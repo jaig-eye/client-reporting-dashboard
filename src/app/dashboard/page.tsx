@@ -1,159 +1,184 @@
 import { redirect } from 'next/navigation'
-import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { summarizeMetrics, getDailyTrend, calcDelta, formatCurrency, formatNumber, formatRoas, formatPercent } from '@/lib/metrics'
-import type { CampaignMetric, Client } from '@/lib/types'
+import { cookies } from 'next/headers'
+import { createAdminClient } from '@/lib/supabase/server'
+import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
+import type { CampaignMetric, Client, AdAccount, SyncLog } from '@/lib/types'
 import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 
+function fmtDate(d: Date) {
+  return d.toISOString().split('T')[0]
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
   searchParams: Promise<{ from?: string; to?: string }>
 }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const cookieStore = await cookies()
+  const token = cookieStore.get('client_token')?.value
+  if (!token) redirect('/access')
 
-  const adminClient = createAdminClient()
+  const db = createAdminClient()
 
-  // Get client record by email
-  const { data: client } = await adminClient
+  // Validate token and get client in one query
+  const { data: client } = await db
     .from('clients')
     .select('*')
-    .eq('email', user.email)
+    .eq('dashboard_token', token)
     .single() as { data: Client | null }
 
-  if (!client) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Access pending</h1>
-          <p className="text-gray-500 text-sm">Your account is being set up. Check back soon.</p>
-        </div>
-      </div>
-    )
-  }
+  if (!client) redirect('/access')
 
   // Date range (default: last 30 days)
   const params = await searchParams
   const toDate = params.to ? new Date(params.to) : new Date()
-  const fromDate = params.from ? new Date(params.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const fromDate = params.from
+    ? new Date(params.from)
+    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
-  const priorFrom = new Date(fromDate.getTime() - (toDate.getTime() - fromDate.getTime()))
+  const periodMs = toDate.getTime() - fromDate.getTime()
   const priorTo = new Date(fromDate.getTime() - 86400000)
+  const priorFrom = new Date(priorTo.getTime() - periodMs)
 
-  const fmt = (d: Date) => d.toISOString().split('T')[0]
-
-  // Fetch current period metrics
-  const { data: currentMetrics } = await adminClient
-    .from('campaign_metrics')
-    .select('*')
-    .eq('client_id', client.id)
-    .gte('date', fmt(fromDate))
-    .lte('date', fmt(toDate)) as { data: CampaignMetric[] | null }
-
-  // Fetch prior period metrics
-  const { data: priorMetrics } = await adminClient
-    .from('campaign_metrics')
-    .select('*')
-    .eq('client_id', client.id)
-    .gte('date', fmt(priorFrom))
-    .lte('date', fmt(priorTo)) as { data: CampaignMetric[] | null }
+  // Fetch current + prior period in parallel
+  const [{ data: currentMetrics }, { data: priorMetrics }, { data: lastSync }] = await Promise.all([
+    db.from('campaign_metrics')
+      .select('*')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate))
+      .lte('date', fmtDate(toDate)) as Promise<{ data: CampaignMetric[] | null }>,
+    db.from('campaign_metrics')
+      .select('spend,impressions,clicks,conversions,conversion_value')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(priorFrom))
+      .lte('date', fmtDate(priorTo)) as Promise<{ data: CampaignMetric[] | null }>,
+    db.from('sync_logs')
+      .select('completed_at,status')
+      .eq('client_id', client.id)
+      .eq('status', 'success')
+      .order('completed_at', { ascending: false })
+      .limit(1) as Promise<{ data: SyncLog[] | null }>,
+  ])
 
   const current = summarizeMetrics(currentMetrics || [])
   const prior = summarizeMetrics(priorMetrics || [])
   const dailyTrend = getDailyTrend(currentMetrics || [])
 
-  // Aggregate by campaign for the table
-  const campaignMap = new Map<string, { name: string; platform: string; spend: number; clicks: number; conversions: number; roas: number }>()
+  // Aggregate campaigns for table
+  const campMap = new Map<string, {
+    name: string; platform: string
+    spend: number; clicks: number; conversions: number; conversionValue: number
+    impressions: number
+  }>()
   for (const row of currentMetrics || []) {
-    const existing = campaignMap.get(row.campaign_id)
-    if (existing) {
-      existing.spend += Number(row.spend)
-      existing.clicks += Number(row.clicks)
-      existing.conversions += Number(row.conversions)
+    const key = row.campaign_id
+    const ex = campMap.get(key)
+    if (ex) {
+      ex.spend += Number(row.spend)
+      ex.clicks += Number(row.clicks)
+      ex.conversions += Number(row.conversions)
+      ex.conversionValue += Number(row.conversion_value)
+      ex.impressions += Number(row.impressions)
     } else {
-      campaignMap.set(row.campaign_id, {
+      campMap.set(key, {
         name: row.campaign_name,
         platform: row.platform,
         spend: Number(row.spend),
         clicks: Number(row.clicks),
         conversions: Number(row.conversions),
-        roas: 0,
+        conversionValue: Number(row.conversion_value),
+        impressions: Number(row.impressions),
       })
     }
   }
-  for (const [, v] of campaignMap) {
-    const totalValue = (currentMetrics || [])
-      .filter(r => r.campaign_name === v.name)
-      .reduce((s, r) => s + Number(r.conversion_value), 0)
-    v.roas = v.spend > 0 ? totalValue / v.spend : 0
-  }
-  const campaigns = Array.from(campaignMap.values()).sort((a, b) => b.spend - a.spend)
+  const campaigns = Array.from(campMap.values())
+    .map(c => ({
+      ...c,
+      roas: c.spend > 0 ? c.conversionValue / c.spend : 0,
+      cpl: c.conversions > 0 ? c.spend / c.conversions : 0,
+      ctr: c.impressions > 0 ? c.clicks / c.impressions : 0,
+    }))
+    .sort((a, b) => b.spend - a.spend)
+
+  const syncedAt = lastSync?.[0]?.completed_at
+    ? new Date(lastSync[0].completed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : null
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            {client.logo_url && (
-              <img src={client.logo_url} alt={client.name} className="h-7 mb-1" />
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-6" />}
+            <span className="font-semibold text-gray-900">{client.name}</span>
+            {syncedAt && (
+              <span className="text-xs text-gray-400 hidden md:inline">Updated {syncedAt}</span>
             )}
-            <h1 className="text-lg font-semibold text-gray-900">{client.name} — Campaign Report</h1>
           </div>
           <div className="flex items-center gap-3">
             <ExportButtons clientId={client.id} />
-            <form action="/auth/signout" method="post">
-              <button className="text-sm text-gray-500 hover:text-gray-700">Sign out</button>
-            </form>
+            <DateRangePicker from={fmtDate(fromDate)} to={fmtDate(toDate)} />
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-sm font-medium text-gray-500">
-            {fmt(fromDate)} – {fmt(toDate)}
-          </h2>
-          <DateRangePicker from={fmt(fromDate)} to={fmt(toDate)} />
-        </div>
-
-        {/* Metric Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <main className="max-w-7xl mx-auto px-6 py-6">
+        {/* Primary Metrics */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <MetricCard
             label="Total Spend"
-            value={formatCurrency(current.spend)}
+            value={fmt$(current.spend)}
             delta={calcDelta(current.spend, prior.spend)}
+            sub={fmtCurrency(current.spend)}
+            invertDelta
           />
           <MetricCard
             label="ROAS"
-            value={formatRoas(current.roas)}
+            value={fmtRoas(current.roas)}
             delta={calcDelta(current.roas, prior.roas)}
+            sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'}
           />
           <MetricCard
             label="Conversions"
-            value={formatNumber(current.conversions)}
+            value={fmtNum(current.conversions)}
             delta={calcDelta(current.conversions, prior.conversions)}
+            sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined}
           />
           <MetricCard
             label="Clicks"
-            value={formatNumber(current.clicks)}
+            value={fmtNum(current.clicks)}
             delta={calcDelta(current.clicks, prior.clicks)}
+            sub={`${fmtPct(current.ctr)} CTR`}
           />
         </div>
 
-        {/* Spend Chart */}
+        {/* Secondary Metrics */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <MetricCard label="Impressions" value={fmtNum(current.impressions)} delta={calcDelta(current.impressions, prior.impressions)} />
+          <MetricCard label="Avg. CPC" value={fmtCurrency(current.cpc)} delta={calcDelta(current.cpc, prior.cpc)} invertDelta />
+          <MetricCard label="Cost Per Lead" value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta />
+          <MetricCard label="Conv. Value" value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} />
+        </div>
+
+        {/* Chart */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4">Daily Spend & Conversions</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-700">Daily Performance</h2>
+            <span className="text-xs text-gray-400">{fmtDate(fromDate)} – {fmtDate(toDate)}</span>
+          </div>
           <SpendChart data={dailyTrend} />
         </div>
 
         {/* Campaign Table */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4">Campaigns</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-700">Campaigns</h2>
+            <span className="text-xs text-gray-400">{campaigns.length} campaigns</span>
+          </div>
           <CampaignTable campaigns={campaigns} />
         </div>
       </main>
