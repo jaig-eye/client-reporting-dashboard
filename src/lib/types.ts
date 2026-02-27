@@ -4,6 +4,7 @@ export interface Client {
   email: string
   slug: string
   logo_url?: string
+  dashboard_token: string
   created_at: string
   updated_at: string
 }
@@ -51,17 +52,7 @@ export interface MetricSummary {
   roas: number
   ctr: number
   cpc: number
-}
-
-export interface MetricDelta {
-  current: MetricSummary
-  prior: MetricSummary
-  delta: {
-    spend: number
-    conversions: number
-    roas: number
-    clicks: number
-  }
+  cpl: number
 }
 
 export interface DailyMetric {
@@ -74,6 +65,7 @@ export interface DailyMetric {
 
 export interface SyncLog {
   id: string
+  client_id: string
   platform: string
   status: 'running' | 'success' | 'error'
   records_synced: number

@@ -16,41 +16,57 @@ export function summarizeMetrics(rows: CampaignMetric[]): MetricSummary {
     roas: spend > 0 ? conversionValue / spend : 0,
     ctr: impressions > 0 ? clicks / impressions : 0,
     cpc: clicks > 0 ? spend / clicks : 0,
+    cpl: conversions > 0 ? spend / conversions : 0,
   }
 }
 
 export function getDailyTrend(rows: CampaignMetric[]): DailyMetric[] {
-  const byDate: Record<string, DailyMetric> = {}
+  const byDate: Record<string, { spend: number; conversions: number; clicks: number; conversionValue: number }> = {}
+
   for (const row of rows) {
-    const date = row.date.split('T')[0]
-    if (!byDate[date]) {
-      byDate[date] = { date, spend: 0, conversions: 0, clicks: 0, roas: 0 }
-    }
+    const date = String(row.date).split('T')[0]
+    if (!byDate[date]) byDate[date] = { spend: 0, conversions: 0, clicks: 0, conversionValue: 0 }
     byDate[date].spend += Number(row.spend)
     byDate[date].conversions += Number(row.conversions)
     byDate[date].clicks += Number(row.clicks)
+    byDate[date].conversionValue += Number(row.conversion_value)
   }
-  // Calculate ROAS per day (needs conversion_value)
-  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date))
+
+  return Object.entries(byDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, d]) => ({
+      date,
+      spend: d.spend,
+      conversions: d.conversions,
+      clicks: d.clicks,
+      roas: d.spend > 0 ? d.conversionValue / d.spend : 0,
+    }))
 }
 
 export function calcDelta(current: number, prior: number): number {
   if (prior === 0) return current > 0 ? 100 : 0
-  return ((current - prior) / prior) * 100
+  return ((current - prior) / Math.abs(prior)) * 100
 }
 
-export function formatCurrency(n: number): string {
+export function fmt$ (n: number): string {
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }
 
-export function formatNumber(n: number): string {
+export function fmtNum(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
   return new Intl.NumberFormat('en-US').format(Math.round(n))
 }
 
-export function formatPercent(n: number): string {
+export function fmtPct(n: number): string {
   return `${(n * 100).toFixed(2)}%`
 }
 
-export function formatRoas(n: number): string {
+export function fmtRoas(n: number): string {
   return `${n.toFixed(2)}x`
+}
+
+export function fmtCurrency(n: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
