@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim())
-  if (!adminEmails.includes(user.email || '')) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const cookieStore = await cookies()
+  const session = cookieStore.get('admin_session')?.value
+  if (!session || session !== process.env.ADMIN_PASSWORD) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { name, email, slug } = await request.json()

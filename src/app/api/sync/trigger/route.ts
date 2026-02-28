@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 import { syncClient } from '@/lib/sync'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const cookieStore = await cookies()
+  const session = cookieStore.get('admin_session')?.value
+  if (!session || session !== process.env.ADMIN_PASSWORD) {
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/login`)
+  }
 
   const formData = await request.formData()
   const clientId = formData.get('clientId') as string
+  const days = parseInt(formData.get('days') as string || '30')
 
   try {
-    await syncClient(clientId, 30)
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin?synced=${clientId}`)
+    await syncClient(clientId, days)
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/clients/${clientId}?synced=true`)
   } catch (e) {
     console.error('Sync error:', e)
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin?error=sync_failed`)
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/clients/${clientId}?error=sync_failed`)
   }
 }
