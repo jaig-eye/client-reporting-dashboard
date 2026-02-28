@@ -4,6 +4,9 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-[#080c18] text-slate-200;
+  }
+  input[type='date'] {
+    color-scheme: dark;
   }
 }

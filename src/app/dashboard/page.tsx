@@ -112,14 +112,14 @@ export default async function DashboardPage({
     : null
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div className="min-h-screen bg-[#080c18]">
+      <header className="bg-[#0f1525] border-b border-[#1e2a40] sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-6" />}
-            <span className="font-semibold text-gray-900">{client.name}</span>
+            <span className="font-semibold text-white">{client.name}</span>
             {syncedAt && (
-              <span className="text-xs text-gray-400 hidden md:inline">Updated {syncedAt}</span>
+              <span className="text-xs text-slate-500 hidden md:inline">Updated {syncedAt}</span>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -144,18 +144,18 @@ export default async function DashboardPage({
           <MetricCard label="Conv. Value" value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} />
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <div className="bg-[#0f1525] rounded-xl border border-[#1e2a40] p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-700">Daily Performance</h2>
-            <span className="text-xs text-gray-400">{fmtDate(fromDate)} – {fmtDate(toDate)}</span>
+            <h2 className="text-sm font-semibold text-slate-200">Daily Performance</h2>
+            <span className="text-xs text-slate-500">{fmtDate(fromDate)} – {fmtDate(toDate)}</span>
           </div>
           <SpendChart data={dailyTrend} />
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="bg-[#0f1525] rounded-xl border border-[#1e2a40] p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-700">Campaigns</h2>
-            <span className="text-xs text-gray-400">{campaigns.length} campaigns</span>
+            <h2 className="text-sm font-semibold text-slate-200">Campaigns</h2>
+            <span className="text-xs text-slate-500">{campaigns.length} campaigns</span>
           </div>
           <CampaignTable campaigns={campaigns} />
         </div>
