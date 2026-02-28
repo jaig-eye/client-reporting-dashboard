@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
-import type { CampaignMetric, Client, AdAccount, SyncLog } from '@/lib/types'
+import type { CampaignMetric, Client, SyncLog } from '@/lib/types'
 import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
@@ -24,16 +24,14 @@ export default async function DashboardPage({
 
   const db = createAdminClient()
 
-  // Validate token and get client in one query
-  const { data: client } = await db
+  const clientResult = await db
     .from('clients')
     .select('*')
     .eq('dashboard_token', token)
-    .single() as { data: Client | null }
-
+    .single()
+  const client = clientResult.data as Client | null
   if (!client) redirect('/access')
 
-  // Date range (default: last 30 days)
   const params = await searchParams
   const toDate = params.to ? new Date(params.to) : new Date()
   const fromDate = params.from
@@ -44,37 +42,39 @@ export default async function DashboardPage({
   const priorTo = new Date(fromDate.getTime() - 86400000)
   const priorFrom = new Date(priorTo.getTime() - periodMs)
 
-  // Fetch current + prior period in parallel
-  const [{ data: currentMetrics }, { data: priorMetrics }, { data: lastSync }] = await Promise.all([
+  const [currentResult, priorResult, syncResult] = await Promise.all([
     db.from('campaign_metrics')
       .select('*')
       .eq('client_id', client.id)
       .gte('date', fmtDate(fromDate))
-      .lte('date', fmtDate(toDate)) as Promise<{ data: CampaignMetric[] | null }>,
+      .lte('date', fmtDate(toDate)),
     db.from('campaign_metrics')
       .select('spend,impressions,clicks,conversions,conversion_value')
       .eq('client_id', client.id)
       .gte('date', fmtDate(priorFrom))
-      .lte('date', fmtDate(priorTo)) as Promise<{ data: CampaignMetric[] | null }>,
+      .lte('date', fmtDate(priorTo)),
     db.from('sync_logs')
-      .select('completed_at,status')
+      .select('completed_at,status,records_synced')
       .eq('client_id', client.id)
       .eq('status', 'success')
       .order('completed_at', { ascending: false })
-      .limit(1) as Promise<{ data: SyncLog[] | null }>,
+      .limit(1),
   ])
 
-  const current = summarizeMetrics(currentMetrics || [])
-  const prior = summarizeMetrics(priorMetrics || [])
-  const dailyTrend = getDailyTrend(currentMetrics || [])
+  const currentMetrics = (currentResult.data || []) as CampaignMetric[]
+  const priorMetrics = (priorResult.data || []) as CampaignMetric[]
+  const lastSync = (syncResult.data || []) as SyncLog[]
 
-  // Aggregate campaigns for table
+  const current = summarizeMetrics(currentMetrics)
+  const prior = summarizeMetrics(priorMetrics)
+  const dailyTrend = getDailyTrend(currentMetrics)
+
   const campMap = new Map<string, {
     name: string; platform: string
     spend: number; clicks: number; conversions: number; conversionValue: number
     impressions: number
   }>()
-  for (const row of currentMetrics || []) {
+  for (const row of currentMetrics) {
     const key = row.campaign_id
     const ex = campMap.get(key)
     if (ex) {
@@ -95,6 +95,7 @@ export default async function DashboardPage({
       })
     }
   }
+
   const campaigns = Array.from(campMap.values())
     .map(c => ({
       ...c,
@@ -104,8 +105,10 @@ export default async function DashboardPage({
     }))
     .sort((a, b) => b.spend - a.spend)
 
-  const syncedAt = lastSync?.[0]?.completed_at
-    ? new Date(lastSync[0].completed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const syncedAt = lastSync[0]?.completed_at
+    ? new Date(lastSync[0].completed_at).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      })
     : null
 
   return (
@@ -127,36 +130,13 @@ export default async function DashboardPage({
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-6">
-        {/* Primary Metrics */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <MetricCard
-            label="Total Spend"
-            value={fmt$(current.spend)}
-            delta={calcDelta(current.spend, prior.spend)}
-            sub={fmtCurrency(current.spend)}
-            invertDelta
-          />
-          <MetricCard
-            label="ROAS"
-            value={fmtRoas(current.roas)}
-            delta={calcDelta(current.roas, prior.roas)}
-            sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'}
-          />
-          <MetricCard
-            label="Conversions"
-            value={fmtNum(current.conversions)}
-            delta={calcDelta(current.conversions, prior.conversions)}
-            sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined}
-          />
-          <MetricCard
-            label="Clicks"
-            value={fmtNum(current.clicks)}
-            delta={calcDelta(current.clicks, prior.clicks)}
-            sub={`${fmtPct(current.ctr)} CTR`}
-          />
+          <MetricCard label="Total Spend" value={fmt$(current.spend)} delta={calcDelta(current.spend, prior.spend)} sub={fmtCurrency(current.spend)} invertDelta />
+          <MetricCard label="ROAS" value={fmtRoas(current.roas)} delta={calcDelta(current.roas, prior.roas)} sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'} />
+          <MetricCard label="Conversions" value={fmtNum(current.conversions)} delta={calcDelta(current.conversions, prior.conversions)} sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined} />
+          <MetricCard label="Clicks" value={fmtNum(current.clicks)} delta={calcDelta(current.clicks, prior.clicks)} sub={`${fmtPct(current.ctr)} CTR`} />
         </div>
 
-        {/* Secondary Metrics */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <MetricCard label="Impressions" value={fmtNum(current.impressions)} delta={calcDelta(current.impressions, prior.impressions)} />
           <MetricCard label="Avg. CPC" value={fmtCurrency(current.cpc)} delta={calcDelta(current.cpc, prior.cpc)} invertDelta />
@@ -164,7 +144,6 @@ export default async function DashboardPage({
           <MetricCard label="Conv. Value" value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} />
         </div>
 
-        {/* Chart */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-700">Daily Performance</h2>
@@ -173,7 +152,6 @@ export default async function DashboardPage({
           <SpendChart data={dailyTrend} />
         </div>
 
-        {/* Campaign Table */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-700">Campaigns</h2>
