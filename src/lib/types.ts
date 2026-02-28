@@ -15,6 +15,8 @@ export interface AdAccount {
   platform: 'google' | 'meta'
   account_id: string
   account_name?: string
+  access_token?: string
+  refresh_token?: string
   token_expires_at?: string
   created_at: string
 }
@@ -72,4 +74,19 @@ export interface SyncLog {
   error_message?: string
   started_at: string
   completed_at?: string
+}
+
+export interface MetricRow {
+  campaign_id: string
+  campaign_name: string
+  date: string
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversion_value: number
+  roas: number
+  ctr: number
+  cpc: number
+  cpm: number
 }

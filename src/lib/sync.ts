@@ -1,7 +1,7 @@
 import { createAdminClient } from './supabase/server'
 import { fetchGoogleCampaignMetrics, refreshGoogleToken } from './google-ads'
 import { fetchMetaCampaignMetrics } from './meta-ads'
-import type { AdAccount } from './types'
+import type { AdAccount, MetricRow } from './types'
 
 export async function syncClient(clientId: string, days = 30): Promise<number> {
   const db = createAdminClient()
@@ -25,7 +25,7 @@ export async function syncClient(clientId: string, days = 30): Promise<number> {
     const logId = await startSyncLog(db, clientId, account.id, account.platform, dateStart, dateEnd)
 
     try {
-      let metrics: ReturnType<typeof fetchGoogleCampaignMetrics> extends Promise<infer T> ? T : never
+      let metrics: MetricRow[]
 
       if (account.platform === 'google') {
         let token = account.access_token || ''
