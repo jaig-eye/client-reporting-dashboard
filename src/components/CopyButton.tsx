@@ -11,7 +11,6 @@ export default function CopyButton({ text }: { text: string }) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Fallback for browsers that don't support clipboard API
       const el = document.createElement('textarea')
       el.value = text
       document.body.appendChild(el)
@@ -27,7 +26,7 @@ export default function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       className={`text-xs font-medium flex-shrink-0 transition-colors ${
-        copied ? 'text-green-600' : 'text-blue-600 hover:text-blue-800'
+        copied ? 'text-emerald-400' : 'text-blue-400 hover:text-blue-300'
       }`}
     >
       {copied ? 'Copied!' : 'Copy'}

@@ -3,7 +3,7 @@ interface MetricCardProps {
   value: string
   delta?: number
   sub?: string
-  invertDelta?: boolean // for metrics where lower is better (spend, CPL, CPC)
+  invertDelta?: boolean
 }
 
 export default function MetricCard({ label, value, delta, sub, invertDelta }: MetricCardProps) {
@@ -12,13 +12,13 @@ export default function MetricCard({ label, value, delta, sub, invertDelta }: Me
     : null
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4">
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{label}</p>
-      <p className="text-2xl font-bold text-gray-900 leading-none mb-1">{value}</p>
-      {sub && <p className="text-xs text-gray-400 mb-1.5">{sub}</p>}
+    <div className="bg-[#0f1525] rounded-xl border border-[#1e2a40] p-4">
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">{label}</p>
+      <p className="text-2xl font-bold text-white leading-none mb-1">{value}</p>
+      {sub && <p className="text-xs text-slate-500 mb-1.5">{sub}</p>}
       {delta !== undefined && delta !== 0 && (
         <div className={`flex items-center gap-0.5 text-xs font-medium ${
-          isGood ? 'text-emerald-600' : 'text-red-500'
+          isGood ? 'text-emerald-400' : 'text-red-400'
         }`}>
           <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
