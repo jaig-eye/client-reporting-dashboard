@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Ads API — Developer Token Application</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      color: #1a1a1a;
+      background: #fff;
+      padding: 48px 64px;
+      max-width: 860px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+    header {
+      border-bottom: 3px solid #1a73e8;
+      padding-bottom: 20px;
+      margin-bottom: 32px;
+    }
+    header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 4px;
+    }
+    header p {
+      color: #555;
+      font-size: 13px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 40px;
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin-bottom: 32px;
+    }
+    .meta-item label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #888;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .meta-item span {
+      font-size: 13px;
+      color: #1a1a1a;
+      font-weight: 500;
+    }
+    section {
+      margin-bottom: 28px;
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #1a73e8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #e8f0fe;
+    }
+    p {
+      margin-bottom: 8px;
+      color: #333;
+    }
+    ul {
+      padding-left: 18px;
+      margin-bottom: 8px;
+    }
+    ul li {
+      margin-bottom: 4px;
+      color: #333;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 12.5px;
+    }
+    th {
+      background: #1a73e8;
+      color: #fff;
+      text-align: left;
+      padding: 8px 12px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    td {
+      padding: 7px 12px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    tr:nth-child(even) td {
+      background: #f8f9fa;
+    }
+    .tag {
+      display: inline-block;
+      background: #e8f0fe;
+      color: #1a73e8;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 3px;
+      margin-right: 4px;
+    }
+    .tag.green { background: #e6f4ea; color: #137333; }
+    .tag.gray  { background: #f1f3f4; color: #555; }
+    code {
+      background: #f1f3f4;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      color: #c5221f;
+    }
+    .note {
+      background: #fffde7;
+      border-left: 3px solid #f9ab00;
+      padding: 10px 14px;
+      border-radius: 0 4px 4px 0;
+      font-size: 12.5px;
+      color: #555;
+      margin-top: 10px;
+    }
+    footer {
+      margin-top: 48px;
+      padding-top: 16px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 11px;
+      color: #999;
+      text-align: center;
+    }
+    @media print {
+      body { padding: 32px 48px; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Google Ads API &mdash; Developer Token Application</h1>
+    <p>Project documentation submitted in support of a Basic Access developer token request.</p>
+  </header>
+
+  <div class="meta-grid">
+    <div class="meta-item">
+      <label>Application Name</label>
+      <span>Client Reporting Dashboard</span>
+    </div>
+    <div class="meta-item">
+      <label>Application Type</label>
+      <span>Internal Agency Tool (not public-facing)</span>
+    </div>
+    <div class="meta-item">
+      <label>API Access Level Requested</label>
+      <span>Basic Access</span>
+    </div>
+    <div class="meta-item">
+      <label>Account Type</label>
+      <span>Manager Account (MCC)</span>
+    </div>
+    <div class="meta-item">
+      <label>Primary Use Case</label>
+      <span>Read-only campaign performance reporting</span>
+    </div>
+    <div class="meta-item">
+      <label>End Users</label>
+      <span>Agency staff &amp; managed clients (closed group)</span>
+    </div>
+  </div>
+
+  <section>
+    <h2>1. Project Overview</h2>
+    <p>
+      This is a private, internal web application built and operated exclusively by our marketing agency.
+      Its purpose is to provide a clean, real-time campaign performance dashboard to clients whose
+      Google Ads accounts we manage under our MCC (Manager Account).
+    </p>
+    <p>
+      The application is not available to the general public. Access is restricted to:
+    </p>
+    <ul>
+      <li><strong>Agency administrators</strong> — internal staff who manage client accounts and trigger data syncs via a password-protected admin panel.</li>
+      <li><strong>Agency clients</strong> — each client receives a unique, single-use token link that shows only their own campaign data. They cannot access any other client's data.</li>
+    </ul>
+    <p>
+      All Google Ads API calls are made server-side (never from a browser). Data is stored in our
+      own database and served to the dashboard from there — the API is not called at dashboard
+      view time.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. How We Use the Google Ads API</h2>
+    <p>We use the API for one purpose: <strong>reading campaign performance metrics</strong> for sub-accounts under our MCC. We do not create, modify, or delete any campaigns, budgets, or ads.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Endpoint / Resource</th>
+          <th>Purpose</th>
+          <th>Access Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>customers:listAccessibleCustomers</code></td>
+          <td>Discover which sub-account IDs are accessible under the MCC after OAuth</td>
+          <td><span class="tag">Read</span></td>
+        </tr>
+        <tr>
+          <td><code>customers/{id}/googleAds:search</code></td>
+          <td>GAQL query to fetch daily campaign metrics (spend, clicks, impressions, conversions, ROAS)</td>
+          <td><span class="tag">Read</span></td>
+        </tr>
+        <tr>
+          <td>OAuth 2.0 token refresh</td>
+          <td>Maintain access without requiring the agency to re-authenticate manually</td>
+          <td><span class="tag gray">Auth</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>3. Data Accessed</h2>
+    <p>We query the following fields via GAQL — all are aggregated campaign-level metrics with no personally identifiable information:</p>
+    <ul>
+      <li><code>campaign.id</code> and <code>campaign.name</code></li>
+      <li><code>segments.date</code> — daily breakdown</li>
+      <li><code>metrics.cost_micros</code> — ad spend</li>
+      <li><code>metrics.impressions</code></li>
+      <li><code>metrics.clicks</code></li>
+      <li><code>metrics.conversions</code> and <code>metrics.conversions_value</code></li>
+      <li><code>metrics.ctr</code></li>
+    </ul>
+    <p>We do <strong>not</strong> access:</p>
+    <ul>
+      <li>User lists, audience data, or any personally identifiable information</li>
+      <li>Billing or payment information</li>
+      <li>Search terms, keywords, or ad creative content</li>
+      <li>Any data outside of our managed MCC sub-accounts</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>4. Authentication &amp; Token Handling</h2>
+    <p>
+      Authentication is handled via a standard OAuth 2.0 flow using our registered Google Cloud project.
+      The agency owner authenticates once per sub-account. Tokens are stored securely server-side
+      in our database (Supabase) and are never exposed to end users or browsers.
+    </p>
+    <ul>
+      <li>Access tokens are refreshed automatically using stored refresh tokens before each sync.</li>
+      <li>The <code>login-customer-id</code> header is set to our MCC ID on every API call, as required.</li>
+      <li>Token storage is encrypted at rest via our database provider.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5. Technical Architecture</h2>
+    <table>
+      <thead>
+        <tr><th>Component</th><th>Technology</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Web Application</td>
+          <td>Next.js (React) on Vercel</td>
+          <td>Admin panel + client dashboard</td>
+        </tr>
+        <tr>
+          <td>Database</td>
+          <td>Supabase (PostgreSQL)</td>
+          <td>Stores campaign metrics, client records, tokens</td>
+        </tr>
+        <tr>
+          <td>API Layer</td>
+          <td>Next.js API routes (server-side)</td>
+          <td>All Google Ads API calls — never client-side</td>
+        </tr>
+        <tr>
+          <td>Scheduled Sync</td>
+          <td>Vercel Cron Jobs</td>
+          <td>Nightly refresh of campaign data</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note">
+      All Google Ads API requests originate from our server infrastructure. No API credentials or
+      tokens are ever sent to or accessible by end-user browsers.
+    </div>
+  </section>
+
+  <section>
+    <h2>6. Request Volume &amp; Usage Pattern</h2>
+    <p>API usage is minimal and predictable:</p>
+    <ul>
+      <li>One sync per client per day (scheduled nightly cron)</li>
+      <li>Estimated <strong>1&ndash;5 API calls per client per sync</strong> depending on number of campaigns</li>
+      <li>Manual syncs triggered by agency staff only (not automated at high frequency)</li>
+      <li>Current client base: small number of managed accounts — well within Basic Access limits</li>
+    </ul>
+    <p>We are requesting <strong>Basic Access</strong> (15,000 operations/day) which comfortably covers our current and projected usage.</p>
+  </section>
+
+  <section>
+    <h2>7. Compliance &amp; Data Handling</h2>
+    <ul>
+      <li>Campaign data is used solely to generate performance reports for the account owner (our client).</li>
+      <li>Data is never sold, shared with third parties, or used for any purpose other than reporting.</li>
+      <li>Each client can only view their own data — enforced via unique access tokens at the application layer.</li>
+      <li>We comply with the <a href="https://developers.google.com/google-ads/api/docs/terms">Google Ads API Terms of Service</a>.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Prepared for Google Ads API Developer Token application &mdash; Basic Access request &mdash; Internal agency use only
+  </footer>
+
+</body>
+</html>
