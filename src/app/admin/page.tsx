@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
-import type { Client, AdAccount, SyncLog } from '@/lib/types'
+import type { Client, AdAccount } from '@/lib/types'
 import Link from 'next/link'
+import CopyButton from '@/components/CopyButton'
 
 export default async function AdminPage() {
   const db = createAdminClient()
@@ -69,17 +70,5 @@ export default async function AdminPage() {
         )}
       </div>
     </div>
-  )
-}
-
-function CopyButton({ text }: { text: string }) {
-  return (
-    <button
-      onClick={undefined}
-      data-copy={text}
-      className="text-xs text-blue-600 hover:text-blue-800 font-medium flex-shrink-0 copy-btn"
-    >
-      Copy
-    </button>
   )
 }
