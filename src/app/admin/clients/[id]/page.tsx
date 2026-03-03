@@ -1,8 +1,11 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Client, AdAccount, SyncLog } from '@/lib/types'
+import type { Client, AdAccount, SyncLog, AgencySettings } from '@/lib/types'
 import Link from 'next/link'
 import AccountMapper from './AccountMapper'
+import ClientBenchmarks from './ClientBenchmarks'
+
+export const dynamic = 'force-dynamic'
 
 export default async function ClientDetailPage({
   params,
@@ -16,21 +19,28 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientResult, unlinkedResult, recentSyncsResult] = await Promise.all([
-    db.from('clients').select('*, ad_accounts(*)').eq('id', id).single(),
+  const [clientResult, mappedResult, unlinkedResult, recentSyncsResult, settingsResult] = await Promise.all([
+    db.from('clients').select('*').eq('id', id).single(),
+    db.from('ad_accounts').select('id, platform, account_id, account_name').eq('client_id', id).order('platform').order('account_name'),
     db.from('ad_accounts').select('id, platform, account_id, account_name').is('client_id', null).order('platform').order('account_name'),
     db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5),
+    db.from('agency_settings').select('benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm').single(),
   ])
 
-  const client = clientResult.data as (Client & { ad_accounts: AdAccount[] }) | null
+  const client = clientResult.data as Client | null
   if (!client) notFound()
 
-  const recentSyncs = (recentSyncsResult.data ?? []) as SyncLog[]
-  const allUnlinked = (unlinkedResult.data ?? []) as AdAccount[]
+  const recentSyncs    = (recentSyncsResult.data ?? []) as SyncLog[]
+  const allUnlinked    = (unlinkedResult.data ?? []) as AdAccount[]
+  const mappedAccounts = (mappedResult.data ?? []) as AdAccount[]
+  const globalSettings = (settingsResult.data ?? {
+    benchmark_roas: 3, benchmark_ctr: 0.03, benchmark_cpc: 3,
+    benchmark_conv_rate: 0.03, benchmark_cpm: 15,
+  }) as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate' | 'benchmark_cpm'>
 
   const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-  const googleAccounts = client.ad_accounts?.filter(a => a.platform === 'google' && a.client_id === id) ?? []
-  const metaAccounts   = client.ad_accounts?.filter(a => a.platform === 'meta'   && a.client_id === id) ?? []
+  const googleAccounts = mappedAccounts.filter(a => a.platform === 'google')
+  const metaAccounts   = mappedAccounts.filter(a => a.platform === 'meta')
   const isConnected    = googleAccounts.length > 0 || metaAccounts.length > 0
 
   return (
@@ -121,6 +131,25 @@ export default async function ClientDetailPage({
             </span>
           )}
         </div>
+      </div>
+
+      {/* Performance Benchmarks */}
+      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+        <h2 className="font-semibold text-slate-100 mb-1">Performance Benchmarks</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Override global benchmark targets for this client&apos;s Efficiency Score.
+        </p>
+        <ClientBenchmarks
+          clientId={id}
+          globalDefaults={globalSettings}
+          current={{
+            benchmark_roas:       client.benchmark_roas,
+            benchmark_ctr:        client.benchmark_ctr,
+            benchmark_cpc:        client.benchmark_cpc,
+            benchmark_conv_rate:  client.benchmark_conv_rate,
+            benchmark_cpm:        client.benchmark_cpm,
+          }}
+        />
       </div>
 
       {/* Step 3 — GHL Link */}

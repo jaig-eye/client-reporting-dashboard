@@ -78,17 +78,26 @@ export default async function DashboardPage({
   const prior      = summarizeMetrics(priorMetrics)
   const dailyTrend = getDailyTrend(currentMetrics)
 
+  // Per-client benchmark overrides fall back to global agency settings
+  const benchmarks = {
+    benchmark_roas:      client.benchmark_roas      ?? settings.benchmark_roas,
+    benchmark_ctr:       client.benchmark_ctr       ?? settings.benchmark_ctr,
+    benchmark_cpc:       client.benchmark_cpc       ?? settings.benchmark_cpc,
+    benchmark_conv_rate: client.benchmark_conv_rate ?? settings.benchmark_conv_rate,
+    benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
+  }
+
   // Efficiency score + component breakdown
   const convRate = current.clicks > 0 ? current.conversions / current.clicks : 0
   const score    = calcEfficiencyScore(
     { roas: current.roas, ctr: current.ctr, cpc: current.cpc, convRate },
-    settings
+    benchmarks
   )
   const scoreComponents = [
-    { label: 'ROAS',       pct: pctOfBenchmark(current.roas, settings.benchmark_roas,        false), actual: fmtRoas(current.roas),     benchmark: fmtRoas(settings.benchmark_roas) },
-    { label: 'Conv. Rate', pct: pctOfBenchmark(convRate,     settings.benchmark_conv_rate,   false), actual: fmtPct(convRate),           benchmark: fmtPct(settings.benchmark_conv_rate) },
-    { label: 'CTR',        pct: pctOfBenchmark(current.ctr,  settings.benchmark_ctr,         false), actual: fmtPct(current.ctr),        benchmark: fmtPct(settings.benchmark_ctr) },
-    { label: 'CPC',        pct: pctOfBenchmark(current.cpc,  settings.benchmark_cpc,         true),  actual: fmtCurrency(current.cpc),   benchmark: fmtCurrency(settings.benchmark_cpc) },
+    { label: 'ROAS',       pct: pctOfBenchmark(current.roas, benchmarks.benchmark_roas,        false), actual: fmtRoas(current.roas),     benchmark: fmtRoas(benchmarks.benchmark_roas) },
+    { label: 'Conv. Rate', pct: pctOfBenchmark(convRate,     benchmarks.benchmark_conv_rate,   false), actual: fmtPct(convRate),           benchmark: fmtPct(benchmarks.benchmark_conv_rate) },
+    { label: 'CTR',        pct: pctOfBenchmark(current.ctr,  benchmarks.benchmark_ctr,         false), actual: fmtPct(current.ctr),        benchmark: fmtPct(benchmarks.benchmark_ctr) },
+    { label: 'CPC',        pct: pctOfBenchmark(current.cpc,  benchmarks.benchmark_cpc,         true),  actual: fmtCurrency(current.cpc),   benchmark: fmtCurrency(benchmarks.benchmark_cpc) },
   ]
 
   // Aggregate campaigns for table
@@ -128,7 +137,7 @@ export default async function DashboardPage({
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               {settings.agency_logo_url && (
-                <img src={settings.agency_logo_url} alt={settings.agency_name} className="h-5" />
+                <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-8 max-w-[200px] object-contain" />
               )}
               <span className="text-sm font-medium text-slate-300">{settings.agency_name}</span>
             </div>
@@ -154,15 +163,15 @@ export default async function DashboardPage({
         {/* Primary metric cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard label="Total Spend"   value={fmt$(current.spend)}           delta={calcDelta(current.spend,        prior.spend)}           sub={fmtCurrency(current.spend)}                                                                      invertDelta />
-          <MetricCard label="ROAS"          value={fmtRoas(current.roas)}         delta={calcDelta(current.roas,         prior.roas)}            sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'} benchmarkPct={pctOfBenchmark(current.roas, settings.benchmark_roas, false)} />
+          <MetricCard label="ROAS"          value={fmtRoas(current.roas)}         delta={calcDelta(current.roas,         prior.roas)}            sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'} benchmarkPct={pctOfBenchmark(current.roas, benchmarks.benchmark_roas, false)} />
           <MetricCard label="Conversions"   value={fmtNum(current.conversions)}   delta={calcDelta(current.conversions,  prior.conversions)}     sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined} />
-          <MetricCard label="Clicks"        value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks,       prior.clicks)}          sub={`${fmtPct(current.ctr)} CTR`}                                                                     benchmarkPct={pctOfBenchmark(current.ctr, settings.benchmark_ctr, false)} />
+          <MetricCard label="Clicks"        value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks,       prior.clicks)}          sub={`${fmtPct(current.ctr)} CTR`}                                                                     benchmarkPct={pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false)} />
         </div>
 
         {/* Secondary metric cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard label="Impressions"   value={fmtNum(current.impressions)}   delta={calcDelta(current.impressions,  prior.impressions)} />
-          <MetricCard label="Avg. CPC"      value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc,          prior.cpc)}             invertDelta benchmarkPct={pctOfBenchmark(current.cpc, settings.benchmark_cpc, true)} />
+          <MetricCard label="Avg. CPC"      value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc,          prior.cpc)}             invertDelta benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} />
           <MetricCard label="Cost Per Lead" value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta />
           <MetricCard label="Conv. Value"   value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} />
         </div>

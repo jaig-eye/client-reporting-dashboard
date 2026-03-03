@@ -5,6 +5,11 @@ export interface Client {
   slug: string
   logo_url?: string
   dashboard_token: string
+  benchmark_roas?: number | null
+  benchmark_ctr?: number | null
+  benchmark_cpc?: number | null
+  benchmark_conv_rate?: number | null
+  benchmark_cpm?: number | null
   created_at: string
   updated_at: string
 }

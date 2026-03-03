@@ -3,21 +3,30 @@ import type { Client, AdAccount } from '@/lib/types'
 import Link from 'next/link'
 import CopyButton from '@/components/CopyButton'
 
+export const dynamic = 'force-dynamic'
+
 export default async function AdminPage() {
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const { data: clients } = await db
-    .from('clients')
-    .select('*, ad_accounts(*)')
-    .order('created_at', { ascending: false }) as {
-    data: (Client & { ad_accounts: AdAccount[] })[] | null
+  const [clientsResult, accountsResult] = await Promise.all([
+    db.from('clients').select('*').order('created_at', { ascending: false }),
+    db.from('ad_accounts').select('id, client_id, platform').not('client_id', 'is', null),
+  ])
+
+  const clients    = (clientsResult.data ?? []) as Client[]
+  const allMapped  = (accountsResult.data ?? []) as AdAccount[]
+
+  const byClient = new Map<string, AdAccount[]>()
+  for (const a of allMapped) {
+    if (!byClient.has(a.client_id!)) byClient.set(a.client_id!, [])
+    byClient.get(a.client_id!)!.push(a)
   }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold text-white">Clients ({clients?.length ?? 0})</h1>
+        <h1 className="text-lg font-semibold text-white">Clients ({clients.length})</h1>
         <Link
           href="/admin/clients/new"
           className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
@@ -27,10 +36,11 @@ export default async function AdminPage() {
       </div>
 
       <div className="space-y-3">
-        {(clients || []).map(client => {
-          const dashUrl = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-          const google = client.ad_accounts?.filter(a => a.platform === 'google') ?? []
-          const meta = client.ad_accounts?.filter(a => a.platform === 'meta') ?? []
+        {clients.map(client => {
+          const dashUrl      = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
+          const accts        = byClient.get(client.id) ?? []
+          const google       = accts.filter(a => a.platform === 'google')
+          const meta         = accts.filter(a => a.platform === 'meta')
           return (
             <div key={client.id} className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-5">
               <div className="flex items-start justify-between gap-4">
@@ -62,7 +72,7 @@ export default async function AdminPage() {
             </div>
           )
         })}
-        {(!clients || clients.length === 0) && (
+        {clients.length === 0 && (
           <div className="text-center py-20 text-slate-600">
             <p className="text-sm">No clients yet.</p>
           </div>
