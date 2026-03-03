@@ -17,15 +17,15 @@ export default async function ClientDetailPage({
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
   const [clientResult, unlinkedResult, recentSyncsResult] = await Promise.all([
-    db.from('clients').select('*, ad_accounts(*)').eq('id', id).single() as Promise<{ data: (Client & { ad_accounts: AdAccount[] }) | null }>,
+    db.from('clients').select('*, ad_accounts(*)').eq('id', id).single(),
     db.from('ad_accounts').select('id, platform, account_id, account_name').is('client_id', null).order('platform').order('account_name'),
-    db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5) as Promise<{ data: SyncLog[] | null }>,
+    db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5),
   ])
 
-  const client = clientResult.data
+  const client = clientResult.data as (Client & { ad_accounts: AdAccount[] }) | null
   if (!client) notFound()
 
-  const recentSyncs = recentSyncsResult.data ?? []
+  const recentSyncs = (recentSyncsResult.data ?? []) as SyncLog[]
   const allUnlinked = (unlinkedResult.data ?? []) as AdAccount[]
 
   const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
