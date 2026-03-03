@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Upsert ────────────────────────────────────────────────────────────────
-  await upsertMetrics(db, adAccount.client_id, adAccount, validRows as Parameters<typeof upsertMetrics>[3])
+  await upsertMetrics(db, adAccount.client_id, adAccount, validRows as unknown as Parameters<typeof upsertMetrics>[3])
 
   return NextResponse.json({ inserted: validRows.length })
 }
