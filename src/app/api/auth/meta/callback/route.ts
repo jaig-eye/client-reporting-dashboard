@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { exchangeMetaCode, getMetaAdAccounts } from '@/lib/meta-ads'
 import { createAdminClient } from '@/lib/supabase/server'
+import { syncClient, BACKFILL_DAYS } from '@/lib/sync'
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
@@ -17,14 +18,26 @@ export async function GET(request: NextRequest) {
     const db = createAdminClient()
 
     for (const account of accounts) {
-      await db.from('ad_accounts').upsert({
-        client_id: clientId,
-        platform: 'meta',
-        account_id: account.id,
-        account_name: account.name,
-        access_token,
-        token_expires_at: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
-      }, { onConflict: 'client_id,platform,account_id' })
+      const { data: savedAccount } = await db
+        .from('ad_accounts')
+        .upsert({
+          client_id: clientId,
+          platform: 'meta',
+          account_id: account.id,
+          account_name: account.name,
+          access_token,
+          // Meta long-lived tokens last 60 days; set expiry to 55 days to refresh before it lapses
+          token_expires_at: new Date(Date.now() + 55 * 24 * 60 * 60 * 1000).toISOString(),
+        }, { onConflict: 'client_id,platform,account_id' })
+        .select('id')
+        .single()
+
+      // Backfill historical data for this specific newly-connected account.
+      if (savedAccount?.id) {
+        await syncClient(clientId, BACKFILL_DAYS, savedAccount.id).catch(err =>
+          console.error(`Meta backfill failed for account ${account.id}:`, err)
+        )
+      }
     }
 
     return NextResponse.redirect(`${appUrl}/admin/clients/${clientId}?connected=meta`)
