@@ -11,7 +11,8 @@ interface Settings {
   benchmark_conv_rate: number
   benchmark_cpm: number
   default_date_range_days: number
-  meta_system_user_token: string
+  meta_connected: boolean
+  meta_token_expires_at: string | null
 }
 
 const DEFAULT: Settings = {
@@ -23,7 +24,8 @@ const DEFAULT: Settings = {
   benchmark_conv_rate: 0.03,
   benchmark_cpm: 15,
   default_date_range_days: 30,
-  meta_system_user_token: '',
+  meta_connected: false,
+  meta_token_expires_at: null,
 }
 
 export default function SettingsPage() {
@@ -44,7 +46,7 @@ export default function SettingsPage() {
       .catch(() => setLoading(false))
   }, [])
 
-  function set(key: keyof Settings, value: string | number) {
+  function set(key: keyof Pick<Settings, 'agency_name' | 'agency_logo_url' | 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate' | 'benchmark_cpm' | 'default_date_range_days'>, value: string | number) {
     setSaved(false)
     setForm(f => ({ ...f, [key]: value }))
   }
@@ -122,33 +124,45 @@ export default function SettingsPage() {
               <span className="w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0" />
               <span className="text-sm font-medium text-slate-300">Meta Ads</span>
             </div>
-            <Field
-              label="System User Token"
-              hint="From Meta Business Manager → System Users → Generate Token"
-            >
-              <input
-                type="password"
-                value={form.meta_system_user_token}
-                onChange={e => set('meta_system_user_token', e.target.value)}
-                placeholder="EAA…"
-                className={inputCls}
-              />
-            </Field>
+
+            {/* Connection status */}
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleMetaSync}
-                disabled={syncing || !form.meta_system_user_token}
-                className="text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg disabled:opacity-40 transition-colors"
+              {form.meta_connected ? (
+                <span className="text-xs text-emerald-400">
+                  Connected
+                  {form.meta_token_expires_at && (
+                    <> — expires {new Date(form.meta_token_expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</>
+                  )}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-500">Not connected</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <a
+                href="/api/auth/meta?mode=agency"
+                className="text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg transition-colors"
               >
-                {syncing ? 'Syncing…' : 'Sync Meta Accounts'}
-              </button>
+                {form.meta_connected ? 'Reconnect Meta' : 'Connect Meta'}
+              </a>
+              {form.meta_connected && (
+                <button
+                  type="button"
+                  onClick={handleMetaSync}
+                  disabled={syncing}
+                  className="text-sm border border-[#1e2a40] text-slate-400 hover:text-slate-300 hover:border-[#2a3a54] font-medium px-4 py-2 rounded-lg disabled:opacity-40 transition-colors"
+                >
+                  {syncing ? 'Syncing…' : 'Sync Accounts'}
+                </button>
+              )}
               {syncMsg && <span className="text-emerald-400 text-sm">{syncMsg}</span>}
               {syncErr && <span className="text-red-400 text-sm">{syncErr}</span>}
             </div>
             <p className="text-xs text-slate-600">
-              Sync discovers all ad accounts under your Business Manager and makes them
-              available to map to clients. Re-run whenever you add a new client account.
+              Authenticates as your Business Manager admin. After connecting, click Sync
+              Accounts to import all managed ad accounts into the mapping pool.
+              Tokens last ~55 days — reconnect when prompted.
             </p>
           </div>
 

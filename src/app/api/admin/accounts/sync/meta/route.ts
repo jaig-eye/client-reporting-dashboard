@@ -23,17 +23,17 @@ export async function POST() {
   const db = createAdminClient()
   const { data: settings } = await db
     .from('agency_settings')
-    .select('meta_system_user_token')
+    .select('meta_access_token')
     .single()
 
-  if (!settings?.meta_system_user_token) {
+  if (!(settings as Record<string, unknown>)?.meta_access_token) {
     return NextResponse.json(
-      { error: 'No Meta System User Token saved. Add it in Settings first.' },
+      { error: 'Meta not connected. Click "Connect Meta" in Settings first.' },
       { status: 400 }
     )
   }
 
-  const accounts = await fetchAllBMAdAccounts(settings.meta_system_user_token)
+  const accounts = await fetchAllBMAdAccounts((settings as Record<string, unknown>).meta_access_token as string)
   if (accounts.length === 0) {
     return NextResponse.json({ synced: 0 })
   }

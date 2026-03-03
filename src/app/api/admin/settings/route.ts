@@ -15,7 +15,15 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data, error } = await db.from('agency_settings').select('*').single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // Never expose raw tokens to the client — return status indicators only
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { meta_access_token, meta_system_user_token, ...safe } = data as Record<string, unknown>
+  return NextResponse.json({
+    ...safe,
+    meta_connected:        !!(data as Record<string, unknown>).meta_access_token,
+    meta_token_expires_at: (data as Record<string, unknown>).meta_token_expires_at ?? null,
+  })
 }
 
 export async function PUT(request: NextRequest) {
@@ -26,12 +34,11 @@ export async function PUT(request: NextRequest) {
 
   const body = await request.json()
 
-  // Whitelist only editable fields — never allow id or updated_at to be set externally
+  // Whitelist only editable fields — tokens are set via OAuth, never via PUT
   const allowed = [
     'agency_name', 'agency_logo_url',
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm',
     'default_date_range_days',
-    'meta_system_user_token',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
@@ -39,7 +46,6 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  // Get the single row's id first so we can update it
   const { data: existing } = await db.from('agency_settings').select('id').single()
   if (!existing?.id) return NextResponse.json({ error: 'Settings row not found — run migration 005' }, { status: 500 })
 
@@ -51,5 +57,12 @@ export async function PUT(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { meta_access_token, meta_system_user_token, ...safe } = data as Record<string, unknown>
+  return NextResponse.json({
+    ...safe,
+    meta_connected:        !!(data as Record<string, unknown>).meta_access_token,
+    meta_token_expires_at: (data as Record<string, unknown>).meta_token_expires_at ?? null,
+  })
 }
