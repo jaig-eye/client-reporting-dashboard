@@ -11,7 +11,7 @@ export interface Client {
 
 export interface AdAccount {
   id: string
-  client_id: string
+  client_id: string | null
   platform: 'google' | 'meta'
   account_id: string
   account_name?: string
@@ -86,6 +86,7 @@ export interface AgencySettings {
   benchmark_conv_rate: number
   benchmark_cpm: number
   default_date_range_days: number
+  meta_system_user_token?: string
   updated_at: string
 }
 

@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import type { Client, AdAccount, SyncLog } from '@/lib/types'
 import Link from 'next/link'
+import AccountMapper from './AccountMapper'
 
 export default async function ClientDetailPage({
   params,
@@ -15,25 +16,22 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const { data: client } = await db
-    .from('clients')
-    .select('*, ad_accounts(*)')
-    .eq('id', id)
-    .single() as { data: (Client & { ad_accounts: AdAccount[] }) | null }
+  const [clientResult, unlinkedResult, recentSyncsResult] = await Promise.all([
+    db.from('clients').select('*, ad_accounts(*)').eq('id', id).single() as Promise<{ data: (Client & { ad_accounts: AdAccount[] }) | null }>,
+    db.from('ad_accounts').select('id, platform, account_id, account_name').is('client_id', null).order('platform').order('account_name'),
+    db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5) as Promise<{ data: SyncLog[] | null }>,
+  ])
 
+  const client = clientResult.data
   if (!client) notFound()
 
-  const { data: recentSyncs } = await db
-    .from('sync_logs')
-    .select('*')
-    .eq('client_id', id)
-    .order('started_at', { ascending: false })
-    .limit(5) as { data: SyncLog[] | null }
+  const recentSyncs = recentSyncsResult.data ?? []
+  const allUnlinked = (unlinkedResult.data ?? []) as AdAccount[]
 
-  const dashUrl = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-  const googleAccounts = client.ad_accounts?.filter(a => a.platform === 'google') ?? []
-  const metaAccounts = client.ad_accounts?.filter(a => a.platform === 'meta') ?? []
-  const isFullyConnected = googleAccounts.length > 0 || metaAccounts.length > 0
+  const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
+  const googleAccounts = client.ad_accounts?.filter(a => a.platform === 'google' && a.client_id === id) ?? []
+  const metaAccounts   = client.ad_accounts?.filter(a => a.platform === 'meta'   && a.client_id === id) ?? []
+  const isConnected    = googleAccounts.length > 0 || metaAccounts.length > 0
 
   return (
     <div className="max-w-2xl">
@@ -59,80 +57,60 @@ export default async function ClientDetailPage({
         </div>
       )}
 
+      {/* Step 1 — Map Ad Accounts */}
       <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-1">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-            isFullyConnected ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'
-          }`}>{isFullyConnected ? '✓' : '1'}</div>
-          <h2 className="font-semibold text-slate-100">Connect Ad Accounts</h2>
+            isConnected ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'
+          }`}>{isConnected ? '✓' : '1'}</div>
+          <h2 className="font-semibold text-slate-100">Map Ad Accounts</h2>
         </div>
+        <p className="text-xs text-slate-500 mb-4 ml-8">
+          Select from discovered accounts or enter an account ID manually.
+          A 730-day backfill starts automatically on mapping.
+        </p>
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between p-3 bg-[#080c18] border border-[#1e2a40] rounded-lg">
-            <div>
-              <p className="text-sm font-medium text-slate-200">Google Ads</p>
-              {googleAccounts.length > 0
-                ? googleAccounts.map(a => (
-                    <p key={a.id} className="text-xs text-emerald-400">{a.account_name || a.account_id}</p>
-                  ))
-                : <p className="text-xs text-slate-600">Not connected</p>
-              }
-            </div>
-            <a
-              href={`/api/auth/google?clientId=${client.id}`}
-              className={`text-sm px-4 py-1.5 rounded-lg font-medium transition-colors ${
-                googleAccounts.length > 0
-                  ? 'border border-[#1e2a40] text-slate-400 hover:border-[#2a3a54] hover:text-slate-300'
-                  : 'bg-blue-600 text-white hover:bg-blue-500'
-              }`}
-            >
-              {googleAccounts.length > 0 ? 'Reconnect' : 'Connect'}
-            </a>
-          </div>
+        <AccountMapper
+          clientId={id}
+          unlinkedGoogle={allUnlinked.filter(a => a.platform === 'google')}
+          unlinkedMeta={allUnlinked.filter(a => a.platform === 'meta')}
+          mappedGoogle={googleAccounts}
+          mappedMeta={metaAccounts}
+        />
 
-          <div className="flex items-center justify-between p-3 bg-[#080c18] border border-[#1e2a40] rounded-lg">
-            <div>
-              <p className="text-sm font-medium text-slate-200">Meta Ads</p>
-              {metaAccounts.length > 0
-                ? metaAccounts.map(a => (
-                    <p key={a.id} className="text-xs text-emerald-400">{a.account_name || a.account_id}</p>
-                  ))
-                : <p className="text-xs text-slate-600">Not connected</p>
-              }
-            </div>
-            <a
-              href={`/api/auth/meta?clientId=${client.id}`}
-              className={`text-sm px-4 py-1.5 rounded-lg font-medium transition-colors ${
-                metaAccounts.length > 0
-                  ? 'border border-[#1e2a40] text-slate-400 hover:border-[#2a3a54] hover:text-slate-300'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-500'
-              }`}
-            >
-              {metaAccounts.length > 0 ? 'Reconnect' : 'Connect'}
-            </a>
-          </div>
-        </div>
+        {allUnlinked.length === 0 && !isConnected && (
+          <p className="text-xs text-slate-600 mt-3">
+            No discovered accounts yet.{' '}
+            <Link href="/admin/settings" className="text-blue-400 hover:underline">
+              Go to Settings → Platform Connections
+            </Link>{' '}
+            to sync Meta accounts or run the MCC script for Google.
+          </p>
+        )}
       </div>
 
+      {/* Step 2 — Sync Data */}
       <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</div>
           <h2 className="font-semibold text-slate-100">Sync Data</h2>
         </div>
-        <p className="text-sm text-slate-500 mb-4">Pull the last 90 days of campaign data from connected accounts.</p>
+        <p className="text-sm text-slate-500 mb-4">
+          Backfill runs automatically when an account is mapped. Use this to re-sync manually.
+        </p>
         <div className="flex items-center gap-3">
           <form action="/api/sync/trigger" method="POST">
             <input type="hidden" name="clientId" value={client.id} />
             <input type="hidden" name="days" value="90" />
             <button
               type="submit"
-              disabled={!isFullyConnected}
+              disabled={!isConnected}
               className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Sync Last 90 Days
+              Re-sync Last 90 Days
             </button>
           </form>
-          {recentSyncs && recentSyncs.length > 0 && (
+          {recentSyncs.length > 0 && (
             <span className="text-xs text-slate-600">
               Last: {new Date(recentSyncs[0].started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               {' — '}
@@ -145,6 +123,7 @@ export default async function ClientDetailPage({
         </div>
       </div>
 
+      {/* Step 3 — GHL Link */}
       <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">3</div>

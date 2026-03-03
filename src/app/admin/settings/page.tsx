@@ -11,6 +11,7 @@ interface Settings {
   benchmark_conv_rate: number
   benchmark_cpm: number
   default_date_range_days: number
+  meta_system_user_token: string
 }
 
 const DEFAULT: Settings = {
@@ -22,6 +23,7 @@ const DEFAULT: Settings = {
   benchmark_conv_rate: 0.03,
   benchmark_cpm: 15,
   default_date_range_days: 30,
+  meta_system_user_token: '',
 }
 
 export default function SettingsPage() {
@@ -30,6 +32,10 @@ export default function SettingsPage() {
   const [saving, setSaving]   = useState(false)
   const [saved, setSaved]     = useState(false)
   const [error, setError]     = useState('')
+
+  const [syncing, setSyncing]   = useState(false)
+  const [syncMsg, setSyncMsg]   = useState('')
+  const [syncErr, setSyncErr]   = useState('')
 
   useEffect(() => {
     fetch('/api/admin/settings')
@@ -55,6 +61,17 @@ export default function SettingsPage() {
     const data = await res.json()
     if (data.error) { setError(data.error); setSaving(false) }
     else { setSaved(true); setSaving(false) }
+  }
+
+  async function handleMetaSync() {
+    setSyncing(true)
+    setSyncMsg('')
+    setSyncErr('')
+    const res = await fetch('/api/admin/accounts/sync/meta', { method: 'POST' })
+    const data = await res.json()
+    setSyncing(false)
+    if (data.error) setSyncErr(data.error)
+    else setSyncMsg(`Synced ${data.synced} Meta account${data.synced !== 1 ? 's' : ''}`)
   }
 
   if (loading) {
@@ -88,6 +105,65 @@ export default function SettingsPage() {
               className={inputCls}
             />
           </Field>
+        </section>
+
+        {/* Platform Connections */}
+        <section className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-200">Platform Connections</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Connect once at the agency level. Accounts are then mapped to individual clients.
+            </p>
+          </div>
+
+          {/* Meta */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0" />
+              <span className="text-sm font-medium text-slate-300">Meta Ads</span>
+            </div>
+            <Field
+              label="System User Token"
+              hint="From Meta Business Manager → System Users → Generate Token"
+            >
+              <input
+                type="password"
+                value={form.meta_system_user_token}
+                onChange={e => set('meta_system_user_token', e.target.value)}
+                placeholder="EAA…"
+                className={inputCls}
+              />
+            </Field>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleMetaSync}
+                disabled={syncing || !form.meta_system_user_token}
+                className="text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg disabled:opacity-40 transition-colors"
+              >
+                {syncing ? 'Syncing…' : 'Sync Meta Accounts'}
+              </button>
+              {syncMsg && <span className="text-emerald-400 text-sm">{syncMsg}</span>}
+              {syncErr && <span className="text-red-400 text-sm">{syncErr}</span>}
+            </div>
+            <p className="text-xs text-slate-600">
+              Sync discovers all ad accounts under your Business Manager and makes them
+              available to map to clients. Re-run whenever you add a new client account.
+            </p>
+          </div>
+
+          {/* Google */}
+          <div className="space-y-2 pt-2 border-t border-[#1e2a40]">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
+              <span className="text-sm font-medium text-slate-300">Google Ads</span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Google accounts are auto-registered when your MCC script runs — no token
+              needed here. After the first script run, accounts appear in the client
+              mapping dropdown automatically.
+            </p>
+          </div>
         </section>
 
         {/* Benchmarks */}

@@ -56,6 +56,24 @@ export async function getMetaAdAccounts(
   }))
 }
 
+/**
+ * Fetch all ad accounts accessible to a System User token.
+ * A Meta System User covers all accounts assigned in Business Manager —
+ * one token for the whole agency, no OAuth per client needed.
+ */
+export async function fetchAllBMAdAccounts(
+  systemUserToken: string
+): Promise<{ id: string; name: string }[]> {
+  const data = await metaGet('/me/adaccounts', systemUserToken, {
+    fields: 'id,name,account_status',
+    limit: '200',
+  })
+  return ((data.data || []) as Record<string, unknown>[]).map(a => ({
+    id: String(a.id),
+    name: String(a.name || ''),
+  }))
+}
+
 export async function fetchMetaCampaignMetrics(
   accountId: string,
   accessToken: string,

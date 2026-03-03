@@ -31,6 +31,7 @@ export async function PUT(request: NextRequest) {
     'agency_name', 'agency_logo_url',
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm',
     'default_date_range_days',
+    'meta_system_user_token',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
