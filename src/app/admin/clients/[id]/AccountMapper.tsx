@@ -6,14 +6,14 @@ import { useRouter } from 'next/navigation'
 interface UnlinkedAccount {
   id: string
   account_id: string
-  account_name: string | null
+  account_name?: string | null
   platform: string
 }
 
 interface MappedAccount {
   id: string
   account_id: string
-  account_name: string | null
+  account_name?: string | null
   platform: string
 }
 
