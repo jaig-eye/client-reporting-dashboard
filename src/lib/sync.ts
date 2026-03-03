@@ -53,6 +53,12 @@ export async function syncClient(
       let metrics: MetricRow[]
 
       if (account.platform === 'google') {
+        if (!account.access_token && !account.refresh_token) {
+          // MCC script account — no OAuth credentials stored server-side.
+          // Data is pushed by the MCC script; nothing to pull here.
+          await completeSyncLog(db, logId, 'success', 0)
+          continue
+        }
         let token = account.access_token || ''
         if (account.refresh_token && (!token || isTokenExpired(account.token_expires_at))) {
           token = await refreshGoogleToken(account.refresh_token)
@@ -63,9 +69,22 @@ export async function syncClient(
         }
         metrics = await fetchGoogleCampaignMetrics(account.account_id, token, dateStart, dateEnd)
       } else {
+        // Meta: use per-account token if available, otherwise fall back to agency token
+        let metaToken = account.access_token || ''
+        if (!metaToken) {
+          const { data: settings } = await db
+            .from('agency_settings')
+            .select('meta_access_token')
+            .single()
+          metaToken = (settings as Record<string, unknown>)?.meta_access_token as string || ''
+        }
+        if (!metaToken) {
+          await completeSyncLog(db, logId, 'success', 0)
+          continue
+        }
         metrics = await fetchMetaCampaignMetrics(
           account.account_id,
-          account.access_token || '',
+          metaToken,
           dateStart,
           dateEnd
         )

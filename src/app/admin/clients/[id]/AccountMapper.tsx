@@ -87,6 +87,9 @@ function PlatformMapper({
     } else {
       setSelectedId('')
       setManualId('')
+      if (data.backfill === 'run_mcc_script') {
+        setError('Mapped. Run the MCC script with IS_BACKFILL: true to pull historical data.')
+      }
       router.refresh()
     }
   }

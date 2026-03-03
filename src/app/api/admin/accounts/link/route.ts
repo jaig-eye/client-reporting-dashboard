@@ -69,12 +69,28 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Trigger 730-day backfill for this specific account (non-blocking — errors logged, not thrown)
-  if (accountRowId) {
+  // Determine the platform of the account that was just linked
+  const { data: linkedAccount } = await db
+    .from('ad_accounts')
+    .select('platform, access_token, refresh_token')
+    .eq('id', accountRowId!)
+    .single()
+
+  const platform = linkedAccount?.platform
+  const hasCredentials = !!(linkedAccount?.access_token || linkedAccount?.refresh_token)
+
+  if (accountRowId && (platform !== 'google' || hasCredentials)) {
+    // Meta: backfill via agency token (handled in syncClient)
+    // Google with OAuth credentials: backfill via stored token
+    // Google MCC accounts (no credentials): skip — MCC script handles it
     syncClient(client_id, BACKFILL_DAYS, accountRowId).catch(err =>
       console.error(`Backfill failed for account ${accountRowId}:`, err)
     )
   }
 
-  return NextResponse.json({ success: true, ad_account_id: accountRowId })
+  return NextResponse.json({
+    success: true,
+    ad_account_id: accountRowId,
+    backfill: platform !== 'google' || hasCredentials ? 'started' : 'run_mcc_script',
+  })
 }
