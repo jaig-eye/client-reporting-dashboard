@@ -125,9 +125,18 @@ export default async function DashboardPage({
     <div className="min-h-screen bg-[#080c18]">
       <header className="bg-[#0f1525] border-b border-[#1e2a40] sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-6" />}
-            <span className="font-semibold text-white">{client.name}</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              {settings.agency_logo_url && (
+                <img src={settings.agency_logo_url} alt={settings.agency_name} className="h-5" />
+              )}
+              <span className="text-sm font-medium text-slate-300">{settings.agency_name}</span>
+            </div>
+            <span className="text-slate-600">|</span>
+            <div className="flex items-center gap-2">
+              {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5" />}
+              <span className="font-semibold text-white">{client.name}</span>
+            </div>
             {syncedAt && <span className="text-xs text-slate-500 hidden md:inline">Updated {syncedAt}</span>}
           </div>
           <div className="flex items-center gap-3">
