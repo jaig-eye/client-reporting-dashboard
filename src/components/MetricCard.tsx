@@ -1,12 +1,15 @@
+import { scoreColor } from '@/lib/agency-settings'
+
 interface MetricCardProps {
   label: string
   value: string
   delta?: number
   sub?: string
   invertDelta?: boolean
+  benchmarkPct?: number  // 0–100+ percent of benchmark target
 }
 
-export default function MetricCard({ label, value, delta, sub, invertDelta }: MetricCardProps) {
+export default function MetricCard({ label, value, delta, sub, invertDelta, benchmarkPct }: MetricCardProps) {
   const isGood = delta !== undefined
     ? (invertDelta ? delta <= 0 : delta >= 0)
     : null
@@ -26,6 +29,14 @@ export default function MetricCard({ label, value, delta, sub, invertDelta }: Me
             />
           </svg>
           {Math.abs(delta).toFixed(1)}% vs prior
+        </div>
+      )}
+      {benchmarkPct !== undefined && benchmarkPct > 0 && (
+        <div
+          className="mt-1.5 text-[10px] font-medium"
+          style={{ color: scoreColor(Math.min(benchmarkPct, 100)) }}
+        >
+          {benchmarkPct}% of target
         </div>
       )}
     </div>

@@ -76,6 +76,19 @@ export interface SyncLog {
   completed_at?: string
 }
 
+export interface AgencySettings {
+  id: string
+  agency_name: string
+  agency_logo_url?: string
+  benchmark_roas: number
+  benchmark_ctr: number
+  benchmark_cpc: number
+  benchmark_conv_rate: number
+  benchmark_cpm: number
+  default_date_range_days: number
+  updated_at: string
+}
+
 export interface MetricRow {
   campaign_id: string
   campaign_name: string
