@@ -18,12 +18,13 @@ async function metaGet(
 }
 
 export async function exchangeMetaCode(
-  code: string
+  code: string,
+  redirectUri: string
 ): Promise<{ access_token: string }> {
   const params = new URLSearchParams({
     client_id: process.env.META_APP_ID!,
     client_secret: process.env.META_APP_SECRET!,
-    redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/meta/callback`,
+    redirect_uri: redirectUri,
     code,
   })
   const res = await fetch(

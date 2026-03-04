@@ -5,14 +5,15 @@ import { createAdminClient } from '@/lib/supabase/server'
 export async function GET(request: NextRequest) {
   const code  = request.nextUrl.searchParams.get('code')
   const state = request.nextUrl.searchParams.get('state')
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL!
+  const appUrl = request.nextUrl.origin
 
   if (!code || !state) {
     return NextResponse.redirect(`${appUrl}/admin?error=meta_auth_failed`)
   }
 
   try {
-    const { access_token } = await exchangeMetaCode(code)
+    const redirectUri = `${appUrl}/api/auth/meta/callback`
+    const { access_token } = await exchangeMetaCode(code, redirectUri)
     const db = createAdminClient()
 
     if (state === 'agency_settings') {

@@ -9,9 +9,13 @@ export async function GET(request: NextRequest) {
     ? 'agency_settings'
     : (request.nextUrl.searchParams.get('clientId') || '')
 
+  // Use request.nextUrl.origin so the redirect_uri is always the live
+  // deployment URL — no dependency on NEXT_PUBLIC_APP_URL env var.
+  const redirectUri = `${request.nextUrl.origin}/api/auth/meta/callback`
+
   const params = new URLSearchParams({
     client_id: process.env.META_APP_ID!,
-    redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/meta/callback`,
+    redirect_uri: redirectUri,
     scope: 'ads_read,business_management',
     response_type: 'code',
     state,
