@@ -4,6 +4,7 @@ import type { Client, AdAccount, SyncLog, AgencySettings } from '@/lib/types'
 import Link from 'next/link'
 import AccountMapper from './AccountMapper'
 import ClientBenchmarks from './ClientBenchmarks'
+import SyncButtons from './SyncButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -106,31 +107,20 @@ export default async function ClientDetailPage({
           <h2 className="font-semibold text-slate-100">Sync Data</h2>
         </div>
         <p className="text-sm text-slate-500 mb-4">
-          Backfill runs automatically when an account is mapped. Use this to re-sync manually.
+          Manual sync pulls fresh data from mapped accounts. Run after mapping or to backfill history.
         </p>
-        <div className="flex items-center gap-3">
-          <form action="/api/sync/trigger" method="POST">
-            <input type="hidden" name="clientId" value={client.id} />
-            <input type="hidden" name="days" value="90" />
-            <button
-              type="submit"
-              disabled={!isConnected}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              Re-sync Last 90 Days
-            </button>
-          </form>
-          {recentSyncs.length > 0 && (
-            <span className="text-xs text-slate-600">
-              Last: {new Date(recentSyncs[0].started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              {' — '}
-              <span className={recentSyncs[0].status === 'success' ? 'text-emerald-400' : 'text-red-400'}>
-                {recentSyncs[0].status}
-              </span>
-              {recentSyncs[0].records_synced > 0 && ` (${recentSyncs[0].records_synced} rows)`}
+        {recentSyncs.length > 0 && (
+          <p className="text-xs text-slate-600 mb-3">
+            Last sync:{' '}
+            {new Date(recentSyncs[0].started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            {' — '}
+            <span className={recentSyncs[0].status === 'success' ? 'text-emerald-400' : 'text-red-400'}>
+              {recentSyncs[0].status}
             </span>
-          )}
-        </div>
+            {recentSyncs[0].records_synced > 0 && ` (${recentSyncs[0].records_synced} rows)`}
+          </p>
+        )}
+        <SyncButtons clientId={client.id} />
       </div>
 
       {/* Performance Benchmarks */}

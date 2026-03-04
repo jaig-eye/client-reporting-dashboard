@@ -6,18 +6,17 @@ export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
   const session = cookieStore.get('admin_session')?.value
   if (!session || session !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/login`)
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const formData = await request.formData()
-  const clientId = formData.get('clientId') as string
-  const days = parseInt(formData.get('days') as string || '30')
+  const { clientId, days } = await request.json()
+  if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 })
 
   try {
-    await syncClient(clientId, days)
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/clients/${clientId}?synced=true`)
+    const records = await syncClient(clientId, parseInt(days) || 30)
+    return NextResponse.json({ success: true, records })
   } catch (e) {
     console.error('Sync error:', e)
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/admin/clients/${clientId}?error=sync_failed`)
+    return NextResponse.json({ error: String(e) }, { status: 500 })
   }
 }
