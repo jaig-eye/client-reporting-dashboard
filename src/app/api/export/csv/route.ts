@@ -52,10 +52,11 @@ export async function GET(request: NextRequest) {
       !row.raw_meta_actions?.length
     ) return row
 
-    const conversions = row.raw_meta_actions
-      .filter(a => a.action_type === metaConversionAction)
-      .reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-    return { ...row, conversions }
+    const match = row.raw_meta_actions.filter(a => a.action_type === metaConversionAction)
+    const conversions = match.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+    const conversion_value = match.reduce((s, a) => s + parseFloat(a.revenue || '0'), 0)
+    const roas = row.spend > 0 && conversion_value > 0 ? conversion_value / row.spend : 0
+    return { ...row, conversions, conversion_value, roas }
   })
 
   const headers = ['date', 'platform', 'campaign_name', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'roas', 'ctr', 'cpc', 'cpm']

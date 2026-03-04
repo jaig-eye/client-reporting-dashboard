@@ -82,7 +82,7 @@ export default async function DashboardPage({
   const metaConversionAction = effectiveMetricConfig.meta_conversion_action
   const conversionLabel      = effectiveMetricConfig.conversion_label || 'Conversions'
 
-  // Re-map Meta conversions live from raw_meta_actions using the current config.
+  // Re-map Meta conversions, conversion_value, and roas live from raw_meta_actions.
   // Allows changing the conversion action without re-syncing historical data.
   function remapConversions(metrics: CampaignMetric[]): CampaignMetric[] {
     if (!metaConversionAction || metaConversionAction === 'results') return metrics
@@ -90,10 +90,11 @@ export default async function DashboardPage({
       if (row.platform !== 'meta') return row
       const raw = row.raw_meta_actions
       if (!raw?.length) return row
-      const conversions = raw
-        .filter(a => a.action_type === metaConversionAction)
-        .reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-      return { ...row, conversions }
+      const match = raw.filter(a => a.action_type === metaConversionAction)
+      const conversions = match.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+      const conversion_value = match.reduce((s, a) => s + parseFloat(a.revenue || '0'), 0)
+      const roas = row.spend > 0 && conversion_value > 0 ? conversion_value / row.spend : 0
+      return { ...row, conversions, conversion_value, roas }
     })
   }
 
