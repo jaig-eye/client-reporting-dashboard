@@ -3,6 +3,45 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+function DeleteButton({ accountId, accountName }: { accountId: string; accountName: string }) {
+  const router = useRouter()
+  const [confirm, setConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  async function handleDelete() {
+    setDeleting(true)
+    await fetch(`/api/admin/accounts/${accountId}`, { method: 'DELETE' })
+    router.refresh()
+  }
+
+  if (confirm) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          className="text-xs text-red-400 hover:text-red-300 font-medium disabled:opacity-50"
+        >
+          {deleting ? '…' : 'Delete'}
+        </button>
+        <button onClick={() => setConfirm(false)} className="text-xs text-slate-600 hover:text-slate-400">
+          Cancel
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => setConfirm(true)}
+      className="text-xs text-slate-600 hover:text-red-400 transition-colors ml-1"
+      title={`Delete ${accountName} and all its data`}
+    >
+      ×
+    </button>
+  )
+}
+
 interface UnlinkedAccount {
   id: string
   account_id: string
@@ -105,8 +144,9 @@ function PlatformMapper({
           <p className="text-sm font-medium text-slate-200">{label}</p>
           {mapped.length > 0 ? (
             mapped.map(a => (
-              <p key={a.id} className="text-xs text-emerald-400 truncate">
-                {a.account_name || a.account_id}
+              <p key={a.id} className="text-xs text-emerald-400 flex items-center gap-1">
+                <span className="truncate">{a.account_name || a.account_id}</span>
+                <DeleteButton accountId={a.id} accountName={a.account_name || a.account_id} />
               </p>
             ))
           ) : (

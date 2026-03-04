@@ -22,6 +22,7 @@ export async function PATCH(
     'logo_url',
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc',
     'benchmark_conv_rate', 'benchmark_cpm',
+    'metric_config',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

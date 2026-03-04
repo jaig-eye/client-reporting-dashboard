@@ -75,26 +75,33 @@ export async function fetchAllBMAdAccounts(
   }))
 }
 
+/**
+ * Fetch campaign-level daily metrics from Meta.
+ *
+ * @param conversionAction - Which action_type to count as conversions.
+ *   'results' (default) uses Meta's campaign-primary "Results" field.
+ *   Any other value (e.g. 'lead', 'offsite_conversion.fb_pixel_purchase')
+ *   filters the `actions` array to that specific type only.
+ *
+ * Always requests `actions` for discovery — all unique action_types seen
+ * are returned so the admin UI can show them as dropdown options.
+ */
 export async function fetchMetaCampaignMetrics(
   accountId: string,
   accessToken: string,
   dateStart: string,
-  dateEnd: string
-) {
-  // Single account-level insights call with level=campaign — one request for all
-  // campaigns' daily data instead of N+1 per-campaign calls. Pages if needed.
-  //
-  // Uses the `results` field — Meta's campaign-objective primary metric (what Ads
-  // Manager shows as the "Results" column). This avoids summing all
-  // offsite_conversion.* subtypes (view content, add to cart, checkout, etc.)
-  // which inflated conversion counts 10-100x.
-  // CPL (cost per result) is derived dynamically from spend/results in summarizeMetrics.
-  const rows_out = []
+  dateEnd: string,
+  conversionAction = 'results'
+): Promise<{ rows: MetaMetricRow[]; discoveredActions: string[] }> {
+  const rows_out: MetaMetricRow[] = []
+  const discoveredActionTypes = new Set<string>()
 
   const base = new URL(`${BASE_URL}/${accountId}/insights`)
   base.searchParams.set('access_token', accessToken)
   base.searchParams.set('level', 'campaign')
-  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,results')
+  // Always fetch `actions` for discovery + specific action filtering.
+  // `results` is also fetched as the default when conversionAction === 'results'.
+  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,results,actions')
   base.searchParams.set('time_range', JSON.stringify({ since: dateStart, until: dateEnd }))
   base.searchParams.set('time_increment', '1')
   base.searchParams.set('limit', '500')
@@ -111,20 +118,36 @@ export async function fetchMetaCampaignMetrics(
     const rows = (data.data || []) as Record<string, unknown>[]
 
     for (const day of rows) {
+      const actions = (day.actions || []) as Record<string, unknown>[]
+
+      // Accumulate all seen action types for discovery
+      for (const a of actions) {
+        const t = String(a.action_type || '')
+        if (t) discoveredActionTypes.add(t)
+      }
+
       const spend       = parseFloat(String(day.spend       || '0'))
       const impressions = parseInt(  String(day.impressions || '0'))
       const clicks      = parseInt(  String(day.clicks      || '0'))
       const ctr         = parseFloat(String(day.ctr         || '0'))
       const cpm         = parseFloat(String(day.cpm         || '0'))
 
-      // Meta returns `results` as [{action_type, value}] or as a plain number.
-      const rawResults = day.results
       let resultCount = 0
-      if (Array.isArray(rawResults)) {
-        resultCount = (rawResults as Record<string, unknown>[])
-          .reduce((s, r) => s + parseFloat(String(r.value || '0')), 0)
-      } else if (rawResults !== undefined && rawResults !== null) {
-        resultCount = parseFloat(String(rawResults))
+
+      if (conversionAction === 'results') {
+        // Use Meta's campaign-primary "Results" field (objective-specific)
+        const rawResults = day.results
+        if (Array.isArray(rawResults)) {
+          resultCount = (rawResults as Record<string, unknown>[])
+            .reduce((s, r) => s + parseFloat(String(r.value || '0')), 0)
+        } else if (rawResults !== undefined && rawResults !== null) {
+          resultCount = parseFloat(String(rawResults))
+        }
+      } else {
+        // Filter actions to the admin-configured action_type
+        resultCount = actions
+          .filter(a => String(a.action_type) === conversionAction)
+          .reduce((s, a) => s + parseFloat(String(a.value || '0')), 0)
       }
 
       rows_out.push({
@@ -135,8 +158,8 @@ export async function fetchMetaCampaignMetrics(
         impressions,
         clicks,
         conversions:      resultCount,
-        conversion_value: 0,  // no revenue tracking; CPL = spend/results via summarizeMetrics
-        roas:             0,  // not applicable for lead-gen Meta campaigns
+        conversion_value: 0,  // no revenue tracking; CPL computed from spend/conversions
+        roas:             0,  // not applicable for lead-gen
         ctr:              ctr / 100,
         cpc:              clicks > 0 ? spend / clicks : 0,
         cpm,
@@ -147,5 +170,20 @@ export async function fetchMetaCampaignMetrics(
     nextUrl = (paging?.next as string) || null
   }
 
-  return rows_out
+  return { rows: rows_out, discoveredActions: Array.from(discoveredActionTypes) }
+}
+
+interface MetaMetricRow {
+  campaign_id: string
+  campaign_name: string
+  date: string
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversion_value: number
+  roas: number
+  ctr: number
+  cpc: number
+  cpm: number
 }

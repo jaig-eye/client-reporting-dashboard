@@ -13,16 +13,29 @@ export async function GET(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { data, error } = await db.from('agency_settings').select('*').single()
+  const [{ data, error }, { data: metaAccounts }] = await Promise.all([
+    db.from('agency_settings').select('*').single(),
+    db.from('ad_accounts')
+      .select('available_meta_actions')
+      .eq('platform', 'meta')
+      .not('available_meta_actions', 'is', null),
+  ])
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const discoveredMetaActions = Array.from(new Set(
+    (metaAccounts ?? []).flatMap(a =>
+      Array.isArray(a.available_meta_actions) ? a.available_meta_actions as string[] : []
+    )
+  ))
 
   // Never expose raw tokens to the client — return status indicators only
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { meta_access_token, meta_system_user_token, ...safe } = data as Record<string, unknown>
   return NextResponse.json({
     ...safe,
-    meta_connected:        !!(data as Record<string, unknown>).meta_access_token,
-    meta_token_expires_at: (data as Record<string, unknown>).meta_token_expires_at ?? null,
+    meta_connected:          !!(data as Record<string, unknown>).meta_access_token,
+    meta_token_expires_at:   (data as Record<string, unknown>).meta_token_expires_at ?? null,
+    discovered_meta_actions: discoveredMetaActions,
   })
 }
 
@@ -40,6 +53,7 @@ export async function PUT(request: NextRequest) {
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm',
     'default_date_range_days',
     'cron_enabled',
+    'metric_config',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

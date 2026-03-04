@@ -1,7 +1,7 @@
 import { createAdminClient } from './supabase/server'
 import { fetchGoogleCampaignMetrics, refreshGoogleToken } from './google-ads'
 import { fetchMetaCampaignMetrics } from './meta-ads'
-import type { AdAccount, MetricRow } from './types'
+import type { AdAccount, MetricConfig, MetricRow } from './types'
 
 // BACKFILL_DAYS: used when an account is first connected — pulls full history
 export const BACKFILL_DAYS = 730
@@ -25,6 +25,19 @@ export async function syncClient(
   dateEndOverride?: string
 ): Promise<number> {
   const db = createAdminClient()
+
+  // Load metric config and Meta fallback token in one round-trip.
+  // Client metric_config overrides global agency metric_config.
+  const [{ data: agencyRow }, { data: clientRow }] = await Promise.all([
+    db.from('agency_settings').select('metric_config, meta_access_token').single(),
+    db.from('clients').select('metric_config').eq('id', clientId).single(),
+  ])
+  const metricConfig: MetricConfig = {
+    ...(agencyRow?.metric_config as MetricConfig ?? {}),
+    ...(clientRow?.metric_config as MetricConfig ?? {}),
+  }
+  const agencyMetaToken: string = (agencyRow as Record<string, unknown>)?.meta_access_token as string || ''
+  const metaConversionAction = metricConfig.meta_conversion_action ?? 'results'
 
   let query = db
     .from('ad_accounts')
@@ -84,24 +97,28 @@ export async function syncClient(
         metrics = await fetchGoogleCampaignMetrics(account.account_id, token, dateStart, dateEnd)
       } else {
         // Meta: use per-account token if available, otherwise fall back to agency token
-        let metaToken = account.access_token || ''
-        if (!metaToken) {
-          const { data: settings } = await db
-            .from('agency_settings')
-            .select('meta_access_token')
-            .single()
-          metaToken = (settings as Record<string, unknown>)?.meta_access_token as string || ''
-        }
+        const metaToken = account.access_token || agencyMetaToken
         if (!metaToken) {
           await completeSyncLog(db, logId, 'success', 0)
           continue
         }
-        metrics = await fetchMetaCampaignMetrics(
+        const result = await fetchMetaCampaignMetrics(
           account.account_id,
           metaToken,
           dateStart,
-          dateEnd
+          dateEnd,
+          metaConversionAction
         )
+        metrics = result.rows
+
+        // Merge discovered action types with existing (accumulate over time)
+        if (result.discoveredActions.length > 0) {
+          const existing = Array.isArray(account.available_meta_actions)
+            ? (account.available_meta_actions as string[])
+            : []
+          const merged = Array.from(new Set([...existing, ...result.discoveredActions]))
+          await db.from('ad_accounts').update({ available_meta_actions: merged }).eq('id', account.id)
+        }
       }
 
       if (metrics.length > 0) {

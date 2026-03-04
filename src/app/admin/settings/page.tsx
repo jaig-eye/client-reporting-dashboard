@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import AgencyBackfill from './AgencyBackfill'
+import MetricSettings from './MetricSettings'
+import type { MetricConfig } from '@/lib/types'
 
 interface Settings {
   agency_name: string
@@ -15,6 +17,8 @@ interface Settings {
   meta_connected: boolean
   meta_token_expires_at: string | null
   cron_enabled: boolean
+  metric_config: MetricConfig
+  discovered_meta_actions: string[]
 }
 
 const DEFAULT: Settings = {
@@ -29,6 +33,8 @@ const DEFAULT: Settings = {
   meta_connected: false,
   meta_token_expires_at: null,
   cron_enabled: true,
+  metric_config: {},
+  discovered_meta_actions: [],
 }
 
 export default function SettingsPage() {
@@ -266,6 +272,20 @@ export default function SettingsPage() {
           {saved && <span className="text-emerald-400 text-sm">Saved</span>}
         </div>
       </form>
+
+      {/* Metric Mapping */}
+      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Metric Mapping — Global Defaults</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Define how Meta API fields map to dashboard metrics. Per-client overrides are set on the client page.
+          </p>
+        </div>
+        <MetricSettings
+          current={form.metric_config}
+          discoveredMetaActions={form.discovered_meta_actions}
+        />
+      </section>
 
       {/* Historical Data Backfill */}
       <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">

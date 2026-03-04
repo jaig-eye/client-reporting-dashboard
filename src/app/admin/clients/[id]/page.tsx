@@ -1,9 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Client, AdAccount, SyncLog, AgencySettings } from '@/lib/types'
+import type { Client, AdAccount, SyncLog, AgencySettings, MetricConfig } from '@/lib/types'
 import Link from 'next/link'
 import AccountMapper from './AccountMapper'
 import ClientBenchmarks from './ClientBenchmarks'
+import ClientMetricConfig from './ClientMetricConfig'
 import SyncButtons from './SyncButtons'
 
 export const dynamic = 'force-dynamic'
@@ -22,24 +23,31 @@ export default async function ClientDetailPage({
 
   const [clientResult, mappedResult, unlinkedResult, recentSyncsResult, settingsResult] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
-    db.from('ad_accounts').select('id, platform, account_id, account_name').eq('client_id', id).order('platform').order('account_name'),
+    db.from('ad_accounts').select('id, platform, account_id, account_name, available_meta_actions').eq('client_id', id).order('platform').order('account_name'),
     // All accounts not already mapped to THIS client — includes unlinked (client_id IS NULL)
     // and accounts mapped to other clients, so the admin can pick any discovered account.
     db.from('ad_accounts').select('id, platform, account_id, account_name').or(`client_id.is.null,client_id.neq.${id}`).order('platform').order('account_name'),
     db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5),
-    db.from('agency_settings').select('benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm').single(),
+    db.from('agency_settings').select('benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,metric_config').single(),
   ])
 
   const client = clientResult.data as Client | null
   if (!client) notFound()
 
-  const recentSyncs    = (recentSyncsResult.data ?? []) as SyncLog[]
+  const recentSyncs       = (recentSyncsResult.data ?? []) as SyncLog[]
   const availableAccounts = (unlinkedResult.data ?? []) as AdAccount[]  // all not-yet-mapped-to-this-client
-  const mappedAccounts = (mappedResult.data ?? []) as AdAccount[]
-  const globalSettings = (settingsResult.data ?? {
+  const mappedAccounts    = (mappedResult.data ?? []) as AdAccount[]
+  const globalSettings    = (settingsResult.data ?? {
     benchmark_roas: 3, benchmark_ctr: 0.03, benchmark_cpc: 3,
-    benchmark_conv_rate: 0.03, benchmark_cpm: 15,
-  }) as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate' | 'benchmark_cpm'>
+    benchmark_conv_rate: 0.03, benchmark_cpm: 15, metric_config: {},
+  }) as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate' | 'benchmark_cpm' | 'metric_config'>
+
+  // Collect discovered Meta action types from this client's mapped accounts
+  const discoveredMetaActions = Array.from(new Set(
+    mappedAccounts
+      .filter(a => a.platform === 'meta')
+      .flatMap(a => Array.isArray(a.available_meta_actions) ? a.available_meta_actions as string[] : [])
+  ))
 
   const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
   const googleAccounts = mappedAccounts.filter(a => a.platform === 'google')
@@ -141,6 +149,20 @@ export default async function ClientDetailPage({
             benchmark_conv_rate:  client.benchmark_conv_rate,
             benchmark_cpm:        client.benchmark_cpm,
           }}
+        />
+      </div>
+
+      {/* Metric Mapping — per-client override */}
+      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+        <h2 className="font-semibold text-slate-100 mb-1">Metric Mapping</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Override the global Meta conversion action for this client (e.g. phone calls, form leads, purchases).
+        </p>
+        <ClientMetricConfig
+          clientId={id}
+          current={client.metric_config ?? {}}
+          globalConfig={globalSettings.metric_config ?? {}}
+          discoveredMetaActions={discoveredMetaActions}
         />
       </div>
 

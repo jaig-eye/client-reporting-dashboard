@@ -1,3 +1,11 @@
+/** Per-client or global metric configuration. Client values override global defaults. */
+export interface MetricConfig {
+  /** Which Meta action_type to count as conversions. 'results' = Meta's campaign primary result. */
+  meta_conversion_action?: string
+  /** Display label override for the conversions metric, e.g. "Leads", "Purchases". */
+  conversion_label?: string
+}
+
 export interface Client {
   id: string
   name: string
@@ -10,6 +18,7 @@ export interface Client {
   benchmark_cpc?: number | null
   benchmark_conv_rate?: number | null
   benchmark_cpm?: number | null
+  metric_config: MetricConfig
   created_at: string
   updated_at: string
 }
@@ -23,6 +32,8 @@ export interface AdAccount {
   access_token?: string
   refresh_token?: string
   token_expires_at?: string
+  /** Discovered Meta action_type strings, accumulated during syncs. */
+  available_meta_actions?: string[]
   created_at: string
 }
 
@@ -92,6 +103,7 @@ export interface AgencySettings {
   benchmark_cpm: number
   default_date_range_days: number
   meta_system_user_token?: string
+  metric_config: MetricConfig
   updated_at: string
 }
 
