@@ -90,9 +90,9 @@ function PlatformMapper({
       setSelectedId('')
       setManualId('')
       if (data.backfill === 'run_mcc_script') {
-        setSuccess('Mapped. Re-run the MCC script with IS_BACKFILL: true to pull historical data.')
+        setSuccess('Mapped. Run the MCC script with IS_BACKFILL: true to pull historical data.')
       } else {
-        setSuccess('Mapped. Backfill started.')
+        setSuccess('Mapped. Use the Sync button or run Backfill All in Agency Settings.')
       }
       router.refresh()
     }

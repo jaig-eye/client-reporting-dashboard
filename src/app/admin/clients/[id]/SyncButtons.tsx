@@ -8,7 +8,7 @@ const CHUNK_DAYS = 30
 function buildChunks(days: number): { dateStart: string; dateEnd: string }[] {
   const fmt = (d: Date) => d.toISOString().split('T')[0]
   const toDate = new Date()
-  toDate.setDate(toDate.getDate() - 1) // yesterday
+  toDate.setDate(toDate.getDate() - 1)
 
   const fromDate = new Date(toDate)
   fromDate.setDate(fromDate.getDate() - (days - 1))
@@ -34,18 +34,18 @@ export default function SyncButtons({ clientId }: { clientId: string }) {
   const [result, setResult]     = useState('')
   const [error, setError]       = useState('')
 
-  async function handleSync(days: number) {
+  async function handleSync() {
     setSyncing(true)
     setResult('')
     setError('')
     setProgress('')
 
-    const chunks = buildChunks(days)
+    const chunks = buildChunks(30)
     let totalRecords = 0
 
     try {
       for (let i = 0; i < chunks.length; i++) {
-        setProgress(chunks.length > 1 ? `Batch ${i + 1} / ${chunks.length}` : 'Syncing…')
+        if (chunks.length > 1) setProgress(`Batch ${i + 1} / ${chunks.length}`)
         const res = await fetch('/api/sync/trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -69,22 +69,15 @@ export default function SyncButtons({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <button onClick={() => handleSync(30)}  disabled={syncing} className={btnCls}>
-          {syncing ? '…' : 'Last 30 Days'}
-        </button>
-        <button onClick={() => handleSync(90)}  disabled={syncing} className={btnCls}>
-          {syncing ? '…' : 'Last 90 Days'}
-        </button>
-        <button onClick={() => handleSync(365)} disabled={syncing} className={btnCls}>
-          {syncing ? '…' : 'Last 365 Days'}
+      <div className="flex items-center gap-3">
+        <button onClick={handleSync} disabled={syncing} className={btnCls}>
+          {syncing ? (progress || 'Syncing…') : 'Sync Last 30 Days'}
         </button>
       </div>
-      {progress && <p className="text-xs text-slate-400">{progress}</p>}
-      {result   && <p className="text-xs text-emerald-400">{result}</p>}
-      {error    && <p className="text-xs text-red-400">{error}</p>}
+      {result && <p className="text-xs text-emerald-400">{result}</p>}
+      {error  && <p className="text-xs text-red-400">{error}</p>}
       <p className="text-xs text-slate-600">
-        Large ranges are split into 30-day batches to avoid timeouts.
+        Syncs the last 30 days. For full historical data, use Backfill All in Agency Settings.
       </p>
     </div>
   )

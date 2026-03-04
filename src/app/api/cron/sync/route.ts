@@ -11,6 +11,16 @@ export async function GET(request: NextRequest) {
   }
 
   const db = createAdminClient()
+
+  // Check if cron sync is enabled in agency settings
+  const { data: settings } = await db
+    .from('agency_settings')
+    .select('cron_enabled')
+    .single()
+  if (settings?.cron_enabled === false) {
+    return NextResponse.json({ skipped: true, reason: 'Cron sync disabled in Agency Settings' })
+  }
+
   const { data: clients } = await db.from('clients').select('id, name')
 
   const results = []

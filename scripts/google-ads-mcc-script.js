@@ -18,6 +18,14 @@
  * to pull (max 730 days / 2 years). Run once manually, then set
  * IS_BACKFILL back to false and save for the scheduled daily runs.
  *
+ * Re-running the backfill is safe — the ingest endpoint uses UPSERT with
+ * conflict resolution on (ad_account_id, campaign_id, date), so duplicate
+ * rows are never created. Existing rows are updated in place.
+ *
+ * NOTE: The script pushes data for ALL accounts under the MCC on each run.
+ * Accounts that are not yet mapped to a client in the admin panel are
+ * registered but their metrics are discarded until they are mapped.
+ *
  * ACCOUNTS
  * ────────
  * By default the script syncs ALL sub-accounts under the MCC.

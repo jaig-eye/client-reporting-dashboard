@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { syncClient, BACKFILL_DAYS } from '@/lib/sync'
 
 function isAdminAuthed(session: string | undefined) {
   return session && session === process.env.ADMIN_PASSWORD
@@ -97,7 +96,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Determine credentials to decide backfill strategy
+  // Determine if this is a Google MCC-managed account (no credentials stored server-side)
   const { data: linkedAccount } = await db
     .from('ad_accounts')
     .select('platform, access_token, refresh_token')
@@ -105,17 +104,14 @@ export async function POST(request: NextRequest) {
     .single()
 
   const resolvedPlatform = linkedAccount?.platform ?? platform
-  const hasCredentials = !!(linkedAccount?.access_token || linkedAccount?.refresh_token)
+  const isGoogleMcc = resolvedPlatform === 'google' &&
+    !linkedAccount?.access_token && !linkedAccount?.refresh_token
 
-  if (accountRowId && (resolvedPlatform !== 'google' || hasCredentials)) {
-    syncClient(client_id, BACKFILL_DAYS, accountRowId).catch(err =>
-      console.error(`Backfill failed for account ${accountRowId}:`, err)
-    )
-  }
-
+  // No automatic backfill on map — admin uses the Sync buttons or agency-level
+  // backfill to pull historical data on demand, in batches, without timeouts.
   return NextResponse.json({
     success: true,
     ad_account_id: accountRowId,
-    backfill: resolvedPlatform !== 'google' || hasCredentials ? 'started' : 'run_mcc_script',
+    backfill: isGoogleMcc ? 'run_mcc_script' : 'use_sync_buttons',
   })
 }

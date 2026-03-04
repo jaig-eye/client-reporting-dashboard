@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import AgencyBackfill from './AgencyBackfill'
 
 interface Settings {
   agency_name: string
@@ -13,6 +14,7 @@ interface Settings {
   default_date_range_days: number
   meta_connected: boolean
   meta_token_expires_at: string | null
+  cron_enabled: boolean
 }
 
 const DEFAULT: Settings = {
@@ -26,6 +28,7 @@ const DEFAULT: Settings = {
   default_date_range_days: 30,
   meta_connected: false,
   meta_token_expires_at: null,
+  cron_enabled: true,
 }
 
 export default function SettingsPage() {
@@ -74,6 +77,16 @@ export default function SettingsPage() {
     setSyncing(false)
     if (data.error) setSyncErr(data.error)
     else setSyncMsg(`Synced ${data.synced} Meta account${data.synced !== 1 ? 's' : ''}`)
+  }
+
+  async function toggleCron(enabled: boolean) {
+    setForm(f => ({ ...f, cron_enabled: enabled }))
+    setSaved(false)
+    await fetch('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cron_enabled: enabled }),
+    })
   }
 
   if (loading) {
@@ -253,6 +266,62 @@ export default function SettingsPage() {
           {saved && <span className="text-emerald-400 text-sm">Saved</span>}
         </div>
       </form>
+
+      {/* Historical Data Backfill */}
+      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Historical Data Backfill</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Pulls up to {730} days of history for accounts that have no data yet.
+            Accounts that already have data are skipped automatically — no duplicates.
+            Runs in 30-day batches to avoid timeouts.
+          </p>
+        </div>
+        <AgencyBackfill />
+      </section>
+
+      {/* Sync Schedule */}
+      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Sync Schedule</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Automated daily sync keeps all client dashboards up to date.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {/* Toggle */}
+          <label className="flex items-center gap-3 cursor-pointer">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.cron_enabled}
+              onClick={() => toggleCron(!form.cron_enabled)}
+              className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                form.cron_enabled ? 'bg-blue-600' : 'bg-[#1e2a40]'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  form.cron_enabled ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+            <span className="text-sm text-slate-300">
+              {form.cron_enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </label>
+
+          <div className="text-xs text-slate-500 space-y-1">
+            <p>Schedule: <span className="text-slate-400 font-mono">0 6 * * *</span> — daily at 6:00 AM UTC</p>
+            <p>Syncs the last 3 days for all clients (catches late-arriving conversions).</p>
+            <p className="text-slate-600">
+              Schedule is defined in <span className="font-mono">vercel.json</span>. Toggle above pauses execution
+              without removing the schedule.
+            </p>
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
