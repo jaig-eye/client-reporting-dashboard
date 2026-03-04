@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   if (!accounts?.length) return NextResponse.json({ accounts: [] })
 
   // Client names
-  const clientIds = [...new Set(accounts.map(a => a.client_id as string))]
+  const clientIds = Array.from(new Set(accounts.map(a => a.client_id as string)))
   const { data: clients } = await db
     .from('clients')
     .select('id, name')
