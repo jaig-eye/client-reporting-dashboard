@@ -78,7 +78,7 @@ export default async function ClientDetailPage({
         </div>
         <p className="text-xs text-slate-500 mb-4 ml-8">
           Select from discovered accounts or enter an account ID manually.
-          A 730-day backfill starts automatically on mapping.
+          After mapping, use the Sync button below or Backfill All in Agency Settings.
         </p>
 
         <AccountMapper

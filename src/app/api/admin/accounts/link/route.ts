@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 
 function isAdminAuthed(session: string | undefined) {
@@ -106,6 +107,11 @@ export async function POST(request: NextRequest) {
   const resolvedPlatform = linkedAccount?.platform ?? platform
   const isGoogleMcc = resolvedPlatform === 'google' &&
     !linkedAccount?.access_token && !linkedAccount?.refresh_token
+
+  // Bust Next.js router cache so the admin overview and client detail page
+  // both reflect the new mapping immediately on next navigation.
+  revalidatePath('/admin')
+  revalidatePath(`/admin/clients/${client_id}`)
 
   // No automatic backfill on map — admin uses the Sync buttons or agency-level
   // backfill to pull historical data on demand, in batches, without timeouts.
