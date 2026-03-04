@@ -10,11 +10,13 @@ function isAdminAuthed(session: string | undefined) {
 /**
  * POST /api/admin/accounts/link
  *
- * Maps an ad account to a client and triggers a 730-day backfill.
+ * Maps an ad account to a client. Any existing account of the same platform
+ * already mapped to this client is unmapped first (one account per platform).
+ * Triggers a 730-day backfill for Meta or credentialed Google accounts.
  *
  * Body (one of two forms):
- *   { ad_account_id: string, client_id: string }          — link existing unlinked row by UUID
- *   { account_id: string, platform: string, client_id: string } — find or create by platform account_id
+ *   { ad_account_id: string, client_id: string }                    — link by UUID (dropdown)
+ *   { account_id: string, platform: string, client_id: string }     — find or create by platform ID
  */
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
@@ -28,31 +30,56 @@ export async function POST(request: NextRequest) {
 
   const db = createAdminClient()
   let accountRowId: string | undefined
+  let platform: string | undefined
 
   if (body.ad_account_id) {
-    // Link an existing discovered account (selected from dropdown)
+    // Resolve platform of the account being mapped
+    const { data: acct } = await db
+      .from('ad_accounts')
+      .select('platform')
+      .eq('id', body.ad_account_id)
+      .single()
+
+    if (!acct) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    platform = acct.platform
+
+    // Unmap any existing account of the same platform for this client
+    await db
+      .from('ad_accounts')
+      .update({ client_id: null })
+      .eq('client_id', client_id)
+      .eq('platform', platform)
+      .neq('id', body.ad_account_id)
+
+    // Map the selected account (allow reassignment — previous guard removed)
     const { data, error } = await db
       .from('ad_accounts')
       .update({ client_id })
       .eq('id', body.ad_account_id)
-      .is('client_id', null) // safety: never reassign already-mapped accounts
       .select('id')
       .single()
 
     if (error || !data) {
-      return NextResponse.json(
-        { error: 'Account not found or already mapped to another client' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Failed to map account' }, { status: 500 })
     }
     accountRowId = data.id
+
   } else if (body.account_id && body.platform) {
-    // Manual account ID entry — find or create the row, then map it
+    platform = body.platform
     const normalised = String(body.account_id).trim()
+
+    // Unmap any existing account of the same platform for this client
+    await db
+      .from('ad_accounts')
+      .update({ client_id: null })
+      .eq('client_id', client_id)
+      .eq('platform', platform)
+
+    // Find or create the row, then map it
     const { data, error } = await db
       .from('ad_accounts')
       .upsert(
-        { platform: body.platform, account_id: normalised, client_id },
+        { platform, account_id: normalised, client_id },
         { onConflict: 'platform,account_id', ignoreDuplicates: false }
       )
       .select('id')
@@ -62,6 +89,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error?.message ?? 'Failed to link account' }, { status: 500 })
     }
     accountRowId = data.id
+
   } else {
     return NextResponse.json(
       { error: 'Provide either ad_account_id or account_id + platform' },
@@ -69,20 +97,17 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Determine the platform of the account that was just linked
+  // Determine credentials to decide backfill strategy
   const { data: linkedAccount } = await db
     .from('ad_accounts')
     .select('platform, access_token, refresh_token')
     .eq('id', accountRowId!)
     .single()
 
-  const platform = linkedAccount?.platform
+  const resolvedPlatform = linkedAccount?.platform ?? platform
   const hasCredentials = !!(linkedAccount?.access_token || linkedAccount?.refresh_token)
 
-  if (accountRowId && (platform !== 'google' || hasCredentials)) {
-    // Meta: backfill via agency token (handled in syncClient)
-    // Google with OAuth credentials: backfill via stored token
-    // Google MCC accounts (no credentials): skip — MCC script handles it
+  if (accountRowId && (resolvedPlatform !== 'google' || hasCredentials)) {
     syncClient(client_id, BACKFILL_DAYS, accountRowId).catch(err =>
       console.error(`Backfill failed for account ${accountRowId}:`, err)
     )
@@ -91,6 +116,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     success: true,
     ad_account_id: accountRowId,
-    backfill: platform !== 'google' || hasCredentials ? 'started' : 'run_mcc_script',
+    backfill: resolvedPlatform !== 'google' || hasCredentials ? 'started' : 'run_mcc_script',
   })
 }

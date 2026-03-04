@@ -63,8 +63,9 @@ function PlatformMapper({
   const router = useRouter()
   const [selectedId, setSelectedId] = useState('')
   const [manualId, setManualId]     = useState('')
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState('')
+  const [success, setSuccess] = useState('')
 
   async function handleMap() {
     const payload = selectedId
@@ -75,6 +76,7 @@ function PlatformMapper({
 
     setLoading(true)
     setError('')
+    setSuccess('')
     const res = await fetch('/api/admin/accounts/link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -88,13 +90,13 @@ function PlatformMapper({
       setSelectedId('')
       setManualId('')
       if (data.backfill === 'run_mcc_script') {
-        setError('Mapped. Run the MCC script with IS_BACKFILL: true to pull historical data.')
+        setSuccess('Mapped. Re-run the MCC script with IS_BACKFILL: true to pull historical data.')
+      } else {
+        setSuccess('Mapped. Backfill started.')
       }
       router.refresh()
     }
   }
-
-  const isConnected = mapped.length > 0
 
   return (
     <div className="p-3 bg-[#080c18] border border-[#1e2a40] rounded-lg">
@@ -110,7 +112,8 @@ function PlatformMapper({
           ) : (
             <p className="text-xs text-slate-600">Not mapped</p>
           )}
-          {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+          {success && <p className="text-xs text-emerald-400 mt-1">{success}</p>}
+          {error   && <p className="text-xs text-red-400 mt-1">{error}</p>}
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -140,13 +143,9 @@ function PlatformMapper({
           <button
             onClick={handleMap}
             disabled={loading || (!selectedId && !manualId.trim())}
-            className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 ${
-              isConnected
-                ? 'border border-[#1e2a40] text-slate-400 hover:border-[#2a3a54] hover:text-slate-300'
-                : `${accentCls} text-white`
-            }`}
+            className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 ${accentCls} text-white`}
           >
-            {loading ? '…' : isConnected ? 'Add' : 'Map'}
+            {loading ? '…' : 'Map'}
           </button>
         </div>
       </div>
