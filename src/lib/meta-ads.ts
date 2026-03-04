@@ -30,7 +30,7 @@ export async function exchangeMetaCode(
     `${BASE_URL}/oauth/access_token?${params}`
   )
   const data = await res.json() as Record<string, unknown>
-  if (data.error) throw new Error(`Meta code exchange failed`)
+  if (data.error) throw new Error(`Meta code exchange failed: ${JSON.stringify(data.error)}`)
 
   // Exchange for long-lived token (60-day)
   const llParams = new URLSearchParams({
