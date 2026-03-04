@@ -18,6 +18,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               <a href="/admin" className="text-sm text-slate-400 hover:text-white transition-colors">
                 Clients
               </a>
+              <a href="/admin/metric-mapping" className="text-sm text-slate-400 hover:text-white transition-colors">
+                Metric Mapping
+              </a>
               <a href="/admin/settings" className="text-sm text-slate-400 hover:text-white transition-colors">
                 Settings
               </a>

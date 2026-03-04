@@ -163,6 +163,11 @@ export async function fetchMetaCampaignMetrics(
         ctr:              ctr / 100,
         cpc:              clicks > 0 ? spend / clicks : 0,
         cpm,
+        // Raw actions stored so the admin can remap conversions without re-syncing
+        rawActions: actions.map(a => ({
+          action_type: String(a.action_type || ''),
+          value:       String(a.value       || '0'),
+        })),
       })
     }
 
@@ -186,4 +191,5 @@ interface MetaMetricRow {
   ctr: number
   cpc: number
   cpm: number
+  rawActions: { action_type: string; value: string }[]
 }

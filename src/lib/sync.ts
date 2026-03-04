@@ -176,6 +176,8 @@ export async function upsertMetrics(
         ctr: impressions > 0 ? clicks / impressions : 0,
         cpc: clicks > 0 ? spend / clicks : 0,
         cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
+        // Store raw Meta actions for live remapping without re-sync
+        raw_meta_actions: account.platform === 'meta' ? (m.rawActions ?? null) : undefined,
       }
     })
 

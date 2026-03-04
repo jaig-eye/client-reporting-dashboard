@@ -70,9 +70,35 @@ export default async function DashboardPage({
     getAgencySettings(),
   ])
 
-  const currentMetrics = (currentResult.data || []) as CampaignMetric[]
-  const priorMetrics   = (priorResult.data   || []) as CampaignMetric[]
-  const lastSync       = (syncResult.data    || []) as SyncLog[]
+  const rawCurrentMetrics = (currentResult.data || []) as CampaignMetric[]
+  const rawPriorMetrics   = (priorResult.data   || []) as CampaignMetric[]
+  const lastSync          = (syncResult.data    || []) as SyncLog[]
+
+  // Effective metric config: client-level overrides global agency config
+  const effectiveMetricConfig = {
+    ...settings.metric_config,
+    ...(client.metric_config ?? {}),
+  }
+  const metaConversionAction = effectiveMetricConfig.meta_conversion_action
+  const conversionLabel      = effectiveMetricConfig.conversion_label || 'Conversions'
+
+  // Re-map Meta conversions live from raw_meta_actions using the current config.
+  // Allows changing the conversion action without re-syncing historical data.
+  function remapConversions(metrics: CampaignMetric[]): CampaignMetric[] {
+    if (!metaConversionAction || metaConversionAction === 'results') return metrics
+    return metrics.map(row => {
+      if (row.platform !== 'meta') return row
+      const raw = row.raw_meta_actions
+      if (!raw?.length) return row
+      const conversions = raw
+        .filter(a => a.action_type === metaConversionAction)
+        .reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+      return { ...row, conversions }
+    })
+  }
+
+  const currentMetrics = remapConversions(rawCurrentMetrics)
+  const priorMetrics   = remapConversions(rawPriorMetrics)
 
   const current    = summarizeMetrics(currentMetrics)
   const prior      = summarizeMetrics(priorMetrics)
@@ -164,7 +190,7 @@ export default async function DashboardPage({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard label="Total Spend"   value={fmt$(current.spend)}           delta={calcDelta(current.spend,        prior.spend)}           sub={fmtCurrency(current.spend)}                                                                      invertDelta />
           <MetricCard label="ROAS"          value={fmtRoas(current.roas)}         delta={calcDelta(current.roas,         prior.roas)}            sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'} benchmarkPct={pctOfBenchmark(current.roas, benchmarks.benchmark_roas, false)} />
-          <MetricCard label="Conversions"   value={fmtNum(current.conversions)}   delta={calcDelta(current.conversions,  prior.conversions)}     sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined} />
+          <MetricCard label={conversionLabel} value={fmtNum(current.conversions)}   delta={calcDelta(current.conversions,  prior.conversions)}     sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined} />
           <MetricCard label="Clicks"        value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks,       prior.clicks)}          sub={`${fmtPct(current.ctr)} CTR`}                                                                     benchmarkPct={pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false)} />
         </div>
 
@@ -172,7 +198,7 @@ export default async function DashboardPage({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard label="Impressions"   value={fmtNum(current.impressions)}   delta={calcDelta(current.impressions,  prior.impressions)} />
           <MetricCard label="Avg. CPC"      value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc,          prior.cpc)}             invertDelta benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} />
-          <MetricCard label="Cost Per Lead" value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta />
+          <MetricCard label={`Cost Per ${conversionLabel.replace(/s$/, '')}`} value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta />
           <MetricCard label="Conv. Value"   value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} />
         </div>
 

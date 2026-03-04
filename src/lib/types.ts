@@ -54,6 +54,8 @@ export interface CampaignMetric {
   ctr: number
   cpc: number
   cpm: number
+  /** Stored raw Meta action entries — used for live conversion remapping without re-sync. */
+  raw_meta_actions?: { action_type: string; value: string }[] | null
 }
 
 export interface DateRange {
@@ -120,4 +122,6 @@ export interface MetricRow {
   ctr: number
   cpc: number
   cpm: number
+  /** Raw Meta action entries for post-hoc remapping. Only populated for Meta rows. */
+  rawActions?: { action_type: string; value: string }[]
 }

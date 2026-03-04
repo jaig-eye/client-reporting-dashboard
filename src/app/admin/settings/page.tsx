@@ -1,9 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import AgencyBackfill from './AgencyBackfill'
-import MetricSettings from './MetricSettings'
-import type { MetricConfig } from '@/lib/types'
 
 interface Settings {
   agency_name: string
@@ -17,8 +16,6 @@ interface Settings {
   meta_connected: boolean
   meta_token_expires_at: string | null
   cron_enabled: boolean
-  metric_config: MetricConfig
-  discovered_meta_actions: string[]
 }
 
 const DEFAULT: Settings = {
@@ -33,8 +30,6 @@ const DEFAULT: Settings = {
   meta_connected: false,
   meta_token_expires_at: null,
   cron_enabled: true,
-  metric_config: {},
-  discovered_meta_actions: [],
 }
 
 export default function SettingsPage() {
@@ -273,18 +268,22 @@ export default function SettingsPage() {
         </div>
       </form>
 
-      {/* Metric Mapping */}
-      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-200">Metric Mapping — Global Defaults</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Define how Meta API fields map to dashboard metrics. Per-client overrides are set on the client page.
-          </p>
+      {/* Metric Mapping — link to dedicated page */}
+      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-200">Metric Mapping</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Configure how Meta and Google data maps to dashboard metrics (conversions, labels, per-client overrides).
+            </p>
+          </div>
+          <Link
+            href="/admin/metric-mapping"
+            className="text-sm border border-[#1e2a40] text-slate-400 hover:text-slate-200 hover:border-[#2a3a54] px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
+          >
+            Configure →
+          </Link>
         </div>
-        <MetricSettings
-          current={form.metric_config}
-          discoveredMetaActions={form.discovered_meta_actions}
-        />
       </section>
 
       {/* Historical Data Backfill */}
