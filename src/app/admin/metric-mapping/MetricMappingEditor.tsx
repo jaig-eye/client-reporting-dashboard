@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { buildMetaActionOptions } from '@/lib/metric-presets'
 import type { MetricConfig } from '@/lib/types'
@@ -25,6 +26,8 @@ export default function MetricMappingEditor({ globalConfig, discoveredMetaAction
 
   const initAction = globalConfig.meta_conversion_action ?? ''
   const isCustom   = !!initAction && !presetValues.has(initAction)
+
+  const router = useRouter()
 
   const [action,  setAction]  = useState(isCustom ? CUSTOM_VALUE : initAction)
   const [custom,  setCustom]  = useState(isCustom ? initAction : '')
@@ -51,8 +54,12 @@ export default function MetricMappingEditor({ globalConfig, discoveredMetaAction
     })
     const data = await res.json()
     setSaving(false)
-    if (data.error) setError(data.error)
-    else setSaved(true)
+    if (data.error) {
+      setError(data.error)
+    } else {
+      setSaved(true)
+      router.refresh() // invalidate Next.js Router Cache so navigating back shows fresh data
+    }
   }
 
   const selectCls =

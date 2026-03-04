@@ -59,10 +59,22 @@ export default function SettingsPage() {
     e.preventDefault()
     setSaving(true)
     setError('')
+    // Send only the fields this form manages — never include metric_config here
+    // so saving branding/benchmarks never overwrites the Metric Mapping settings.
+    const body = {
+      agency_name:             form.agency_name,
+      agency_logo_url:         form.agency_logo_url,
+      benchmark_roas:          form.benchmark_roas,
+      benchmark_ctr:           form.benchmark_ctr,
+      benchmark_cpc:           form.benchmark_cpc,
+      benchmark_conv_rate:     form.benchmark_conv_rate,
+      benchmark_cpm:           form.benchmark_cpm,
+      default_date_range_days: form.default_date_range_days,
+    }
     const res = await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(body),
     })
     const data = await res.json()
     if (data.error) { setError(data.error); setSaving(false) }
