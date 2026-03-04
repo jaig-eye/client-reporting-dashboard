@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import type { CampaignMetric } from '@/lib/types'
+import type { CampaignMetric, MetricConfig } from '@/lib/types'
 
 export async function GET(request: NextRequest) {
-  // Allow access via client token cookie
   const cookieStore = await cookies()
   const clientToken = cookieStore.get('client_token')?.value
   if (!clientToken) {
@@ -13,19 +12,25 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  // Verify token and get client
-  const { data: client } = await db
-    .from('clients')
-    .select('id')
-    .eq('dashboard_token', clientToken)
-    .single()
+  // Fetch client + agency settings in parallel for metric config resolution
+  const [{ data: client }, { data: agencyRow }] = await Promise.all([
+    db.from('clients').select('id, metric_config').eq('dashboard_token', clientToken).single(),
+    db.from('agency_settings').select('metric_config').single(),
+  ])
 
   if (!client) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Effective metric config: client overrides global
+  const effectiveConfig: MetricConfig = {
+    ...(agencyRow?.metric_config as MetricConfig ?? {}),
+    ...(client.metric_config as MetricConfig ?? {}),
+  }
+  const metaConversionAction = effectiveConfig.meta_conversion_action
+
   const from = request.nextUrl.searchParams.get('from') || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
-  const to = request.nextUrl.searchParams.get('to') || new Date().toISOString().split('T')[0]
+  const to   = request.nextUrl.searchParams.get('to')   || new Date().toISOString().split('T')[0]
 
   const { data } = await db
     .from('campaign_metrics')
@@ -36,10 +41,27 @@ export async function GET(request: NextRequest) {
     .order('date', { ascending: false }) as { data: CampaignMetric[] | null }
 
   const rows = data || []
+
+  // Apply the same live remapping logic as the dashboard so the export
+  // reflects the current metric mapping, not the stale sync-time value.
+  const remapped = rows.map(row => {
+    if (
+      row.platform !== 'meta' ||
+      !metaConversionAction ||
+      metaConversionAction === 'results' ||
+      !row.raw_meta_actions?.length
+    ) return row
+
+    const conversions = row.raw_meta_actions
+      .filter(a => a.action_type === metaConversionAction)
+      .reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+    return { ...row, conversions }
+  })
+
   const headers = ['date', 'platform', 'campaign_name', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'roas', 'ctr', 'cpc', 'cpm']
   const csv = [
     headers.join(','),
-    ...rows.map(r =>
+    ...remapped.map(r =>
       headers.map(h => {
         const val = r[h as keyof CampaignMetric]
         return typeof val === 'string' && val.includes(',') ? `"${val}"` : val
