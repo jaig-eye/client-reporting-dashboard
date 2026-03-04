@@ -56,6 +56,11 @@ export async function syncClient(
   let totalRecords = 0
 
   for (const account of accounts) {
+    // Guard: never sync an account that isn't mapped to a client.
+    // The query already enforces client_id = clientId, but this is an
+    // explicit safety net for race conditions where an account is unmapped mid-run.
+    if (!account.client_id) continue
+
     const logId = await startSyncLog(db, clientId, account.id, account.platform, dateStart, dateEnd)
 
     try {

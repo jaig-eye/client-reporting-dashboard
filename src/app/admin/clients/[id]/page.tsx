@@ -23,7 +23,9 @@ export default async function ClientDetailPage({
   const [clientResult, mappedResult, unlinkedResult, recentSyncsResult, settingsResult] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('ad_accounts').select('id, platform, account_id, account_name').eq('client_id', id).order('platform').order('account_name'),
-    db.from('ad_accounts').select('id, platform, account_id, account_name').is('client_id', null).order('platform').order('account_name'),
+    // All accounts not already mapped to THIS client — includes unlinked (client_id IS NULL)
+    // and accounts mapped to other clients, so the admin can pick any discovered account.
+    db.from('ad_accounts').select('id, platform, account_id, account_name').or(`client_id.is.null,client_id.neq.${id}`).order('platform').order('account_name'),
     db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5),
     db.from('agency_settings').select('benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm').single(),
   ])
@@ -32,7 +34,7 @@ export default async function ClientDetailPage({
   if (!client) notFound()
 
   const recentSyncs    = (recentSyncsResult.data ?? []) as SyncLog[]
-  const allUnlinked    = (unlinkedResult.data ?? []) as AdAccount[]
+  const availableAccounts = (unlinkedResult.data ?? []) as AdAccount[]  // all not-yet-mapped-to-this-client
   const mappedAccounts = (mappedResult.data ?? []) as AdAccount[]
   const globalSettings = (settingsResult.data ?? {
     benchmark_roas: 3, benchmark_ctr: 0.03, benchmark_cpc: 3,
@@ -83,13 +85,13 @@ export default async function ClientDetailPage({
 
         <AccountMapper
           clientId={id}
-          unlinkedGoogle={allUnlinked.filter(a => a.platform === 'google')}
-          unlinkedMeta={allUnlinked.filter(a => a.platform === 'meta')}
+          unlinkedGoogle={availableAccounts.filter(a => a.platform === 'google')}
+          unlinkedMeta={availableAccounts.filter(a => a.platform === 'meta')}
           mappedGoogle={googleAccounts}
           mappedMeta={metaAccounts}
         />
 
-        {allUnlinked.length === 0 && !isConnected && (
+        {availableAccounts.length === 0 && !isConnected && (
           <p className="text-xs text-slate-600 mt-3">
             No discovered accounts yet.{' '}
             <Link href="/admin/settings" className="text-blue-400 hover:underline">
