@@ -83,12 +83,18 @@ export async function fetchMetaCampaignMetrics(
 ) {
   // Single account-level insights call with level=campaign — one request for all
   // campaigns' daily data instead of N+1 per-campaign calls. Pages if needed.
-  const results = []
+  //
+  // Uses the `results` field — Meta's campaign-objective primary metric (what Ads
+  // Manager shows as the "Results" column). This avoids summing all
+  // offsite_conversion.* subtypes (view content, add to cart, checkout, etc.)
+  // which inflated conversion counts 10-100x.
+  // CPL (cost per result) is derived dynamically from spend/results in summarizeMetrics.
+  const rows_out = []
 
   const base = new URL(`${BASE_URL}/${accountId}/insights`)
   base.searchParams.set('access_token', accessToken)
   base.searchParams.set('level', 'campaign')
-  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,actions,action_values')
+  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,results')
   base.searchParams.set('time_range', JSON.stringify({ since: dateStart, until: dateEnd }))
   base.searchParams.set('time_increment', '1')
   base.searchParams.set('limit', '500')
@@ -110,32 +116,29 @@ export async function fetchMetaCampaignMetrics(
       const clicks      = parseInt(  String(day.clicks      || '0'))
       const ctr         = parseFloat(String(day.ctr         || '0'))
       const cpm         = parseFloat(String(day.cpm         || '0'))
-      const actions      = (day.actions      || []) as Record<string, unknown>[]
-      const actionValues = (day.action_values || []) as Record<string, unknown>[]
 
-      const conversions = actions
-        .filter(a => {
-          const t = String(a.action_type || '')
-          return t.startsWith('offsite_conversion') || t === 'lead'
-        })
-        .reduce((s, a) => s + parseInt(String(a.value || '0')), 0)
+      // Meta returns `results` as [{action_type, value}] or as a plain number.
+      const rawResults = day.results
+      let resultCount = 0
+      if (Array.isArray(rawResults)) {
+        resultCount = (rawResults as Record<string, unknown>[])
+          .reduce((s, r) => s + parseFloat(String(r.value || '0')), 0)
+      } else if (rawResults !== undefined && rawResults !== null) {
+        resultCount = parseFloat(String(rawResults))
+      }
 
-      const conversionValue = actionValues
-        .filter(a => String(a.action_type || '').startsWith('offsite_conversion'))
-        .reduce((s, a) => s + parseFloat(String(a.value || '0')), 0)
-
-      results.push({
+      rows_out.push({
         campaign_id:      String(day.campaign_id   || ''),
         campaign_name:    String(day.campaign_name || ''),
         date:             String(day.date_start    || ''),
         spend,
         impressions,
         clicks,
-        conversions,
-        conversion_value: conversionValue,
-        roas: spend > 0 ? conversionValue / spend : 0,
-        ctr:  ctr / 100,
-        cpc:  clicks > 0 ? spend / clicks : 0,
+        conversions:      resultCount,
+        conversion_value: 0,  // no revenue tracking; CPL = spend/results via summarizeMetrics
+        roas:             0,  // not applicable for lead-gen Meta campaigns
+        ctr:              ctr / 100,
+        cpc:              clicks > 0 ? spend / clicks : 0,
         cpm,
       })
     }
@@ -144,5 +147,5 @@ export async function fetchMetaCampaignMetrics(
     nextUrl = (paging?.next as string) || null
   }
 
-  return results
+  return rows_out
 }
