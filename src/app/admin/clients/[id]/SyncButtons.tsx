@@ -3,33 +3,65 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+const CHUNK_DAYS = 30
+
+function buildChunks(days: number): { dateStart: string; dateEnd: string }[] {
+  const fmt = (d: Date) => d.toISOString().split('T')[0]
+  const toDate = new Date()
+  toDate.setDate(toDate.getDate() - 1) // yesterday
+
+  const fromDate = new Date(toDate)
+  fromDate.setDate(fromDate.getDate() - (days - 1))
+
+  const chunks: { dateStart: string; dateEnd: string }[] = []
+  const cursor = new Date(fromDate)
+
+  while (cursor <= toDate) {
+    const chunkEnd = new Date(cursor)
+    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1)
+    if (chunkEnd > toDate) chunkEnd.setTime(toDate.getTime())
+    chunks.push({ dateStart: fmt(cursor), dateEnd: fmt(chunkEnd) })
+    cursor.setDate(cursor.getDate() + CHUNK_DAYS)
+  }
+
+  return chunks
+}
+
 export default function SyncButtons({ clientId }: { clientId: string }) {
   const router = useRouter()
-  const [syncing, setSyncing] = useState(false)
-  const [result, setResult]   = useState('')
-  const [error,  setError]    = useState('')
+  const [syncing, setSyncing]   = useState(false)
+  const [progress, setProgress] = useState('')
+  const [result, setResult]     = useState('')
+  const [error, setError]       = useState('')
 
   async function handleSync(days: number) {
     setSyncing(true)
     setResult('')
     setError('')
+    setProgress('')
+
+    const chunks = buildChunks(days)
+    let totalRecords = 0
+
     try {
-      const res = await fetch('/api/sync/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, days }),
-      })
-      const data = await res.json()
-      if (data.error) {
-        setError(data.error)
-      } else {
-        setResult(`Done — ${data.records} rows synced`)
-        router.refresh()
+      for (let i = 0; i < chunks.length; i++) {
+        setProgress(chunks.length > 1 ? `Batch ${i + 1} / ${chunks.length}` : 'Syncing…')
+        const res = await fetch('/api/sync/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId, ...chunks[i] }),
+        })
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        totalRecords += data.records || 0
       }
+      setResult(`Done — ${totalRecords} rows synced`)
+      router.refresh()
     } catch (e) {
       setError(String(e))
     } finally {
       setSyncing(false)
+      setProgress('')
     }
   }
 
@@ -39,19 +71,20 @@ export default function SyncButtons({ clientId }: { clientId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={() => handleSync(30)}  disabled={syncing} className={btnCls}>
-          {syncing ? 'Syncing…' : 'Last 30 Days'}
+          {syncing ? '…' : 'Last 30 Days'}
         </button>
         <button onClick={() => handleSync(90)}  disabled={syncing} className={btnCls}>
-          {syncing ? 'Syncing…' : 'Last 90 Days'}
+          {syncing ? '…' : 'Last 90 Days'}
         </button>
         <button onClick={() => handleSync(365)} disabled={syncing} className={btnCls}>
-          {syncing ? 'Syncing…' : 'Last 365 Days'}
+          {syncing ? '…' : 'Last 365 Days'}
         </button>
       </div>
-      {result && <p className="text-xs text-emerald-400">{result}</p>}
-      {error  && <p className="text-xs text-red-400">{error}</p>}
+      {progress && <p className="text-xs text-slate-400">{progress}</p>}
+      {result   && <p className="text-xs text-emerald-400">{result}</p>}
+      {error    && <p className="text-xs text-red-400">{error}</p>}
       <p className="text-xs text-slate-600">
-        Longer ranges may time out on Vercel — run 90-day first, then 365-day if needed.
+        Large ranges are split into 30-day batches to avoid timeouts.
       </p>
     </div>
   )

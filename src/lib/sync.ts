@@ -20,7 +20,9 @@ export const INCREMENTAL_DAYS = 3
 export async function syncClient(
   clientId: string,
   days = INCREMENTAL_DAYS,
-  accountId?: string
+  accountId?: string,
+  dateStartOverride?: string,
+  dateEndOverride?: string
 ): Promise<number> {
   const db = createAdminClient()
 
@@ -34,15 +36,22 @@ export async function syncClient(
   const { data: accounts } = await query as { data: AdAccount[] | null }
   if (!accounts?.length) return 0
 
-  // Always sync up to yesterday — today's data is incomplete mid-day
-  const toDate = new Date()
-  toDate.setDate(toDate.getDate() - 1)
-  const fromDate = new Date(toDate)
-  fromDate.setDate(fromDate.getDate() - (days - 1))
-
   const fmt = (d: Date) => d.toISOString().split('T')[0]
-  const dateStart = fmt(fromDate)
-  const dateEnd = fmt(toDate)
+  let dateStart: string
+  let dateEnd: string
+
+  if (dateStartOverride && dateEndOverride) {
+    dateStart = dateStartOverride
+    dateEnd = dateEndOverride
+  } else {
+    // Always sync up to yesterday — today's data is incomplete mid-day
+    const toDate = new Date()
+    toDate.setDate(toDate.getDate() - 1)
+    const fromDate = new Date(toDate)
+    fromDate.setDate(fromDate.getDate() - (days - 1))
+    dateStart = fmt(fromDate)
+    dateEnd = fmt(toDate)
+  }
 
   let totalRecords = 0
 

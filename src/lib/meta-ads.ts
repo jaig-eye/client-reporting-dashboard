@@ -81,35 +81,36 @@ export async function fetchMetaCampaignMetrics(
   dateStart: string,
   dateEnd: string
 ) {
-  // Get campaigns
-  const campData = await metaGet(`/${accountId}/campaigns`, accessToken, {
-    fields: 'id,name,status',
-    effective_status: '["ACTIVE","PAUSED"]',
-    limit: '100',
-  })
-  const campaigns = (campData.data || []) as Record<string, unknown>[]
+  // Single account-level insights call with level=campaign — one request for all
+  // campaigns' daily data instead of N+1 per-campaign calls. Pages if needed.
   const results = []
 
-  for (const campaign of campaigns) {
-    const campaignId = String(campaign.id)
-    const campaignName = String(campaign.name || '')
+  const base = new URL(`${BASE_URL}/${accountId}/insights`)
+  base.searchParams.set('access_token', accessToken)
+  base.searchParams.set('level', 'campaign')
+  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,actions,action_values')
+  base.searchParams.set('time_range', JSON.stringify({ since: dateStart, until: dateEnd }))
+  base.searchParams.set('time_increment', '1')
+  base.searchParams.set('limit', '500')
 
-    // Get daily breakdown insights
-    const insightsData = await metaGet(`/${campaignId}/insights`, accessToken, {
-      fields: 'spend,impressions,clicks,ctr,cpm,actions,action_values',
-      time_range: JSON.stringify({ since: dateStart, until: dateEnd }),
-      time_increment: '1', // daily breakdown
-      limit: '90',
-    })
+  let nextUrl: string | null = base.toString()
 
-    const insights = (insightsData.data || []) as Record<string, unknown>[]
-    for (const day of insights) {
-      const spend = parseFloat(String(day.spend || '0'))
-      const impressions = parseInt(String(day.impressions || '0'))
-      const clicks = parseInt(String(day.clicks || '0'))
-      const ctr = parseFloat(String(day.ctr || '0'))
-      const cpm = parseFloat(String(day.cpm || '0'))
-      const actions = (day.actions || []) as Record<string, unknown>[]
+  while (nextUrl) {
+    const res = await fetch(nextUrl)
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Meta API error ${res.status}: ${text}`)
+    }
+    const data = await res.json() as Record<string, unknown>
+    const rows = (data.data || []) as Record<string, unknown>[]
+
+    for (const day of rows) {
+      const spend       = parseFloat(String(day.spend       || '0'))
+      const impressions = parseInt(  String(day.impressions || '0'))
+      const clicks      = parseInt(  String(day.clicks      || '0'))
+      const ctr         = parseFloat(String(day.ctr         || '0'))
+      const cpm         = parseFloat(String(day.cpm         || '0'))
+      const actions      = (day.actions      || []) as Record<string, unknown>[]
       const actionValues = (day.action_values || []) as Record<string, unknown>[]
 
       const conversions = actions
@@ -124,20 +125,24 @@ export async function fetchMetaCampaignMetrics(
         .reduce((s, a) => s + parseFloat(String(a.value || '0')), 0)
 
       results.push({
-        campaign_id: campaignId,
-        campaign_name: campaignName,
-        date: String(day.date_start || ''),
+        campaign_id:      String(day.campaign_id   || ''),
+        campaign_name:    String(day.campaign_name || ''),
+        date:             String(day.date_start    || ''),
         spend,
         impressions,
         clicks,
         conversions,
         conversion_value: conversionValue,
         roas: spend > 0 ? conversionValue / spend : 0,
-        ctr: ctr / 100,
-        cpc: clicks > 0 ? spend / clicks : 0,
+        ctr:  ctr / 100,
+        cpc:  clicks > 0 ? spend / clicks : 0,
         cpm,
       })
     }
+
+    const paging = data.paging as Record<string, unknown> | undefined
+    nextUrl = (paging?.next as string) || null
   }
+
   return results
 }
