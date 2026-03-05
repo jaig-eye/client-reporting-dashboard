@@ -58,6 +58,7 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
                 {h.label}{sortKey === h.key && <span className="ml-1 opacity-50">{sortDir === 'desc' ? '↓' : '↑'}</span>}
               </th>
             ))}
+            <th className={`${thCls} cursor-default hover:text-slate-500`}>Goal</th>
             <th className={`${thCls} cursor-default hover:text-slate-500`}>Platform</th>
           </tr>
         </thead>
@@ -93,6 +94,15 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
                 </td>
                 <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
                   {!showRoas && c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span className="text-slate-700">—</span>}
+                </td>
+                <td className="py-3 px-3 whitespace-nowrap">
+                  {c.goalType !== 'unset' ? (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${def.badgeClasses}`}>
+                      {def.badge}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-700">—</span>
+                  )}
                 </td>
                 <td className="py-3 px-3">
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${

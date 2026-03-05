@@ -26,14 +26,11 @@ export async function GET(
   const { id } = await params
   const db = createAdminClient()
 
-  // Fetch existing campaign_settings + distinct campaigns from metrics (for discovery)
-  const [settingsResult, metricsResult] = await Promise.all([
+  // get_client_campaigns uses SELECT DISTINCT ON so it returns exactly one row per
+  // (platform, campaign_id) regardless of how many daily metric rows exist.
+  const [settingsResult, campaignsResult] = await Promise.all([
     db.from('campaign_settings').select('*').eq('client_id', id).order('campaign_name'),
-    db
-      .from('campaign_metrics')
-      .select('campaign_id, campaign_name, platform')
-      .eq('client_id', id)
-      .order('campaign_name'),
+    db.rpc('get_client_campaigns', { p_client_id: id }),
   ])
 
   const settings = settingsResult.data ?? []
@@ -41,14 +38,11 @@ export async function GET(
   // Build a set of campaign_ids that already have settings
   const configured = new Set(settings.map(s => `${s.platform}::${s.campaign_id}`))
 
-  // Deduplicate metrics by (platform, campaign_id)
-  const seen = new Set<string>()
+  // Any campaigns returned by RPC that aren't in campaign_settings yet
   const unsettled: typeof settings = []
-  for (const row of (metricsResult.data ?? [])) {
+  for (const row of ((campaignsResult.data ?? []) as { campaign_id: string; campaign_name: string; platform: string }[])) {
     const key = `${row.platform}::${row.campaign_id}`
-    if (!configured.has(key) && !seen.has(key)) {
-      seen.add(key)
-      // Auto-suggest goal type from campaign name
+    if (!configured.has(key)) {
       unsettled.push({
         id: '',
         client_id: id,

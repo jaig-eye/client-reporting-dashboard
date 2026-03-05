@@ -5,6 +5,7 @@ import Link from 'next/link'
 import AccountMapper from './AccountMapper'
 import ClientBenchmarks from './ClientBenchmarks'
 import CampaignConfigurator from './CampaignConfigurator'
+import ClientMetricVisibility from './ClientMetricVisibility'
 import SyncButtons from './SyncButtons'
 
 export const dynamic = 'force-dynamic'
@@ -163,6 +164,18 @@ export default async function ClientDetailPage({
         <CampaignConfigurator
           clientId={id}
           discoveredMetaActions={discoveredMetaActions}
+        />
+      </div>
+
+      {/* Dashboard Metric Visibility */}
+      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
+        <h2 className="font-semibold text-slate-100 mb-1">Dashboard Metrics</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Choose which metrics are visible on this client&apos;s dashboard. Blue = shown, red = hidden.
+        </p>
+        <ClientMetricVisibility
+          clientId={id}
+          currentMetricConfig={client.metric_config ?? {}}
         />
       </div>
 

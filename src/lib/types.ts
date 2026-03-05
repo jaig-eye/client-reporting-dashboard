@@ -4,6 +4,12 @@ export interface MetricConfig {
   meta_conversion_action?: string
   /** Display label override for the conversions metric, e.g. "Leads", "Purchases". */
   conversion_label?: string
+  /**
+   * Metric keys to hide on the client dashboard.
+   * Valid keys: 'efficiency_score' | 'roas' | 'revenue' | 'conversions' |
+   *             'cpl' | 'clicks' | 'ctr' | 'cpc' | 'impressions'
+   */
+  hidden_metrics?: string[]
 }
 
 export interface Client {

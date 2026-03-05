@@ -86,6 +86,8 @@ export default async function DashboardPage({
     ...settings.metric_config,
     ...(client.metric_config ?? {}),
   }
+  const hiddenMetrics = new Set<string>(effectiveMetricConfig.hidden_metrics ?? [])
+  const show = (k: string) => !hiddenMetrics.has(k)
   const clientMetaConversionAction = effectiveMetricConfig.meta_conversion_action
 
   // Re-map Meta conversions live from raw_meta_actions.
@@ -229,16 +231,16 @@ export default async function DashboardPage({
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
-        <EfficiencyScore score={score} components={scoreComponents} />
+        {show('efficiency_score') && <EfficiencyScore score={score} components={scoreComponents} />}
 
         {showSplitCards ? (
           <>
             {/* Platform-agnostic summary row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <MetricCard label="Total Spend"  value={fmt$(current.spend)}           delta={calcDelta(current.spend, prior.spend)}           sub={fmtCurrency(current.spend)}     invertDelta delay={0} />
-              <MetricCard label="Clicks"       value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks, prior.clicks)}         sub={`${fmtPct(current.ctr)} CTR`}   benchmarkPct={pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false)} delay={1} />
-              <MetricCard label="Avg. CPC"     value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc, prior.cpc)}               invertDelta                           benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} delay={2} />
-              <MetricCard label="Impressions"  value={fmtNum(current.impressions)}   delta={calcDelta(current.impressions, prior.impressions)}                                     delay={3} />
+              {show('clicks') && <MetricCard label="Clicks"      value={fmtNum(current.clicks)}      delta={calcDelta(current.clicks, prior.clicks)}         sub={show('ctr') ? `${fmtPct(current.ctr)} CTR` : undefined} benchmarkPct={show('ctr') ? pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false) : undefined} delay={1} />}
+              {show('cpc') && <MetricCard label="Avg. CPC"       value={fmtCurrency(current.cpc)}    delta={calcDelta(current.cpc, prior.cpc)}               invertDelta benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} delay={2} />}
+              {show('impressions') && <MetricCard label="Impressions" value={fmtNum(current.impressions)} delta={calcDelta(current.impressions, prior.impressions)} delay={3} />}
             </div>
 
             {/* Per-goal-type conversion cards */}
@@ -262,22 +264,24 @@ export default async function DashboardPage({
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">{label}</p>
-                        <p className="text-3xl font-bold text-white">{fmtNum(sum.conversions)}</p>
-                        <p className="text-xs mt-1" style={{ color: delta >= 0 ? '#10b981' : '#f87171' }}>
-                          {delta >= 0 ? '+' : ''}{delta.toFixed(1)}% vs prior period
-                        </p>
-                      </div>
-                      {showR ? (
+                      {show('conversions') && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">{label}</p>
+                          <p className="text-3xl font-bold text-white">{fmtNum(sum.conversions)}</p>
+                          <p className="text-xs mt-1" style={{ color: delta >= 0 ? '#10b981' : '#f87171' }}>
+                            {delta >= 0 ? '+' : ''}{delta.toFixed(1)}% vs prior period
+                          </p>
+                        </div>
+                      )}
+                      {showR && show('roas') ? (
                         <div>
                           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">ROAS</p>
                           <p className="text-3xl font-bold" style={{ color: sum.roas >= 3 ? '#10b981' : sum.roas >= 1.5 ? '#f59e0b' : '#f87171' }}>
                             {fmtRoas(sum.roas)}
                           </p>
-                          <p className="text-xs text-slate-500 mt-1">{fmt$(sum.conversionValue)} revenue</p>
+                          {show('revenue') && <p className="text-xs text-slate-500 mt-1">{fmt$(sum.conversionValue)} revenue</p>}
                         </div>
-                      ) : (
+                      ) : !showR && show('cpl') ? (
                         <div>
                           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Cost / {label.replace(/s$/, '')}</p>
                           <p className="text-3xl font-bold text-white">
@@ -285,7 +289,7 @@ export default async function DashboardPage({
                           </p>
                           <p className="text-xs text-slate-500 mt-1">{fmt$(sum.spend)} spend</p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 )
@@ -315,16 +319,16 @@ export default async function DashboardPage({
           <>
             {/* Standard 4-card layout (no goal types configured yet) */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard label="Total Spend"     value={fmt$(current.spend)}           delta={calcDelta(current.spend, prior.spend)}           sub={fmtCurrency(current.spend)}                                                                        invertDelta delay={0} />
-              <MetricCard label="ROAS"            value={fmtRoas(current.roas)}         delta={calcDelta(current.roas, prior.roas)}             sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'}  benchmarkPct={pctOfBenchmark(current.roas, benchmarks.benchmark_roas, false)} delay={1} />
-              <MetricCard label={conversionLabel} value={fmtNum(current.conversions)}   delta={calcDelta(current.conversions, prior.conversions)} sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined}                                         delay={2} />
-              <MetricCard label="Clicks"          value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks, prior.clicks)}         sub={`${fmtPct(current.ctr)} CTR`}                                                             benchmarkPct={pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false)} delay={3} />
+              <MetricCard label="Total Spend"     value={fmt$(current.spend)}           delta={calcDelta(current.spend, prior.spend)}           sub={fmtCurrency(current.spend)}  invertDelta delay={0} />
+              {show('roas') && <MetricCard label="ROAS"            value={fmtRoas(current.roas)}         delta={calcDelta(current.roas, prior.roas)}             sub={current.roas >= 1 ? `${fmtCurrency(current.conversionValue)} value` : 'Below breakeven'}  benchmarkPct={pctOfBenchmark(current.roas, benchmarks.benchmark_roas, false)} delay={1} />}
+              {show('conversions') && <MetricCard label={conversionLabel} value={fmtNum(current.conversions)}   delta={calcDelta(current.conversions, prior.conversions)} sub={show('cpl') && current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined} delay={2} />}
+              {show('clicks') && <MetricCard label="Clicks"          value={fmtNum(current.clicks)}        delta={calcDelta(current.clicks, prior.clicks)}         sub={show('ctr') ? `${fmtPct(current.ctr)} CTR` : undefined} benchmarkPct={show('ctr') ? pctOfBenchmark(current.ctr, benchmarks.benchmark_ctr, false) : undefined} delay={3} />}
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard label="Impressions"     value={fmtNum(current.impressions)}   delta={calcDelta(current.impressions, prior.impressions)}                                                                                                                   delay={0} />
-              <MetricCard label="Avg. CPC"        value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc, prior.cpc)}               invertDelta                                                                                    benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} delay={1} />
-              <MetricCard label={`Cost Per ${conversionLabel.replace(/s$/, '')}`} value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta              delay={2} />
-              <MetricCard label="Conv. Value"     value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)}                                                                                                         delay={3} />
+              {show('impressions') && <MetricCard label="Impressions"     value={fmtNum(current.impressions)}   delta={calcDelta(current.impressions, prior.impressions)} delay={0} />}
+              {show('cpc') && <MetricCard label="Avg. CPC"        value={fmtCurrency(current.cpc)}      delta={calcDelta(current.cpc, prior.cpc)}               invertDelta benchmarkPct={pctOfBenchmark(current.cpc, benchmarks.benchmark_cpc, true)} delay={1} />}
+              {show('cpl') && <MetricCard label={`Cost Per ${conversionLabel.replace(/s$/, '')}`} value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'} delta={current.cpl > 0 && prior.cpl > 0 ? calcDelta(current.cpl, prior.cpl) : undefined} invertDelta delay={2} />}
+              {show('revenue') && <MetricCard label="Conv. Value"     value={fmt$(current.conversionValue)} delta={calcDelta(current.conversionValue, prior.conversionValue)} delay={3} />}
             </div>
           </>
         )}

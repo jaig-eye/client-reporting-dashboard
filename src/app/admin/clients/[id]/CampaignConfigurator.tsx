@@ -34,6 +34,17 @@ function EyeOffIcon() {
   )
 }
 
+// Common Google conversion types for the dropdown
+const GOOGLE_CONVERSION_TYPES = [
+  { value: 'Purchases',          label: 'Purchases / Sales' },
+  { value: 'Leads',              label: 'Leads / Form Fills' },
+  { value: 'Phone Calls',        label: 'Phone Calls' },
+  { value: 'Appointments',       label: 'Appointments / Bookings' },
+  { value: 'Sign-ups',           label: 'Sign-ups / Registrations' },
+  { value: 'Page Views',         label: 'Page Views / Micro-conversions' },
+  { value: 'All Conversions',    label: 'All Conversions (default)' },
+]
+
 export default function CampaignConfigurator({ clientId, discoveredMetaActions }: Props) {
   const router = useRouter()
   const metaOptions = buildMetaActionOptions(discoveredMetaActions)
@@ -103,8 +114,8 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        Assign a goal type to each campaign. Use the eye icon to hide campaigns from the client dashboard
-        (e.g. internal test or fraud campaigns). Goal type is auto-suggested from the campaign name.
+        Assign a goal and conversion action to each campaign. Purchases goal = ROAS shown;
+        all other goals = CPL shown. Use the eye icon to hide campaigns (e.g. test/fraud campaigns).
       </p>
 
       {loading && <p className="text-xs text-slate-600 py-4 text-center">Loading campaigns…</p>}
@@ -114,14 +125,17 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
 
       {rows.length > 0 && (
         <div className="overflow-x-auto -mx-2">
-          <table className="w-full text-xs min-w-[760px]">
+          <table className="w-full text-xs min-w-[820px]">
             <thead>
               <tr className="border-b border-white/[0.06]">
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-8">&nbsp;</th>
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide">Campaign</th>
-                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[160px]">Goal Type</th>
-                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[220px]">Meta Conversion Action</th>
-                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[120px]">Label Override</th>
+                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[155px]">Goal Type</th>
+                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[210px]">Conversion Action</th>
+                <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[130px]">
+                  Label Override
+                  <span className="text-slate-700 font-normal ml-1">(Meta only)</span>
+                </th>
                 <th className="text-center py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-14">Hide</th>
               </tr>
             </thead>
@@ -142,7 +156,7 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                         {row.platform === 'meta' ? 'M' : 'G'}
                       </span>
                     </td>
-                    <td className="py-2 px-3 text-slate-300 max-w-[220px]">
+                    <td className="py-2 px-3 text-slate-300 max-w-[200px]">
                       <span className="truncate block" title={row.campaign_name}>{row.campaign_name}</span>
                       {row.isNew && <span className="text-slate-600 italic">auto-suggested</span>}
                     </td>
@@ -161,6 +175,8 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                         {def.badge}
                       </div>
                     </td>
+
+                    {/* Conversion Action — Meta: action type dropdown; Google: conversion type select */}
                     <td className="py-2 px-3">
                       {row.platform === 'meta' ? (
                         <select
@@ -174,23 +190,39 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                           ))}
                         </select>
                       ) : (
-                        <span className="text-slate-600 text-xs italic">Standard Conversions (auto)</span>
+                        <select
+                          value={row.conversion_label ?? ''}
+                          onChange={e => update(i, { conversion_label: e.target.value || null })}
+                          className={selectCls}
+                        >
+                          <option value="">— select type —</option>
+                          {GOOGLE_CONVERSION_TYPES.map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
                       )}
                     </td>
+
+                    {/* Label Override — Meta only; Google uses conversion_label above */}
                     <td className="py-2 px-3">
-                      <input
-                        type="text"
-                        value={row.conversion_label ?? ''}
-                        onChange={e => update(i, { conversion_label: e.target.value || null })}
-                        placeholder={GOAL_TYPE_DEFS[row.goal_type].defaultConversionLabel}
-                        className={inputCls}
-                      />
+                      {row.platform === 'meta' ? (
+                        <input
+                          type="text"
+                          value={row.conversion_label ?? ''}
+                          onChange={e => update(i, { conversion_label: e.target.value || null })}
+                          placeholder={GOAL_TYPE_DEFS[row.goal_type].defaultConversionLabel}
+                          className={inputCls}
+                        />
+                      ) : (
+                        <span className="text-slate-700 text-xs">—</span>
+                      )}
                     </td>
+
                     <td className="py-2 px-3 text-center">
                       <button
                         type="button"
                         onClick={() => update(i, { hidden: !row.hidden })}
-                        title={row.hidden ? 'Hidden from dashboard — click to show' : 'Visible on dashboard — click to hide'}
+                        title={row.hidden ? 'Hidden — click to show' : 'Visible — click to hide'}
                         className={`inline-flex items-center justify-center rounded p-1 transition-colors ${
                           row.hidden
                             ? 'text-red-400 hover:text-red-300 bg-red-500/10'
@@ -221,7 +253,7 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
           </button>
           {saved && <span className="text-xs text-emerald-400">Saved</span>}
           {hiddenCount > 0 && (
-            <span className="text-xs text-slate-600">{hiddenCount} campaign{hiddenCount !== 1 ? 's' : ''} hidden from dashboard</span>
+            <span className="text-xs text-slate-600">{hiddenCount} campaign{hiddenCount !== 1 ? 's' : ''} hidden</span>
           )}
         </div>
       )}
