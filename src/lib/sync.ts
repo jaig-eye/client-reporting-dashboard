@@ -1,6 +1,7 @@
 import { createAdminClient } from './supabase/server'
 import { fetchGoogleCampaignMetrics, refreshGoogleToken } from './google-ads'
 import { fetchMetaCampaignMetrics } from './meta-ads'
+import { detectGoalType } from './goal-types'
 import type { AdAccount, MetricConfig, MetricRow } from './types'
 
 // BACKFILL_DAYS: used when an account is first connected — pulls full history
@@ -189,6 +190,25 @@ export async function upsertMetrics(
         onConflict: 'ad_account_id,campaign_id,date',
         ignoreDuplicates: false, // always update metrics on conflict
       }
+    )
+  }
+
+  // Auto-populate campaign_settings for newly discovered campaigns.
+  // INSERT ... ON CONFLICT DO NOTHING preserves any admin overrides already set.
+  const uniqueCampaigns = Array.from(
+    new Map(rows.map(r => [`${r.platform}::${r.campaign_id}`, r])).values()
+  )
+  const campaignSettingRows = uniqueCampaigns.map(r => ({
+    client_id: clientId,
+    platform: r.platform,
+    campaign_id: r.campaign_id,
+    campaign_name: r.campaign_name,
+    goal_type: detectGoalType(r.campaign_name),
+  }))
+  if (campaignSettingRows.length > 0) {
+    await db.from('campaign_settings').upsert(
+      campaignSettingRows,
+      { onConflict: 'client_id,platform,campaign_id', ignoreDuplicates: true }
     )
   }
 }

@@ -1,3 +1,6 @@
+'use client'
+
+import { motion } from 'framer-motion'
 import { scoreColor } from '@/lib/agency-settings'
 
 interface MetricCardProps {
@@ -7,15 +10,27 @@ interface MetricCardProps {
   sub?: string
   invertDelta?: boolean
   benchmarkPct?: number  // 0–100+ percent of benchmark target
+  delay?: number         // stagger delay index (0, 1, 2, …)
 }
 
-export default function MetricCard({ label, value, delta, sub, invertDelta, benchmarkPct }: MetricCardProps) {
+export default function MetricCard({ label, value, delta, sub, invertDelta, benchmarkPct, delay = 0 }: MetricCardProps) {
   const isGood = delta !== undefined
     ? (invertDelta ? delta <= 0 : delta >= 0)
     : null
 
   return (
-    <div className="bg-[#0f1525] rounded-xl border border-[#1e2a40] p-4">
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: delay * 0.07, ease: 'easeOut' }}
+      className="rounded-2xl border p-4"
+      style={{
+        background: 'rgba(255,255,255,0.025)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderColor: 'rgba(255,255,255,0.07)',
+      }}
+    >
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">{label}</p>
       <p className="text-2xl font-bold text-white leading-none mb-1">{value}</p>
       {sub && <p className="text-xs text-slate-500 mb-1.5">{sub}</p>}
@@ -39,6 +54,6 @@ export default function MetricCard({ label, value, delta, sub, invertDelta, benc
           {benchmarkPct}% of target
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }

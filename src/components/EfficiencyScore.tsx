@@ -24,7 +24,12 @@ export default function EfficiencyScore({ score, components }: Props) {
     'Underperforming'
 
   return (
-    <div className="bg-[#0f1525] rounded-xl border border-[#1e2a40] p-5">
+    <div className="rounded-2xl border p-5" style={{
+      background: 'rgba(255,255,255,0.025)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+      borderColor: 'rgba(255,255,255,0.07)',
+    }}>
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-4">
         Marketing Efficiency Score
       </p>
@@ -36,7 +41,7 @@ export default function EfficiencyScore({ score, components }: Props) {
             {/* Track */}
             <circle
               cx="60" cy="60" r={radius}
-              fill="none" stroke="#1e2a40" strokeWidth="10"
+              fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="10"
             />
             {/* Progress */}
             <circle
@@ -79,7 +84,7 @@ export default function EfficiencyScore({ score, components }: Props) {
                   {c.pct}%
                 </span>
               </div>
-              <div className="h-1.5 bg-[#1e2a40] rounded-full overflow-hidden">
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
                 <div
                   className="h-full rounded-full transition-all duration-500"
                   style={{ width: `${c.pct}%`, backgroundColor: scoreColor(c.pct) }}

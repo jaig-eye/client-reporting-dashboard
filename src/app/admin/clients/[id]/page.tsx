@@ -5,6 +5,7 @@ import Link from 'next/link'
 import AccountMapper from './AccountMapper'
 import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricConfig from './ClientMetricConfig'
+import CampaignConfigurator from './CampaignConfigurator'
 import SyncButtons from './SyncButtons'
 
 export const dynamic = 'force-dynamic'
@@ -149,6 +150,20 @@ export default async function ClientDetailPage({
             benchmark_conv_rate:  client.benchmark_conv_rate,
             benchmark_cpm:        client.benchmark_cpm,
           }}
+        />
+      </div>
+
+      {/* Campaign Goal Configuration */}
+      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+        <h2 className="font-semibold text-slate-100 mb-1">Campaign Goals</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Assign each campaign a goal type (Lead Gen, Ecommerce, Calls, etc.) and optionally override
+          the Meta conversion action. Goal types control ROAS vs CPL display and how the dashboard
+          groups summary metrics.
+        </p>
+        <CampaignConfigurator
+          clientId={id}
+          discoveredMetaActions={discoveredMetaActions}
         />
       </div>
 

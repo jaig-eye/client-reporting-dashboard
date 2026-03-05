@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import { GOAL_TYPE_DEFS, shouldShowRoas } from '@/lib/goal-types'
+import type { GoalType } from '@/lib/types'
 
 interface Campaign {
   name: string
@@ -12,6 +14,8 @@ interface Campaign {
   cpl: number
   ctr: number
   impressions: number
+  goalType: GoalType
+  conversionLabel: string
 }
 
 type SortKey = 'spend' | 'clicks' | 'conversions' | 'roas' | 'cpl' | 'name'
@@ -42,45 +46,74 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
     { key: 'cpl', label: 'CPL' },
   ]
 
+  const thCls = 'text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-300 select-none whitespace-nowrap transition-colors'
+
   return (
     <div className="overflow-x-auto -mx-2">
-      <table className="w-full text-sm min-w-[640px]">
+      <table className="w-full text-sm min-w-[700px]">
         <thead>
-          <tr className="border-b border-[#1e2a40]">
+          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             {headers.map(h => (
-              <th
-                key={h.key}
-                onClick={() => toggleSort(h.key)}
-                className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-300 select-none whitespace-nowrap transition-colors"
-              >
-                {h.label}{sortKey === h.key && <span className="ml-1 opacity-60">{sortDir === 'desc' ? '↓' : '↑'}</span>}
+              <th key={h.key} onClick={() => toggleSort(h.key)} className={thCls}>
+                {h.label}{sortKey === h.key && <span className="ml-1 opacity-50">{sortDir === 'desc' ? '↓' : '↑'}</span>}
               </th>
             ))}
-            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Platform</th>
+            <th className={`${thCls} cursor-default hover:text-slate-500`}>Goal</th>
+            <th className={`${thCls} cursor-default hover:text-slate-500`}>Platform</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-[#1e2a40]">
-          {sorted.map((c, i) => (
-            <tr key={i} className="hover:bg-[#151c30] transition-colors">
-              <td className="py-3 px-3 font-medium text-slate-200 max-w-[260px] truncate" title={c.name}>{c.name}</td>
-              <td className="py-3 px-3 text-slate-400 whitespace-nowrap">${c.spend.toFixed(2)}</td>
-              <td className="py-3 px-3 text-slate-400">{c.clicks.toLocaleString()}</td>
-              <td className="py-3 px-3 text-slate-400">{c.conversions.toFixed(1)}</td>
-              <td className="py-3 px-3 font-semibold whitespace-nowrap" style={{
-                color: c.roas >= 3 ? '#10b981' : c.roas >= 1.5 ? '#f59e0b' : '#f87171'
-              }}>
-                {c.roas.toFixed(2)}x
-              </td>
-              <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
-                {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : '—'}
-              </td>
-              <td className="py-3 px-3">
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  c.platform === 'google' ? 'bg-blue-500/10 text-blue-400' : 'bg-indigo-500/10 text-indigo-400'
-                }`}>{c.platform === 'google' ? 'Google' : 'Meta'}</span>
-              </td>
-            </tr>
-          ))}
+        <tbody>
+          {sorted.map((c, i) => {
+            const def = GOAL_TYPE_DEFS[c.goalType]
+            const showRoas = shouldShowRoas(c.goalType)
+            return (
+              <tr
+                key={i}
+                style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                className="transition-colors hover:bg-white/[0.025]"
+              >
+                <td className="py-3 px-3 font-medium text-slate-200 max-w-[260px] truncate" title={c.name}>
+                  {c.name}
+                </td>
+                <td className="py-3 px-3 text-slate-400 whitespace-nowrap">${c.spend.toFixed(2)}</td>
+                <td className="py-3 px-3 text-slate-400">{c.clicks.toLocaleString()}</td>
+                <td className="py-3 px-3 text-slate-400">
+                  <span>{c.conversions.toFixed(1)}</span>
+                  {c.conversionLabel && c.goalType !== 'unset' && (
+                    <span className="text-slate-600 ml-1 text-xs">{c.conversionLabel.toLowerCase()}</span>
+                  )}
+                </td>
+                <td className="py-3 px-3 font-semibold whitespace-nowrap">
+                  {showRoas ? (
+                    <span style={{ color: c.roas >= 3 ? '#10b981' : c.roas >= 1.5 ? '#f59e0b' : '#f87171' }}>
+                      {c.roas.toFixed(2)}x
+                    </span>
+                  ) : (
+                    <span className="text-slate-700">—</span>
+                  )}
+                </td>
+                <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
+                  {!showRoas && c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span className="text-slate-700">—</span>}
+                </td>
+                <td className="py-3 px-3">
+                  {c.goalType !== 'unset' ? (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${def.badgeClasses}`}>
+                      {def.badge}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-700">—</span>
+                  )}
+                </td>
+                <td className="py-3 px-3">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    c.platform === 'google' ? 'bg-blue-500/10 text-blue-400' : 'bg-indigo-500/10 text-indigo-400'
+                  }`}>
+                    {c.platform === 'google' ? 'Google' : 'Meta'}
+                  </span>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

@@ -4,9 +4,32 @@
 
 @layer base {
   body {
-    @apply bg-[#080c18] text-slate-200;
+    @apply text-slate-200;
+    background: #04040a;
   }
   input[type='date'] {
     color-scheme: dark;
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    background: rgba(255, 255, 255, 0.025);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 1rem;
+  }
+
+  .glass-input {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: #e2e8f0;
+    border-radius: 0.5rem;
+  }
+
+  .glass-input:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
   }
 }

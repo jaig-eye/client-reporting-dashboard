@@ -126,3 +126,19 @@ export interface MetricRow {
   /** Raw Meta action entries for post-hoc remapping. Only populated for Meta rows. */
   rawActions?: { action_type: string; value: string; revenue: string }[]
 }
+
+import type { GoalType } from './goal-types'
+export type { GoalType }
+
+export interface CampaignSettings {
+  id: string
+  client_id: string
+  platform: 'google' | 'meta'
+  campaign_id: string
+  campaign_name: string
+  goal_type: GoalType
+  meta_conversion_action?: string | null
+  conversion_label?: string | null
+  created_at: string
+  updated_at: string
+}
