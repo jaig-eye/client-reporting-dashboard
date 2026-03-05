@@ -58,6 +58,7 @@ export async function GET(
         goal_type: detectGoalType(row.campaign_name),
         meta_conversion_action: null,
         conversion_label: null,
+        hidden: false,
         created_at: '',
         updated_at: '',
       })
@@ -89,6 +90,7 @@ export async function PATCH(
     goal_type: GoalType
     meta_conversion_action?: string | null
     conversion_label?: string | null
+    hidden?: boolean
   }[]
 
   if (!Array.isArray(body) || body.length === 0) {
@@ -103,6 +105,7 @@ export async function PATCH(
     goal_type: b.goal_type,
     meta_conversion_action: b.meta_conversion_action ?? null,
     conversion_label: b.conversion_label ?? null,
+    hidden: b.hidden ?? false,
     updated_at: new Date().toISOString(),
   }))
 

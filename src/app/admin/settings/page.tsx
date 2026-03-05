@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 import AgencyBackfill from './AgencyBackfill'
 
 interface Settings {
@@ -32,6 +31,14 @@ const DEFAULT: Settings = {
   cron_enabled: true,
 }
 
+const glassSection: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.025)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  border: '1px solid rgba(255,255,255,0.07)',
+  borderRadius: '1rem',
+}
+
 export default function SettingsPage() {
   const [form, setForm]       = useState<Settings>(DEFAULT)
   const [loading, setLoading] = useState(true)
@@ -59,8 +66,6 @@ export default function SettingsPage() {
     e.preventDefault()
     setSaving(true)
     setError('')
-    // Send only the fields this form manages — never include metric_config here
-    // so saving branding/benchmarks never overwrites the Metric Mapping settings.
     const body = {
       agency_name:             form.agency_name,
       agency_logo_url:         form.agency_logo_url,
@@ -110,10 +115,10 @@ export default function SettingsPage() {
     <div className="max-w-xl">
       <h1 className="text-lg font-semibold text-white mb-6">Agency Settings</h1>
 
-      <form onSubmit={handleSave} className="space-y-6">
+      <form onSubmit={handleSave} className="space-y-4">
 
         {/* Branding */}
-        <section className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+        <section style={glassSection} className="p-6 space-y-4">
           <h2 className="text-sm font-semibold text-slate-200 mb-1">Branding</h2>
 
           <Field label="Agency Name" hint="Shown in the admin header">
@@ -136,7 +141,7 @@ export default function SettingsPage() {
         </section>
 
         {/* Platform Connections */}
-        <section className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-5">
+        <section style={glassSection} className="p-6 space-y-5">
           <div>
             <h2 className="text-sm font-semibold text-slate-200">Platform Connections</h2>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -151,7 +156,6 @@ export default function SettingsPage() {
               <span className="text-sm font-medium text-slate-300">Meta Ads</span>
             </div>
 
-            {/* Connection status */}
             <div className="flex items-center gap-3">
               {form.meta_connected ? (
                 <span className="text-xs text-emerald-400">
@@ -177,7 +181,8 @@ export default function SettingsPage() {
                   type="button"
                   onClick={handleMetaSync}
                   disabled={syncing}
-                  className="text-sm border border-[#1e2a40] text-slate-400 hover:text-slate-300 hover:border-[#2a3a54] font-medium px-4 py-2 rounded-lg disabled:opacity-40 transition-colors"
+                  className="text-sm text-slate-400 hover:text-slate-300 font-medium px-4 py-2 rounded-lg disabled:opacity-40 transition-colors"
+                  style={{ border: '1px solid rgba(255,255,255,0.08)' }}
                 >
                   {syncing ? 'Syncing…' : 'Sync Accounts'}
                 </button>
@@ -193,7 +198,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Google */}
-          <div className="space-y-2 pt-2 border-t border-[#1e2a40]">
+          <div className="space-y-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
               <span className="text-sm font-medium text-slate-300">Google Ads</span>
@@ -207,7 +212,7 @@ export default function SettingsPage() {
         </section>
 
         {/* Benchmarks */}
-        <section className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+        <section style={glassSection} className="p-6 space-y-4">
           <div className="mb-1">
             <h2 className="text-sm font-semibold text-slate-200">Performance Benchmarks</h2>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -280,26 +285,8 @@ export default function SettingsPage() {
         </div>
       </form>
 
-      {/* Metric Mapping — link to dedicated page */}
-      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-200">Metric Mapping</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Configure how Meta and Google data maps to dashboard metrics (conversions, labels, per-client overrides).
-            </p>
-          </div>
-          <Link
-            href="/admin/metric-mapping"
-            className="text-sm border border-[#1e2a40] text-slate-400 hover:text-slate-200 hover:border-[#2a3a54] px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
-          >
-            Configure →
-          </Link>
-        </div>
-      </section>
-
       {/* Historical Data Backfill */}
-      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+      <section style={glassSection} className="mt-4 p-6 space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-slate-200">Historical Data Backfill</h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -312,7 +299,7 @@ export default function SettingsPage() {
       </section>
 
       {/* Sync Schedule */}
-      <section className="mt-6 bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 space-y-4">
+      <section style={glassSection} className="mt-4 p-6 space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-slate-200">Sync Schedule</h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -321,7 +308,6 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-3">
-          {/* Toggle */}
           <label className="flex items-center gap-3 cursor-pointer">
             <button
               type="button"
@@ -329,7 +315,7 @@ export default function SettingsPage() {
               aria-checked={form.cron_enabled}
               onClick={() => toggleCron(!form.cron_enabled)}
               className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                form.cron_enabled ? 'bg-blue-600' : 'bg-[#1e2a40]'
+                form.cron_enabled ? 'bg-blue-600' : 'bg-white/[0.06]'
               }`}
             >
               <span
@@ -358,7 +344,7 @@ export default function SettingsPage() {
 }
 
 const inputCls =
-  'w-full bg-[#080c18] border border-[#1e2a40] text-slate-200 placeholder-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-colors'
+  'w-full bg-black/40 border border-white/10 text-slate-200 placeholder-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-colors'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (

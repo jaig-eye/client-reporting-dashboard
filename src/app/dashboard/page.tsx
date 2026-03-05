@@ -106,8 +106,8 @@ export default async function DashboardPage({
     })
   }
 
-  const currentMetrics = remapMetrics(rawCurrentMetrics)
-  const priorMetrics   = remapMetrics(rawPriorMetrics)
+  const currentMetrics = remapMetrics(rawCurrentMetrics).filter(r => !campaignConfigMap.get(r.campaign_id)?.hidden)
+  const priorMetrics   = remapMetrics(rawPriorMetrics).filter(r => !campaignConfigMap.get(r.campaign_id)?.hidden)
 
   const current    = summarizeMetrics(currentMetrics)
   const prior      = summarizeMetrics(priorMetrics)

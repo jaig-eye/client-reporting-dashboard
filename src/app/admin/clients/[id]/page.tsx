@@ -1,10 +1,9 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Client, AdAccount, SyncLog, AgencySettings, MetricConfig } from '@/lib/types'
+import type { Client, AdAccount, SyncLog, AgencySettings } from '@/lib/types'
 import Link from 'next/link'
 import AccountMapper from './AccountMapper'
 import ClientBenchmarks from './ClientBenchmarks'
-import ClientMetricConfig from './ClientMetricConfig'
 import CampaignConfigurator from './CampaignConfigurator'
 import SyncButtons from './SyncButtons'
 
@@ -80,7 +79,7 @@ export default async function ClientDetailPage({
       )}
 
       {/* Step 1 — Map Ad Accounts */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
         <div className="flex items-center gap-2 mb-1">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
             isConnected ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'
@@ -112,7 +111,7 @@ export default async function ClientDetailPage({
       </div>
 
       {/* Step 2 — Sync Data */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
         <div className="flex items-center gap-2 mb-4">
           <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</div>
           <h2 className="font-semibold text-slate-100">Sync Data</h2>
@@ -135,7 +134,7 @@ export default async function ClientDetailPage({
       </div>
 
       {/* Performance Benchmarks */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
         <h2 className="font-semibold text-slate-100 mb-1">Performance Benchmarks</h2>
         <p className="text-xs text-slate-500 mb-4">
           Override global benchmark targets for this client&apos;s Efficiency Score.
@@ -154,7 +153,7 @@ export default async function ClientDetailPage({
       </div>
 
       {/* Campaign Goal Configuration */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
+      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
         <h2 className="font-semibold text-slate-100 mb-1">Campaign Goals</h2>
         <p className="text-xs text-slate-500 mb-4">
           Assign each campaign a goal type (Lead Gen, Ecommerce, Calls, etc.) and optionally override
@@ -167,22 +166,8 @@ export default async function ClientDetailPage({
         />
       </div>
 
-      {/* Metric Mapping — per-client override */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6 mb-4">
-        <h2 className="font-semibold text-slate-100 mb-1">Metric Mapping</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          Override the global Meta conversion action for this client (e.g. phone calls, form leads, purchases).
-        </p>
-        <ClientMetricConfig
-          clientId={id}
-          current={client.metric_config ?? {}}
-          globalConfig={globalSettings.metric_config ?? {}}
-          discoveredMetaActions={discoveredMetaActions}
-        />
-      </div>
-
       {/* Step 3 — GHL Link */}
-      <div className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-6">
+      <div className="rounded-2xl p-6 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
         <div className="flex items-center gap-2 mb-4">
           <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">3</div>
           <h2 className="font-semibold text-slate-100">Add to GHL Sidebar</h2>
@@ -190,7 +175,7 @@ export default async function ClientDetailPage({
         <p className="text-sm text-slate-500 mb-3">
           Copy this link and paste it as a Custom Menu Link in the client&apos;s GHL sub-account.
         </p>
-        <div className="flex items-center gap-2 bg-[#080c18] border border-[#1e2a40] rounded-lg px-3 py-3">
+        <div className="flex items-center gap-2 rounded-lg px-3 py-3" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <code className="text-xs text-slate-400 font-mono break-all flex-1">{dashUrl}</code>
         </div>
         <p className="text-xs text-slate-600 mt-2">

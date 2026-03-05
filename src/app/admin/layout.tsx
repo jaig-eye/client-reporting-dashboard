@@ -4,8 +4,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const settings = await getAgencySettings()
 
   return (
-    <div className="min-h-screen bg-[#080c18]">
-      <header className="bg-[#0f1525] border-b border-[#1e2a40]">
+    <div className="min-h-screen" style={{ background: '#04040a' }}>
+      <header className="sticky top-0 z-10 border-b" style={{
+        background: 'rgba(4,4,10,0.85)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderColor: 'rgba(255,255,255,0.06)',
+      }}>
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
@@ -17,9 +22,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <nav className="flex gap-4">
               <a href="/admin" className="text-sm text-slate-400 hover:text-white transition-colors">
                 Clients
-              </a>
-              <a href="/admin/metric-mapping" className="text-sm text-slate-400 hover:text-white transition-colors">
-                Metric Mapping
               </a>
               <a href="/admin/settings" className="text-sm text-slate-400 hover:text-white transition-colors">
                 Settings

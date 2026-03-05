@@ -2,13 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { GOAL_TYPE_OPTIONS, GOAL_TYPE_DEFS, detectGoalType } from '@/lib/goal-types'
+import { GOAL_TYPE_OPTIONS, GOAL_TYPE_DEFS } from '@/lib/goal-types'
 import { buildMetaActionOptions } from '@/lib/metric-presets'
 import type { GoalType, CampaignSettings } from '@/lib/types'
 
 interface CampaignRow extends Omit<CampaignSettings, 'id' | 'created_at' | 'updated_at'> {
   id?: string
-  /** True if this row came from metrics but has no settings row yet */
   isNew?: boolean
   dirty?: boolean
 }
@@ -16,6 +15,23 @@ interface CampaignRow extends Omit<CampaignSettings, 'id' | 'created_at' | 'upda
 interface Props {
   clientId: string
   discoveredMetaActions: string[]
+}
+
+function EyeIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  )
+}
+
+function EyeOffIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+    </svg>
+  )
 }
 
 export default function CampaignConfigurator({ clientId, discoveredMetaActions }: Props) {
@@ -63,6 +79,7 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
         goal_type: r.goal_type,
         meta_conversion_action: r.meta_conversion_action ?? null,
         conversion_label: r.conversion_label ?? null,
+        hidden: r.hidden ?? false,
       }))),
     })
     const data = await res.json()
@@ -80,14 +97,14 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
   const selectCls = 'bg-black/40 border border-white/10 text-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition-colors w-full'
   const inputCls  = 'bg-black/40 border border-white/10 text-slate-200 placeholder-slate-600 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition-colors w-full'
 
-  const dirtyCount = rows.filter(r => r.dirty || r.isNew).length
+  const dirtyCount  = rows.filter(r => r.dirty || r.isNew).length
+  const hiddenCount = rows.filter(r => r.hidden).length
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        Assign a goal type to each campaign. Goal types control which metrics are shown on the dashboard
-        (ROAS for purchases, CPL for leads, etc.) and how campaigns are grouped in the summary cards.
-        Goal type is auto-suggested from the campaign name — review and override as needed.
+        Assign a goal type to each campaign. Use the eye icon to hide campaigns from the client dashboard
+        (e.g. internal test or fraud campaigns). Goal type is auto-suggested from the campaign name.
       </p>
 
       {loading && <p className="text-xs text-slate-600 py-4 text-center">Loading campaigns…</p>}
@@ -97,7 +114,7 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
 
       {rows.length > 0 && (
         <div className="overflow-x-auto -mx-2">
-          <table className="w-full text-xs min-w-[700px]">
+          <table className="w-full text-xs min-w-[760px]">
             <thead>
               <tr className="border-b border-white/[0.06]">
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-8">&nbsp;</th>
@@ -105,14 +122,17 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[160px]">Goal Type</th>
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[220px]">Meta Conversion Action</th>
                 <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-[120px]">Label Override</th>
+                <th className="text-center py-2 px-3 text-slate-500 font-semibold uppercase tracking-wide w-14">Hide</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
               {rows.map((row, i) => {
                 const def = GOAL_TYPE_DEFS[row.goal_type]
-                const autoSuggested = row.isNew
                 return (
-                  <tr key={`${row.platform}::${row.campaign_id}`} className="hover:bg-white/[0.02] transition-colors">
+                  <tr
+                    key={`${row.platform}::${row.campaign_id}`}
+                    className={`transition-colors ${row.hidden ? 'opacity-40' : 'hover:bg-white/[0.02]'}`}
+                  >
                     <td className="py-2 px-3">
                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                         row.platform === 'meta'
@@ -124,9 +144,7 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                     </td>
                     <td className="py-2 px-3 text-slate-300 max-w-[220px]">
                       <span className="truncate block" title={row.campaign_name}>{row.campaign_name}</span>
-                      {autoSuggested && (
-                        <span className="text-slate-600 italic">auto-suggested</span>
-                      )}
+                      {row.isNew && <span className="text-slate-600 italic">auto-suggested</span>}
                     </td>
                     <td className="py-2 px-3">
                       <select
@@ -168,6 +186,20 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
                         className={inputCls}
                       />
                     </td>
+                    <td className="py-2 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => update(i, { hidden: !row.hidden })}
+                        title={row.hidden ? 'Hidden from dashboard — click to show' : 'Visible on dashboard — click to hide'}
+                        className={`inline-flex items-center justify-center rounded p-1 transition-colors ${
+                          row.hidden
+                            ? 'text-red-400 hover:text-red-300 bg-red-500/10'
+                            : 'text-slate-600 hover:text-slate-400 hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        {row.hidden ? <EyeOffIcon /> : <EyeIcon />}
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -187,7 +219,10 @@ export default function CampaignConfigurator({ clientId, discoveredMetaActions }
           >
             {saving ? 'Saving…' : `Save${dirtyCount > 0 ? ` (${dirtyCount} changed)` : ''}`}
           </button>
-          {saved && <span className="text-xs text-emerald-400">Saved — dashboard will update immediately</span>}
+          {saved && <span className="text-xs text-emerald-400">Saved</span>}
+          {hiddenCount > 0 && (
+            <span className="text-xs text-slate-600">{hiddenCount} campaign{hiddenCount !== 1 ? 's' : ''} hidden from dashboard</span>
+          )}
         </div>
       )}
     </div>

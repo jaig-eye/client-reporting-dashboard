@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS campaign_settings (
   meta_conversion_action TEXT,
   -- Display label override (e.g. "Leads", "Purchases", "Phone Calls")
   conversion_label      TEXT,
+  -- When true the campaign is excluded from the client dashboard entirely
+  hidden                BOOLEAN       NOT NULL DEFAULT FALSE,
   created_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   updated_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   UNIQUE(client_id, platform, campaign_id)

@@ -139,6 +139,7 @@ export interface CampaignSettings {
   goal_type: GoalType
   meta_conversion_action?: string | null
   conversion_label?: string | null
+  hidden?: boolean
   created_at: string
   updated_at: string
 }

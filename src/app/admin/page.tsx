@@ -42,7 +42,7 @@ export default async function AdminPage() {
           const google       = accts.filter(a => a.platform === 'google')
           const meta         = accts.filter(a => a.platform === 'meta')
           return (
-            <div key={client.id} className="bg-[#0f1525] border border-[#1e2a40] rounded-xl p-5">
+            <div key={client.id} className="rounded-2xl p-5 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-2">
@@ -57,14 +57,14 @@ export default async function AdminPage() {
                       <span className="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full">No accounts linked</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 bg-[#080c18] border border-[#1e2a40] rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
                     <span className="text-xs text-slate-500 font-mono truncate flex-1">{dashUrl}</span>
                     <CopyButton text={dashUrl} />
                   </div>
                 </div>
                 <Link
                   href={`/admin/clients/${client.id}`}
-                  className="text-sm border border-[#1e2a40] text-slate-400 px-3 py-1.5 rounded-lg hover:border-[#2a3a54] hover:text-slate-200 transition-colors whitespace-nowrap flex-shrink-0"
+                  className="text-sm text-slate-400 px-3 py-1.5 rounded-lg hover:text-slate-200 transition-colors whitespace-nowrap flex-shrink-0" style={{ border: '1px solid rgba(255,255,255,0.08)' }}
                 >
                   Manage →
                 </Link>
