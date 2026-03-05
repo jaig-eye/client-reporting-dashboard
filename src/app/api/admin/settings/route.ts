@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 
@@ -72,6 +73,11 @@ export async function PUT(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Invalidate Next.js Data Cache so server components always serve fresh DB data
+  revalidatePath('/admin/metric-mapping')
+  revalidatePath('/admin/settings')
+  revalidatePath('/admin')
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { meta_access_token, meta_system_user_token, ...safe } = data as Record<string, unknown>

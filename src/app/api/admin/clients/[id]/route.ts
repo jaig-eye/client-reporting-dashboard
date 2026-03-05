@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 
@@ -38,5 +39,11 @@ export async function PATCH(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Invalidate Next.js Data Cache so the client page and metric-mapping always serve fresh DB data
+  revalidatePath(`/admin/clients/${id}`)
+  revalidatePath('/admin/metric-mapping')
+  revalidatePath('/admin')
+
   return NextResponse.json(data)
 }
