@@ -26,11 +26,14 @@ export async function GET(
   const { id } = await params
   const db = createAdminClient()
 
-  // get_client_campaigns uses SELECT DISTINCT ON so it returns exactly one row per
-  // (platform, campaign_id) regardless of how many daily metric rows exist.
+  // Fetch only the 3 lightweight columns we need; override PostgREST's default 1000-row
+  // cap with limit(10000). Deduplication happens in JS below.
   const [settingsResult, campaignsResult] = await Promise.all([
     db.from('campaign_settings').select('*').eq('client_id', id).order('campaign_name'),
-    db.rpc('get_client_campaigns', { p_client_id: id }),
+    db.from('campaign_metrics')
+      .select('campaign_id,campaign_name,platform')
+      .eq('client_id', id)
+      .limit(10000),
   ])
 
   const settings = settingsResult.data ?? []
@@ -38,25 +41,26 @@ export async function GET(
   // Build a set of campaign_ids that already have settings
   const configured = new Set(settings.map(s => `${s.platform}::${s.campaign_id}`))
 
-  // Any campaigns returned by RPC that aren't in campaign_settings yet
+  // Deduplicate raw metric rows → one entry per (platform, campaign_id)
+  const seen = new Set<string>()
   const unsettled: typeof settings = []
   for (const row of ((campaignsResult.data ?? []) as { campaign_id: string; campaign_name: string; platform: string }[])) {
     const key = `${row.platform}::${row.campaign_id}`
-    if (!configured.has(key)) {
-      unsettled.push({
-        id: '',
-        client_id: id,
-        platform: row.platform,
-        campaign_id: row.campaign_id,
-        campaign_name: row.campaign_name,
-        goal_type: detectGoalType(row.campaign_name),
-        meta_conversion_action: null,
-        conversion_label: null,
-        hidden: false,
-        created_at: '',
-        updated_at: '',
-      })
-    }
+    if (configured.has(key) || seen.has(key)) continue
+    seen.add(key)
+    unsettled.push({
+      id: '',
+      client_id: id,
+      platform: row.platform,
+      campaign_id: row.campaign_id,
+      campaign_name: row.campaign_name,
+      goal_type: detectGoalType(row.campaign_name),
+      meta_conversion_action: null,
+      conversion_label: null,
+      hidden: false,
+      created_at: '',
+      updated_at: '',
+    })
   }
 
   return NextResponse.json({ settings, unsettled })
