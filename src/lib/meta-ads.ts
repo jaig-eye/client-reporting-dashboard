@@ -101,7 +101,7 @@ export async function fetchMetaCampaignMetrics(
   base.searchParams.set('level', 'campaign')
   // Always fetch `actions` for discovery + specific action filtering.
   // `results` is also fetched as the default when conversionAction === 'results'.
-  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,results,actions')
+  base.searchParams.set('fields', 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,results,actions,action_values')
   base.searchParams.set('time_range', JSON.stringify({ since: dateStart, until: dateEnd }))
   base.searchParams.set('time_increment', '1')
   base.searchParams.set('limit', '500')
@@ -118,7 +118,15 @@ export async function fetchMetaCampaignMetrics(
     const rows = (data.data || []) as Record<string, unknown>[]
 
     for (const day of rows) {
-      const actions = (day.actions || []) as Record<string, unknown>[]
+      const actions      = (day.actions       || []) as Record<string, unknown>[]
+      const actionValues = (day.action_values || []) as Record<string, unknown>[]
+
+      // Build a revenue map from action_values (monetary value per action_type)
+      const revenueByType = new Map<string, number>()
+      for (const av of actionValues) {
+        const t = String(av.action_type || '')
+        if (t) revenueByType.set(t, parseFloat(String(av.value || '0')))
+      }
 
       // Accumulate all seen action types for discovery
       for (const a of actions) {
@@ -133,6 +141,7 @@ export async function fetchMetaCampaignMetrics(
       const cpm         = parseFloat(String(day.cpm         || '0'))
 
       let resultCount = 0
+      let conversionRevenue = 0
 
       if (conversionAction === 'results') {
         // Use Meta's campaign-primary "Results" field (objective-specific)
@@ -143,11 +152,14 @@ export async function fetchMetaCampaignMetrics(
         } else if (rawResults !== undefined && rawResults !== null) {
           resultCount = parseFloat(String(rawResults))
         }
+        // Revenue not available via results field
       } else {
         // Filter actions to the admin-configured action_type
         resultCount = actions
           .filter(a => String(a.action_type) === conversionAction)
           .reduce((s, a) => s + parseFloat(String(a.value || '0')), 0)
+        // Revenue for this action (e.g. purchase value for ROAS)
+        conversionRevenue = revenueByType.get(conversionAction) || 0
       }
 
       rows_out.push({
@@ -158,15 +170,17 @@ export async function fetchMetaCampaignMetrics(
         impressions,
         clicks,
         conversions:      resultCount,
-        conversion_value: 0,  // no revenue tracking; CPL computed from spend/conversions
-        roas:             0,  // not applicable for lead-gen
+        conversion_value: conversionRevenue,
+        roas:             spend > 0 && conversionRevenue > 0 ? conversionRevenue / spend : 0,
         ctr:              ctr / 100,
         cpc:              clicks > 0 ? spend / clicks : 0,
         cpm,
-        // Raw actions stored so the admin can remap conversions without re-syncing
+        // Raw actions stored so the admin can remap without re-syncing.
+        // Each entry includes count (value) and revenue (from action_values).
         rawActions: actions.map(a => ({
           action_type: String(a.action_type || ''),
           value:       String(a.value       || '0'),
+          revenue:     String(revenueByType.get(String(a.action_type || '')) || '0'),
         })),
       })
     }
@@ -191,5 +205,5 @@ interface MetaMetricRow {
   ctr: number
   cpc: number
   cpm: number
-  rawActions: { action_type: string; value: string }[]
+  rawActions: { action_type: string; value: string; revenue: string }[]
 }
