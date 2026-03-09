@@ -1,10 +1,19 @@
-import type { CampaignMetric, MetricSummary, DailyMetric } from './types'
+import type { MetricSummary, DailyMetric } from './types'
 
-export function summarizeMetrics(rows: CampaignMetric[]): MetricSummary {
-  const spend = rows.reduce((s, r) => s + Number(r.spend), 0)
-  const impressions = rows.reduce((s, r) => s + Number(r.impressions), 0)
-  const clicks = rows.reduce((s, r) => s + Number(r.clicks), 0)
-  const conversions = rows.reduce((s, r) => s + Number(r.conversions), 0)
+interface MetricRow {
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversion_value: number
+  date?: string
+}
+
+export function summarizeMetrics(rows: MetricRow[]): MetricSummary {
+  const spend           = rows.reduce((s, r) => s + Number(r.spend), 0)
+  const impressions     = rows.reduce((s, r) => s + Number(r.impressions), 0)
+  const clicks          = rows.reduce((s, r) => s + Number(r.clicks), 0)
+  const conversions     = rows.reduce((s, r) => s + Number(r.conversions), 0)
   const conversionValue = rows.reduce((s, r) => s + Number(r.conversion_value), 0)
 
   return {
@@ -14,21 +23,22 @@ export function summarizeMetrics(rows: CampaignMetric[]): MetricSummary {
     conversions,
     conversionValue,
     roas: spend > 0 ? conversionValue / spend : 0,
-    ctr: impressions > 0 ? clicks / impressions : 0,
-    cpc: clicks > 0 ? spend / clicks : 0,
-    cpl: conversions > 0 ? spend / conversions : 0,
+    ctr:  impressions > 0 ? clicks / impressions : 0,
+    cpc:  clicks > 0 ? spend / clicks : 0,
+    cpl:  conversions > 0 ? spend / conversions : 0,
   }
 }
 
-export function getDailyTrend(rows: CampaignMetric[]): DailyMetric[] {
+export function getDailyTrend(rows: MetricRow[]): DailyMetric[] {
   const byDate: Record<string, { spend: number; conversions: number; clicks: number; conversionValue: number }> = {}
 
   for (const row of rows) {
-    const date = String(row.date).split('T')[0]
+    const date = String(row.date ?? '').split('T')[0]
+    if (!date) continue
     if (!byDate[date]) byDate[date] = { spend: 0, conversions: 0, clicks: 0, conversionValue: 0 }
-    byDate[date].spend += Number(row.spend)
-    byDate[date].conversions += Number(row.conversions)
-    byDate[date].clicks += Number(row.clicks)
+    byDate[date].spend           += Number(row.spend)
+    byDate[date].conversions     += Number(row.conversions)
+    byDate[date].clicks          += Number(row.clicks)
     byDate[date].conversionValue += Number(row.conversion_value)
   }
 
@@ -36,10 +46,10 @@ export function getDailyTrend(rows: CampaignMetric[]): DailyMetric[] {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, d]) => ({
       date,
-      spend: d.spend,
+      spend:       d.spend,
       conversions: d.conversions,
-      clicks: d.clicks,
-      roas: d.spend > 0 ? d.conversionValue / d.spend : 0,
+      clicks:      d.clicks,
+      roas:        d.spend > 0 ? d.conversionValue / d.spend : 0,
     }))
 }
 
@@ -48,7 +58,7 @@ export function calcDelta(current: number, prior: number): number {
   return ((current - prior) / Math.abs(prior)) * 100
 }
 
-export function fmt$ (n: number): string {
+export function fmt$(n: number): string {
   if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }

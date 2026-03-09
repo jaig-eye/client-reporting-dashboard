@@ -1,254 +1,377 @@
-import { createAdminClient } from './supabase/server'
-import { fetchGoogleCampaignMetrics, refreshGoogleToken } from './google-ads'
-import { fetchMetaCampaignMetrics } from './meta-ads'
-import { detectGoalType } from './goal-types'
-import type { AdAccount, MetricConfig, MetricRow } from './types'
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync Engine
+//
+// Orchestrates data ingestion across all connector types.
+// Each client_connection is synced independently using its connector's adapter.
+// Source data is written to platform-specific tables (google_ads_metrics, meta_ads_metrics)
+// — never merged at ingest time.
+//
+// Sync types:
+//   backfill    — full historical pull when a connection is first created
+//   incremental — daily catch-up (last INCREMENTAL_DAYS days to catch late conversions)
+//   manual      — admin-triggered, custom date range
+// ─────────────────────────────────────────────────────────────────────────────
 
-// BACKFILL_DAYS: used when an account is first connected — pulls full history
+import { createAdminClient } from './supabase/server'
+import { getConnectorAdapter } from './connectors/registry'
+import type { ClientConnection, Connector, SyncJobType } from './types'
+import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
+
+/** Days of history pulled on first connection (approx 2 years). */
 export const BACKFILL_DAYS = 730
-// INCREMENTAL_DAYS: used by the daily cron — re-syncs last 3 days to capture
-// late-arriving conversions (Google Ads conversions can update up to 30 days back)
-export const INCREMENTAL_DAYS = 3
 
 /**
- * Sync campaign metrics for a client.
+ * Days re-synced on each incremental run.
+ * Google Ads and Meta both update conversions retroactively (up to 30 days back),
+ * so we re-pull recent days to capture late-arriving conversion data.
+ */
+export const INCREMENTAL_DAYS = 3
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main sync entry points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sync all active connections for a client.
+ * Called by the admin panel sync buttons and the daily cron job.
  *
- * @param clientId   - UUID of the client to sync
- * @param days       - How many days back to fetch (inclusive of today)
- * @param accountId  - Optional: limit sync to a single ad_account.id (used for backfill
- *                     on first connection so we don't re-sync already-synced accounts)
+ * @param clientId  - UUID of the client to sync
+ * @param jobType   - 'backfill', 'incremental', or 'manual'
+ * @param days      - Number of days back to sync (uses INCREMENTAL_DAYS if not specified)
+ * @param connectionId - If provided, only syncs this specific connection
+ * @param dateFrom  - ISO date string override (used for manual syncs)
+ * @param dateTo    - ISO date string override (used for manual syncs)
+ * @returns Total number of records synced across all connections
  */
 export async function syncClient(
   clientId: string,
+  jobType: SyncJobType = 'incremental',
   days = INCREMENTAL_DAYS,
-  accountId?: string,
-  dateStartOverride?: string,
-  dateEndOverride?: string
+  connectionId?: string,
+  dateFrom?: string,
+  dateTo?: string
 ): Promise<number> {
   const db = createAdminClient()
 
-  // Load metric config and Meta fallback token in one round-trip.
-  // Client metric_config overrides global agency metric_config.
-  const [{ data: agencyRow }, { data: clientRow }] = await Promise.all([
-    db.from('agency_settings').select('metric_config, meta_access_token').single(),
-    db.from('clients').select('metric_config').eq('id', clientId).single(),
-  ])
-  const metricConfig: MetricConfig = {
-    ...(agencyRow?.metric_config as MetricConfig ?? {}),
-    ...(clientRow?.metric_config as MetricConfig ?? {}),
-  }
-  const agencyMetaToken: string = (agencyRow as Record<string, unknown>)?.meta_access_token as string || ''
-  const metaConversionAction = metricConfig.meta_conversion_action ?? 'results'
-
+  // Load connections with their connector details in one query
   let query = db
-    .from('ad_accounts')
-    .select('*')
+    .from('client_connections')
+    .select('*, connector:connectors(*)')
     .eq('client_id', clientId)
+    .eq('status', 'active')
 
-  if (accountId) query = query.eq('id', accountId)
+  if (connectionId) query = query.eq('id', connectionId)
 
-  const { data: accounts } = await query as { data: AdAccount[] | null }
-  if (!accounts?.length) return 0
-
-  const fmt = (d: Date) => d.toISOString().split('T')[0]
-  let dateStart: string
-  let dateEnd: string
-
-  if (dateStartOverride && dateEndOverride) {
-    dateStart = dateStartOverride
-    dateEnd = dateEndOverride
-  } else {
-    // Always sync up to yesterday — today's data is incomplete mid-day
-    const toDate = new Date()
-    toDate.setDate(toDate.getDate() - 1)
-    const fromDate = new Date(toDate)
-    fromDate.setDate(fromDate.getDate() - (days - 1))
-    dateStart = fmt(fromDate)
-    dateEnd = fmt(toDate)
+  const { data: connections } = await query as {
+    data: (ClientConnection & { connector: Connector })[] | null
   }
+  if (!connections?.length) return 0
+
+  // Compute default date range if not overridden
+  const [resolvedFrom, resolvedTo] = dateFrom && dateTo
+    ? [dateFrom, dateTo]
+    : computeDateRange(jobType === 'backfill' ? BACKFILL_DAYS : days)
 
   let totalRecords = 0
 
-  for (const account of accounts) {
-    // Guard: never sync an account that isn't mapped to a client.
-    // The query already enforces client_id = clientId, but this is an
-    // explicit safety net for race conditions where an account is unmapped mid-run.
-    if (!account.client_id) continue
+  for (const connection of connections) {
+    const adapter = getConnectorAdapter(connection.connector.type)
+    if (!adapter) {
+      // Connector type exists in DB but has no implementation yet (e.g. Search Console)
+      continue
+    }
 
-    const logId = await startSyncLog(db, clientId, account.id, account.platform, dateStart, dateEnd)
+    const jobId = await startSyncJob(db, connection.id, clientId, jobType, resolvedFrom, resolvedTo)
 
     try {
-      let metrics: MetricRow[]
+      // Refresh auth tokens if the adapter supports it (e.g. Google OAuth)
+      let auth = connection.connector.auth
+      if (adapter.refreshAuth) {
+        const refreshed = await adapter.refreshAuth(auth)
+        if (refreshed) {
+          auth = refreshed
+          // Persist refreshed tokens so future syncs have a valid token
+          await db
+            .from('connectors')
+            .update({ auth: refreshed })
+            .eq('id', connection.connector_id)
+        }
+      }
 
-      if (account.platform === 'google') {
-        if (!account.access_token && !account.refresh_token) {
-          // MCC script account — no OAuth credentials stored server-side.
-          // Data is pushed by the MCC script; nothing to pull here.
-          await completeSyncLog(db, logId, 'success', 0)
-          continue
-        }
-        let token = account.access_token || ''
-        if (account.refresh_token && (!token || isTokenExpired(account.token_expires_at))) {
-          token = await refreshGoogleToken(account.refresh_token)
-          await db.from('ad_accounts').update({
-            access_token: token,
-            token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-          }).eq('id', account.id)
-        }
-        metrics = await fetchGoogleCampaignMetrics(account.account_id, token, dateStart, dateEnd)
-      } else {
-        // Meta: use per-account token if available, otherwise fall back to agency token
-        const metaToken = account.access_token || agencyMetaToken
-        if (!metaToken) {
-          await completeSyncLog(db, logId, 'success', 0)
-          continue
-        }
-        const result = await fetchMetaCampaignMetrics(
-          account.account_id,
-          metaToken,
-          dateStart,
-          dateEnd,
-          metaConversionAction
+      // Fetch source-specific metrics
+      const result = await adapter.fetchMetrics(
+        connection.external_id,
+        auth,
+        connection.connector.config,
+        resolvedFrom,
+        resolvedTo
+      )
+
+      if (result.error) {
+        await completeSyncJob(db, jobId, 'error', 0, result.error)
+        continue
+      }
+
+      // Write to the platform-specific table — no merging
+      let recordCount = 0
+      if (connection.connector.type === 'google_ads') {
+        recordCount = await upsertGoogleAdsMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as GoogleAdsRawRow[]
         )
-        metrics = result.rows
-
-        // Merge discovered action types with existing (accumulate over time)
-        if (result.discoveredActions.length > 0) {
-          const existing = Array.isArray(account.available_meta_actions)
-            ? (account.available_meta_actions as string[])
-            : []
-          const merged = Array.from(new Set([...existing, ...result.discoveredActions]))
-          await db.from('ad_accounts').update({ available_meta_actions: merged }).eq('id', account.id)
-        }
+      } else if (connection.connector.type === 'meta_ads') {
+        recordCount = await upsertMetaAdsMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as MetaAdsRawRow[],
+          result.discoveredActions ?? []
+        )
       }
 
-      if (metrics.length > 0) {
-        await upsertMetrics(db, clientId, account, metrics)
-        totalRecords += metrics.length
-      }
+      totalRecords += recordCount
 
-      await completeSyncLog(db, logId, 'success', metrics.length)
-    } catch (e) {
-      await completeSyncLog(db, logId, 'error', 0, String(e))
-      throw e
+      // Update last_synced_at on the connection
+      await db
+        .from('client_connections')
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq('id', connection.id)
+
+      await completeSyncJob(db, jobId, 'success', recordCount)
+    } catch (err) {
+      await completeSyncJob(db, jobId, 'error', 0, String(err))
+      throw err
     }
   }
 
   return totalRecords
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-specific upsert functions
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Safe batch upsert for campaign_metrics.
- *
- * On conflict (ad_account_id, campaign_id, date) the row is updated in place.
- * Only metric columns are written — structural columns (client_id, platform, etc.)
- * are set on INSERT and never overwritten on UPDATE, preserving data integrity.
- * Campaign name is only updated when the incoming value is non-empty, so a blank
- * response from a flaky API call never erases an existing name.
+ * Upsert Google Ads metrics into google_ads_metrics.
+ * On conflict (connection_id, campaign_id, date) the row is updated.
+ * Derived metrics (spend, roas, ctr, cpc, cpm) are computed from raw values.
  */
-export async function upsertMetrics(
+export async function upsertGoogleAdsMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GoogleAdsRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.campaign_id)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => {
+    const costMicros    = Number(r.cost_micros)    || 0
+    const spend         = costMicros / 1_000_000
+    const impressions   = Number(r.impressions)    || 0
+    const clicks        = Number(r.clicks)         || 0
+    const conversions   = Number(r.conversions)    || 0
+    const convValue     = Number(r.conversions_value) || 0
+    const vtc           = Number(r.view_through_conversions) || 0
+
+    return {
+      connection_id:            connectionId,
+      client_id:                clientId,
+      campaign_id:              String(r.campaign_id),
+      campaign_name:            String(r.campaign_name || ''),
+      campaign_status:          r.campaign_status || null,
+      campaign_type:            r.campaign_type   || null,
+      date:                     String(r.date).split('T')[0],
+      cost_micros:              costMicros,
+      spend,
+      impressions,
+      clicks,
+      conversions,
+      conversions_value:        convValue,
+      view_through_conversions: vtc,
+      // Derived metrics computed from source values
+      roas: spend > 0 ? convValue / spend : 0,
+      ctr:  impressions > 0 ? clicks / impressions : 0,
+      cpc:  clicks > 0 ? spend / clicks : 0,
+      cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
+    }
+  })
+
+  // Batch upsert in groups of 200 to avoid request size limits
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('google_ads_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,campaign_id,date',
+        ignoreDuplicates: false,
+      })
+  }
+
+  // Auto-discover campaigns for client_campaign_assignments
+  await upsertCampaignAssignments(db, clientId, 'google_ads', mapped)
+
+  return mapped.length
+}
+
+/**
+ * Upsert Meta Ads metrics into meta_ads_metrics.
+ * Stores the full actions + action_values JSONB for live conversion remapping.
+ * Derived conversions/roas are computed from Meta's "results" field (primary objective result).
+ */
+export async function upsertMetaAdsMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: MetaAdsRawRow[],
+  discoveredActions: string[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.campaign_id)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => {
+    const spend       = Number(r.spend)       || 0
+    const impressions = Number(r.impressions) || 0
+    const clicks      = Number(r.clicks)      || 0
+
+    // Default: use the total count across all actions as a proxy conversion count.
+    // The actual conversion logic happens at query time using the stored actions JSONB.
+    const conversionTotal = r.actions.reduce(
+      (sum, a) => sum + parseFloat(a.value || '0'),
+      0
+    )
+    const revenueTotal = r.action_values.reduce(
+      (sum, a) => sum + parseFloat(a.value || '0'),
+      0
+    )
+
+    return {
+      connection_id:     connectionId,
+      client_id:         clientId,
+      campaign_id:       String(r.campaign_id),
+      campaign_name:     String(r.campaign_name || ''),
+      objective:         r.objective || null,
+      date:              String(r.date).split('T')[0],
+      spend,
+      impressions,
+      clicks,
+      reach:             Number(r.reach)      || 0,
+      frequency:         Number(r.frequency)  || 0,
+      actions:           r.actions,
+      action_values:     r.action_values,
+      // Derived (approximate — will be remapped at query time)
+      conversions:       conversionTotal,
+      conversion_value:  revenueTotal,
+      roas:              spend > 0 && revenueTotal > 0 ? revenueTotal / spend : 0,
+      ctr:               impressions > 0 ? clicks / impressions : 0,
+      cpc:               clicks > 0 ? spend / clicks : 0,
+      cpm:               impressions > 0 ? (spend / impressions) * 1000 : 0,
+      // Accumulated action types for the conversion selector UI.
+      // Merged with existing discovered_actions on upsert.
+      discovered_actions: discoveredActions,
+    }
+  })
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('meta_ads_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,campaign_id,date',
+        ignoreDuplicates: false,
+      })
+  }
+
+  await upsertCampaignAssignments(db, clientId, 'meta_ads', mapped)
+
+  return mapped.length
+}
+
+/**
+ * Auto-insert newly discovered campaigns into client_campaign_assignments.
+ * Uses ON CONFLICT DO NOTHING to preserve any admin-set category or config.
+ */
+async function upsertCampaignAssignments(
   db: ReturnType<typeof createAdminClient>,
   clientId: string,
-  account: Pick<AdAccount, 'id' | 'platform'>,
-  metrics: MetricRow[]
+  source: string,
+  rows: { campaign_id: string; campaign_name: string }[]
 ) {
-  const rows = metrics
-    .filter(m => m.date && m.campaign_id) // guard: skip rows missing key fields
-    .map(m => {
-      const spend = Number(m.spend) || 0
-      const impressions = Number(m.impressions) || 0
-      const clicks = Number(m.clicks) || 0
-      const conversions = Number(m.conversions) || 0
-      const conversionValue = Number(m.conversion_value) || 0
-      return {
-        client_id: clientId,
-        ad_account_id: account.id,
-        platform: account.platform,
-        campaign_id: String(m.campaign_id),
-        campaign_name: String(m.campaign_name || ''),
-        date: String(m.date).split('T')[0], // normalise to YYYY-MM-DD
-        spend,
-        impressions,
-        clicks,
-        conversions,
-        conversion_value: conversionValue,
-        // Derived metrics — always recomputed from source values for consistency
-        roas: spend > 0 ? conversionValue / spend : 0,
-        ctr: impressions > 0 ? clicks / impressions : 0,
-        cpc: clicks > 0 ? spend / clicks : 0,
-        cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
-        // Store raw Meta actions for live remapping without re-sync
-        raw_meta_actions: account.platform === 'meta' ? (m.rawActions ?? null) : undefined,
-      }
-    })
-
-  // Upsert in batches of 200 rows
-  for (let i = 0; i < rows.length; i += 200) {
-    await db.from('campaign_metrics').upsert(
-      rows.slice(i, i + 200),
-      {
-        onConflict: 'ad_account_id,campaign_id,date',
-        ignoreDuplicates: false, // always update metrics on conflict
-      }
-    )
-  }
-
-  // Auto-populate campaign_settings for newly discovered campaigns.
-  // INSERT ... ON CONFLICT DO NOTHING preserves any admin overrides already set.
-  const uniqueCampaigns = Array.from(
-    new Map(rows.map(r => [`${r.platform}::${r.campaign_id}`, r])).values()
+  const unique = Array.from(
+    new Map(rows.map(r => [r.campaign_id, r])).values()
   )
-  const campaignSettingRows = uniqueCampaigns.map(r => ({
-    client_id: clientId,
-    platform: r.platform,
-    campaign_id: r.campaign_id,
+  const assignments = unique.map(r => ({
+    client_id:     clientId,
+    source,
+    campaign_id:   r.campaign_id,
     campaign_name: r.campaign_name,
-    goal_type: detectGoalType(r.campaign_name),
+    // category_id starts as NULL — admin assigns a category in the Campaign Categories UI
   }))
-  if (campaignSettingRows.length > 0) {
-    await db.from('campaign_settings').upsert(
-      campaignSettingRows,
-      { onConflict: 'client_id,platform,campaign_id', ignoreDuplicates: true }
-    )
+
+  if (assignments.length > 0) {
+    await db
+      .from('client_campaign_assignments')
+      .upsert(assignments, {
+        onConflict: 'client_id,source,campaign_id',
+        ignoreDuplicates: true, // never overwrite admin-set fields
+      })
   }
 }
 
-function isTokenExpired(expiresAt?: string): boolean {
-  if (!expiresAt) return true
-  return new Date(expiresAt).getTime() < Date.now() + 5 * 60 * 1000
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync job helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-async function startSyncLog(
+async function startSyncJob(
   db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
   clientId: string,
-  adAccountId: string,
-  platform: string,
-  dateStart: string,
-  dateEnd: string
+  jobType: SyncJobType,
+  dateFrom: string,
+  dateTo: string
 ): Promise<string> {
-  const { data } = await db.from('sync_logs').insert({
-    client_id: clientId,
-    ad_account_id: adAccountId,
-    platform,
-    status: 'running',
-    date_range_start: dateStart,
-    date_range_end: dateEnd,
-  }).select('id').single()
+  const { data } = await db
+    .from('sync_jobs')
+    .insert({
+      connection_id: connectionId,
+      client_id:     clientId,
+      job_type:      jobType,
+      status:        'running',
+      date_from:     dateFrom,
+      date_to:       dateTo,
+    })
+    .select('id')
+    .single()
   return data?.id || ''
 }
 
-async function completeSyncLog(
+async function completeSyncJob(
   db: ReturnType<typeof createAdminClient>,
-  logId: string,
+  jobId: string,
   status: 'success' | 'error',
   records: number,
   errorMessage?: string
 ) {
-  if (!logId) return
-  await db.from('sync_logs').update({
+  if (!jobId) return
+  await db.from('sync_jobs').update({
     status,
     records_synced: records,
-    error_message: errorMessage,
-    completed_at: new Date().toISOString(),
-  }).eq('id', logId)
+    error_message:  errorMessage,
+    completed_at:   new Date().toISOString(),
+  }).eq('id', jobId)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Date range helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns [dateFrom, dateTo] as YYYY-MM-DD strings for a trailing window ending yesterday. */
+function computeDateRange(days: number): [string, string] {
+  const fmt = (d: Date) => d.toISOString().split('T')[0]
+  // Sync up to yesterday — today's data is incomplete mid-day
+  const to = new Date()
+  to.setDate(to.getDate() - 1)
+  const from = new Date(to)
+  from.setDate(from.getDate() - (days - 1))
+  return [fmt(from), fmt(to)]
 }

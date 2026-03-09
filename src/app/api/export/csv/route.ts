@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import type { CampaignMetric, MetricConfig } from '@/lib/types'
+import type { GoogleAdsMetric, MetaAdsMetric } from '@/lib/types'
+import type { MetaAction } from '@/lib/connectors/types'
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -12,62 +13,50 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  // Fetch client + agency settings in parallel for metric config resolution
-  const [{ data: client }, { data: agencyRow }] = await Promise.all([
-    db.from('clients').select('id, metric_config').eq('dashboard_token', clientToken).single(),
-    db.from('agency_settings').select('metric_config').single(),
-  ])
+  const { data: client } = await db
+    .from('clients')
+    .select('id')
+    .eq('dashboard_token', clientToken)
+    .single()
 
-  if (!client) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Effective metric config: client overrides global
-  const effectiveConfig: MetricConfig = {
-    ...(agencyRow?.metric_config as MetricConfig ?? {}),
-    ...(client.metric_config as MetricConfig ?? {}),
-  }
-  const metaConversionAction = effectiveConfig.meta_conversion_action
+  if (!client) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const from = request.nextUrl.searchParams.get('from') || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
   const to   = request.nextUrl.searchParams.get('to')   || new Date().toISOString().split('T')[0]
 
-  const { data } = await db
-    .from('campaign_metrics')
-    .select('*')
-    .eq('client_id', client.id)
-    .gte('date', from)
-    .lte('date', to)
-    .order('date', { ascending: false }) as { data: CampaignMetric[] | null }
+  // Fetch from both source tables in parallel
+  const [googleRes, metaRes] = await Promise.all([
+    db.from('google_ads_metrics')
+      .select('date, campaign_name, spend, impressions, clicks, conversions, conversions_value, roas, ctr, cpc, cpm')
+      .eq('client_id', client.id)
+      .gte('date', from)
+      .lte('date', to)
+      .order('date', { ascending: false }),
+    db.from('meta_ads_metrics')
+      .select('date, campaign_name, spend, impressions, clicks, conversions, conversion_value, roas, ctr, cpc, cpm, actions, action_values')
+      .eq('client_id', client.id)
+      .gte('date', from)
+      .lte('date', to)
+      .order('date', { ascending: false }),
+  ])
 
-  const rows = data || []
+  const headers = ['date', 'source', 'campaign_name', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'roas', 'ctr', 'cpc', 'cpm']
 
-  // Apply the same live remapping logic as the dashboard so the export
-  // reflects the current metric mapping, not the stale sync-time value.
-  const remapped = rows.map(row => {
-    if (
-      row.platform !== 'meta' ||
-      !metaConversionAction ||
-      metaConversionAction === 'results' ||
-      !row.raw_meta_actions?.length
-    ) return row
+  const googleRows = ((googleRes.data ?? []) as GoogleAdsMetric[]).map(r => [
+    r.date, 'Google Ads', escapeCSV(r.campaign_name), r.spend.toFixed(2),
+    r.impressions, r.clicks, r.conversions.toFixed(2), r.conversions_value.toFixed(2),
+    r.roas.toFixed(4), r.ctr.toFixed(4), r.cpc.toFixed(2), r.cpm.toFixed(2),
+  ])
 
-    const match = row.raw_meta_actions.filter(a => a.action_type === metaConversionAction)
-    const conversions = match.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-    const conversion_value = match.reduce((s, a) => s + parseFloat(a.revenue || '0'), 0)
-    const roas = row.spend > 0 && conversion_value > 0 ? conversion_value / row.spend : 0
-    return { ...row, conversions, conversion_value, roas }
-  })
+  const metaRows = ((metaRes.data ?? []) as MetaAdsMetric[]).map(r => [
+    r.date, 'Meta Ads', escapeCSV(r.campaign_name), r.spend.toFixed(2),
+    r.impressions, r.clicks, r.conversions.toFixed(2), r.conversion_value.toFixed(2),
+    r.roas.toFixed(4), r.ctr.toFixed(4), r.cpc.toFixed(2), r.cpm.toFixed(2),
+  ])
 
-  const headers = ['date', 'platform', 'campaign_name', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'roas', 'ctr', 'cpc', 'cpm']
   const csv = [
     headers.join(','),
-    ...remapped.map(r =>
-      headers.map(h => {
-        const val = r[h as keyof CampaignMetric]
-        return typeof val === 'string' && val.includes(',') ? `"${val}"` : val
-      }).join(',')
-    ),
+    ...[...googleRows, ...metaRows].map(row => row.join(',')),
   ].join('\n')
 
   return new NextResponse(csv, {
@@ -76,4 +65,11 @@ export async function GET(request: NextRequest) {
       'Content-Disposition': `attachment; filename="report-${from}-${to}.csv"`,
     },
   })
+}
+
+function escapeCSV(val: string): string {
+  if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+    return `"${val.replace(/"/g, '""')}"`
+  }
+  return val
 }

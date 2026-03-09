@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 })
 
   try {
-    const records = await syncClient(clientId, parseInt(days) || 30, accountId || undefined, dateStart, dateEnd)
+    const records = await syncClient(clientId, 'manual', parseInt(days) || 30, accountId || undefined, dateStart, dateEnd)
     return NextResponse.json({ success: true, records })
   } catch (e) {
     console.error('Sync error:', e)

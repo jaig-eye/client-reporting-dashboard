@@ -1,22 +1,25 @@
 'use client'
 
+// Admin Login — /admin/login
+// Clean light-theme login screen.
+
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function AdminLoginPage() {
-  const router = useRouter()
+  const router   = useRouter()
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [error,   setError]     = useState('')
+  const [loading, setLoading]   = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
     const res = await fetch('/api/auth/admin-login', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body:    JSON.stringify({ password }),
     })
     if (res.ok) {
       router.push('/admin')
@@ -27,28 +30,54 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#080c18]">
-      <div className="bg-[#0f1525] rounded-2xl border border-[#1e2a40] p-8 w-full max-w-sm">
-        <h1 className="text-xl font-bold text-white mb-6">Admin Login</h1>
+    <div
+      className="min-h-screen flex items-center justify-center"
+      style={{ background: 'var(--bg-base)' }}
+    >
+      <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
+        {/* Logo placeholder */}
+        <div className="mb-6">
+          <div
+            className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-3"
+            style={{ background: 'var(--blue)' }}
+          >
+            A
+          </div>
+          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            Admin Login
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            Sign in to access the agency dashboard.
+          </p>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Password</label>
+            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+              Password
+            </label>
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
               autoFocus
-              className="w-full bg-[#080c18] border border-[#1e2a40] text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-colors"
+              className="input"
+              placeholder="Enter your password"
             />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+
+          {error && (
+            <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>
+          )}
+
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg text-sm disabled:opacity-50 transition-colors"
+            className="btn btn-primary w-full justify-center"
+            style={{ padding: '0.625rem' }}
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
       </div>

@@ -16,7 +16,7 @@ import type { DailyMetric } from '@/lib/types'
 export default function SpendChart({ data }: { data: DailyMetric[] }) {
   if (!data.length) {
     return (
-      <div className="h-64 flex items-center justify-center text-slate-600 text-sm">
+      <div className="h-64 flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
         No data for this period
       </div>
     )
@@ -32,12 +32,12 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <ComposedChart data={formatted} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e2a40" />
-        <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#475569' }} tickLine={false} axisLine={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+        <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} />
         <YAxis
           yAxisId="spend"
           orientation="left"
-          tick={{ fontSize: 11, fill: '#475569' }}
+          tick={{ fontSize: 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
           tickFormatter={v => `$${v}`}
@@ -45,7 +45,7 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
         <YAxis
           yAxisId="conversions"
           orientation="right"
-          tick={{ fontSize: 11, fill: '#475569' }}
+          tick={{ fontSize: 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
         />
@@ -57,19 +57,20 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
           contentStyle={{
             fontSize: 12,
             borderRadius: 8,
-            border: '1px solid #1e2a40',
-            backgroundColor: '#0f1525',
-            color: '#e2e8f0',
+            border: '1px solid #e5e7eb',
+            backgroundColor: '#ffffff',
+            color: '#111827',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
           }}
-          cursor={{ fill: '#ffffff08' }}
+          cursor={{ fill: 'rgba(0,0,0,0.03)' }}
         />
-        <Legend wrapperStyle={{ fontSize: 12, color: '#64748b' }} />
-        <Bar yAxisId="spend" dataKey="spend" fill="#3b82f6" opacity={0.85} radius={[3, 3, 0, 0]} name="Spend" />
+        <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
+        <Bar yAxisId="spend" dataKey="spend" fill="#2563eb" opacity={0.8} radius={[3, 3, 0, 0]} name="Spend" />
         <Line
           yAxisId="conversions"
           type="monotone"
           dataKey="conversions"
-          stroke="#10b981"
+          stroke="#059669"
           strokeWidth={2}
           dot={false}
           name="Conversions"

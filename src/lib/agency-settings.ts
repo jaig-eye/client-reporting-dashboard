@@ -11,7 +11,9 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   benchmark_conv_rate: 0.03,
   benchmark_cpm: 15.0,
   default_date_range_days: 30,
-  metric_config: {},
+  default_conversion_value: 0,
+  cron_enabled: true,
+  app_version: '',
   updated_at: '',
 }
 

@@ -1,41 +1,33 @@
-import { getAgencySettings } from '@/lib/agency-settings'
+// Admin Layout - Sidebar shell for all /admin/* pages
+
+import { createAdminClient } from '@/lib/supabase/server'
+import Sidebar from '@/components/admin/Sidebar'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const settings = await getAgencySettings()
+  const db = createAdminClient()
+
+  const [settingsResult, userResult] = await Promise.all([
+    db.from('agency_settings').select('agency_name, agency_logo_url, app_version').single(),
+    db.from('users').select('name, email, avatar_url').eq('role', 'admin').eq('is_active', true)
+      .order('created_at', { ascending: true }).limit(1).maybeSingle(),
+  ])
+
+  const settings = settingsResult.data ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0' }
+  const user = userResult.data ?? { name: 'Admin', email: '', avatar_url: null }
 
   return (
-    <div className="min-h-screen" style={{ background: '#04040a' }}>
-      <header className="sticky top-0 z-10 border-b" style={{
-        background: 'rgba(4,4,10,0.85)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderColor: 'rgba(255,255,255,0.06)',
-      }}>
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              {settings.agency_logo_url && (
-                <img src={settings.agency_logo_url} alt={settings.agency_name} className="h-5" />
-              )}
-              <span className="font-bold text-white">{settings.agency_name}</span>
-            </div>
-            <nav className="flex gap-4">
-              <a href="/admin" className="text-sm text-slate-400 hover:text-white transition-colors">
-                Clients
-              </a>
-              <a href="/admin/settings" className="text-sm text-slate-400 hover:text-white transition-colors">
-                Settings
-              </a>
-            </nav>
-          </div>
-          <form action="/api/auth/admin-logout" method="POST">
-            <button className="text-sm text-slate-600 hover:text-slate-400 transition-colors">
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      <main className="max-w-5xl mx-auto px-6 py-8">{children}</main>
+    <div className="flex min-h-screen" style={{ background: 'var(--bg-base)' }}>
+      <Sidebar
+        agencyName={settings.agency_name}
+        agencyLogoUrl={settings.agency_logo_url ?? undefined}
+        appVersion={(settings as Record<string, unknown>).app_version as string ?? '2.0.0'}
+        userName={user.name}
+        userEmail={user.email}
+        userAvatarUrl={user.avatar_url ?? undefined}
+      />
+      <div className="flex-1 min-w-0">
+        <main className="p-8 max-w-5xl">{children}</main>
+      </div>
     </div>
   )
 }

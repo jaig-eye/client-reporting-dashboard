@@ -1,12 +1,15 @@
+// Client Detail — /admin/clients/[id]
+// Full-width client management page with source-specific connection cards.
+// Each data source shows: connection status, account name, last sync, and actions.
+// No more single "Map Ad Accounts" form — each source has its own card.
+
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Client, AdAccount, SyncLog, AgencySettings } from '@/lib/types'
 import Link from 'next/link'
-import AccountMapper from './AccountMapper'
-import ClientBenchmarks from './ClientBenchmarks'
-import CampaignConfigurator from './CampaignConfigurator'
-import ClientMetricVisibility from './ClientMetricVisibility'
-import SyncButtons from './SyncButtons'
+import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
+import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
+import CopyButton from '@/components/CopyButton'
+import ClientSyncButton from './ClientSyncButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,179 +25,244 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientResult, mappedResult, unlinkedResult, recentSyncsResult, settingsResult] = await Promise.all([
+  const [clientRes, connectionsRes, connectorsRes, recentJobsRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
-    db.from('ad_accounts').select('id, platform, account_id, account_name, available_meta_actions').eq('client_id', id).order('platform').order('account_name'),
-    // All accounts not already mapped to THIS client — includes unlinked (client_id IS NULL)
-    // and accounts mapped to other clients, so the admin can pick any discovered account.
-    db.from('ad_accounts').select('id, platform, account_id, account_name').or(`client_id.is.null,client_id.neq.${id}`).order('platform').order('account_name'),
-    db.from('sync_logs').select('*').eq('client_id', id).order('started_at', { ascending: false }).limit(5),
-    db.from('agency_settings').select('benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,metric_config').single(),
+    db.from('client_connections')
+      .select('*, connector:connectors(*)')
+      .eq('client_id', id)
+      .order('created_at'),
+    db.from('connectors').select('*').order('created_at'),
+    db.from('sync_jobs')
+      .select('*')
+      .eq('client_id', id)
+      .order('started_at', { ascending: false })
+      .limit(10),
   ])
 
-  const client = clientResult.data as Client | null
+  const client = clientRes.data as Client | null
   if (!client) notFound()
 
-  const recentSyncs       = (recentSyncsResult.data ?? []) as SyncLog[]
-  const availableAccounts = (unlinkedResult.data ?? []) as AdAccount[]  // all not-yet-mapped-to-this-client
-  const mappedAccounts    = (mappedResult.data ?? []) as AdAccount[]
-  const globalSettings    = (settingsResult.data ?? {
-    benchmark_roas: 3, benchmark_ctr: 0.03, benchmark_cpc: 3,
-    benchmark_conv_rate: 0.03, benchmark_cpm: 15, metric_config: {},
-  }) as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate' | 'benchmark_cpm' | 'metric_config'>
+  const connections = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
+  const connectors  = (connectorsRes.data ?? []) as Connector[]
+  const recentJobs  = (recentJobsRes.data ?? []) as SyncJob[]
 
-  // Collect discovered Meta action types from this client's mapped accounts
-  const discoveredMetaActions = Array.from(new Set(
-    mappedAccounts
-      .filter(a => a.platform === 'meta')
-      .flatMap(a => Array.isArray(a.available_meta_actions) ? a.available_meta_actions as string[] : [])
-  ))
-
-  const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-  const googleAccounts = mappedAccounts.filter(a => a.platform === 'google')
-  const metaAccounts   = mappedAccounts.filter(a => a.platform === 'meta')
-  const isConnected    = googleAccounts.length > 0 || metaAccounts.length > 0
+  // Index connections by connector type for quick lookup
+  const connByType = new Map(connections.map(c => [c.connector.type, c]))
+  const dashUrl    = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
 
   return (
-    <div className="max-w-2xl">
-      <div className="flex items-center gap-3 mb-6">
-        <Link href="/admin" className="text-sm text-slate-500 hover:text-slate-300 transition-colors">← Clients</Link>
-        <span className="text-[#1e2a40]">/</span>
-        <h1 className="text-lg font-semibold text-white">{client.name}</h1>
+    <div>
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 mb-6 text-sm">
+        <Link href="/admin/clients" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
+          Clients
+        </Link>
+        <span style={{ color: 'var(--border)' }}>/</span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{client.name}</span>
       </div>
 
+      {/* Flash notices */}
       {sp.connected && (
-        <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm px-4 py-3 rounded-xl">
-          {sp.connected === 'google' ? 'Google Ads' : 'Meta'} connected successfully.
-        </div>
+        <Notice type="success">{sp.connected.replace(/_/g, ' ')} connected successfully.</Notice>
       )}
-      {sp.synced && (
-        <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm px-4 py-3 rounded-xl">
-          Sync complete.
+      {sp.synced && <Notice type="success">Sync complete.</Notice>}
+      {sp.error  && <Notice type="error">Error: {sp.error.replace(/_/g, ' ')}</Notice>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* ── Left: client info + dashboard link + recent jobs ── */}
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h2 className="section-title mb-3">Client Info</h2>
+            <div className="space-y-3 text-sm">
+              <InfoField label="Name"  value={client.name}  />
+              <InfoField label="Email" value={client.email} />
+              {client.slug && <InfoField label="Slug" value={client.slug} mono />}
+            </div>
+          </div>
+
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Dashboard Link</h2>
+            <p className="section-desc mb-3">Share with the client to access their reporting dashboard.</p>
+            <div
+              className="flex items-center gap-2 rounded-lg px-3 py-2.5"
+              style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
+            >
+              <span className="text-xs font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>
+                {dashUrl}
+              </span>
+              <CopyButton text={dashUrl} />
+            </div>
+          </div>
+
+          {recentJobs.length > 0 && (
+            <div className="card p-5">
+              <h2 className="section-title mb-3">Recent Syncs</h2>
+              <div className="space-y-2">
+                {recentJobs.slice(0, 5).map(job => (
+                  <div key={job.id} className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {new Date(job.started_at).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                      })}
+                    </span>
+                    <span className={`badge ${
+                      job.status === 'success' ? 'badge-green' :
+                      job.status === 'error'   ? 'badge-red'   : 'badge-amber'
+                    }`}>
+                      {job.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
-      {sp.error && (
-        <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-4 py-3 rounded-xl">
-          Error: {sp.error.replace(/_/g, ' ')}
+
+        {/* ── Right: source-specific connection cards ── */}
+        <div className="lg:col-span-2 space-y-4">
+          <h2 className="section-title">Data Sources</h2>
+
+          {ALL_CONNECTOR_TYPES.map(type => {
+            const def         = getConnectorDef(type)
+            const connection  = connByType.get(type)
+            const connector   = connectors.find(c => c.type === type)
+            const implemented = isConnectorImplemented(type)
+
+            // Determine the card state
+            const state =
+              !implemented ? 'coming-soon'
+              : !connector ? 'connector-missing'
+              : connection ? 'connected'
+              : 'not-connected'
+
+            return (
+              <div key={type} className="card p-5">
+                <div className="flex items-start justify-between gap-4">
+                  {/* Icon + description */}
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div
+                      className="h-9 w-9 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                      style={{ background: state === 'coming-soon' ? '#d1d5db' : def.color }}
+                    >
+                      {def.icon}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {def.label}
+                        </h3>
+                        <SourceBadge state={state} />
+                      </div>
+
+                      {state === 'connected' && connection && (
+                        <div className="text-xs space-y-0.5" style={{ color: 'var(--text-muted)' }}>
+                          <p>{connection.external_name ?? connection.external_id}</p>
+                          {connection.last_synced_at && (
+                            <p>Last synced {new Date(connection.last_synced_at).toLocaleString('en-US', {
+                              month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                            })}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {state === 'connector-missing' && (
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>
+                            Set up agency {def.label} connection first →
+                          </Link>
+                        </p>
+                      )}
+
+                      {state === 'not-connected' && (
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          Agency connector is ready — assign an account to this client.
+                        </p>
+                      )}
+
+                      {state === 'coming-soon' && (
+                        <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                          {def.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {state === 'connected' && connection && (
+                      <>
+                        <ClientSyncButton clientId={id} connectionId={connection.id} />
+                        <Link
+                          href={`/admin/clients/${id}/connections/${connection.id}`}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                        >
+                          Settings
+                        </Link>
+                      </>
+                    )}
+                    {state === 'not-connected' && connector && (
+                      <Link
+                        href={`/admin/clients/${id}/connections/new?connector=${connector.id}`}
+                        className="btn btn-primary"
+                        style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                      >
+                        Connect Account
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
-      )}
 
-      {/* Step 1 — Map Ad Accounts */}
-      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <div className="flex items-center gap-2 mb-1">
-          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-            isConnected ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'
-          }`}>{isConnected ? '✓' : '1'}</div>
-          <h2 className="font-semibold text-slate-100">Map Ad Accounts</h2>
-        </div>
-        <p className="text-xs text-slate-500 mb-4 ml-8">
-          Select from discovered accounts or enter an account ID manually.
-          After mapping, use the Sync button below or Backfill All in Agency Settings.
-        </p>
-
-        <AccountMapper
-          clientId={id}
-          unlinkedGoogle={availableAccounts.filter(a => a.platform === 'google')}
-          unlinkedMeta={availableAccounts.filter(a => a.platform === 'meta')}
-          mappedGoogle={googleAccounts}
-          mappedMeta={metaAccounts}
-        />
-
-        {availableAccounts.length === 0 && !isConnected && (
-          <p className="text-xs text-slate-600 mt-3">
-            No discovered accounts yet.{' '}
-            <Link href="/admin/settings" className="text-blue-400 hover:underline">
-              Go to Settings → Platform Connections
-            </Link>{' '}
-            to sync Meta accounts or run the MCC script for Google.
-          </p>
-        )}
       </div>
+    </div>
+  )
+}
 
-      {/* Step 2 — Sync Data */}
-      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</div>
-          <h2 className="font-semibold text-slate-100">Sync Data</h2>
-        </div>
-        <p className="text-sm text-slate-500 mb-4">
-          Manual sync pulls fresh data from mapped accounts. Run after mapping or to backfill history.
-        </p>
-        {recentSyncs.length > 0 && (
-          <p className="text-xs text-slate-600 mb-3">
-            Last sync:{' '}
-            {new Date(recentSyncs[0].started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-            {' — '}
-            <span className={recentSyncs[0].status === 'success' ? 'text-emerald-400' : 'text-red-400'}>
-              {recentSyncs[0].status}
-            </span>
-            {recentSyncs[0].records_synced > 0 && ` (${recentSyncs[0].records_synced} rows)`}
-          </p>
-        )}
-        <SyncButtons clientId={client.id} />
-      </div>
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ─────────────────────────────────────────────────────────────────────────────
 
-      {/* Performance Benchmarks */}
-      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <h2 className="font-semibold text-slate-100 mb-1">Performance Benchmarks</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          Override global benchmark targets for this client&apos;s Efficiency Score.
-        </p>
-        <ClientBenchmarks
-          clientId={id}
-          globalDefaults={globalSettings}
-          current={{
-            benchmark_roas:       client.benchmark_roas,
-            benchmark_ctr:        client.benchmark_ctr,
-            benchmark_cpc:        client.benchmark_cpc,
-            benchmark_conv_rate:  client.benchmark_conv_rate,
-            benchmark_cpm:        client.benchmark_cpm,
-          }}
-        />
-      </div>
+function InfoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
+      <p
+        className={mono ? 'font-mono text-xs' : 'text-sm'}
+        style={{ color: 'var(--text-secondary)' }}
+      >
+        {value}
+      </p>
+    </div>
+  )
+}
 
-      {/* Campaign Goal Configuration */}
-      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <h2 className="font-semibold text-slate-100 mb-1">Campaign Goals</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          Assign each campaign a goal type (Lead Gen, Ecommerce, Calls, etc.) and optionally override
-          the Meta conversion action. Goal types control ROAS vs CPL display and how the dashboard
-          groups summary metrics.
-        </p>
-        <CampaignConfigurator
-          clientId={id}
-          discoveredMetaActions={discoveredMetaActions}
-        />
-      </div>
+function SourceBadge({ state }: { state: string }) {
+  const m: Record<string, { label: string; cls: string }> = {
+    connected:           { label: 'Connected',   cls: 'badge-green' },
+    'connector-missing': { label: 'Not set up',  cls: 'badge-amber' },
+    'not-connected':     { label: 'Available',   cls: 'badge-gray'  },
+    'coming-soon':       { label: 'Coming soon', cls: 'badge-gray'  },
+  }
+  const d = m[state] ?? { label: state, cls: 'badge-gray' }
+  return <span className={`badge ${d.cls}`}>{d.label}</span>
+}
 
-      {/* Dashboard Metric Visibility */}
-      <div className="rounded-2xl p-6 mb-4 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <h2 className="font-semibold text-slate-100 mb-1">Dashboard Metrics</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          Choose which metrics are visible on this client&apos;s dashboard. Blue = shown, red = hidden.
-        </p>
-        <ClientMetricVisibility
-          clientId={id}
-          currentMetricConfig={client.metric_config ?? {}}
-        />
-      </div>
-
-      {/* Step 3 — GHL Link */}
-      <div className="rounded-2xl p-6 border" style={{ background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">3</div>
-          <h2 className="font-semibold text-slate-100">Add to GHL Sidebar</h2>
-        </div>
-        <p className="text-sm text-slate-500 mb-3">
-          Copy this link and paste it as a Custom Menu Link in the client&apos;s GHL sub-account.
-        </p>
-        <div className="flex items-center gap-2 rounded-lg px-3 py-3" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <code className="text-xs text-slate-400 font-mono break-all flex-1">{dashUrl}</code>
-        </div>
-        <p className="text-xs text-slate-600 mt-2">
-          GHL: Sub-Account Settings → Custom Menu Links → Add Link → Open in new tab
-        </p>
-      </div>
+function Notice({ type, children }: { type: 'success' | 'error'; children: React.ReactNode }) {
+  const s = type === 'success'
+    ? { bg: 'var(--green-subtle)', border: '#bbf7d0', color: 'var(--green)' }
+    : { bg: 'var(--red-subtle)',   border: '#fecaca', color: 'var(--red)'   }
+  return (
+    <div
+      className="mb-4 rounded-xl px-4 py-3 text-sm"
+      style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
+    >
+      {children}
     </div>
   )
 }

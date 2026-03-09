@@ -1,24 +1,24 @@
 'use client'
 
 import { useState } from 'react'
-import { GOAL_TYPE_DEFS, shouldShowRoas } from '@/lib/goal-types'
-import type { GoalType } from '@/lib/types'
+import type { CampaignCategory } from '@/lib/types'
 
 interface Campaign {
-  name: string
-  platform: string
+  campaign_name: string
+  source: string
   spend: number
   clicks: number
   conversions: number
+  conversionValue: number
   roas: number
   cpl: number
   ctr: number
   impressions: number
-  goalType: GoalType
-  conversionLabel: string
+  cpm: number
+  category: CampaignCategory | null
 }
 
-type SortKey = 'spend' | 'clicks' | 'conversions' | 'roas' | 'cpl' | 'name'
+type SortKey = 'campaign_name' | 'spend' | 'clicks' | 'conversions' | 'roas' | 'cpl'
 
 export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) {
   const [sortKey, setSortKey] = useState<SortKey>('spend')
@@ -35,80 +35,102 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
     return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
   })
 
-  if (!campaigns.length) return <p className="text-sm text-slate-500 py-6 text-center">No campaign data for this period.</p>
+  if (!campaigns.length) {
+    return (
+      <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+        No campaign data for this period.
+      </p>
+    )
+  }
 
   const headers: { key: SortKey; label: string }[] = [
-    { key: 'name', label: 'Campaign' },
-    { key: 'spend', label: 'Spend' },
-    { key: 'clicks', label: 'Clicks' },
-    { key: 'conversions', label: 'Conv.' },
-    { key: 'roas', label: 'ROAS' },
-    { key: 'cpl', label: 'CPL' },
+    { key: 'campaign_name', label: 'Campaign' },
+    { key: 'spend',         label: 'Spend' },
+    { key: 'clicks',        label: 'Clicks' },
+    { key: 'conversions',   label: 'Conv.' },
+    { key: 'roas',          label: 'ROAS' },
+    { key: 'cpl',           label: 'CPL' },
   ]
 
-  const thCls = 'text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-300 select-none whitespace-nowrap transition-colors'
-
   return (
-    <div className="overflow-x-auto -mx-2">
-      <table className="w-full text-sm min-w-[700px]">
+    <div className="overflow-x-auto">
+      <table className="data-table">
         <thead>
-          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <tr>
             {headers.map(h => (
-              <th key={h.key} onClick={() => toggleSort(h.key)} className={thCls}>
-                {h.label}{sortKey === h.key && <span className="ml-1 opacity-50">{sortDir === 'desc' ? '↓' : '↑'}</span>}
+              <th key={h.key} onClick={() => toggleSort(h.key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                {h.label}
+                {sortKey === h.key && (
+                  <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>
+                )}
               </th>
             ))}
-            <th className={`${thCls} cursor-default hover:text-slate-500`}>Goal</th>
-            <th className={`${thCls} cursor-default hover:text-slate-500`}>Platform</th>
+            <th>Category</th>
+            <th>Source</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const def = GOAL_TYPE_DEFS[c.goalType]
-            const showRoas = shouldShowRoas(c.goalType)
+            const showRoas = c.category?.display_mode === 'roas' || (c.roas > 0 && c.conversionValue > 0)
+            const convLabel = c.category?.conversion_label
             return (
-              <tr
-                key={i}
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                className="transition-colors hover:bg-white/[0.025]"
-              >
-                <td className="py-3 px-3 font-medium text-slate-200 max-w-[260px] truncate" title={c.name}>
-                  {c.name}
+              <tr key={i}>
+                <td
+                  className="font-medium"
+                  style={{ color: 'var(--text-secondary)', maxWidth: 260 }}
+                  title={c.campaign_name}
+                >
+                  <span className="block truncate">{c.campaign_name}</span>
                 </td>
-                <td className="py-3 px-3 text-slate-400 whitespace-nowrap">${c.spend.toFixed(2)}</td>
-                <td className="py-3 px-3 text-slate-400">{c.clicks.toLocaleString()}</td>
-                <td className="py-3 px-3 text-slate-400">
-                  <span>{c.conversions.toFixed(1)}</span>
-                  {c.conversionLabel && c.goalType !== 'unset' && (
-                    <span className="text-slate-600 ml-1 text-xs">{c.conversionLabel.toLowerCase()}</span>
+                <td style={{ color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
+                <td style={{ color: 'var(--text-muted)' }}>
+                  {c.conversions.toFixed(1)}
+                  {convLabel && (
+                    <span className="ml-1 text-xs" style={{ color: 'var(--text-faint)' }}>
+                      {convLabel.toLowerCase()}
+                    </span>
                   )}
                 </td>
-                <td className="py-3 px-3 font-semibold whitespace-nowrap">
+                <td className="font-semibold whitespace-nowrap">
                   {showRoas ? (
-                    <span style={{ color: c.roas >= 3 ? '#10b981' : c.roas >= 1.5 ? '#f59e0b' : '#f87171' }}>
+                    <span style={{
+                      color: c.roas >= 3 ? 'var(--green)' : c.roas >= 1.5 ? '#d97706' : 'var(--red)'
+                    }}>
                       {c.roas.toFixed(2)}x
                     </span>
                   ) : (
-                    <span className="text-slate-700">—</span>
+                    <span style={{ color: 'var(--text-faint)' }}>—</span>
                   )}
                 </td>
-                <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
-                  {!showRoas && c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span className="text-slate-700">—</span>}
+                <td style={{ color: 'var(--text-muted)' }}>
+                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
-                <td className="py-3 px-3 whitespace-nowrap">
-                  {c.goalType !== 'unset' ? (
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${def.badgeClasses}`}>
-                      {def.badge}
+                <td>
+                  {c.category ? (
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-full flex-shrink-0"
+                        style={{ background: c.category.color }}
+                      />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {c.category.name}
+                      </span>
                     </span>
                   ) : (
-                    <span className="text-[10px] text-slate-700">—</span>
+                    <span className="text-xs" style={{ color: 'var(--text-faint)' }}>—</span>
                   )}
                 </td>
-                <td className="py-3 px-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    c.platform === 'google' ? 'bg-blue-500/10 text-blue-400' : 'bg-indigo-500/10 text-indigo-400'
-                  }`}>
-                    {c.platform === 'google' ? 'Google' : 'Meta'}
+                <td>
+                  <span
+                    className="badge"
+                    style={{
+                      background: c.source === 'google_ads' ? '#eff6ff' : '#f5f3ff',
+                      color:      c.source === 'google_ads' ? '#2563eb' : '#7c3aed',
+                      border:     c.source === 'google_ads' ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
+                    }}
+                  >
+                    {c.source === 'google_ads' ? 'Google' : 'Meta'}
                   </span>
                 </td>
               </tr>
