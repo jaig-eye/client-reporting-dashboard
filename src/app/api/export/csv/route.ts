@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 import type { GoogleAdsMetric, MetaAdsMetric } from '@/lib/types'
-import type { MetaAction } from '@/lib/connectors/types'
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()

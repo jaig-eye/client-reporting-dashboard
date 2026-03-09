@@ -198,7 +198,7 @@ export default async function DashboardPage({
       cpl:             c.conversions > 0 ? c.spend / c.conversions : 0,
       ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
       cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
-      category:        c.category,
+      category:        c.category ?? null,
       hidden:          false,
     }))
     .sort((a, b) => b.spend - a.spend)

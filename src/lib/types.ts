@@ -318,6 +318,7 @@ export interface MetricSummary {
   ctr: number
   cpc: number
   cpl: number
+  cpm: number
   reach?: number              // Meta-only
   frequency?: number          // Meta-only
 }

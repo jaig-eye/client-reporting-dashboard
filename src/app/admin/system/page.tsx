@@ -106,7 +106,7 @@ export default async function SystemPage() {
                 <tbody>
                   {recentJobs.map(job => {
                     const started  = new Date(job.started_at)
-                    const finished = job.finished_at ? new Date(job.finished_at) : null
+                    const finished = job.completed_at ? new Date(job.completed_at) : null
                     const durMs    = finished ? finished.getTime() - started.getTime() : null
                     const durStr   = durMs != null
                       ? durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(1)}s`

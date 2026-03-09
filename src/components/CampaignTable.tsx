@@ -71,7 +71,7 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const showRoas = c.category?.display_mode === 'roas' || (c.roas > 0 && c.conversionValue > 0)
+            const showRoas = c.category?.display_mode === 'ecommerce' || (c.roas > 0 && c.conversionValue > 0)
             const convLabel = c.category?.conversion_label
             return (
               <tr key={i}>

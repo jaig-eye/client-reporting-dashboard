@@ -26,6 +26,7 @@ export function summarizeMetrics(rows: MetricRow[]): MetricSummary {
     ctr:  impressions > 0 ? clicks / impressions : 0,
     cpc:  clicks > 0 ? spend / clicks : 0,
     cpl:  conversions > 0 ? spend / conversions : 0,
+    cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
   }
 }
 

@@ -81,18 +81,18 @@ export default async function ConnectorDetailPage({
           <div className="card p-5">
             <h2 className="section-title mb-3">Client Accounts Using This Connector</h2>
             <div className="space-y-2">
-              {(connections as Array<{
+              {(connections as unknown as Array<{
                 id: string
                 external_id: string
                 external_name: string | null
                 status: string
                 last_synced_at: string | null
-                client: { name: string } | null
+                client: { name: string }[] | null
               }>).map(conn => (
                 <div key={conn.id} className="flex items-center justify-between text-sm">
                   <div>
                     <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
-                      {conn.client?.name ?? 'Unknown client'}
+                      {conn.client?.[0]?.name ?? 'Unknown client'}
                     </span>
                     <span className="ml-2 text-xs" style={{ color: 'var(--text-faint)' }}>
                       {conn.external_name ?? conn.external_id}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { upsertMetaAdsMetrics } from '@/lib/sync'
-import type { MetaAction } from '@/lib/connectors/types'
+import type { MetaAction } from '@/lib/types'
 
 /**
  * POST /api/ingest/meta
@@ -87,9 +87,9 @@ export async function POST(request: NextRequest) {
   }))
 
   // Discover all unique action types across this batch
-  const discoveredActions = [...new Set(
+  const discoveredActions = Array.from(new Set(
     metaRows.flatMap(r => r.actions.map((a: MetaAction) => a.action_type))
-  )]
+  ))
 
   const inserted = await upsertMetaAdsMetrics(db, connection.id, connection.client_id, metaRows, discoveredActions)
   return NextResponse.json({ inserted })

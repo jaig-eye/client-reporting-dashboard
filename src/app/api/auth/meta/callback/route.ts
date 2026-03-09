@@ -42,8 +42,8 @@ export async function GET(request: NextRequest) {
         await db.from('connector_accounts').upsert(
           accounts.map(a => ({
             connector_id:  connector.id,
-            external_id:   a.id,
-            external_name: a.name,
+            external_id:   a.external_id,
+            external_name: a.external_name,
           })),
           { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
         )
