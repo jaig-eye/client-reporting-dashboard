@@ -1,6 +1,6 @@
 'use client'
 
-// Admin Login — /admin/login
+// Admin Login — /admin
 // Super admin: leave email blank, enter master password.
 // Regular admin: enter email + password set by super admin.
 
@@ -14,6 +14,8 @@ export default function AdminLoginPage() {
   const [error,    setError]    = useState('')
   const [loading,  setLoading]  = useState(false)
 
+  const isSuperAdmin = email.trim() === ''
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
@@ -24,7 +26,7 @@ export default function AdminLoginPage() {
       body:    JSON.stringify({ email: email.trim() || undefined, password }),
     })
     if (res.ok) {
-      router.push('/admin')
+      router.push('/admin/dashboard')
     } else {
       const d = await res.json().catch(() => ({}))
       setError(d.error || 'Invalid credentials')
@@ -58,7 +60,7 @@ export default function AdminLoginPage() {
             <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
               Email
               <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
-                — leave blank for super admin
+                — leave blank to sign in as super admin
               </span>
             </label>
             <input
@@ -82,12 +84,17 @@ export default function AdminLoginPage() {
               required
               autoComplete="current-password"
               className="input"
-              placeholder="Enter your password"
+              placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
             />
           </div>
 
           {error && (
-            <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>
+            <div
+              className="rounded-lg px-3 py-2 text-sm"
+              style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+            >
+              {error}
+            </div>
           )}
 
           <button
@@ -99,6 +106,12 @@ export default function AdminLoginPage() {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+
+        <p className="text-xs mt-5 text-center" style={{ color: 'var(--text-faint)' }}>
+          {isSuperAdmin
+            ? 'Super admin mode — full access'
+            : 'Enter your agency email and password'}
+        </p>
       </div>
     </div>
   )

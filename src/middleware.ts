@@ -12,11 +12,11 @@ export async function middleware(request: NextRequest) {
     // Token is validated in the page itself against the DB
   }
 
-  // Protect /admin — requires admin_session cookie
-  if (pathname.startsWith('/admin') && pathname !== '/admin/login') {
+  // Protect /admin/* — /admin itself is the login page (unauthenticated access allowed)
+  if (pathname.startsWith('/admin') && pathname !== '/admin') {
     const session = request.cookies.get('admin_session')?.value
     if (!session || session !== process.env.ADMIN_PASSWORD) {
-      return NextResponse.redirect(new URL('/admin/login', request.url))
+      return NextResponse.redirect(new URL('/admin', request.url))
     }
   }
 

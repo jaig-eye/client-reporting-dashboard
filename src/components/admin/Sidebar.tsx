@@ -12,8 +12,9 @@
 // is driven by pathname matching (no client-side router required for the shell).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 
 interface NavItem {
   href: string
@@ -25,13 +26,13 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/admin',                   label: 'Overview',          icon: '◈',  matchPrefix: false },
-  { href: '/admin/clients',           label: 'Clients',           icon: '⊡',  matchPrefix: true  },
-  { href: '/admin/connections',       label: 'Data Connections',  icon: '⟳',  matchPrefix: true  },
-  { href: '/admin/categories',        label: 'Campaign Categories', icon: '⊞', matchPrefix: true },
-  { href: '/admin/users',             label: 'Users',             icon: '◎',  matchPrefix: true  },
-  { href: '/admin/settings',          label: 'Agency Settings',   icon: '⊙',  matchPrefix: true  },
-  { href: '/admin/system',            label: 'System',            icon: '⚙',  matchPrefix: true  },
+  { href: '/admin/dashboard',         label: 'Overview',            icon: '◈',  matchPrefix: false },
+  { href: '/admin/clients',           label: 'Clients',             icon: '⊡',  matchPrefix: true  },
+  { href: '/admin/connections',       label: 'Data Connections',    icon: '⟳',  matchPrefix: true  },
+  { href: '/admin/categories',        label: 'Campaign Categories', icon: '⊞',  matchPrefix: true  },
+  { href: '/admin/users',             label: 'Users',               icon: '◎',  matchPrefix: true  },
+  { href: '/admin/settings',          label: 'Agency Settings',     icon: '⊙',  matchPrefix: true  },
+  { href: '/admin/system',            label: 'System',              icon: '⚙',  matchPrefix: true  },
 ]
 
 interface SidebarProps {
@@ -41,6 +42,7 @@ interface SidebarProps {
   userName: string
   userEmail: string
   userAvatarUrl?: string
+  isSuperAdmin?: boolean
 }
 
 export default function Sidebar({
@@ -50,8 +52,18 @@ export default function Sidebar({
   userName,
   userEmail,
   userAvatarUrl,
+  isSuperAdmin = false,
 }: SidebarProps) {
-  const pathname = usePathname()
+  const pathname    = usePathname()
+  const router      = useRouter()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  async function handleLogout() {
+    setLoggingOut(true)
+    await fetch('/api/auth/admin-logout', { method: 'POST' })
+    router.push('/admin')
+    router.refresh()
+  }
 
   function isActive(item: NavItem): boolean {
     if (item.matchPrefix === false) {
@@ -137,58 +149,71 @@ export default function Sidebar({
         </div>
       </nav>
 
-      {/* ── Bottom: User card ────────────────────────────── */}
+      {/* ── Bottom: User card + logout ───────────────────── */}
       <div
         style={{
           padding: '0.75rem',
           borderTop: '1px solid var(--border-subtle)',
         }}
       >
-        <Link
-          href="/admin/users/me"
-          className="flex items-center gap-2.5 p-2 rounded-lg transition-colors hover:bg-[var(--bg-subtle)] group"
-          style={{ textDecoration: 'none' }}
-        >
-          {/* Avatar */}
-          {userAvatarUrl ? (
-            <img
-              src={userAvatarUrl}
-              alt={userName}
-              className="h-8 w-8 rounded-full object-cover flex-shrink-0"
-            />
-          ) : (
+        {/* User info row */}
+        {isSuperAdmin ? (
+          <div className="flex items-center gap-2.5 p-2 rounded-lg">
             <div
               className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
               style={{ background: 'var(--blue)' }}
             >
-              {initials}
+              SA
             </div>
-          )}
-
-          {/* Name + email */}
-          <div className="min-w-0 flex-1">
-            <p
-              className="text-sm font-medium truncate leading-tight"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {userName}
-            </p>
-            <p
-              className="text-xs truncate leading-tight"
-              style={{ color: 'var(--text-faint)' }}
-            >
-              {userEmail}
-            </p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate leading-tight" style={{ color: 'var(--text-primary)' }}>
+                Super Admin
+              </p>
+              <p className="text-xs truncate leading-tight" style={{ color: 'var(--text-faint)' }}>
+                Master account
+              </p>
+            </div>
           </div>
-
-          {/* Settings caret */}
-          <span
-            className="text-xs opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-            style={{ color: 'var(--text-faint)' }}
+        ) : (
+          <Link
+            href="/admin/users/me"
+            className="flex items-center gap-2.5 p-2 rounded-lg transition-colors hover:bg-[var(--bg-subtle)] group"
+            style={{ textDecoration: 'none' }}
           >
-            →
-          </span>
-        </Link>
+            {userAvatarUrl ? (
+              <img src={userAvatarUrl} alt={userName} className="h-8 w-8 rounded-full object-cover flex-shrink-0" />
+            ) : (
+              <div
+                className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
+                style={{ background: 'var(--blue)' }}
+              >
+                {initials}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate leading-tight" style={{ color: 'var(--text-primary)' }}>
+                {userName}
+              </p>
+              <p className="text-xs truncate leading-tight" style={{ color: 'var(--text-faint)' }}>
+                {userEmail}
+              </p>
+            </div>
+            <span className="text-xs opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" style={{ color: 'var(--text-faint)' }}>
+              →
+            </span>
+          </Link>
+        )}
+
+        {/* Logout button */}
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="w-full mt-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors hover:bg-[var(--bg-subtle)]"
+          style={{ color: 'var(--text-muted)', textAlign: 'left' }}
+        >
+          <span style={{ width: '1.125rem', textAlign: 'center', fontSize: '0.9rem' }} aria-hidden>↩</span>
+          {loggingOut ? 'Signing out…' : 'Sign out'}
+        </button>
       </div>
     </aside>
   )
