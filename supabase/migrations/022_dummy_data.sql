@@ -5,18 +5,23 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── 1. Client ────────────────────────────────────────────────────────────────
-INSERT INTO clients (id, name, dashboard_token, status, ad_fuel_cut)
+-- dashboard_token (UUID) — use this to access the client dashboard:
+--   Set client_token cookie to: eeeeeeee-de00-0000-0000-000000000001
+--   Or visit /access and enter that token.
+INSERT INTO clients (id, name, email, slug, dashboard_token, ad_fuel_cut)
 VALUES (
   'aaaaaaaa-0000-0000-0000-000000000001',
   'Apex Roofing Co.',
-  'demo_apex_roofing_2024',
-  'active',
+  'demo@apexroofing.example',
+  'apex-roofing-co',
+  'eeeeeeee-de00-0000-0000-000000000001',
   NULL
 )
 ON CONFLICT (id) DO NOTHING;
 
 -- ── 2. Connectors (agency-level) ─────────────────────────────────────────────
-INSERT INTO connectors (id, source, label, credentials, status)
+-- Columns: type (not source), auth (not credentials)
+INSERT INTO connectors (id, type, label, auth, status)
 VALUES
   (
     'bbbbbbbb-0001-0000-0000-000000000001',
@@ -35,18 +40,23 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ── 3. Client connections ─────────────────────────────────────────────────────
-INSERT INTO client_connections (id, client_id, connector_id, status)
+-- external_id is required (platform-native account ID)
+INSERT INTO client_connections (id, client_id, connector_id, external_id, external_name, status)
 VALUES
   (
     'cccccccc-0001-0000-0000-000000000001',
     'aaaaaaaa-0000-0000-0000-000000000001',
     'bbbbbbbb-0001-0000-0000-000000000001',
+    '1234567890',
+    'Apex Roofing Google Ads',
     'active'
   ),
   (
     'cccccccc-0002-0000-0000-000000000001',
     'aaaaaaaa-0000-0000-0000-000000000001',
     'bbbbbbbb-0002-0000-0000-000000000001',
+    'act_1234567890',
+    'Apex Roofing Meta Ads',
     'active'
   )
 ON CONFLICT (id) DO NOTHING;
