@@ -1,27 +1,22 @@
-// /api/admin/users/me/password
-// Change the current admin user's password.
-// Requires current_password for verification before updating.
+// POST /api/admin/users/me/password — change the current user's password.
+// Requires current_password for verification. Super admin cannot use this.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { createHash } from 'crypto'
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
-
-function hashPassword(password: string): string {
-  // SHA-256 hash — in production consider bcrypt, but this matches the existing auth pattern
-  return createHash('sha256').update(password).digest('hex')
-}
+import { isAdminAuthed, hashPassword } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const session = req.cookies.get('admin_session')?.value
+  const userId  = req.cookies.get('admin_user_id')?.value
 
-  const body = await req.json()
-  const { current_password, new_password } = body
+  if (!isAdminAuthed(session)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!userId) {
+    return NextResponse.json({ error: 'Super admin password is set via environment variable' }, { status: 403 })
+  }
 
+  const { current_password, new_password } = await req.json()
   if (!current_password || !new_password) {
     return NextResponse.json({ error: 'current_password and new_password are required' }, { status: 400 })
   }
@@ -30,18 +25,14 @@ export async function POST(req: NextRequest) {
   }
 
   const db = createAdminClient()
-
-  // Get current user
   const { data: user } = await db
     .from('users')
     .select('id, password_hash')
-    .eq('role', 'admin')
-    .eq('is_active', true)
+    .eq('id', userId)
     .single()
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-  // Verify current password
   if (user.password_hash && user.password_hash !== hashPassword(current_password)) {
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }

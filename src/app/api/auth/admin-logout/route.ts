@@ -5,5 +5,6 @@ export async function POST() {
     new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL!)
   )
   response.cookies.delete('admin_session')
+  response.cookies.delete('admin_user_id')
   return response
 }

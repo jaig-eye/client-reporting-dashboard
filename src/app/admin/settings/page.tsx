@@ -33,11 +33,31 @@ const DEFAULT: Settings = {
 }
 
 export default function AgencySettingsPage() {
-  const [form,    setForm]    = useState<Settings>(DEFAULT)
-  const [loading, setLoading] = useState(true)
-  const [saving,  setSaving]  = useState(false)
-  const [saved,   setSaved]   = useState(false)
-  const [error,   setError]   = useState('')
+  const [form,      setForm]      = useState<Settings>(DEFAULT)
+  const [loading,   setLoading]   = useState(true)
+  const [saving,    setSaving]    = useState(false)
+  const [saved,     setSaved]     = useState(false)
+  const [error,     setError]     = useState('')
+  const [uploading, setUploading] = useState(false)
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('folder', 'logos')
+      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (data.url) field('agency_logo_url', data.url)
+      else throw new Error(data.error || 'Upload failed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Logo upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   useEffect(() => {
     fetch('/api/admin/settings')
@@ -97,20 +117,31 @@ export default function AgencySettingsPage() {
               placeholder="My Agency"
             />
           </FormField>
-          <FormField label="Logo URL" hint="Shown in the admin sidebar and client dashboards">
-            <input
-              className="input"
-              value={form.agency_logo_url}
-              onChange={e => field('agency_logo_url', e.target.value)}
-              placeholder="https://your-agency.com/logo.png"
-            />
-          </FormField>
-          {form.agency_logo_url && (
-            <div>
-              <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Preview:</p>
-              <img src={form.agency_logo_url} alt="Logo preview" className="max-h-10 object-contain" />
+          <FormField label="Agency Logo" hint="Shown in the admin sidebar and client dashboards">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                {form.agency_logo_url && (
+                  <img src={form.agency_logo_url} alt="Agency logo" className="h-10 object-contain rounded" />
+                )}
+                <label className="btn btn-secondary cursor-pointer" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
+                  {uploading ? 'Uploading…' : form.agency_logo_url ? 'Replace Logo' : 'Upload Logo'}
+                  <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} disabled={uploading} />
+                </label>
+                {form.agency_logo_url && (
+                  <button type="button" className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                    onClick={() => field('agency_logo_url', '')}>
+                    Remove
+                  </button>
+                )}
+              </div>
+              <input
+                className="input"
+                value={form.agency_logo_url}
+                onChange={e => field('agency_logo_url', e.target.value)}
+                placeholder="Or paste image URL…"
+              />
             </div>
-          )}
+          </FormField>
         </div>
 
         {/* Performance Benchmarks */}

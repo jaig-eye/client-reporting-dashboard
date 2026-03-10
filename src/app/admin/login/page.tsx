@@ -1,16 +1,18 @@
 'use client'
 
 // Admin Login — /admin/login
-// Clean light-theme login screen.
+// Super admin: leave email blank, enter master password.
+// Regular admin: enter email + password set by super admin.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function AdminLoginPage() {
-  const router   = useRouter()
+  const router    = useRouter()
+  const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
-  const [error,   setError]     = useState('')
-  const [loading, setLoading]   = useState(false)
+  const [error,    setError]    = useState('')
+  const [loading,  setLoading]  = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -19,12 +21,13 @@ export default function AdminLoginPage() {
     const res = await fetch('/api/auth/admin-login', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ password }),
+      body:    JSON.stringify({ email: email.trim() || undefined, password }),
     })
     if (res.ok) {
       router.push('/admin')
     } else {
-      setError('Incorrect password')
+      const d = await res.json().catch(() => ({}))
+      setError(d.error || 'Invalid credentials')
       setLoading(false)
     }
   }
@@ -35,7 +38,6 @@ export default function AdminLoginPage() {
       style={{ background: 'var(--bg-base)' }}
     >
       <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-        {/* Logo placeholder */}
         <div className="mb-6">
           <div
             className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-3"
@@ -54,6 +56,23 @@ export default function AdminLoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+              Email
+              <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
+                — leave blank for super admin
+              </span>
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              autoComplete="email"
+              className="input"
+              placeholder="admin@agency.com"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
               Password
             </label>
             <input
@@ -61,7 +80,7 @@ export default function AdminLoginPage() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
-              autoFocus
+              autoComplete="current-password"
               className="input"
               placeholder="Enter your password"
             />

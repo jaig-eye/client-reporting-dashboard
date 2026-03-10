@@ -10,6 +10,8 @@ import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
 import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
 import CopyButton from '@/components/CopyButton'
 import ClientSyncButton from './ClientSyncButton'
+import DeleteClientButton from './DeleteClientButton'
+import ClientLogoUpload from './ClientLogoUpload'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,6 +81,18 @@ export default async function ClientDetailPage({
               <InfoField label="Email" value={client.email} />
               {client.slug && <InfoField label="Slug" value={client.slug} mono />}
             </div>
+          </div>
+
+          <div className="card p-5">
+            <h2 className="section-title mb-3">Client Logo</h2>
+            <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
+            <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
+          </div>
+
+          {/* Danger zone */}
+          <div className="card p-5">
+            <h2 className="section-title mb-3">Danger Zone</h2>
+            <DeleteClientButton clientId={id} clientName={client.name} />
           </div>
 
           <div className="card p-5">

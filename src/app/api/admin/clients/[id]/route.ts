@@ -1,33 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
-
-function isAdminAuthed(session: string | undefined) {
-  return session && session === process.env.ADMIN_PASSWORD
-}
+import { isAdminAuthed } from '@/lib/auth'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+  const session = request.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { id } = await params
   const body = await request.json()
 
-  const allowed = [
-    'logo_url',
-    'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc',
-    'benchmark_conv_rate', 'benchmark_cpm',
-    'metric_config',
-  ]
+  const allowed = ['name', 'email', 'slug', 'logo_url', 'default_conversion_value']
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
-    if (key in body) patch[key] = body[key] // null allowed — clears override
+    if (key in body) patch[key] = body[key]
   }
 
   const db = createAdminClient()
@@ -40,10 +31,34 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Invalidate Next.js Data Cache so the client page and metric-mapping always serve fresh DB data
   revalidatePath(`/admin/clients/${id}`)
-  revalidatePath('/admin/metric-mapping')
-  revalidatePath('/admin')
+  revalidatePath('/admin/clients')
 
   return NextResponse.json(data)
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = request.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const db = createAdminClient()
+
+  // Cascade-delete all client data manually in dependency order
+  await db.from('sync_jobs').delete().eq('client_id', id)
+  await db.from('client_campaign_assignments').delete().eq('client_id', id)
+  await db.from('google_ads_metrics').delete().eq('client_id', id)
+  await db.from('meta_ads_metrics').delete().eq('client_id', id)
+  await db.from('client_connections').delete().eq('client_id', id)
+
+  const { error } = await db.from('clients').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  revalidatePath('/admin/clients')
+  return NextResponse.json({ success: true })
 }
