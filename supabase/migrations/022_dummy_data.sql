@@ -103,11 +103,11 @@ SELECT
   'cccccccc-0001-0000-0000-000000000001',
   'aaaaaaaa-0000-0000-0000-000000000001',
   'goog_camp_001', 'Branded – Roofing Services', d::date,
-  ROUND((18 + random() * 10 + CASE WHEN EXTRACT(dow FROM d) IN (1,2,3,4,5) THEN 4 ELSE 0 END)::numeric, 2),
-  (900  + floor(random() * 500))::int,
-  (55   + floor(random() * 35))::int,
-  ROUND((4 + random() * 5)::numeric, 4),
-  ROUND((4 + random() * 5) * (350 + random() * 60)::numeric, 2)
+  ROUND((18 + random()::numeric * 10 + CASE WHEN EXTRACT(dow FROM d) IN (1,2,3,4,5) THEN 4 ELSE 0 END)::numeric, 2),
+  (900  + floor(random()::numeric * 500))::int,
+  (55   + floor(random()::numeric * 35))::int,
+  ROUND((4 + random()::numeric * 5)::numeric, 4),
+  ROUND((4 + random()::numeric * 5) * (350 + random()::numeric * 60)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, campaign_id, date) DO NOTHING;
 
@@ -119,11 +119,11 @@ SELECT
   'cccccccc-0001-0000-0000-000000000001',
   'aaaaaaaa-0000-0000-0000-000000000001',
   'goog_camp_002', 'Competitors – Best Roofers', d::date,
-  ROUND((35 + random() * 20)::numeric, 2),
-  (2500 + floor(random() * 1000))::int,
-  (90   + floor(random() * 50))::int,
-  ROUND((3 + random() * 6)::numeric, 4),
-  ROUND((3 + random() * 6) * (300 + random() * 80)::numeric, 2)
+  ROUND((35 + random()::numeric * 20)::numeric, 2),
+  (2500 + floor(random()::numeric * 1000))::int,
+  (90   + floor(random()::numeric * 50))::int,
+  ROUND((3 + random()::numeric * 6)::numeric, 4),
+  ROUND((3 + random()::numeric * 6) * (300 + random()::numeric * 80)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, campaign_id, date) DO NOTHING;
 
@@ -135,11 +135,11 @@ SELECT
   'cccccccc-0001-0000-0000-000000000001',
   'aaaaaaaa-0000-0000-0000-000000000001',
   'goog_camp_003', 'Display Retargeting', d::date,
-  ROUND((8 + random() * 6)::numeric, 2),
-  (12000 + floor(random() * 5000))::int,
-  (20    + floor(random() * 20))::int,
-  ROUND((0.5 + random() * 1.5)::numeric, 4),
-  ROUND((0.5 + random() * 1.5) * (200 + random() * 100)::numeric, 2)
+  ROUND((8 + random()::numeric * 6)::numeric, 2),
+  (12000 + floor(random()::numeric * 5000))::int,
+  (20    + floor(random()::numeric * 20))::int,
+  ROUND((0.5 + random()::numeric * 1.5)::numeric, 4),
+  ROUND((0.5 + random()::numeric * 1.5) * (200 + random()::numeric * 100)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, campaign_id, date) DO NOTHING;
 
@@ -155,11 +155,11 @@ SELECT
   'cccccccc-0002-0000-0000-000000000001',
   'aaaaaaaa-0000-0000-0000-000000000001',
   'meta_camp_001', 'Facebook Lead Ads – Roof Inspections', d::date,
-  ROUND((45 + random() * 25)::numeric, 2),
-  (8000 + floor(random() * 4000))::int,
-  (120  + floor(random() * 80))::int,
-  ROUND((5 + random() * 8)::numeric, 4),
-  ROUND((5 + random() * 8) * (280 + random() * 80)::numeric, 2),
+  ROUND((45 + random()::numeric * 25)::numeric, 2),
+  (8000 + floor(random()::numeric * 4000))::int,
+  (120  + floor(random()::numeric * 80))::int,
+  ROUND((5 + random()::numeric * 8)::numeric, 4),
+  ROUND((5 + random()::numeric * 8) * (280 + random()::numeric * 80)::numeric, 2),
   '[{"action_type":"lead","value":"5"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
@@ -175,11 +175,11 @@ SELECT
   'cccccccc-0002-0000-0000-000000000001',
   'aaaaaaaa-0000-0000-0000-000000000001',
   'meta_camp_002', 'Instagram Awareness – Storm Season', d::date,
-  ROUND((20 + random() * 10)::numeric, 2),
-  (25000 + floor(random() * 10000))::int,
-  (60    + floor(random() * 40))::int,
-  ROUND((0.5 + random() * 2)::numeric, 4),
-  ROUND((0.5 + random() * 2) * (150 + random() * 100)::numeric, 2),
+  ROUND((20 + random()::numeric * 10)::numeric, 2),
+  (25000 + floor(random()::numeric * 10000))::int,
+  (60    + floor(random()::numeric * 40))::int,
+  ROUND((0.5 + random()::numeric * 2)::numeric, 4),
+  ROUND((0.5 + random()::numeric * 2) * (150 + random()::numeric * 100)::numeric, 2),
   '[{"action_type":"post_engagement","value":"1"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
@@ -200,11 +200,11 @@ SELECT
   'Apex Roofing | Free Estimate | Call Now',
   'EXPANDED_TEXT_AD',
   'goog_ag_001', 'Branded – Exact', d::date,
-  ROUND((8 + random() * 5)::numeric, 2),
-  (400 + floor(random() * 200))::int,
-  (25  + floor(random() * 15))::int,
-  ROUND((2 + random() * 2)::numeric, 4),
-  ROUND((2 + random() * 2) * (360 + random() * 40)::numeric, 2)
+  ROUND((8 + random()::numeric * 5)::numeric, 2),
+  (400 + floor(random()::numeric * 200))::int,
+  (25  + floor(random()::numeric * 15))::int,
+  ROUND((2 + random()::numeric * 2)::numeric, 4),
+  ROUND((2 + random()::numeric * 2) * (360 + random()::numeric * 40)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -220,11 +220,11 @@ SELECT
   '#1 Roofing Company | Apex | Same Day',
   'RESPONSIVE_SEARCH_AD',
   'goog_ag_001', 'Branded – Exact', d::date,
-  ROUND((6 + random() * 4)::numeric, 2),
-  (300 + floor(random() * 150))::int,
-  (18  + floor(random() * 12))::int,
-  ROUND((1.5 + random() * 2)::numeric, 4),
-  ROUND((1.5 + random() * 2) * (340 + random() * 60)::numeric, 2)
+  ROUND((6 + random()::numeric * 4)::numeric, 2),
+  (300 + floor(random()::numeric * 150))::int,
+  (18  + floor(random()::numeric * 12))::int,
+  ROUND((1.5 + random()::numeric * 2)::numeric, 4),
+  ROUND((1.5 + random()::numeric * 2) * (340 + random()::numeric * 60)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -240,11 +240,11 @@ SELECT
   'Local Roofing Experts | 20yr Warranty',
   'RESPONSIVE_SEARCH_AD',
   'goog_ag_002', 'Branded – Phrase', d::date,
-  ROUND((4 + random() * 4)::numeric, 2),
-  (200 + floor(random() * 150))::int,
-  (12  + floor(random() * 10))::int,
-  ROUND((0.5 + random() * 1.5)::numeric, 4),
-  ROUND((0.5 + random() * 1.5) * (320 + random() * 80)::numeric, 2)
+  ROUND((4 + random()::numeric * 4)::numeric, 2),
+  (200 + floor(random()::numeric * 150))::int,
+  (12  + floor(random()::numeric * 10))::int,
+  ROUND((0.5 + random()::numeric * 1.5)::numeric, 4),
+  ROUND((0.5 + random()::numeric * 1.5) * (320 + random()::numeric * 80)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -260,11 +260,11 @@ SELECT
   'Switch From Competitor | Apex Roofing',
   'RESPONSIVE_SEARCH_AD',
   'goog_ag_003', 'Competitor – Generic', d::date,
-  ROUND((20 + random() * 12)::numeric, 2),
-  (1400 + floor(random() * 600))::int,
-  (55   + floor(random() * 30))::int,
-  ROUND((2 + random() * 3)::numeric, 4),
-  ROUND((2 + random() * 3) * (290 + random() * 90)::numeric, 2)
+  ROUND((20 + random()::numeric * 12)::numeric, 2),
+  (1400 + floor(random()::numeric * 600))::int,
+  (55   + floor(random()::numeric * 30))::int,
+  ROUND((2 + random()::numeric * 3)::numeric, 4),
+  ROUND((2 + random()::numeric * 3) * (290 + random()::numeric * 90)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -280,11 +280,11 @@ SELECT
   'Better Than The Rest | Free Roof Quote',
   'EXPANDED_TEXT_AD',
   'goog_ag_003', 'Competitor – Generic', d::date,
-  ROUND((15 + random() * 10)::numeric, 2),
-  (1100 + floor(random() * 500))::int,
-  (35   + floor(random() * 25))::int,
-  ROUND((1 + random() * 3)::numeric, 4),
-  ROUND((1 + random() * 3) * (300 + random() * 80)::numeric, 2)
+  ROUND((15 + random()::numeric * 10)::numeric, 2),
+  (1100 + floor(random()::numeric * 500))::int,
+  (35   + floor(random()::numeric * 25))::int,
+  ROUND((1 + random()::numeric * 3)::numeric, 4),
+  ROUND((1 + random()::numeric * 3) * (300 + random()::numeric * 80)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -300,11 +300,11 @@ SELECT
   'Apex Roofing – Retargeting Banner',
   'RESPONSIVE_DISPLAY_AD',
   'goog_ag_004', 'Retargeting – All Visitors', d::date,
-  ROUND((8 + random() * 6)::numeric, 2),
-  (12000 + floor(random() * 5000))::int,
-  (20    + floor(random() * 20))::int,
-  ROUND((0.5 + random() * 1.5)::numeric, 4),
-  ROUND((0.5 + random() * 1.5) * (200 + random() * 100)::numeric, 2)
+  ROUND((8 + random()::numeric * 6)::numeric, 2),
+  (12000 + floor(random()::numeric * 5000))::int,
+  (20    + floor(random()::numeric * 20))::int,
+  ROUND((0.5 + random()::numeric * 1.5)::numeric, 4),
+  ROUND((0.5 + random()::numeric * 1.5) * (200 + random()::numeric * 100)::numeric, 2)
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
 ON CONFLICT (connection_id, ad_id, date) DO NOTHING;
 
@@ -324,11 +324,11 @@ SELECT
   'meta_camp_001', 'meta_ad_001',
   'Roof damage? Get a FREE inspection this week',
   'meta_adset_001', 'Lead Gen – Homeowners 35-65', d::date,
-  ROUND((22 + random() * 12)::numeric, 2),
-  (4000 + floor(random() * 2000))::int,
-  (65   + floor(random() * 40))::int,
-  ROUND((3 + random() * 4)::numeric, 4),
-  ROUND((3 + random() * 4) * (270 + random() * 80)::numeric, 2),
+  ROUND((22 + random()::numeric * 12)::numeric, 2),
+  (4000 + floor(random()::numeric * 2000))::int,
+  (65   + floor(random()::numeric * 40))::int,
+  ROUND((3 + random()::numeric * 4)::numeric, 4),
+  ROUND((3 + random()::numeric * 4) * (270 + random()::numeric * 80)::numeric, 2),
   '[{"action_type":"lead","value":"3"},{"action_type":"link_click","value":"65"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
@@ -347,11 +347,11 @@ SELECT
   'meta_camp_001', 'meta_ad_002',
   'Video: Before & After Storm Damage Repairs',
   'meta_adset_001', 'Lead Gen – Homeowners 35-65', d::date,
-  ROUND((23 + random() * 14)::numeric, 2),
-  (4200 + floor(random() * 2200))::int,
-  (55   + floor(random() * 40))::int,
-  ROUND((2 + random() * 4)::numeric, 4),
-  ROUND((2 + random() * 4) * (290 + random() * 70)::numeric, 2),
+  ROUND((23 + random()::numeric * 14)::numeric, 2),
+  (4200 + floor(random()::numeric * 2200))::int,
+  (55   + floor(random()::numeric * 40))::int,
+  ROUND((2 + random()::numeric * 4)::numeric, 4),
+  ROUND((2 + random()::numeric * 4) * (290 + random()::numeric * 70)::numeric, 2),
   '[{"action_type":"lead","value":"2"},{"action_type":"video_view","value":"1200"},{"action_type":"link_click","value":"55"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
@@ -370,11 +370,11 @@ SELECT
   'meta_camp_002', 'meta_ad_003',
   'Storm Season Is Here – Protect Your Home',
   'meta_adset_002', 'Awareness – Broad 25-55', d::date,
-  ROUND((12 + random() * 7)::numeric, 2),
-  (14000 + floor(random() * 6000))::int,
-  (35    + floor(random() * 25))::int,
-  ROUND((0.5 + random() * 1.5)::numeric, 4),
-  ROUND((0.5 + random() * 1.5) * (160 + random() * 80)::numeric, 2),
+  ROUND((12 + random()::numeric * 7)::numeric, 2),
+  (14000 + floor(random()::numeric * 6000))::int,
+  (35    + floor(random()::numeric * 25))::int,
+  ROUND((0.5 + random()::numeric * 1.5)::numeric, 4),
+  ROUND((0.5 + random()::numeric * 1.5) * (160 + random()::numeric * 80)::numeric, 2),
   '[{"action_type":"post_engagement","value":"450"},{"action_type":"link_click","value":"35"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
@@ -393,11 +393,11 @@ SELECT
   'meta_camp_002', 'meta_ad_004',
   'Brand Video – The Apex Roofing Story',
   'meta_adset_002', 'Awareness – Broad 25-55', d::date,
-  ROUND((8 + random() * 5)::numeric, 2),
-  (11000 + floor(random() * 5000))::int,
-  (25    + floor(random() * 20))::int,
-  ROUND((0.2 + random() * 0.8)::numeric, 4),
-  ROUND((0.2 + random() * 0.8) * (120 + random() * 80)::numeric, 2),
+  ROUND((8 + random()::numeric * 5)::numeric, 2),
+  (11000 + floor(random()::numeric * 5000))::int,
+  (25    + floor(random()::numeric * 20))::int,
+  ROUND((0.2 + random()::numeric * 0.8)::numeric, 4),
+  ROUND((0.2 + random()::numeric * 0.8) * (120 + random()::numeric * 80)::numeric, 2),
   '[{"action_type":"video_view","value":"2800"},{"action_type":"link_click","value":"25"}]'::jsonb,
   '[]'::jsonb
 FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') AS d
