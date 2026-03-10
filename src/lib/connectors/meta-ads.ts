@@ -76,6 +76,196 @@ async function metaGet(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Ad-level metrics fetch (for campaign drill-down)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MetaAdRawRow {
+  campaign_id: string
+  campaign_name: string
+  adset_id: string
+  adset_name: string
+  ad_id: string
+  ad_name: string
+  thumbnail_url: string
+  date: string
+  spend: number
+  impressions: number
+  clicks: number
+  reach: number
+  actions: import('../types').MetaAction[]
+  action_values: import('../types').MetaAction[]
+  conversions: number
+  conversion_value: number
+}
+
+/**
+ * Fetch ad-level metrics for a Meta ad account over a date range.
+ * Includes thumbnail_url fetched from the creative API in a batch request.
+ * Called by the sync engine after campaign-level sync.
+ */
+export async function fetchMetaAdMetrics(
+  externalId: string,
+  auth: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string
+): Promise<MetaAdRawRow[]> {
+  const accessToken =
+    (auth.system_user_token as string | undefined) ||
+    (auth.access_token as string | undefined)
+
+  if (!accessToken) return []
+
+  const rows: MetaAdRawRow[] = []
+
+  // Build initial insights URL at the ad level
+  let nextUrl: string | null = (() => {
+    const base = new URL(`${BASE_URL}/${externalId}/insights`)
+    base.searchParams.set('access_token', accessToken)
+    base.searchParams.set('level', 'ad')
+    base.searchParams.set(
+      'fields',
+      [
+        'campaign_id',
+        'campaign_name',
+        'adset_id',
+        'adset_name',
+        'ad_id',
+        'ad_name',
+        'spend',
+        'impressions',
+        'clicks',
+        'reach',
+        'actions',
+        'action_values',
+      ].join(',')
+    )
+    base.searchParams.set(
+      'time_range',
+      JSON.stringify({ since: dateFrom, until: dateTo })
+    )
+    base.searchParams.set('time_increment', '1')
+    base.searchParams.set('limit', '500')
+    return base.toString()
+  })()
+
+  // Collect all ad_ids so we can batch-fetch thumbnails
+  const adIdSet = new Set<string>()
+  const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url'>)[] = []
+
+  while (nextUrl) {
+    const res = await fetch(nextUrl)
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Meta API error ${res.status}: ${text}`)
+    }
+
+    const data = (await res.json()) as Record<string, unknown>
+    const dayRows = (data.data || []) as Record<string, unknown>[]
+
+    for (const day of dayRows) {
+      const rawActions      = (day.actions       || []) as Record<string, unknown>[]
+      const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
+
+      const actions = rawActions.map(a => ({
+        action_type: String(a.action_type || ''),
+        value:       String(a.value       || '0'),
+      }))
+      const actionValues = rawActionValues.map(a => ({
+        action_type: String(a.action_type || ''),
+        value:       String(a.value       || '0'),
+      }))
+
+      const conversions = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+      const conversionValue = actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+
+      const adId = String(day.ad_id || '')
+      if (adId) adIdSet.add(adId)
+
+      rawRows.push({
+        campaign_id:      String(day.campaign_id   || ''),
+        campaign_name:    String(day.campaign_name || ''),
+        adset_id:         String(day.adset_id      || ''),
+        adset_name:       String(day.adset_name    || ''),
+        ad_id:            adId,
+        ad_name:          String(day.ad_name       || ''),
+        date:             String(day.date_start     || ''),
+        spend:            parseFloat(String(day.spend       || '0')),
+        impressions:      parseInt(  String(day.impressions || '0'), 10),
+        clicks:           parseInt(  String(day.clicks      || '0'), 10),
+        reach:            parseInt(  String(day.reach       || '0'), 10),
+        actions,
+        action_values:    actionValues,
+        conversions,
+        conversion_value: conversionValue,
+      })
+    }
+
+    const paging = data.paging as Record<string, unknown> | undefined
+    nextUrl = (paging?.next as string) || null
+  }
+
+  // Batch-fetch thumbnail URLs for all unique ad_ids
+  const thumbnails = await fetchAdThumbnails(Array.from(adIdSet), accessToken)
+
+  // Merge thumbnail URLs into rows
+  for (const row of rawRows) {
+    rows.push({ ...row, thumbnail_url: thumbnails[row.ad_id] || '' })
+  }
+
+  return rows
+}
+
+/**
+ * Fetch thumbnail URLs for a list of ad IDs using the Meta batch API.
+ * Returns a map of ad_id → thumbnail_url.
+ */
+async function fetchAdThumbnails(
+  adIds: string[],
+  accessToken: string
+): Promise<Record<string, string>> {
+  if (!adIds.length) return {}
+
+  const result: Record<string, string> = {}
+
+  // Process in batches of 50 (Meta batch API limit)
+  for (let i = 0; i < adIds.length; i += 50) {
+    const batch = adIds.slice(i, i + 50)
+    try {
+      // Request thumbnail from the ad creative
+      const batchRequests = batch.map(adId => ({
+        method: 'GET',
+        relative_url: `${adId}?fields=creative{thumbnail_url}`,
+      }))
+
+      const batchUrl = new URL(`${BASE_URL}/`)
+      batchUrl.searchParams.set('access_token', accessToken)
+      batchUrl.searchParams.set('batch', JSON.stringify(batchRequests))
+
+      const res = await fetch(batchUrl.toString(), { method: 'POST' })
+      if (!res.ok) continue
+
+      const responses = (await res.json()) as Record<string, unknown>[]
+      for (let j = 0; j < responses.length; j++) {
+        const item = responses[j]
+        if (!item || (item.code as number) !== 200) continue
+        try {
+          const body = JSON.parse(item.body as string) as Record<string, unknown>
+          const creative = body.creative as Record<string, unknown> | undefined
+          const url = creative?.thumbnail_url as string | undefined
+          if (url) result[batch[j]] = url
+        } catch {
+          // ignore parse errors for individual ads
+        }
+      }
+    } catch {
+      // ignore batch errors — thumbnails are best-effort
+    }
+  }
+
+  return result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter implementation
 // ─────────────────────────────────────────────────────────────────────────────
 

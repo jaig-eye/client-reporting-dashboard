@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   const params = new URLSearchParams({
     client_id: process.env.META_APP_ID!,
     redirect_uri: redirectUri,
-    scope: 'ads_read,business_management',
+    scope: 'ads_read,ads_management,business_management',
     response_type: 'code',
     state,
   })

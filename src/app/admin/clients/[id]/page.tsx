@@ -8,10 +8,12 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
 import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
+import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
 import CopyButton from '@/components/CopyButton'
 import ClientSyncButton from './ClientSyncButton'
 import DeleteClientButton from './DeleteClientButton'
 import ClientLogoUpload from './ClientLogoUpload'
+import ClientAdFuelCut from './ClientAdFuelCut'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +29,7 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientRes, connectionsRes, connectorsRes, recentJobsRes] = await Promise.all([
+  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('client_connections')
       .select('*, connector:connectors(*)')
@@ -39,6 +41,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(10),
+    db.from('agency_settings').select('ad_fuel_cut').single(),
   ])
 
   const client = clientRes.data as Client | null
@@ -47,6 +50,7 @@ export default async function ClientDetailPage({
   const connections = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
   const connectors  = (connectorsRes.data ?? []) as Connector[]
   const recentJobs  = (recentJobsRes.data ?? []) as SyncJob[]
+  const globalCut   = (settingsRes.data as { ad_fuel_cut?: number } | null)?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
 
   // Index connections by connector type for quick lookup
   const connByType = new Map(connections.map(c => [c.connector.type, c]))
@@ -87,6 +91,18 @@ export default async function ClientDetailPage({
             <h2 className="section-title mb-3">Client Logo</h2>
             <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
             <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
+          </div>
+
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Ad Fuel Cut</h2>
+            <p className="section-desc mb-3">
+              Per-client margin override. Ad Fuel Spend = raw spend ÷ (1 − cut).
+            </p>
+            <ClientAdFuelCut
+              clientId={id}
+              currentCut={client.ad_fuel_cut}
+              globalCut={globalCut}
+            />
           </div>
 
           {/* Danger zone */}

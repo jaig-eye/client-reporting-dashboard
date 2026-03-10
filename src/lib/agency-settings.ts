@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   benchmark_cpm: 15.0,
   default_date_range_days: 30,
   default_conversion_value: 0,
+  ad_fuel_cut: 0.20,
   cron_enabled: true,
   app_version: '',
   updated_at: '',

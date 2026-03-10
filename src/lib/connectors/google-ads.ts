@@ -120,6 +120,93 @@ async function listAccessibleCustomers(accessToken: string): Promise<string[]> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Ad-level metrics fetch (for campaign drill-down)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GoogleAdsAdRawRow {
+  campaign_id: string
+  campaign_name: string
+  ad_group_id: string
+  ad_group_name: string
+  ad_id: string
+  ad_name: string
+  ad_type: string
+  date: string
+  cost_micros: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversions_value: number
+}
+
+/**
+ * Fetch ad-level metrics for a Google Ads account over a date range.
+ * Called by the sync engine after campaign-level sync.
+ */
+export async function fetchGoogleAdMetrics(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string
+): Promise<GoogleAdsAdRawRow[]> {
+  const accessToken = auth.access_token as string | undefined
+  if (!accessToken && !auth.refresh_token) return []
+
+  const token = accessToken!
+  const mccId = (config.mcc_customer_id as string | undefined) || externalId
+
+  const raw = await runQuery(
+    externalId,
+    mccId,
+    token,
+    `SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      segments.date,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM ad_group_ad
+    WHERE ad_group_ad.status != 'REMOVED'
+      AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+    ORDER BY segments.date DESC`
+  )
+
+  return raw.map(row => {
+    const campaign  = row.campaign   as Record<string, unknown>
+    const adGroup   = row.ad_group   as Record<string, unknown>
+    const adGroupAd = row.ad_group_ad as Record<string, unknown>
+    const ad        = adGroupAd?.ad  as Record<string, unknown>
+    const metrics   = row.metrics    as Record<string, unknown>
+    const segments  = row.segments   as Record<string, unknown>
+
+    return {
+      campaign_id:       String(campaign?.id          || ''),
+      campaign_name:     String(campaign?.name        || ''),
+      ad_group_id:       String(adGroup?.id           || ''),
+      ad_group_name:     String(adGroup?.name         || ''),
+      ad_id:             String(ad?.id                || ''),
+      ad_name:           String(ad?.name              || ''),
+      ad_type:           String(ad?.type              || ''),
+      date:              String(segments?.date        || ''),
+      cost_micros:       Number(metrics?.costMicros   || 0),
+      impressions:       Number(metrics?.impressions  || 0),
+      clicks:            Number(metrics?.clicks       || 0),
+      conversions:       Number(metrics?.conversions  || 0),
+      conversions_value: Number(metrics?.conversionsValue || 0),
+    }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter implementation
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ export async function PATCH(
   const { id } = await params
   const body = await request.json()
 
-  const allowed = ['name', 'email', 'slug', 'logo_url', 'default_conversion_value']
+  const allowed = ['name', 'email', 'slug', 'logo_url', 'default_conversion_value', 'ad_fuel_cut']
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]

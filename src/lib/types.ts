@@ -109,6 +109,11 @@ export interface Client {
   dashboard_token: string
   /** Client-level default conversion value (overrides agency default). */
   default_conversion_value?: number | null
+  /**
+   * Per-client Ad Fuel margin override (0.20 = 20%, 0 = pass-through).
+   * NULL = use agency_settings.ad_fuel_cut.
+   */
+  ad_fuel_cut?: number | null
   created_at: string
   updated_at: string
 }
@@ -130,6 +135,11 @@ export interface AgencySettings {
   default_date_range_days: number
   /** Agency-wide default conversion value applied when no client/campaign override exists. */
   default_conversion_value: number
+  /**
+   * Global Ad Fuel margin (0.20 = 20% agency cut).
+   * ad_fuel_spend = raw_spend / (1 - ad_fuel_cut)
+   */
+  ad_fuel_cut: number
   cron_enabled: boolean
   app_version: string
   primary_user_id?: string
@@ -319,6 +329,8 @@ export interface MetricSummary {
   cpc: number
   cpl: number
   cpm: number
+  /** Ad Fuel spend = raw spend / (1 - ad_fuel_cut). Set on the dashboard with client's cut. */
+  adFuelSpend?: number
   reach?: number              // Meta-only
   frequency?: number          // Meta-only
 }
@@ -349,8 +361,58 @@ export interface CampaignRow {
   cpl: number
   ctr: number
   cpm: number
+  /** Ad Fuel spend (marked-up) — computed from spend + client's ad_fuel_cut. */
+  adFuelSpend?: number
   category?: CampaignCategory
   hidden: boolean
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AD-LEVEL METRICS (for campaign drill-down)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Google Ads ad-level metric row (one row per ad per day). */
+export interface GoogleAdsAdMetric {
+  id: string
+  connection_id: string
+  client_id: string
+  campaign_id: string
+  campaign_name: string
+  ad_group_id: string
+  ad_group_name: string
+  ad_id: string
+  ad_name: string
+  ad_type?: string
+  date: string
+  cost_micros: number
+  spend: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversions_value: number
+}
+
+/** Meta Ads ad-level metric row (one row per ad per day). */
+export interface MetaAdsAdMetric {
+  id: string
+  connection_id: string
+  client_id: string
+  campaign_id: string
+  campaign_name: string
+  adset_id?: string
+  adset_name?: string
+  ad_id: string
+  ad_name: string
+  thumbnail_url?: string
+  date: string
+  spend: number
+  impressions: number
+  clicks: number
+  reach: number
+  actions: MetaAction[]
+  action_values: MetaAction[]
+  conversions: number
+  conversion_value: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

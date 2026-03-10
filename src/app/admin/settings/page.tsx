@@ -7,29 +7,31 @@
 import { useEffect, useState } from 'react'
 
 interface Settings {
-  agency_name:             string
-  agency_logo_url:         string
-  benchmark_roas:          number
-  benchmark_ctr:           number
-  benchmark_cpc:           number
-  benchmark_conv_rate:     number
-  benchmark_cpm:           number
-  default_date_range_days: number
+  agency_name:              string
+  agency_logo_url:          string
+  benchmark_roas:           number
+  benchmark_ctr:            number
+  benchmark_cpc:            number
+  benchmark_conv_rate:      number
+  benchmark_cpm:            number
+  default_date_range_days:  number
   default_conversion_value: number
-  cron_enabled:            boolean
+  ad_fuel_cut:              number
+  cron_enabled:             boolean
 }
 
 const DEFAULT: Settings = {
-  agency_name:             '',
-  agency_logo_url:         '',
-  benchmark_roas:          3,
-  benchmark_ctr:           0.03,
-  benchmark_cpc:           3,
-  benchmark_conv_rate:     0.03,
-  benchmark_cpm:           15,
-  default_date_range_days: 30,
+  agency_name:              '',
+  agency_logo_url:          '',
+  benchmark_roas:           3,
+  benchmark_ctr:            0.03,
+  benchmark_cpc:            3,
+  benchmark_conv_rate:      0.03,
+  benchmark_cpm:            15,
+  default_date_range_days:  30,
   default_conversion_value: 0,
-  cron_enabled:            true,
+  ad_fuel_cut:              0.20,
+  cron_enabled:             true,
 }
 
 export default function AgencySettingsPage() {
@@ -199,6 +201,23 @@ export default function AgencySettingsPage() {
             <input type="number" step="0.01" min="0" className="input"
               value={form.default_conversion_value}
               onChange={e => field('default_conversion_value', parseFloat(e.target.value) || 0)} />
+          </FormField>
+        </div>
+
+        {/* Ad Fuel */}
+        <div className="card p-6 space-y-4">
+          <div>
+            <h2 className="section-title">Ad Fuel</h2>
+            <p className="section-desc">
+              Agency margin applied to raw platform spend. Ad Fuel Spend = raw spend ÷ (1 − cut).
+              Example: $800 raw spend at 20% cut = $1,000 Ad Fuel billed to client.
+              Individual clients can override this in their settings.
+            </p>
+          </div>
+          <FormField label="Global Ad Fuel Cut (%)" hint="e.g. 20 = agency keeps 20% of Ad Fuel">
+            <input type="number" step="0.1" min="0" max="99" className="input"
+              value={parseFloat((form.ad_fuel_cut * 100).toFixed(2))}
+              onChange={e => field('ad_fuel_cut', Math.min(0.99, parseFloat(e.target.value) / 100) || 0)} />
           </FormField>
         </div>
 

@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import type { CampaignCategory } from '@/lib/types'
 
 interface Campaign {
+  campaign_id: string
   campaign_name: string
   source: string
   spend: number
@@ -15,12 +17,27 @@ interface Campaign {
   ctr: number
   impressions: number
   cpm: number
+  adFuelSpend?: number
   category: CampaignCategory | null
 }
 
-type SortKey = 'campaign_name' | 'spend' | 'clicks' | 'conversions' | 'roas' | 'cpl'
+type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversions' | 'roas' | 'cpl'
 
-export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) {
+export default function CampaignTable({
+  campaigns,
+  adFuelCut = 0,
+  connectionId,
+  dateFrom,
+  dateTo,
+}: {
+  campaigns: Campaign[]
+  adFuelCut?: number
+  connectionId?: string
+  dateFrom?: string
+  dateTo?: string
+}) {
+  const showAdFuel = adFuelCut > 0
+
   const [sortKey, setSortKey] = useState<SortKey>('spend')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -30,7 +47,8 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
   }
 
   const sorted = [...campaigns].sort((a, b) => {
-    const av = a[sortKey], bv = b[sortKey]
+    const av = a[sortKey] ?? a.spend
+    const bv = b[sortKey] ?? b.spend
     if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(String(bv)) : String(bv).localeCompare(av)
     return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
   })
@@ -43,36 +61,60 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
     )
   }
 
-  const headers: { key: SortKey; label: string }[] = [
-    { key: 'campaign_name', label: 'Campaign' },
-    { key: 'spend',         label: 'Spend' },
-    { key: 'clicks',        label: 'Clicks' },
-    { key: 'conversions',   label: 'Conv.' },
-    { key: 'roas',          label: 'ROAS' },
-    { key: 'cpl',           label: 'CPL' },
-  ]
+  function SortTh({ sk, children }: { sk: SortKey; children: React.ReactNode }) {
+    return (
+      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+        {children}
+        {sortKey === sk && (
+          <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>
+        )}
+      </th>
+    )
+  }
+
+  function drillLink(c: Campaign) {
+    if (!connectionId) return null
+    const qs = new URLSearchParams({
+      source: c.source,
+      connectionId,
+      ...(dateFrom ? { from: dateFrom } : {}),
+      ...(dateTo   ? { to:   dateTo   } : {}),
+    })
+    return `/dashboard/campaign/${encodeURIComponent(c.campaign_id)}?${qs}`
+  }
 
   return (
     <div className="overflow-x-auto">
       <table className="data-table">
         <thead>
           <tr>
-            {headers.map(h => (
-              <th key={h.key} onClick={() => toggleSort(h.key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                {h.label}
-                {sortKey === h.key && (
-                  <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>
-                )}
-              </th>
-            ))}
+            <SortTh sk="campaign_name">Campaign</SortTh>
+            {showAdFuel ? (
+              <>
+                <SortTh sk="adFuelSpend">Ad Fuel Cost</SortTh>
+                <SortTh sk="spend">Raw Spend</SortTh>
+              </>
+            ) : (
+              <SortTh sk="spend">Spend</SortTh>
+            )}
+            <SortTh sk="clicks">Clicks</SortTh>
+            <SortTh sk="conversions">Conv.</SortTh>
+            <SortTh sk="roas">ROAS</SortTh>
+            <SortTh sk="cpl">CPL</SortTh>
+            {showAdFuel && <th style={{ color: 'var(--text-muted)' }}>AF ROAS</th>}
             <th>Category</th>
             <th>Source</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const showRoas = c.category?.display_mode === 'ecommerce' || (c.roas > 0 && c.conversionValue > 0)
+            const showRoas  = c.category?.display_mode === 'ecommerce' || (c.roas > 0 && c.conversionValue > 0)
             const convLabel = c.category?.conversion_label
+            const link      = drillLink(c)
+            const afRoas    = showAdFuel && c.adFuelSpend && c.adFuelSpend > 0
+              ? c.conversionValue / c.adFuelSpend
+              : null
+
             return (
               <tr key={i}>
                 <td
@@ -80,9 +122,28 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
                   style={{ color: 'var(--text-secondary)', maxWidth: 260 }}
                   title={c.campaign_name}
                 >
-                  <span className="block truncate">{c.campaign_name}</span>
+                  {link ? (
+                    <Link
+                      href={link}
+                      className="block truncate hover:underline"
+                      style={{ color: 'var(--blue)' }}
+                    >
+                      {c.campaign_name}
+                    </Link>
+                  ) : (
+                    <span className="block truncate">{c.campaign_name}</span>
+                  )}
                 </td>
-                <td style={{ color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
+                {showAdFuel ? (
+                  <>
+                    <td className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      ${(c.adFuelSpend ?? c.spend).toFixed(2)}
+                    </td>
+                    <td style={{ color: 'var(--text-faint)' }}>${c.spend.toFixed(2)}</td>
+                  </>
+                ) : (
+                  <td style={{ color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
+                )}
                 <td style={{ color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
                 <td style={{ color: 'var(--text-muted)' }}>
                   {c.conversions.toFixed(1)}
@@ -106,6 +167,19 @@ export default function CampaignTable({ campaigns }: { campaigns: Campaign[] }) 
                 <td style={{ color: 'var(--text-muted)' }}>
                   {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
+                {showAdFuel && (
+                  <td className="font-semibold whitespace-nowrap">
+                    {afRoas != null ? (
+                      <span style={{
+                        color: afRoas >= 3 ? 'var(--green)' : afRoas >= 1.5 ? '#d97706' : 'var(--red)'
+                      }}>
+                        {afRoas.toFixed(2)}x
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-faint)' }}>—</span>
+                    )}
+                  </td>
+                )}
                 <td>
                   {c.category ? (
                     <span className="flex items-center gap-1.5">

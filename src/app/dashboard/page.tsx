@@ -11,7 +11,7 @@ import { cookies } from 'next/headers'
 import { Suspense } from 'react'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
+import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, GoogleAdsMetric, MetaAdsMetric, CampaignCategory } from '@/lib/types'
 import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
@@ -78,6 +78,9 @@ export default async function DashboardPage({
 
   const categories  = (categoriesResult.data ?? []) as CampaignCategory[]
   const categoryMap = new Map(categories.map(c => [c.id, c]))
+
+  // Resolve effective Ad Fuel cut: client override takes precedence over global
+  const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
 
   // Fetch source-specific metrics for the active tab
   type NormRow = {
@@ -198,6 +201,7 @@ export default async function DashboardPage({
       cpl:             c.conversions > 0 ? c.spend / c.conversions : 0,
       ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
       cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
+      adFuelSpend:     applyAdFuel(c.spend, adFuelCut),
       category:        c.category ?? null,
       hidden:          false,
     }))
@@ -295,10 +299,11 @@ export default async function DashboardPage({
             {/* Row 1: spend-focused KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <MetricCard
-                label="Total Spend"
-                value={fmt$(current.spend)}
+                label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'}
+                value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)}
                 delta={calcDelta(current.spend, prior.spend)}
                 invertDelta
+                sub={adFuelCut > 0 ? `${fmt$(current.spend)} raw` : undefined}
                 delay={0}
               />
               <MetricCard
@@ -370,7 +375,13 @@ export default async function DashboardPage({
                   <p className="section-desc">{campaigns.length} campaigns</p>
                 </div>
               </div>
-              <CampaignTable campaigns={campaigns} />
+              <CampaignTable
+                campaigns={campaigns}
+                adFuelCut={adFuelCut}
+                connectionId={activeConnection?.id}
+                dateFrom={fmtDate(fromDate)}
+                dateTo={fmtDate(toDate)}
+              />
             </div>
           </>
         )}

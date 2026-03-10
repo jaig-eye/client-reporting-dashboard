@@ -14,8 +14,12 @@
 
 import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
+import { fetchGoogleAdMetrics } from './connectors/google-ads'
+import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
+import type { GoogleAdsAdRawRow } from './connectors/google-ads'
+import type { MetaAdRawRow } from './connectors/meta-ads'
 
 /** Days of history pulled on first connection (approx 2 years). */
 export const BACKFILL_DAYS = 730
@@ -121,6 +125,17 @@ export async function syncClient(
           clientId,
           result.rows as GoogleAdsRawRow[]
         )
+        // Ad-level sync (best-effort — don't fail the job if this errors)
+        try {
+          const adRows = await fetchGoogleAdMetrics(
+            connection.external_id,
+            auth,
+            connection.connector.config,
+            resolvedFrom,
+            resolvedTo
+          )
+          await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
+        } catch { /* ad-level sync errors are non-fatal */ }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
           db,
@@ -129,6 +144,16 @@ export async function syncClient(
           result.rows as MetaAdsRawRow[],
           result.discoveredActions ?? []
         )
+        // Ad-level sync (best-effort)
+        try {
+          const adRows = await fetchMetaAdMetrics(
+            connection.external_id,
+            auth,
+            resolvedFrom,
+            resolvedTo
+          )
+          await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
+        } catch { /* ad-level sync errors are non-fatal */ }
       }
 
       totalRecords += recordCount
@@ -283,6 +308,100 @@ export async function upsertMetaAdsMetrics(
   }
 
   await upsertCampaignAssignments(db, clientId, 'meta_ads', mapped)
+
+  return mapped.length
+}
+
+/**
+ * Upsert Google Ads ad-level metrics into google_ads_ad_metrics.
+ * On conflict (connection_id, ad_id, date) the row is updated.
+ */
+export async function upsertGoogleAdsAdMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GoogleAdsAdRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.ad_id)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => {
+    const costMicros = Number(r.cost_micros) || 0
+    const spend      = costMicros / 1_000_000
+    return {
+      connection_id:     connectionId,
+      client_id:         clientId,
+      campaign_id:       String(r.campaign_id),
+      campaign_name:     String(r.campaign_name || ''),
+      ad_group_id:       String(r.ad_group_id),
+      ad_group_name:     String(r.ad_group_name || ''),
+      ad_id:             String(r.ad_id),
+      ad_name:           String(r.ad_name || ''),
+      ad_type:           r.ad_type || null,
+      date:              String(r.date).split('T')[0],
+      cost_micros:       costMicros,
+      spend,
+      impressions:       Number(r.impressions)      || 0,
+      clicks:            Number(r.clicks)           || 0,
+      conversions:       Number(r.conversions)      || 0,
+      conversions_value: Number(r.conversions_value)|| 0,
+    }
+  })
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('google_ads_ad_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,ad_id,date',
+        ignoreDuplicates: false,
+      })
+  }
+
+  return mapped.length
+}
+
+/**
+ * Upsert Meta Ads ad-level metrics into meta_ads_ad_metrics.
+ * On conflict (connection_id, ad_id, date) the row is updated.
+ */
+export async function upsertMetaAdsAdMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: MetaAdRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.ad_id)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    campaign_id:      String(r.campaign_id),
+    campaign_name:    String(r.campaign_name || ''),
+    adset_id:         r.adset_id  || null,
+    adset_name:       r.adset_name || null,
+    ad_id:            String(r.ad_id),
+    ad_name:          String(r.ad_name || ''),
+    thumbnail_url:    r.thumbnail_url || null,
+    date:             String(r.date).split('T')[0],
+    spend:            Number(r.spend)       || 0,
+    impressions:      Number(r.impressions) || 0,
+    clicks:           Number(r.clicks)      || 0,
+    reach:            Number(r.reach)       || 0,
+    actions:          r.actions,
+    action_values:    r.action_values,
+    conversions:      Number(r.conversions)       || 0,
+    conversion_value: Number(r.conversion_value)  || 0,
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('meta_ads_ad_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,ad_id,date',
+        ignoreDuplicates: false,
+      })
+  }
 
   return mapped.length
 }

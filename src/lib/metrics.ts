@@ -54,6 +54,24 @@ export function getDailyTrend(rows: MetricRow[]): DailyMetric[] {
     }))
 }
 
+/**
+ * Compute Ad Fuel spend from raw platform spend and the agency's cut percentage.
+ *
+ * The agency retains `cutPct` of the total billed amount ("Ad Fuel"); the rest
+ * goes to the platform as raw ad spend.
+ *
+ *   ad_fuel_spend = raw_spend / (1 - cut_pct)
+ *
+ * Examples:
+ *   $800 raw, 20% cut → $1,000 Ad Fuel ($200 kept by agency)
+ *   $800 raw,  0% cut → $800 Ad Fuel (client gets 100% on ads)
+ */
+export function applyAdFuel(rawSpend: number, cutPct: number): number {
+  if (cutPct <= 0) return rawSpend
+  if (cutPct >= 1) return rawSpend // guard against invalid config
+  return rawSpend / (1 - cutPct)
+}
+
 export function calcDelta(current: number, prior: number): number {
   if (prior === 0) return current > 0 ? 100 : 0
   return ((current - prior) / Math.abs(prior)) * 100
