@@ -153,6 +153,14 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dailyTrend = getDailyTrend(currentMetrics as any[])
 
+  // Detect dominant display mode from campaign assignments
+  const assignmentModes = (assignmentsData ?? [])
+    .map((a: Record<string, unknown>) => (a.category as Record<string, unknown> | null)?.display_mode as string | undefined)
+    .filter(Boolean)
+  const ecomCount   = assignmentModes.filter(m => m === 'ecommerce').length
+  const leadCount   = assignmentModes.filter(m => m === 'lead_gen').length
+  const isEcomDash  = ecomCount > leadCount
+
   // Aggregate metrics per campaign for the breakdown table
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
@@ -296,7 +304,7 @@ export default async function DashboardPage({
 
         {currentMetrics.length > 0 && (
           <>
-            {/* Row 1: spend-focused KPIs */}
+            {/* Row 1: mode-aware primary KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <MetricCard
                 label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'}
@@ -306,43 +314,90 @@ export default async function DashboardPage({
                 sub={adFuelCut > 0 ? `${fmt$(current.spend)} raw` : undefined}
                 delay={0}
               />
-              <MetricCard
-                label="Conv. Value"
-                value={fmt$(current.conversionValue)}
-                delta={calcDelta(current.conversionValue, prior.conversionValue)}
-                delay={1}
-              />
-              <MetricCard
-                label="ROAS"
-                value={fmtRoas(current.roas)}
-                delta={calcDelta(current.roas, prior.roas)}
-                delay={2}
-              />
-              <MetricCard
-                label="Conversions"
-                value={fmtNum(current.conversions)}
-                delta={calcDelta(current.conversions, prior.conversions)}
-                sub={current.cpl > 0 ? `${fmtCurrency(current.cpl)} CPL` : undefined}
-                delay={3}
-              />
+              {isEcomDash ? (
+                <>
+                  <MetricCard
+                    label="ROAS"
+                    value={fmtRoas(current.roas)}
+                    delta={calcDelta(current.roas, prior.roas)}
+                    delay={1}
+                  />
+                  <MetricCard
+                    label="Revenue"
+                    value={fmt$(current.conversionValue)}
+                    delta={calcDelta(current.conversionValue, prior.conversionValue)}
+                    delay={2}
+                  />
+                  <MetricCard
+                    label="Orders"
+                    value={fmtNum(current.conversions)}
+                    delta={calcDelta(current.conversions, prior.conversions)}
+                    delay={3}
+                  />
+                </>
+              ) : (
+                <>
+                  <MetricCard
+                    label="Leads"
+                    value={fmtNum(current.conversions)}
+                    delta={calcDelta(current.conversions, prior.conversions)}
+                    delay={1}
+                  />
+                  <MetricCard
+                    label="CPL"
+                    value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'}
+                    delta={calcDelta(current.cpl, prior.cpl)}
+                    invertDelta
+                    delay={2}
+                  />
+                  <MetricCard
+                    label="Clicks"
+                    value={fmtNum(current.clicks)}
+                    delta={calcDelta(current.clicks, prior.clicks)}
+                    sub={`${fmtPct(current.ctr)} CTR`}
+                    delay={3}
+                  />
+                </>
+              )}
             </div>
 
-            {/* Row 2: engagement KPIs */}
+            {/* Row 2: secondary KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard
-                label="Clicks"
-                value={fmtNum(current.clicks)}
-                delta={calcDelta(current.clicks, prior.clicks)}
-                sub={`${fmtPct(current.ctr)} CTR`}
-                delay={0}
-              />
-              <MetricCard
-                label="Avg. CPC"
-                value={fmtCurrency(current.cpc)}
-                delta={calcDelta(current.cpc, prior.cpc)}
-                invertDelta
-                delay={1}
-              />
+              {isEcomDash ? (
+                <>
+                  <MetricCard
+                    label="Clicks"
+                    value={fmtNum(current.clicks)}
+                    delta={calcDelta(current.clicks, prior.clicks)}
+                    sub={`${fmtPct(current.ctr)} CTR`}
+                    delay={0}
+                  />
+                  <MetricCard
+                    label="Avg. CPC"
+                    value={fmtCurrency(current.cpc)}
+                    delta={calcDelta(current.cpc, prior.cpc)}
+                    invertDelta
+                    delay={1}
+                  />
+                </>
+              ) : (
+                <>
+                  <MetricCard
+                    label="Est. ROAS"
+                    value={fmtRoas(current.roas)}
+                    delta={calcDelta(current.roas, prior.roas)}
+                    sub="Not connected to CRM"
+                    delay={0}
+                  />
+                  <MetricCard
+                    label="Avg. CPC"
+                    value={fmtCurrency(current.cpc)}
+                    delta={calcDelta(current.cpc, prior.cpc)}
+                    invertDelta
+                    delay={1}
+                  />
+                </>
+              )}
               <MetricCard
                 label="Impressions"
                 value={fmtNum(current.impressions)}
