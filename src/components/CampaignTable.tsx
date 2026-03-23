@@ -26,12 +26,14 @@ type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversio
 export default function CampaignTable({
   campaigns,
   adFuelCut = 0,
+  isEcomDash = false,
   connectionId,
   dateFrom,
   dateTo,
 }: {
   campaigns: Campaign[]
   adFuelCut?: number
+  isEcomDash?: boolean
   connectionId?: string
   dateFrom?: string
   dateTo?: string
@@ -89,31 +91,27 @@ export default function CampaignTable({
         <thead>
           <tr>
             <SortTh sk="campaign_name">Campaign</SortTh>
-            {showAdFuel ? (
-              <>
-                <SortTh sk="adFuelSpend">Ad Fuel Cost</SortTh>
-                <SortTh sk="spend">Raw Spend</SortTh>
-              </>
-            ) : (
-              <SortTh sk="spend">Spend</SortTh>
-            )}
+            <SortTh sk={showAdFuel ? 'adFuelSpend' : 'spend'}>
+              {showAdFuel ? 'Ad Fuel Cost' : 'Spend'}
+            </SortTh>
             <SortTh sk="clicks">Clicks</SortTh>
             <SortTh sk="conversions">Conv.</SortTh>
-            <SortTh sk="roas">ROAS</SortTh>
+            {isEcomDash ? (
+              <SortTh sk="roas">ROAS</SortTh>
+            ) : (
+              <th style={{ color: 'var(--text-muted)' }}>CTR</th>
+            )}
             <SortTh sk="cpl">CPL</SortTh>
-            {showAdFuel && <th style={{ color: 'var(--text-muted)' }}>AF ROAS</th>}
             <th>Category</th>
             <th>Source</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const showRoas  = c.category?.display_mode === 'ecommerce' || (c.roas > 0 && c.conversionValue > 0)
+            const rowIsEcom = c.category?.display_mode === 'ecommerce'
             const convLabel = c.category?.conversion_label
             const link      = drillLink(c)
-            const afRoas    = showAdFuel && c.adFuelSpend && c.adFuelSpend > 0
-              ? c.conversionValue / c.adFuelSpend
-              : null
+            const displaySpend = showAdFuel ? (c.adFuelSpend ?? c.spend) : c.spend
 
             return (
               <tr key={i}>
@@ -134,16 +132,7 @@ export default function CampaignTable({
                     <span className="block truncate">{c.campaign_name}</span>
                   )}
                 </td>
-                {showAdFuel ? (
-                  <>
-                    <td className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      ${(c.adFuelSpend ?? c.spend).toFixed(2)}
-                    </td>
-                    <td style={{ color: 'var(--text-faint)' }}>${c.spend.toFixed(2)}</td>
-                  </>
-                ) : (
-                  <td style={{ color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
-                )}
+                <td style={{ color: 'var(--text-muted)' }}>${displaySpend.toFixed(2)}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
                 <td style={{ color: 'var(--text-muted)' }}>
                   {c.conversions.toFixed(1)}
@@ -153,33 +142,24 @@ export default function CampaignTable({
                     </span>
                   )}
                 </td>
-                <td className="font-semibold whitespace-nowrap">
-                  {showRoas ? (
-                    <span style={{
-                      color: c.roas >= 3 ? 'var(--green)' : c.roas >= 1.5 ? '#d97706' : 'var(--red)'
-                    }}>
-                      {c.roas.toFixed(2)}x
-                    </span>
-                  ) : (
-                    <span style={{ color: 'var(--text-faint)' }}>—</span>
-                  )}
-                </td>
-                <td style={{ color: 'var(--text-muted)' }}>
-                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                {showAdFuel && (
+                {isEcomDash ? (
                   <td className="font-semibold whitespace-nowrap">
-                    {afRoas != null ? (
-                      <span style={{
-                        color: afRoas >= 3 ? 'var(--green)' : afRoas >= 1.5 ? '#d97706' : 'var(--red)'
-                      }}>
-                        {afRoas.toFixed(2)}x
+                    {rowIsEcom && c.roas > 0 ? (
+                      <span style={{ color: c.roas >= 3 ? 'var(--green)' : c.roas >= 1.5 ? '#d97706' : 'var(--red)' }}>
+                        {c.roas.toFixed(2)}x
                       </span>
                     ) : (
                       <span style={{ color: 'var(--text-faint)' }}>—</span>
                     )}
                   </td>
+                ) : (
+                  <td style={{ color: 'var(--text-muted)' }}>
+                    {c.ctr > 0 ? `${(c.ctr * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                  </td>
                 )}
+                <td style={{ color: 'var(--text-muted)' }}>
+                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
                 <td>
                   {c.category ? (
                     <span className="flex items-center gap-1.5">

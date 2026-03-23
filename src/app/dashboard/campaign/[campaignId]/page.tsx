@@ -1,9 +1,10 @@
 // Campaign Detail — /dashboard/campaign/[campaignId]
 //
-// Drill-down: Campaign → Ad Sets → Ads
-// Metric emphasis adapts to campaign category display_mode:
-//   lead_gen  → Leads, CPL as hero metrics; ROAS shown as estimated
-//   ecommerce → ROAS, Revenue as hero metrics
+// Shows campaign KPI summary + a clickable list of ad groups / ad sets.
+// Clicking an ad group navigates to the ad-level view:
+//   /dashboard/campaign/[campaignId]/adset/[adsetId]
+//
+// Navigation: Platforms → Platform → Campaign (here) → Ad Group → Ads
 
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
@@ -12,7 +13,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { applyAdFuel, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
-import AdSetCards, { type AdCardData, type AdSetData, type DisplayMode } from '@/components/AdSetCards'
+import type { DisplayMode } from '@/components/AdSetCards'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,15 +36,15 @@ export default async function CampaignDetailPage({
   if (!client) redirect('/access')
 
   const { campaignId } = await params
-  const sp         = await searchParams
-  const source     = sp.source ?? 'google_ads'
-  const dateFrom   = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
-  const dateTo     = sp.to ?? new Date().toISOString().split('T')[0]
+  const sp       = await searchParams
+  const source   = sp.source ?? 'google_ads'
+  const dateFrom = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
+  const dateTo   = sp.to ?? new Date().toISOString().split('T')[0]
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
 
-  // Fetch campaign category → determines display mode and conversion label
+  // Campaign category → display mode + conversion label
   const { data: assignmentData } = await db
     .from('client_campaign_assignments')
     .select('category:campaign_categories(display_mode, conversion_label)')
@@ -52,155 +53,105 @@ export default async function CampaignDetailPage({
     .eq('campaign_id', campaignId)
     .maybeSingle()
 
-  const catInfo    = (assignmentData?.category ?? null) as { display_mode: string; conversion_label: string } | null
-  const displayMode      = (catInfo?.display_mode ?? 'lead_gen') as DisplayMode
-  const conversionLabel  = catInfo?.conversion_label ?? 'Conversions'
-  const isEcom     = displayMode === 'ecommerce'
+  const catInfo         = (assignmentData?.category ?? null) as { display_mode: string; conversion_label: string } | null
+  const displayMode     = (catInfo?.display_mode ?? 'lead_gen') as DisplayMode
+  const conversionLabel = catInfo?.conversion_label ?? 'Conversions'
+  const isEcom          = displayMode === 'ecommerce'
 
-  // ── Fetch ad-level metrics ───────────────────────────────────────────────
+  const isGoogleAds  = source === 'google_ads'
+  const groupLabel   = isGoogleAds ? 'Ad Group' : 'Ad Set'
+
+  // ── Fetch ad-level metrics ─────────────────────────────────────────────────
   type GoogleAdRow = {
-    ad_id: string; ad_name: string; ad_type: string | null
-    ad_group_id: string; ad_group_name: string
+    ad_id: string; ad_group_id: string; ad_group_name: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number
   }
   type MetaAdRow = {
-    ad_id: string; ad_name: string; thumbnail_url: string | null
-    adset_id: string | null; adset_name: string | null
+    ad_id: string; adset_id: string | null; adset_name: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
   }
 
   let campaignName = decodeURIComponent(campaignId)
-  // Map<setId, { setName, ads: Map<ad_id, AdCardData> }>
-  const setMap = new Map<string, { setName: string; ads: Map<string, AdCardData> }>()
 
-  // Helper to upsert into setMap
-  function upsertAd(setId: string, setName: string, ad: AdCardData) {
-    if (!setMap.has(setId)) {
-      setMap.set(setId, { setName, ads: new Map() })
-    }
-    const set = setMap.get(setId)!
-    const ex  = set.ads.get(ad.ad_id)
+  // Map<setId, { setName, spend, impressions, clicks, conversions, conversionValue, adCount }>
+  type SetAgg = { setName: string; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
+  const setMap = new Map<string, SetAgg>()
+
+  function upsertSet(setId: string, setName: string, adId: string, sp: number, im: number, cl: number, co: number, cv: number) {
+    const ex = setMap.get(setId)
     if (ex) {
-      ex.spend           += ad.spend
-      ex.impressions     += ad.impressions
-      ex.clicks          += ad.clicks
-      ex.conversions     += ad.conversions
-      ex.conversionValue += ad.conversionValue
-      ex.adFuelSpend      = applyAdFuel(ex.spend, adFuelCut)
-      ex.roas             = ex.spend > 0 ? ex.conversionValue / ex.spend : 0
-      ex.cpl              = ex.conversions > 0 ? ex.spend / ex.conversions : 0
-      ex.ctr              = ex.impressions > 0 ? ex.clicks / ex.impressions : 0
+      ex.spend           += sp
+      ex.impressions     += im
+      ex.clicks          += cl
+      ex.conversions     += co
+      ex.conversionValue += cv
+      ex.adIds.add(adId)
     } else {
-      set.ads.set(ad.ad_id, { ...ad })
+      setMap.set(setId, { setName, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
     }
   }
 
-  if (source === 'google_ads') {
+  if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_name,ad_type,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value')
+        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .limit(1)
-        .maybeSingle(),
+        .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
-
     for (const r of (rows ?? []) as GoogleAdRow[]) {
-      const sp = Number(r.spend) || 0
-      const cv = Number(r.conversions_value) || 0
-      const cl = Number(r.clicks) || 0
-      const im = Number(r.impressions) || 0
-      const co = Number(r.conversions) || 0
-      upsertAd(r.ad_group_id, r.ad_group_name, {
-        ad_id:           r.ad_id,
-        ad_name:         r.ad_name,
-        ad_type:         r.ad_type,
-        thumbnail_url:   null,
-        spend:           sp,
-        impressions:     im,
-        clicks:          cl,
-        conversions:     co,
-        conversionValue: cv,
-        roas:            sp > 0 ? cv / sp : 0,
-        cpl:             co > 0 ? sp / co : 0,
-        ctr:             im > 0 ? cl / im : 0,
-        adFuelSpend:     applyAdFuel(sp, adFuelCut),
-      })
+      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversions_value)||0)
     }
   } else {
-    // Meta
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,ad_name,thumbnail_url,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value')
+        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('meta_ads_metrics')
-        .select('campaign_name')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .limit(1)
-        .maybeSingle(),
+        .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
-
     for (const r of (rows ?? []) as MetaAdRow[]) {
-      const sp    = Number(r.spend) || 0
-      const cv    = Number(r.conversion_value) || 0
-      const cl    = Number(r.clicks) || 0
-      const im    = Number(r.impressions) || 0
-      const co    = Number(r.conversions) || 0
       const setId = r.adset_id ?? r.adset_name ?? 'unknown'
-      upsertAd(setId, r.adset_name ?? 'Ad Set', {
-        ad_id:           r.ad_id,
-        ad_name:         r.ad_name,
-        ad_type:         null,
-        thumbnail_url:   r.thumbnail_url,
-        spend:           sp,
-        impressions:     im,
-        clicks:          cl,
-        conversions:     co,
-        conversionValue: cv,
-        roas:            sp > 0 ? cv / sp : 0,
-        cpl:             co > 0 ? sp / co : 0,
-        ctr:             im > 0 ? cl / im : 0,
-        adFuelSpend:     applyAdFuel(sp, adFuelCut),
-      })
+      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversion_value)||0)
     }
   }
 
-  // Build sorted AdSetData[]
-  const adSets: AdSetData[] = Array.from(setMap.entries())
-    .map(([setId, s]) => {
-      const ads = Array.from(s.ads.values()).sort((a, b) => b.spend - a.spend)
-      const spend           = ads.reduce((t, a) => t + a.spend, 0)
-      const impressions     = ads.reduce((t, a) => t + a.impressions, 0)
-      const clicks          = ads.reduce((t, a) => t + a.clicks, 0)
-      const conversions     = ads.reduce((t, a) => t + a.conversions, 0)
-      const conversionValue = ads.reduce((t, a) => t + a.conversionValue, 0)
-      return { setId, setName: s.setName, spend, impressions, clicks, conversions, conversionValue, ads }
-    })
+  const adGroups = Array.from(setMap.entries())
+    .map(([setId, s]) => ({
+      setId,
+      setName:         s.setName,
+      spend:           s.spend,
+      impressions:     s.impressions,
+      clicks:          s.clicks,
+      conversions:     s.conversions,
+      conversionValue: s.conversionValue,
+      adCount:         s.adIds.size,
+      displaySpend:    adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend,
+      roas:            s.spend > 0 && s.conversionValue > 0 ? s.conversionValue / s.spend : 0,
+      cpl:             s.conversions > 0 ? s.spend / s.conversions : 0,
+      ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
+    }))
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals
-  const totSpend           = adSets.reduce((t, s) => t + s.spend, 0)
-  const totImpressions     = adSets.reduce((t, s) => t + s.impressions, 0)
-  const totClicks          = adSets.reduce((t, s) => t + s.clicks, 0)
-  const totConversions     = adSets.reduce((t, s) => t + s.conversions, 0)
-  const totConversionValue = adSets.reduce((t, s) => t + s.conversionValue, 0)
-  const totAds             = adSets.reduce((t, s) => t + s.ads.length, 0)
+  const totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
+  const totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
+  const totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
+  const totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
+  const totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
 
-  const backHref = `/dashboard?${new URLSearchParams({ source, from: dateFrom, to: dateTo })}`
+  const dateQs  = new URLSearchParams({ source, from: dateFrom, to: dateTo })
+  const backHref = `/dashboard?${dateQs}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -224,16 +175,15 @@ export default async function CampaignDetailPage({
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-        {/* ── Breadcrumb + campaign title ────────────────────── */}
+        {/* ── Breadcrumb ─────────────────────────────────────── */}
         <div>
-          {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: 'var(--text-faint)' }}>
-            <Link href="/dashboard" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-              Dashboard
+            <Link href={`/dashboard?${new URLSearchParams({ from: dateFrom, to: dateTo })}`} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
+              Platforms
             </Link>
             <span>/</span>
             <Link href={backHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-              {source === 'google_ads' ? 'Google Ads' : 'Meta Ads'}
+              {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
             </Link>
             <span>/</span>
             <span style={{ color: 'var(--text-secondary)' }}>{campaignName}</span>
@@ -246,12 +196,12 @@ export default async function CampaignDetailPage({
                 <span
                   className="badge"
                   style={{
-                    background: source === 'google_ads' ? '#eff6ff' : '#f5f3ff',
-                    color:      source === 'google_ads' ? '#2563eb' : '#7c3aed',
-                    border:     source === 'google_ads' ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
+                    background: isGoogleAds ? '#eff6ff' : '#f5f3ff',
+                    color:      isGoogleAds ? '#2563eb' : '#7c3aed',
+                    border:     isGoogleAds ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
                   }}
                 >
-                  {source === 'google_ads' ? 'Google Ads' : 'Meta Ads'}
+                  {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
                 </span>
                 {catInfo && (
                   <span className="badge badge-blue">{catInfo.display_mode.replace('_', ' ')}</span>
@@ -264,7 +214,7 @@ export default async function CampaignDetailPage({
           </div>
         </div>
 
-        {/* ── KPI summary ─────────────────────────────────────── */}
+        {/* ── Campaign KPI summary ────────────────────────────── */}
         <CampaignSummary
           spend={totSpend}
           impressions={totImpressions}
@@ -276,30 +226,88 @@ export default async function CampaignDetailPage({
           conversionLabel={conversionLabel}
         />
 
-        {/* ── Ad Sets → Ads ───────────────────────────────────── */}
+        {/* ── Ad Group list ────────────────────────────────────── */}
         <div className="card p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="section-title">
-                {adSets.length > 1
-                  ? `${adSets.length} Ad Sets · ${totAds} Ads`
-                  : `${totAds} Ads`
-                }
-              </h2>
-              {!isEcom && (
-                <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>
-                  ROAS is estimated — not connected to a CRM or purchase pipeline
-                </p>
-              )}
-            </div>
+          <div className="mb-5">
+            <h2 className="section-title">
+              {adGroups.length} {groupLabel}{adGroups.length !== 1 ? 's' : ''}
+            </h2>
+            <p className="section-desc">Click a {groupLabel.toLowerCase()} to see individual ads</p>
           </div>
 
-          <AdSetCards
-            adSets={adSets}
-            displayMode={displayMode}
-            adFuelCut={adFuelCut}
-            conversionLabel={conversionLabel}
-          />
+          {adGroups.length === 0 ? (
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+              No ad-level data synced yet.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {adGroups.map(group => {
+                const adsetQs  = new URLSearchParams({ source, from: dateFrom, to: dateTo })
+                const adsetHref = `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(group.setId)}?${adsetQs}`
+
+                return (
+                  <Link
+                    key={group.setId}
+                    href={adsetHref}
+                    className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg"
+                    style={{
+                      background: 'var(--bg-subtle)',
+                      border: '1px solid var(--border-subtle)',
+                      textDecoration: 'none',
+                      display: 'flex',
+                    }}
+                  >
+                    <div className="min-w-0">
+                      {/* Label + name */}
+                      <p className="text-xs font-medium uppercase tracking-wide mb-0.5" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
+                        {groupLabel}
+                      </p>
+                      <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {group.setName || groupLabel}
+                      </p>
+                      {/* Metrics row */}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <span className="font-medium">{fmt$(group.displaySpend)}</span>
+                        <span style={{ color: 'var(--border)' }}>·</span>
+                        {isEcom ? (
+                          <>
+                            <span
+                              className="font-medium"
+                              style={{ color: group.roas >= 3 ? 'var(--green)' : group.roas >= 1.5 ? '#d97706' : group.roas > 0 ? 'var(--red)' : 'var(--text-faint)' }}
+                            >
+                              {group.roas > 0 ? `${fmtRoas(group.roas)} ROAS` : 'No conv.'}
+                            </span>
+                            <span style={{ color: 'var(--border)' }}>·</span>
+                            <span>{fmt$(group.conversionValue)} revenue</span>
+                            <span style={{ color: 'var(--border)' }}>·</span>
+                            <span>{fmtNum(group.conversions)} orders</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>{group.conversions.toFixed(0)} {conversionLabel.toLowerCase()}</span>
+                            {group.cpl > 0 && (
+                              <>
+                                <span style={{ color: 'var(--border)' }}>·</span>
+                                <span>{fmtCurrency(group.cpl)} CPL</span>
+                              </>
+                            )}
+                            <span style={{ color: 'var(--border)' }}>·</span>
+                            <span>{fmtPct(group.ctr)} CTR</span>
+                          </>
+                        )}
+                        <span style={{ color: 'var(--border)' }}>·</span>
+                        <span style={{ color: 'var(--text-faint)' }}>{group.adCount} ad{group.adCount !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-medium flex-shrink-0" style={{ color: 'var(--blue)' }}>
+                      View Ads →
+                    </span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
         </div>
 
       </main>
@@ -312,14 +320,8 @@ export default async function CampaignDetailPage({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CampaignSummary({
-  spend,
-  impressions,
-  clicks,
-  conversions,
-  conversionValue,
-  adFuelCut,
-  displayMode,
-  conversionLabel,
+  spend, impressions, clicks, conversions, conversionValue,
+  adFuelCut, displayMode, conversionLabel,
 }: {
   spend:            number
   impressions:      number
@@ -340,20 +342,14 @@ function CampaignSummary({
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-      {/* Spend */}
       <StatCard label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}>
         <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(displaySpend)}</span>
-        {adFuelCut > 0 && <span className="text-xs ml-1" style={{ color: 'var(--text-faint)' }}>({fmt$(spend)} raw)</span>}
       </StatCard>
 
       {isEcom ? (
         <>
-          {/* Ecommerce: ROAS hero */}
           <StatCard label="ROAS">
-            <span
-              className="text-xl font-bold"
-              style={{ color: roas > 0 ? roasColor : 'var(--text-faint)' }}
-            >
+            <span className="text-xl font-bold" style={{ color: roas > 0 ? roasColor : 'var(--text-faint)' }}>
               {roas > 0 ? fmtRoas(roas) : '—'}
             </span>
           </StatCard>
@@ -375,7 +371,6 @@ function CampaignSummary({
         </>
       ) : (
         <>
-          {/* Lead Gen: CPL hero */}
           <StatCard label={conversionLabel}>
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {conversions > 0 ? conversions.toFixed(0) : '—'}
@@ -388,12 +383,9 @@ function CampaignSummary({
           </StatCard>
           <StatCard label="Clicks">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(clicks)}</span>
-            <span className="text-xs ml-1" style={{ color: 'var(--text-faint)' }}>{fmtPct(ctr)} CTR</span>
           </StatCard>
-          <StatCard label="Est. ROAS" faint>
-            <span className="text-xl font-bold" style={{ color: roas > 0 ? 'var(--text-muted)' : 'var(--text-faint)' }}>
-              {roas > 0 ? fmtRoas(roas) : '—'}
-            </span>
+          <StatCard label="CTR">
+            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(ctr)}</span>
           </StatCard>
         </>
       )}
@@ -401,17 +393,9 @@ function CampaignSummary({
   )
 }
 
-function StatCard({
-  label,
-  faint = false,
-  children,
-}: {
-  label:    string
-  faint?:   boolean
-  children: React.ReactNode
-}) {
+function StatCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="card p-4" style={faint ? { opacity: 0.6 } : undefined}>
+    <div className="card p-4">
       <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
       <div className="flex items-baseline gap-1 flex-wrap">{children}</div>
     </div>

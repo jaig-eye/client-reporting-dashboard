@@ -23,6 +23,13 @@ export async function GET(request: NextRequest) {
 
     const db = createAdminClient()
 
+    // Preserve existing config (e.g. MCC customer ID) when re-authorizing
+    const { data: existing } = await db
+      .from('connectors')
+      .select('config')
+      .eq('type', 'google_ads')
+      .maybeSingle()
+
     // Upsert the agency-level Google Ads connector
     const { data: connector, error } = await db
       .from('connectors')
@@ -30,7 +37,7 @@ export async function GET(request: NextRequest) {
         type:   'google_ads',
         label:  'Google Ads',
         auth,
-        config: {},
+        config: (existing?.config ?? {}),
         status: 'active',
       }, { onConflict: 'type' })
       .select('id')

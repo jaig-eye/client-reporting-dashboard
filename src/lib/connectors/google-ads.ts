@@ -79,16 +79,18 @@ async function runQuery(
   customerId: string,
   mccCustomerId: string,
   accessToken: string,
-  query: string
+  query: string,
+  developerToken?: string
 ): Promise<Record<string, unknown>[]> {
-  const id = customerId.replace(/-/g, '')
+  const id  = customerId.replace(/-/g, '')
   const mcc = mccCustomerId.replace(/-/g, '')
+  const devToken = developerToken || process.env.GOOGLE_DEVELOPER_TOKEN!
 
   const res = await fetch(`${BASE_URL}/customers/${id}/googleAds:search`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'developer-token': process.env.GOOGLE_DEVELOPER_TOKEN!,
+      'developer-token': devToken,
       'login-customer-id': mcc,
       'Content-Type': 'application/json',
     },
@@ -105,11 +107,12 @@ async function runQuery(
 }
 
 /** List all accessible customer accounts under the authenticated user. */
-async function listAccessibleCustomers(accessToken: string): Promise<string[]> {
+async function listAccessibleCustomers(accessToken: string, developerToken?: string): Promise<string[]> {
+  const devToken = developerToken || process.env.GOOGLE_DEVELOPER_TOKEN!
   const res = await fetch(`${BASE_URL}/customers:listAccessibleCustomers`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'developer-token': process.env.GOOGLE_DEVELOPER_TOKEN!,
+      'developer-token': devToken,
     },
   })
   if (!res.ok) throw new Error(`listAccessibleCustomers failed: ${res.status}`)
@@ -153,8 +156,9 @@ export async function fetchGoogleAdMetrics(
   const accessToken = auth.access_token as string | undefined
   if (!accessToken && !auth.refresh_token) return []
 
-  const token = accessToken!
-  const mccId = (config.mcc_customer_id as string | undefined) || externalId
+  const token    = accessToken!
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token as string | undefined) || undefined
 
   const raw = await runQuery(
     externalId,
@@ -177,7 +181,8 @@ export async function fetchGoogleAdMetrics(
     FROM ad_group_ad
     WHERE ad_group_ad.status != 'REMOVED'
       AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
-    ORDER BY segments.date DESC`
+    ORDER BY segments.date DESC`,
+    devToken
   )
 
   return raw.map(row => {
@@ -243,8 +248,9 @@ export const googleAdsConnector: ConnectorAdapter = {
       return { rows: [] }
     }
 
-    const token = accessToken!
-    const mccId = (config.mcc_customer_id as string | undefined) || externalId
+    const token    = accessToken!
+    const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+    const devToken = (auth.developer_token as string | undefined) || undefined
 
     const raw = await runQuery(
       externalId,
@@ -265,7 +271,8 @@ export const googleAdsConnector: ConnectorAdapter = {
       FROM campaign
       WHERE campaign.status != 'REMOVED'
         AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
-      ORDER BY segments.date DESC`
+      ORDER BY segments.date DESC`,
+      devToken
     )
 
     const rows: GoogleAdsRawRow[] = raw.map(row => {
@@ -297,7 +304,8 @@ export const googleAdsConnector: ConnectorAdapter = {
     const accessToken = auth.access_token as string | undefined
     if (!accessToken) return []
 
-    const customerIds = await listAccessibleCustomers(accessToken)
+    const devToken = (auth.developer_token as string | undefined) || undefined
+    const customerIds = await listAccessibleCustomers(accessToken, devToken)
     return customerIds.map(id => ({
       external_id: id,
       external_name: `Google Ads: ${id}`,
@@ -308,7 +316,8 @@ export const googleAdsConnector: ConnectorAdapter = {
     try {
       const accessToken = auth.access_token as string | undefined
       if (!accessToken) return false
-      const customers = await listAccessibleCustomers(accessToken)
+      const devToken = (auth.developer_token as string | undefined) || undefined
+      const customers = await listAccessibleCustomers(accessToken, devToken)
       return customers.length >= 0 // even 0 accounts is a valid auth state
     } catch {
       return false

@@ -17,6 +17,13 @@ export async function GET(request: NextRequest) {
     const auth = { access_token }
     const db   = createAdminClient()
 
+    // Preserve existing config (e.g. Business Manager ID) when re-authorizing
+    const { data: existing } = await db
+      .from('connectors')
+      .select('config')
+      .eq('type', 'meta_ads')
+      .maybeSingle()
+
     // Upsert the agency-level Meta Ads connector
     const { data: connector, error } = await db
       .from('connectors')
@@ -24,7 +31,7 @@ export async function GET(request: NextRequest) {
         type:   'meta_ads',
         label:  'Meta Ads',
         auth,
-        config: {},
+        config: (existing?.config ?? {}),
         status: 'active',
       }, { onConflict: 'type' })
       .select('id')

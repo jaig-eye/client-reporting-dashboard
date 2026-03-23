@@ -40,11 +40,13 @@ export default function AdSetCards({
   displayMode = 'lead_gen',
   adFuelCut = 0,
   conversionLabel = 'Conversions',
+  groupLabel = 'Ad Set',
 }: {
   adSets:           AdSetData[]
   displayMode?:     DisplayMode
   adFuelCut?:       number
   conversionLabel?: string
+  groupLabel?:      string
 }) {
   if (adSets.length === 0) {
     return (
@@ -68,12 +70,16 @@ export default function AdSetCards({
           <div key={set.setId}>
             {/* ── Ad set header ──────────────────────────────────── */}
             <div
-              className="flex items-start justify-between gap-4 mb-4 pb-3"
-              style={{ borderBottom: '1px solid var(--border)' }}
+              className="flex items-start justify-between gap-4 mb-4 px-3 py-2.5 rounded-lg"
+              style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}
             >
               <div>
+                {/* Group type label */}
+                <p className="text-xs font-medium uppercase tracking-wide mb-0.5" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
+                  {groupLabel}
+                </p>
                 <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {set.setName || 'Ad Set'}
+                  {set.setName || groupLabel}
                 </h3>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                   <span>{fmt$(displaySpend)}{adFuelCut > 0 && <span style={{ color: 'var(--text-faint)' }}> ({fmt$(set.spend)} raw)</span>}</span>
@@ -110,8 +116,8 @@ export default function AdSetCards({
                 </div>
               </div>
               <span
-                className="text-xs flex-shrink-0"
-                style={{ color: 'var(--text-faint)', paddingTop: 2 }}
+                className="text-xs flex-shrink-0 mt-5"
+                style={{ color: 'var(--text-faint)' }}
               >
                 {set.ads.length} ad{set.ads.length !== 1 ? 's' : ''}
               </span>
@@ -143,7 +149,7 @@ export default function AdSetCards({
 // Individual ad card
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AdCard({
+export function AdCard({
   ad,
   isEcom,
   adFuelCut,
