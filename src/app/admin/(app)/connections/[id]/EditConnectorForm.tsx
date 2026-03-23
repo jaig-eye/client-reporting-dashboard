@@ -16,16 +16,10 @@ const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder: s
   ],
   meta_ads: [
     {
-      key:         'app_id',
-      label:       'App ID',
-      placeholder: '1234567890',
-      hint:        'Your Meta App ID from developers.facebook.com.',
-    },
-    {
       key:         'business_manager_id',
       label:       'Business Manager ID',
       placeholder: '1234567890',
-      hint:        'Found in Meta Business Suite → Settings.',
+      hint:        'Found in Meta Business Suite → Settings (optional).',
     },
   ],
 }

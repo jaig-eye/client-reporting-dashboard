@@ -109,10 +109,7 @@ export async function fetchMetaAdMetrics(
   dateFrom: string,
   dateTo: string
 ): Promise<MetaAdRawRow[]> {
-  const accessToken =
-    (auth.system_user_token as string | undefined) ||
-    (auth.access_token as string | undefined)
-
+  const accessToken = resolveToken(auth)
   if (!accessToken) return []
 
   const rows: MetaAdRawRow[] = []
@@ -269,11 +266,23 @@ async function fetchAdThumbnails(
 // Connector adapter implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Derive an access token from stored auth. Supports three modes:
+ *  1. system_user_token — never expires, preferred
+ *  2. access_token — long-lived OAuth or manually pasted token
+ *  3. app_id + app_secret — generates an App Access Token ({id}|{secret})
+ */
+function resolveToken(auth: Record<string, unknown>): string | undefined {
+  if (auth.system_user_token) return auth.system_user_token as string
+  if (auth.access_token)      return auth.access_token      as string
+  if (auth.app_id && auth.app_secret) {
+    return `${auth.app_id}|${auth.app_secret}`
+  }
+  return undefined
+}
+
 export const metaAdsConnector: ConnectorAdapter = {
   type: 'meta_ads',
 
-  // Meta long-lived tokens last 60 days and don't auto-refresh — admins must reconnect.
-  // System User tokens never expire. No refreshAuth needed.
   refreshAuth: undefined,
 
   async fetchMetrics(
@@ -283,10 +292,7 @@ export const metaAdsConnector: ConnectorAdapter = {
     dateFrom: string,
     dateTo: string
   ): Promise<SyncResult> {
-    // Prefer the system user token (agency-level); fall back to per-account OAuth token
-    const accessToken =
-      (auth.system_user_token as string | undefined) ||
-      (auth.access_token as string | undefined)
+    const accessToken = resolveToken(auth)
 
     if (!accessToken) return { rows: [] }
 
@@ -384,10 +390,7 @@ export const metaAdsConnector: ConnectorAdapter = {
   async discoverAccounts(
     auth: Record<string, unknown>
   ): Promise<DiscoveredAccount[]> {
-    const accessToken =
-      (auth.system_user_token as string | undefined) ||
-      (auth.access_token as string | undefined)
-
+    const accessToken = resolveToken(auth)
     if (!accessToken) return []
 
     const data = await metaGet('/me/adaccounts', accessToken, {
@@ -408,9 +411,7 @@ export const metaAdsConnector: ConnectorAdapter = {
 
   async testConnection(auth: Record<string, unknown>): Promise<boolean> {
     try {
-      const accessToken =
-        (auth.system_user_token as string | undefined) ||
-        (auth.access_token as string | undefined)
+      const accessToken = resolveToken(auth)
       if (!accessToken) return false
       // A simple /me check validates the token is alive
       const data = await metaGet('/me', accessToken, { fields: 'id' })
