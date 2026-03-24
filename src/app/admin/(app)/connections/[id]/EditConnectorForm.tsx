@@ -4,6 +4,50 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Connector } from '@/lib/types'
 
+// Reconnect buttons — start a fresh OAuth flow while preserving existing config
+function ReconnectSection({ connector }: { connector: Connector }) {
+  if (connector.type === 'google_ads') {
+    const config = (connector.config ?? {}) as Record<string, string>
+    const mcc    = config.mcc_customer_id ?? ''
+    const auth   = (connector.auth   ?? {}) as Record<string, string>
+    const devTok = auth.developer_token ?? ''
+    const params = new URLSearchParams()
+    if (devTok) params.set('developer_token', devTok)
+    if (mcc)    params.set('mcc_customer_id', mcc)
+    return (
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+          Reconnect Google Account
+        </h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
+          Re-authorize if the connection has expired or you want to switch Google accounts.
+        </p>
+        <a href={`/api/auth/google/start?${params}`} className="btn btn-secondary">
+          🔵 Reconnect with Google
+        </a>
+      </div>
+    )
+  }
+
+  if (connector.type === 'meta_ads') {
+    return (
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+          Reconnect Facebook Account
+        </h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
+          Re-authorize if the 60-day token has expired or you want to switch accounts.
+        </p>
+        <a href="/api/auth/meta/start" className="btn btn-secondary">
+          🟦 Reconnect with Facebook
+        </a>
+      </div>
+    )
+  }
+
+  return null
+}
+
 // Editable config fields per connector type (auth fields are never shown for security)
 const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder: string; hint: string }[]> = {
   google_ads: [
@@ -131,6 +175,8 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
           </button>
         </div>
       </form>
+
+      <ReconnectSection connector={connector} />
 
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
