@@ -46,18 +46,18 @@ export default async function AdSetDetailPage({
   const isGoogleAds = source === 'google_ads'
   const groupLabel  = isGoogleAds ? 'Ad Group' : 'Ad Set'
 
-  // Campaign category → display mode
+  // Campaign display mode — set per-campaign in client settings
   const { data: assignmentData } = await db
     .from('client_campaign_assignments')
-    .select('category:campaign_categories(display_mode, conversion_label)')
+    .select('display_mode, conversion_label')
     .eq('client_id', client.id)
     .eq('source', source)
     .eq('campaign_id', campaignId)
     .maybeSingle()
 
-  const catInfo         = (assignmentData?.category ?? null) as { display_mode: string; conversion_label: string } | null
-  const displayMode     = (catInfo?.display_mode ?? 'lead_gen') as DisplayMode
-  const conversionLabel = catInfo?.conversion_label ?? 'Conversions'
+  const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
+  const conversionLabel = (assignmentData?.conversion_label as string | null)
+    ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
 
   // ── Fetch ad-level metrics for this specific ad group / ad set ─────────────

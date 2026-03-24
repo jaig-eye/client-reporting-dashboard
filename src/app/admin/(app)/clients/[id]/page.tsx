@@ -19,6 +19,7 @@ import ClientLogoUpload from './ClientLogoUpload'
 import ClientAdFuelCut from './ClientAdFuelCut'
 import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
+import ClientCampaignManager from './ClientCampaignManager'
 
 export const dynamic = 'force-dynamic'
 
@@ -297,8 +298,17 @@ export default async function ClientDetailPage({
 
       </div>
 
-      {/* ── Full-width: Conversion Mapping + Raw Data ── */}
+      {/* ── Full-width: Campaign Manager + Conversion Mapping + Raw Data ── */}
       <div className="mt-6 space-y-6">
+
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Campaign Settings</h2>
+          <p className="section-desc mb-4">
+            Configure the display mode (Lead Gen / Ecom) and visibility for each discovered campaign.
+            Changes apply immediately to the client dashboard.
+          </p>
+          <ClientCampaignManager clientId={id} />
+        </div>
 
         <div className="card p-5">
           <h2 className="section-title mb-1">Conversion Mapping</h2>

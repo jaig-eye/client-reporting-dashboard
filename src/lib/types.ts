@@ -117,6 +117,16 @@ export interface Client {
    * NULL = use agency_settings.ad_fuel_cut.
    */
   ad_fuel_cut?: number | null
+  /**
+   * Meta conversion action override for Lead Gen campaigns.
+   * NULL = use agency default_lead_action.
+   */
+  lead_action?: string | null
+  /**
+   * Meta conversion action override for Ecommerce campaigns.
+   * NULL = use agency default_purchase_action.
+   */
+  purchase_action?: string | null
   created_at: string
   updated_at: string
 }
@@ -261,6 +271,14 @@ export interface ClientCampaignAssignment {
   category_id?: string | null
   conversion_value_override?: number | null   // Overrides category + agency default
   meta_conversion_action?: string | null      // Meta-specific: which action counts
+  /**
+   * Per-campaign display mode — controls which metrics are highlighted.
+   * 'lead_gen' → CPL, conversion count. 'ecommerce' → ROAS, revenue.
+   * Replaces the indirect category → display_mode relationship.
+   */
+  display_mode: string                        // 'lead_gen' | 'ecommerce' | ...
+  /** Human-readable label for the conversion metric (e.g. "Leads", "Purchases"). */
+  conversion_label?: string | null
   hidden: boolean
   notes?: string
   created_at: string
@@ -366,7 +384,8 @@ export interface CampaignRow {
   cpm: number
   /** Ad Fuel spend (marked-up) — computed from spend + client's ad_fuel_cut. */
   adFuelSpend?: number
-  category?: CampaignCategory
+  /** Display mode determines which metrics are highlighted. */
+  display_mode?: string | null
   hidden: boolean
 }
 

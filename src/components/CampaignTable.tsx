@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import type { CampaignCategory } from '@/lib/types'
 
 interface Campaign {
   campaign_id: string
@@ -18,7 +17,7 @@ interface Campaign {
   impressions: number
   cpm: number
   adFuelSpend?: number
-  category: CampaignCategory | null
+  display_mode?: string | null   // 'lead_gen' | 'ecommerce'
 }
 
 type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversions' | 'roas' | 'cpl'
@@ -102,15 +101,14 @@ export default function CampaignTable({
               <th style={{ color: 'var(--text-muted)' }}>CTR</th>
             )}
             <SortTh sk="cpl">CPL</SortTh>
-            <th>Category</th>
+            <th>Mode</th>
             <th>Source</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const rowIsEcom = c.category?.display_mode === 'ecommerce'
-            const convLabel = c.category?.conversion_label
-            const link      = drillLink(c)
+            const rowIsEcom    = c.display_mode === 'ecommerce'
+            const link         = drillLink(c)
             const displaySpend = showAdFuel ? (c.adFuelSpend ?? c.spend) : c.spend
 
             return (
@@ -136,11 +134,6 @@ export default function CampaignTable({
                 <td style={{ color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
                 <td style={{ color: 'var(--text-muted)' }}>
                   {c.conversions.toFixed(1)}
-                  {convLabel && (
-                    <span className="ml-1 text-xs" style={{ color: 'var(--text-faint)' }}>
-                      {convLabel.toLowerCase()}
-                    </span>
-                  )}
                 </td>
                 {isEcomDash ? (
                   <td className="font-semibold whitespace-nowrap">
@@ -161,19 +154,15 @@ export default function CampaignTable({
                   {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
                 <td>
-                  {c.category ? (
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className="h-2 w-2 rounded-full flex-shrink-0"
-                        style={{ background: c.category.color }}
-                      />
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {c.category.name}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-xs" style={{ color: 'var(--text-faint)' }}>—</span>
-                  )}
+                  <span
+                    className="badge"
+                    style={rowIsEcom
+                      ? { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }
+                      : { background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }
+                    }
+                  >
+                    {rowIsEcom ? 'Ecom' : 'Lead Gen'}
+                  </span>
                 </td>
                 <td>
                   <span

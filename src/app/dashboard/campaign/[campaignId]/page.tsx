@@ -45,18 +45,18 @@ export default async function CampaignDetailPage({
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
 
-  // Campaign category → display mode + conversion label
+  // Campaign display mode — set per-campaign in client settings
   const { data: assignmentData } = await db
     .from('client_campaign_assignments')
-    .select('category:campaign_categories(display_mode, conversion_label)')
+    .select('display_mode, conversion_label')
     .eq('client_id', client.id)
     .eq('source', source)
     .eq('campaign_id', campaignId)
     .maybeSingle()
 
-  const catInfo         = (assignmentData?.category ?? null) as { display_mode: string; conversion_label: string } | null
-  const displayMode     = (catInfo?.display_mode ?? 'lead_gen') as DisplayMode
-  const conversionLabel = catInfo?.conversion_label ?? 'Conversions'
+  const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
+  const conversionLabel = (assignmentData?.conversion_label as string | null)
+    ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
 
   const isGoogleAds  = source === 'google_ads'
@@ -208,9 +208,9 @@ export default async function CampaignDetailPage({
                 >
                   {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
                 </span>
-                {catInfo && (
-                  <span className="badge badge-blue">{catInfo.display_mode.replace('_', ' ')}</span>
-                )}
+                <span className={`badge ${displayMode === 'ecommerce' ? 'badge-blue' : 'badge-green'}`}>
+                  {displayMode === 'ecommerce' ? 'Ecommerce' : 'Lead Gen'}
+                </span>
                 <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
                   {dateFrom} – {dateTo}
                 </span>

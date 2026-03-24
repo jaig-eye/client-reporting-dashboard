@@ -14,7 +14,7 @@ import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
-import type { Client, ClientConnection, Connector, CampaignCategory } from '@/lib/types'
+import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
@@ -31,11 +31,6 @@ function fmtDate(d: Date) {
 const SOURCE_LABELS: Record<string, string> = {
   google_ads: 'Google Ads',
   meta_ads:   'Meta Ads',
-}
-
-const SOURCE_ICONS: Record<string, string> = {
-  google_ads: '🔵',
-  meta_ads:   '🟦',
 }
 
 export default async function DashboardPage({
@@ -86,7 +81,6 @@ export default async function DashboardPage({
   // ─── Auto-redirect to first available platform ─────────────────────────────
   if (showOverview) {
     if (connections.length === 0) {
-      // No connections — show empty state
       const syncedAt = null
       return (
         <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -111,7 +105,6 @@ export default async function DashboardPage({
       )
     }
 
-    // Default to Google Ads, then Meta Ads, then whatever is first
     const defaultSource =
       availableSources.includes('google_ads') ? 'google_ads'
       : availableSources.includes('meta_ads')  ? 'meta_ads'
@@ -124,10 +117,45 @@ export default async function DashboardPage({
   // ─── Campaign View (source selected) ──────────────────────────────────────
   const activeSource     = requestedSource!
   const activeConnection = connections.find(c => c.connector.type === activeSource)
+  const table            = activeSource === 'google_ads' ? 'google_ads_metrics' : 'meta_ads_metrics'
+  const isMetaSource     = activeSource === 'meta_ads'
 
-  const categoriesResult = await db.from('campaign_categories').select('*').order('sort_order')
-  const categories  = (categoriesResult.data ?? []) as CampaignCategory[]
-  const categoryMap = new Map(categories.map(c => [c.id, c]))
+  // Fetch metrics AND campaign assignments in parallel so we can remap
+  // Meta conversions based on the per-campaign display_mode before summarising.
+  const [curRes, priorRes, assignmentsRes] = await Promise.all([
+    activeConnection
+      ? db.from(table)
+          .select('*')
+          .eq('connection_id', activeConnection.id)
+          .gte('date', fmtDate(fromDate))
+          .lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] }),
+    activeConnection
+      ? db.from(table)
+          .select('spend,impressions,clicks,conversions,conversion_value,conversions_value,actions,action_values')
+          .eq('connection_id', activeConnection.id)
+          .gte('date', fmtDate(priorFrom))
+          .lte('date', fmtDate(priorTo))
+      : Promise.resolve({ data: [] }),
+    db.from('client_campaign_assignments')
+      .select('campaign_id, display_mode, hidden')
+      .eq('client_id', client.id)
+      .eq('source', activeSource),
+  ])
+
+  const assignmentsData = (assignmentsRes.data ?? []) as { campaign_id: string; display_mode: string; hidden: boolean }[]
+  const assignmentMap   = new Map(assignmentsData.map(a => [a.campaign_id, a]))
+  const lastSyncedAt    = activeConnection?.last_synced_at ?? null
+
+  // Determine overall dashboard mode from campaign assignment majority
+  const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
+  const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
+  const isEcomDash = ecomCount > leadCount
+
+  // For Meta ads, pick the conversion action override based on dashboard mode
+  const convAction: string | null = isMetaSource
+    ? (isEcomDash ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    : null
 
   type NormRow = {
     campaign_id: string; campaign_name: string; date: string
@@ -136,56 +164,41 @@ export default async function DashboardPage({
     roas: number; ctr: number; cpc: number; cpm: number
   }
 
-  let currentMetrics: NormRow[] = []
-  let priorMetrics:   Omit<NormRow, 'campaign_id' | 'campaign_name' | 'date'>[] = []
-  let lastSyncedAt:   string | null = null
+  // Normalise a raw DB row, applying Meta conversion remapping when configured.
+  function normalise(rows: Record<string, unknown>[]): NormRow[] {
+    return rows.map(m => {
+      let conversions     = Number(m.conversions)   || 0
+      let conversion_value = Number(m.conversion_value || m.conversions_value || 0)
 
-  if (activeConnection) {
-    const table = activeSource === 'google_ads' ? 'google_ads_metrics' : 'meta_ads_metrics'
+      // Override Meta conversion count with the client's mapped action type
+      if (convAction && Array.isArray(m.actions)) {
+        const actions      = m.actions as MetaAction[]
+        const actionValues = (m.action_values as MetaAction[] | null) ?? []
+        const found        = actions.find(a => a.action_type === convAction)
+        const foundVal     = actionValues.find(a => a.action_type === convAction)
+        if (found)    conversions      = parseFloat(found.value    || '0')
+        if (foundVal) conversion_value = parseFloat(foundVal.value || '0')
+      }
 
-    const [curRes, priorRes] = await Promise.all([
-      db.from(table)
-        .select('*')
-        .eq('connection_id', activeConnection.id)
-        .gte('date', fmtDate(fromDate))
-        .lte('date', fmtDate(toDate)),
-      db.from(table)
-        .select('spend,impressions,clicks,conversions,conversion_value,conversions_value')
-        .eq('connection_id', activeConnection.id)
-        .gte('date', fmtDate(priorFrom))
-        .lte('date', fmtDate(priorTo)),
-    ])
-
-    const normalise = (rows: Record<string, unknown>[]): NormRow[] =>
-      rows.map(m => ({
+      return {
         campaign_id:      String(m.campaign_id   || ''),
         campaign_name:    String(m.campaign_name || ''),
         date:             String(m.date          || ''),
         spend:            Number(m.spend)         || 0,
         impressions:      Number(m.impressions)   || 0,
         clicks:           Number(m.clicks)        || 0,
-        conversions:      Number(m.conversions)   || 0,
-        conversion_value: Number(m.conversion_value  || m.conversions_value || 0),
+        conversions,
+        conversion_value,
         roas:             Number(m.roas)           || 0,
         ctr:              Number(m.ctr)            || 0,
         cpc:              Number(m.cpc)            || 0,
         cpm:              Number(m.cpm)            || 0,
-      }))
-
-    currentMetrics = normalise((curRes.data  ?? []) as Record<string, unknown>[])
-    priorMetrics   = normalise((priorRes.data ?? []) as Record<string, unknown>[])
-    lastSyncedAt   = activeConnection.last_synced_at ?? null
+      }
+    })
   }
 
-  const { data: assignmentsData } = await db
-    .from('client_campaign_assignments')
-    .select('campaign_id, category_id, hidden, category:campaign_categories(*)')
-    .eq('client_id', client.id)
-    .eq('source', activeSource)
-
-  const assignmentMap = new Map(
-    (assignmentsData ?? []).map((a: Record<string, unknown>) => [a.campaign_id as string, a])
-  )
+  const currentMetrics = normalise((curRes.data  ?? []) as Record<string, unknown>[])
+  const priorMetrics   = normalise((priorRes.data ?? []) as Record<string, unknown>[])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const current    = summarizeMetrics(currentMetrics as any[])
@@ -194,27 +207,18 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dailyTrend = getDailyTrend(currentMetrics as any[])
 
-  const assignmentModes = (assignmentsData ?? [])
-    .map((a: Record<string, unknown>) => (a.category as Record<string, unknown> | null)?.display_mode as string | undefined)
-    .filter(Boolean)
-  const ecomCount  = assignmentModes.filter(m => m === 'ecommerce').length
-  const leadCount  = assignmentModes.filter(m => m === 'lead_gen').length
-  const isEcomDash = ecomCount > leadCount
-
+  // Build per-campaign aggregation (skip hidden campaigns)
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
-    conversions: number; conversionValue: number; category?: CampaignCategory
+    conversions: number; conversionValue: number; display_mode: string
   }>()
 
   for (const row of currentMetrics) {
-    const assignment = assignmentMap.get(row.campaign_id) as Record<string, unknown> | undefined
+    const assignment = assignmentMap.get(row.campaign_id)
     if (assignment?.hidden) continue
 
-    const cat = assignment?.category_id
-      ? categoryMap.get(assignment.category_id as string)
-      : (assignment?.category as CampaignCategory | undefined)
-
-    const ex = campMap.get(row.campaign_id)
+    const mode = assignment?.display_mode ?? 'lead_gen'
+    const ex   = campMap.get(row.campaign_id)
     if (ex) {
       ex.spend           += row.spend
       ex.impressions     += row.impressions
@@ -229,7 +233,7 @@ export default async function DashboardPage({
         clicks:          row.clicks,
         conversions:     row.conversions,
         conversionValue: row.conversion_value,
-        category:        cat,
+        display_mode:    mode,
       })
     }
   }
@@ -249,7 +253,7 @@ export default async function DashboardPage({
       ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
       cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
       adFuelSpend:     applyAdFuel(c.spend, adFuelCut),
-      category:        c.category ?? null,
+      display_mode:    c.display_mode,
       hidden:          false,
     }))
     .sort((a, b) => b.spend - a.spend)
@@ -291,9 +295,9 @@ export default async function DashboardPage({
                     fontWeight: 600,
                     textDecoration: 'none',
                     transition: 'all 0.15s',
-                    background:   isActive ? 'var(--blue)'         : 'var(--bg-subtle)',
-                    color:        isActive ? '#fff'                 : 'var(--text-muted)',
-                    border:       isActive ? '1px solid var(--blue)' : '1px solid var(--border)',
+                    background:   isActive ? 'var(--blue)'           : 'var(--bg-subtle)',
+                    color:        isActive ? '#fff'                   : 'var(--text-muted)',
+                    border:       isActive ? '1px solid var(--blue)'  : '1px solid var(--border)',
                   }}
                 >
                   <ConnectorLogo type={conn.connector.type} size={16} />
