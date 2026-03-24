@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'
+import NavigationRefresher from '@/components/admin/NavigationRefresher'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const db = createAdminClient()
@@ -36,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         userAvatarUrl={avatarUrl}
         isSuperAdmin={!userId}
       />
+      <NavigationRefresher />
       <div className="flex-1 min-w-0">
         <main className="p-8 max-w-5xl">{children}</main>
       </div>

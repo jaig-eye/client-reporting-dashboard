@@ -22,12 +22,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   // auth_patch: merge specific auth fields without overwriting OAuth tokens
   if (body.auth_patch && typeof body.auth_patch === 'object') {
-    const { data: existing } = await db
+    const { data: existing, error: fetchErr } = await db
       .from('connectors')
       .select('auth')
       .eq('id', id)
       .single()
-    update.auth = { ...((existing?.auth ?? {}) as object), ...body.auth_patch }
+    if (fetchErr) {
+      console.error('Failed to fetch existing auth for merge:', fetchErr)
+      return NextResponse.json({ error: fetchErr.message }, { status: 500 })
+    }
+    const merged = { ...((existing?.auth ?? {}) as object), ...(body.auth_patch as object) }
+    console.log('Merging auth_patch, keys:', Object.keys(merged))
+    update.auth = merged
   }
 
   if (Object.keys(update).length === 0) {
