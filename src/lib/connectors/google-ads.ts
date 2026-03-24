@@ -16,7 +16,7 @@
 
 import type { ConnectorAdapter, GoogleAdsRawRow, SyncResult, DiscoveredAccount } from './types'
 
-const API_VERSION = 'v19'
+const API_VERSION = 'v20'
 const BASE_URL = `https://googleads.googleapis.com/${API_VERSION}`
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 
@@ -87,7 +87,8 @@ async function runQuery(
 ): Promise<Record<string, unknown>[]> {
   const id  = customerId.replace(/-/g, '')
   const mcc = mccCustomerId.replace(/-/g, '')
-  const devToken = developerToken || process.env.GOOGLE_DEVELOPER_TOKEN!
+  const devToken = developerToken || process.env.GOOGLE_DEVELOPER_TOKEN
+  if (!devToken) throw new Error('Google Ads developer token is missing. Add it in connector settings or set GOOGLE_DEVELOPER_TOKEN env var.')
 
   const res = await fetch(`${BASE_URL}/customers/${id}/googleAds:search`, {
     method: 'POST',
