@@ -73,13 +73,33 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
   const config  = (connector.config ?? {}) as Record<string, string>
   const fields  = CONFIG_FIELDS[connector.type] ?? []
 
-  const [label,      setLabel]      = useState(connector.label ?? '')
-  const [configVals, setConfigVals] = useState<Record<string, string>>(() =>
+  const [label,         setLabel]         = useState(connector.label ?? '')
+  const [configVals,    setConfigVals]     = useState<Record<string, string>>(() =>
     Object.fromEntries(fields.map(f => [f.key, (config[f.key] as string) ?? '']))
   )
-  const [status,     setStatus]     = useState<'idle' | 'saving' | 'deleting' | 'success' | 'error'>('idle')
-  const [errorMsg,   setErrorMsg]   = useState('')
-  const [showDelete, setShowDelete] = useState(false)
+  const [status,        setStatus]        = useState<'idle' | 'saving' | 'deleting' | 'success' | 'error'>('idle')
+  const [errorMsg,      setErrorMsg]      = useState('')
+  const [showDelete,    setShowDelete]    = useState(false)
+  const [discovering,   setDiscovering]   = useState(false)
+  const [discoverMsg,   setDiscoverMsg]   = useState('')
+  const [discoverError, setDiscoverError] = useState('')
+
+  async function handleDiscover() {
+    setDiscovering(true)
+    setDiscoverMsg('')
+    setDiscoverError('')
+    try {
+      const res  = await fetch(`/api/admin/connectors/${connector.id}/discover`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Discovery failed')
+      setDiscoverMsg(`Found ${data.count} account${data.count !== 1 ? 's' : ''}.`)
+      router.refresh()
+    } catch (e) {
+      setDiscoverError(e instanceof Error ? e.message : 'Discovery failed')
+    } finally {
+      setDiscovering(false)
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -175,6 +195,31 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
           </button>
         </div>
       </form>
+
+      {/* Refresh discovered accounts */}
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+          Discovered Accounts
+        </h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
+          Refresh the list of ad accounts available under this connection. Used for the account
+          dropdown when connecting a client.
+        </p>
+        {discoverMsg && (
+          <p className="text-xs mb-2" style={{ color: 'var(--green)' }}>{discoverMsg}</p>
+        )}
+        {discoverError && (
+          <p className="text-xs mb-2" style={{ color: 'var(--red)' }}>{discoverError}</p>
+        )}
+        <button
+          type="button"
+          onClick={handleDiscover}
+          disabled={discovering}
+          className="btn btn-secondary"
+        >
+          {discovering ? 'Refreshing…' : 'Refresh Accounts'}
+        </button>
+      </div>
 
       <ReconnectSection connector={connector} />
 

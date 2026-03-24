@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
 
     // Discover accessible accounts and cache them for the assignment UI
     try {
-      const accounts = await googleAdsConnector.discoverAccounts(auth, {})
+      const accounts = await googleAdsConnector.discoverAccounts(auth, config)
       if (accounts.length > 0) {
         await db.from('connector_accounts').upsert(
           accounts.map(a => ({

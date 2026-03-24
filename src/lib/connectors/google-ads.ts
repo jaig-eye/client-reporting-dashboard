@@ -324,7 +324,8 @@ export const googleAdsConnector: ConnectorAdapter = {
   },
 
   async discoverAccounts(
-    auth: Record<string, unknown>
+    auth:   Record<string, unknown>,
+    config: Record<string, unknown>
   ): Promise<DiscoveredAccount[]> {
     const refreshToken = auth.refresh_token as string | undefined
     const clientId     = auth.client_id     as string | undefined
@@ -338,10 +339,48 @@ export const googleAdsConnector: ConnectorAdapter = {
     if (!accessToken) return []
 
     const devToken = (auth.developer_token as string | undefined) || undefined
+    const mccId    = (config.mcc_customer_id as string | undefined)?.replace(/-/g, '')
+
+    // If we have an MCC ID, query customer_client to get real account names
+    if (mccId) {
+      try {
+        const rows = await runQuery(
+          mccId,
+          mccId,
+          accessToken,
+          `SELECT
+            customer_client.id,
+            customer_client.descriptive_name,
+            customer_client.currency_code,
+            customer_client.manager,
+            customer_client.test_account
+          FROM customer_client
+          WHERE customer_client.level = 1
+            AND customer_client.status = 'ENABLED'`,
+          devToken
+        )
+        return rows.map(row => {
+          const cc = row.customer_client as Record<string, unknown>
+          return {
+            external_id:   String(cc?.id               || ''),
+            external_name: String(cc?.descriptiveName  || cc?.id || ''),
+            metadata: {
+              currency:    cc?.currencyCode,
+              is_manager:  cc?.manager,
+              is_test:     cc?.testAccount,
+            },
+          }
+        }).filter(a => a.external_id)
+      } catch {
+        // Fall back to listAccessibleCustomers if MCC query fails
+      }
+    }
+
+    // Fallback: list accessible customers (no names)
     const customerIds = await listAccessibleCustomers(accessToken, devToken)
     return customerIds.map(id => ({
-      external_id: id,
-      external_name: `Google Ads: ${id}`,
+      external_id:   id,
+      external_name: `Google Ads Account (${id})`,
     }))
   },
 
