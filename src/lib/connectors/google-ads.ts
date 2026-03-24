@@ -44,19 +44,22 @@ export async function exchangeGoogleCode(
   return data
 }
 
-/** Refresh an expired Google access token using the stored refresh token. */
-async function refreshAccessToken(refreshToken: string): Promise<{
-  access_token: string
-  expires_in: number
-}> {
+/** Refresh an expired Google access token using the stored refresh token.
+ *  Uses per-connector client_id/client_secret if provided, falls back to env vars.
+ */
+async function refreshAccessToken(
+  refreshToken: string,
+  clientId?: string,
+  clientSecret?: string,
+): Promise<{ access_token: string; expires_in: number }> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       refresh_token: refreshToken,
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      grant_type: 'refresh_token',
+      client_id:     clientId     || process.env.GOOGLE_CLIENT_ID!,
+      client_secret: clientSecret || process.env.GOOGLE_CLIENT_SECRET!,
+      grant_type:    'refresh_token',
     }),
   })
   const data = await res.json()
@@ -153,10 +156,20 @@ export async function fetchGoogleAdMetrics(
   dateFrom: string,
   dateTo: string
 ): Promise<GoogleAdsAdRawRow[]> {
-  const accessToken = auth.access_token as string | undefined
-  if (!accessToken && !auth.refresh_token) return []
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
 
-  const token    = accessToken!
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const token    = accessToken
   const mccId    = (config.mcc_customer_id as string | undefined) || externalId
   const devToken = (auth.developer_token as string | undefined) || undefined
 
@@ -219,13 +232,15 @@ export const googleAdsConnector: ConnectorAdapter = {
   type: 'google_ads',
 
   async refreshAuth(auth: Record<string, unknown>) {
-    const refreshToken = auth.refresh_token as string | undefined
+    const refreshToken  = auth.refresh_token  as string | undefined
     if (!refreshToken) return null
 
     const expiresAt = auth.token_expires_at as string | undefined
     if (!isExpiringSoon(expiresAt)) return null
 
-    const { access_token, expires_in } = await refreshAccessToken(refreshToken)
+    const clientId     = auth.client_id     as string | undefined
+    const clientSecret = auth.client_secret as string | undefined
+    const { access_token, expires_in } = await refreshAccessToken(refreshToken, clientId, clientSecret)
     return {
       ...auth,
       access_token,
@@ -240,15 +255,25 @@ export const googleAdsConnector: ConnectorAdapter = {
     dateFrom: string,
     dateTo: string
   ): Promise<SyncResult> {
-    const accessToken = auth.access_token as string | undefined
+    const refreshToken  = auth.refresh_token  as string | undefined
+    const clientId      = auth.client_id      as string | undefined
+    const clientSecret  = auth.client_secret  as string | undefined
 
-    // MCC Script mode: no OAuth credentials stored — data arrives via push endpoint.
-    // Return empty rows; the sync engine skips pull-mode sync for this connector.
-    if (!accessToken && !auth.refresh_token) {
+    // No credentials at all → MCC Script push mode, skip pull sync.
+    if (!auth.access_token && !refreshToken) {
       return { rows: [] }
     }
 
-    const token    = accessToken!
+    // Resolve access token — refresh if expired or missing
+    let accessToken = auth.access_token as string | undefined
+    if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+      const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+      accessToken = refreshed.access_token
+    }
+
+    if (!accessToken) return { rows: [] }
+
+    const token    = accessToken
     const mccId    = (config.mcc_customer_id as string | undefined) || externalId
     const devToken = (auth.developer_token as string | undefined) || undefined
 
@@ -301,7 +326,15 @@ export const googleAdsConnector: ConnectorAdapter = {
   async discoverAccounts(
     auth: Record<string, unknown>
   ): Promise<DiscoveredAccount[]> {
-    const accessToken = auth.access_token as string | undefined
+    const refreshToken = auth.refresh_token as string | undefined
+    const clientId     = auth.client_id     as string | undefined
+    const clientSecret = auth.client_secret as string | undefined
+
+    let accessToken = auth.access_token as string | undefined
+    if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+      const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+      accessToken = refreshed.access_token
+    }
     if (!accessToken) return []
 
     const devToken = (auth.developer_token as string | undefined) || undefined
@@ -314,11 +347,20 @@ export const googleAdsConnector: ConnectorAdapter = {
 
   async testConnection(auth: Record<string, unknown>): Promise<boolean> {
     try {
-      const accessToken = auth.access_token as string | undefined
+      const refreshToken = auth.refresh_token as string | undefined
+      const clientId     = auth.client_id     as string | undefined
+      const clientSecret = auth.client_secret as string | undefined
+
+      let accessToken = auth.access_token as string | undefined
+      if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+        const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+        accessToken = refreshed.access_token
+      }
       if (!accessToken) return false
+
       const devToken = (auth.developer_token as string | undefined) || undefined
       const customers = await listAccessibleCustomers(accessToken, devToken)
-      return customers.length >= 0 // even 0 accounts is a valid auth state
+      return customers.length >= 0
     } catch {
       return false
     }
