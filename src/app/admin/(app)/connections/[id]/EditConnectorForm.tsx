@@ -48,7 +48,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
   return null
 }
 
-// Editable config fields per connector type (auth fields are never shown for security)
+// Editable config fields per connector type
 const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder: string; hint: string }[]> = {
   google_ads: [
     {
@@ -68,14 +68,31 @@ const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder: s
   ],
 }
 
+// Editable auth fields (sensitive — shown as password inputs, saved via auth_patch)
+const AUTH_FIELDS: Record<string, { key: string; label: string; placeholder: string; hint: string }[]> = {
+  google_ads: [
+    {
+      key:         'developer_token',
+      label:       'Developer Token',
+      placeholder: 'Leave blank to keep existing',
+      hint:        'Found in Google Ads → Admin → API Center under your MCC account.',
+    },
+  ],
+  meta_ads: [],
+}
+
 export default function EditConnectorForm({ connector }: { connector: Connector }) {
-  const router  = useRouter()
-  const config  = (connector.config ?? {}) as Record<string, string>
-  const fields  = CONFIG_FIELDS[connector.type] ?? []
+  const router      = useRouter()
+  const config      = (connector.config ?? {}) as Record<string, string>
+  const fields      = CONFIG_FIELDS[connector.type] ?? []
+  const authFields  = AUTH_FIELDS[connector.type]   ?? []
 
   const [label,         setLabel]         = useState(connector.label ?? '')
   const [configVals,    setConfigVals]     = useState<Record<string, string>>(() =>
     Object.fromEntries(fields.map(f => [f.key, (config[f.key] as string) ?? '']))
+  )
+  const [authVals,      setAuthVals]       = useState<Record<string, string>>(() =>
+    Object.fromEntries(authFields.map(f => [f.key, '']))
   )
   const [status,        setStatus]        = useState<'idle' | 'saving' | 'deleting' | 'success' | 'error'>('idle')
   const [errorMsg,      setErrorMsg]      = useState('')
@@ -111,10 +128,20 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
         if (configVals[f.key] !== undefined) newConfig[f.key] = configVals[f.key]
       }
 
+      // Only include auth fields that were actually filled in
+      const authPatch: Record<string, string> = {}
+      for (const f of authFields) {
+        if (authVals[f.key]?.trim()) authPatch[f.key] = authVals[f.key].trim()
+      }
+
       const res = await fetch(`/api/admin/connectors/${connector.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label, config: newConfig }),
+        body: JSON.stringify({
+          label,
+          config: newConfig,
+          ...(Object.keys(authPatch).length > 0 ? { auth_patch: authPatch } : {}),
+        }),
       })
       if (!res.ok) {
         const d = await res.json()
@@ -184,6 +211,22 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
               placeholder={f.placeholder}
               value={configVals[f.key] ?? ''}
               onChange={e => setConfigVals(v => ({ ...v, [f.key]: e.target.value }))}
+            />
+            <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{f.hint}</p>
+          </div>
+        ))}
+
+        {authFields.map(f => (
+          <div key={f.key}>
+            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+              {f.label}
+            </label>
+            <input
+              className="input"
+              type="password"
+              placeholder={f.placeholder}
+              value={authVals[f.key] ?? ''}
+              onChange={e => setAuthVals(v => ({ ...v, [f.key]: e.target.value }))}
             />
             <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{f.hint}</p>
           </div>
