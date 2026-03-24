@@ -169,7 +169,7 @@ export default async function DashboardPage({
 
       if (isMetaSource && Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
-        const campConvAction = campaignIsEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null)
+        const campConvAction = campaignIsEcom ? (client!.purchase_action ?? null) : (client!.lead_action ?? null)
         if (campConvAction) {
           const actions      = m.actions as MetaAction[]
           const actionValues = (m.action_values as MetaAction[] | null) ?? []
