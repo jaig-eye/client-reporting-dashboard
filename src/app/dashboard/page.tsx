@@ -152,11 +152,6 @@ export default async function DashboardPage({
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
   const isEcomDash = ecomCount > leadCount
 
-  // For Meta ads, pick the conversion action override based on dashboard mode
-  const convAction: string | null = isMetaSource
-    ? (isEcomDash ? (client.purchase_action ?? null) : (client.lead_action ?? null))
-    : null
-
   type NormRow = {
     campaign_id: string; campaign_name: string; date: string
     spend: number; impressions: number; clicks: number
@@ -164,20 +159,25 @@ export default async function DashboardPage({
     roas: number; ctr: number; cpc: number; cpm: number
   }
 
-  // Normalise a raw DB row, applying Meta conversion remapping when configured.
+  // Normalise a raw DB row, applying per-campaign Meta conversion remapping.
+  // Each campaign uses its own display_mode to pick the right conv action,
+  // so mixed ecom/lead-gen clients get correct values per campaign.
   function normalise(rows: Record<string, unknown>[]): NormRow[] {
     return rows.map(m => {
-      let conversions     = Number(m.conversions)   || 0
+      let conversions      = Number(m.conversions)   || 0
       let conversion_value = Number(m.conversion_value || m.conversions_value || 0)
 
-      // Override Meta conversion count with the client's mapped action type
-      if (convAction && Array.isArray(m.actions)) {
-        const actions      = m.actions as MetaAction[]
-        const actionValues = (m.action_values as MetaAction[] | null) ?? []
-        const found        = actions.find(a => a.action_type === convAction)
-        const foundVal     = actionValues.find(a => a.action_type === convAction)
-        if (found)    conversions      = parseFloat(found.value    || '0')
-        if (foundVal) conversion_value = parseFloat(foundVal.value || '0')
+      if (isMetaSource && Array.isArray(m.actions)) {
+        const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
+        const campConvAction = campaignIsEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null)
+        if (campConvAction) {
+          const actions      = m.actions as MetaAction[]
+          const actionValues = (m.action_values as MetaAction[] | null) ?? []
+          const found        = actions.find(a => a.action_type === campConvAction)
+          const foundVal     = actionValues.find(a => a.action_type === campConvAction)
+          if (found)    conversions      = parseFloat(found.value    || '0')
+          if (foundVal) conversion_value = parseFloat(foundVal.value || '0')
+        }
       }
 
       return {
@@ -239,23 +239,26 @@ export default async function DashboardPage({
   }
 
   const campaigns = Array.from(campMap.entries())
-    .map(([id, c]) => ({
-      campaign_id:     id,
-      campaign_name:   c.name,
-      source:          activeSource as never,
-      spend:           c.spend,
-      impressions:     c.impressions,
-      clicks:          c.clicks,
-      conversions:     c.conversions,
-      conversionValue: c.conversionValue,
-      roas:            c.spend > 0 ? c.conversionValue / c.spend : 0,
-      cpl:             c.conversions > 0 ? c.spend / c.conversions : 0,
-      ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
-      cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
-      adFuelSpend:     applyAdFuel(c.spend, adFuelCut),
-      display_mode:    c.display_mode,
-      hidden:          false,
-    }))
+    .map(([id, c]) => {
+      const dSpend = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
+      return {
+        campaign_id:     id,
+        campaign_name:   c.name,
+        source:          activeSource as never,
+        spend:           c.spend,
+        impressions:     c.impressions,
+        clicks:          c.clicks,
+        conversions:     c.conversions,
+        conversionValue: c.conversionValue,
+        roas:            dSpend > 0 ? c.conversionValue / dSpend : 0,
+        cpl:             c.conversions > 0 ? dSpend / c.conversions : 0,
+        ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
+        cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
+        adFuelSpend:     applyAdFuel(c.spend, adFuelCut),
+        display_mode:    c.display_mode,
+        hidden:          false,
+      }
+    })
     .sort((a, b) => b.spend - a.spend)
 
   const syncedAt = lastSyncedAt
