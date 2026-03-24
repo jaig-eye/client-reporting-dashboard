@@ -86,7 +86,15 @@ export interface MetaAdRawRow {
   adset_name: string
   ad_id: string
   ad_name: string
-  thumbnail_url: string
+  // Creative
+  thumbnail_url: string      // low-res fallback / video poster
+  image_url: string          // high-res image (empty string if none)
+  video_id: string           // Meta video asset ID (empty string if not video)
+  video_thumb_url: string    // video poster URL (empty string if none)
+  creative_body: string      // primary ad copy text
+  creative_title: string     // headline
+  creative_link_url: string  // destination URL
+  ad_status: string          // ACTIVE | PAUSED | DELETED
   date: string
   spend: number
   impressions: number
@@ -145,9 +153,9 @@ export async function fetchMetaAdMetrics(
     return base.toString()
   })()
 
-  // Collect all ad_ids so we can batch-fetch thumbnails
+  // Collect all ad_ids so we can batch-fetch creative assets
   const adIdSet = new Set<string>()
-  const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url'>)[] = []
+  const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url' | 'image_url' | 'video_id' | 'video_thumb_url' | 'creative_body' | 'creative_title' | 'creative_link_url' | 'ad_status'>)[] = []
 
   while (nextUrl) {
     const res = await fetch(nextUrl)
@@ -172,7 +180,7 @@ export async function fetchMetaAdMetrics(
         value:       String(a.value       || '0'),
       }))
 
-      const conversions = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+      const conversions     = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
       const conversionValue = actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
 
       const adId = String(day.ad_id || '')
@@ -201,37 +209,69 @@ export async function fetchMetaAdMetrics(
     nextUrl = (paging?.next as string) || null
   }
 
-  // Batch-fetch thumbnail URLs for all unique ad_ids
-  const thumbnails = await fetchAdThumbnails(Array.from(adIdSet), accessToken)
+  // Batch-fetch creative assets for all unique ad_ids
+  const creativeMap = await fetchAdCreatives(Array.from(adIdSet), accessToken)
 
-  // Merge thumbnail URLs into rows
+  // Merge creative data into rows
   for (const row of rawRows) {
-    rows.push({ ...row, thumbnail_url: thumbnails[row.ad_id] || '' })
+    const creative = creativeMap[row.ad_id] ?? {}
+    rows.push({
+      ...row,
+      thumbnail_url:     creative.thumbnail_url    ?? '',
+      image_url:         creative.image_url        ?? '',
+      video_id:          creative.video_id         ?? '',
+      video_thumb_url:   creative.video_thumb_url  ?? '',
+      creative_body:     creative.creative_body    ?? '',
+      creative_title:    creative.creative_title   ?? '',
+      creative_link_url: creative.creative_link_url ?? '',
+      ad_status:         creative.ad_status        ?? '',
+    })
   }
 
   return rows
 }
 
+interface AdCreativeData {
+  thumbnail_url:    string
+  image_url:        string
+  video_id:         string
+  video_thumb_url:  string
+  creative_body:    string
+  creative_title:   string
+  creative_link_url: string
+  ad_status:        string
+}
+
 /**
- * Fetch thumbnail URLs for a list of ad IDs using the Meta batch API.
- * Returns a map of ad_id → thumbnail_url.
+ * Batch-fetch creative assets and delivery status for a list of ad IDs.
+ * Requests high-res image_url, video info, copy fields, and ad status.
+ * Returns a map of ad_id → AdCreativeData.
  */
-async function fetchAdThumbnails(
+async function fetchAdCreatives(
   adIds: string[],
   accessToken: string
-): Promise<Record<string, string>> {
+): Promise<Record<string, Partial<AdCreativeData>>> {
   if (!adIds.length) return {}
 
-  const result: Record<string, string> = {}
+  const result: Record<string, Partial<AdCreativeData>> = {}
 
   // Process in batches of 50 (Meta batch API limit)
   for (let i = 0; i < adIds.length; i += 50) {
     const batch = adIds.slice(i, i + 50)
     try {
-      // Request thumbnail from the ad creative
+      const creativeFields = [
+        'image_url',
+        'thumbnail_url',
+        'video_id',
+        'body',
+        'title',
+        'link_url',
+        'object_story_spec',
+      ].join(',')
+
       const batchRequests = batch.map(adId => ({
         method: 'GET',
-        relative_url: `${adId}?fields=creative{thumbnail_url}`,
+        relative_url: `${adId}?fields=status,creative{${creativeFields}}`,
       }))
 
       const batchUrl = new URL(`${BASE_URL}/`)
@@ -246,16 +286,34 @@ async function fetchAdThumbnails(
         const item = responses[j]
         if (!item || (item.code as number) !== 200) continue
         try {
-          const body = JSON.parse(item.body as string) as Record<string, unknown>
+          const body     = JSON.parse(item.body as string) as Record<string, unknown>
           const creative = body.creative as Record<string, unknown> | undefined
-          const url = creative?.thumbnail_url as string | undefined
-          if (url) result[batch[j]] = url
+          const adId     = batch[j]
+
+          // Resolve image URL — prefer full-size image_url, fall back to thumbnail
+          const imageUrl    = (creative?.image_url    as string | undefined) ?? ''
+          const thumbUrl    = (creative?.thumbnail_url as string | undefined) ?? ''
+          const videoId     = (creative?.video_id     as string | undefined) ?? ''
+
+          // For video ads, thumbnail_url is the poster frame — keep it separately
+          const videoThumb  = videoId ? thumbUrl : ''
+
+          result[adId] = {
+            image_url:         imageUrl || (!videoId ? thumbUrl : ''),
+            thumbnail_url:     thumbUrl,
+            video_id:          videoId,
+            video_thumb_url:   videoThumb,
+            creative_body:     (creative?.body      as string | undefined) ?? '',
+            creative_title:    (creative?.title     as string | undefined) ?? '',
+            creative_link_url: (creative?.link_url  as string | undefined) ?? '',
+            ad_status:         (body.status         as string | undefined) ?? '',
+          }
         } catch {
           // ignore parse errors for individual ads
         }
       }
     } catch {
-      // ignore batch errors — thumbnails are best-effort
+      // ignore batch errors — creatives are best-effort
     }
   }
 

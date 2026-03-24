@@ -61,11 +61,18 @@ export default async function AdSetDetailPage({
   // ── Fetch ad-level metrics for this specific ad group / ad set ─────────────
   type GoogleAdRow = {
     ad_id: string; ad_name: string; ad_type: string | null; ad_group_name: string
+    ad_status: string | null; ad_strength: string | null
+    headlines: string[] | null; descriptions: string[] | null
+    final_url: string | null; image_url: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number
   }
   type MetaAdRow = {
-    ad_id: string; ad_name: string; thumbnail_url: string | null; adset_name: string | null
+    ad_id: string; ad_name: string; adset_name: string | null
+    thumbnail_url: string | null; image_url: string | null
+    video_id: string | null; video_thumb_url: string | null
+    creative_body: string | null; creative_title: string | null
+    ad_status: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
   }
@@ -96,7 +103,7 @@ export default async function AdSetDetailPage({
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_name,ad_type,ad_group_name,spend,impressions,clicks,conversions,conversions_value')
+        .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .eq('ad_group_id', adsetId)
@@ -118,7 +125,17 @@ export default async function AdSetDetailPage({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
         ad_type:         r.ad_type,
+        ad_status:       r.ad_status,
+        ad_strength:     r.ad_strength,
         thumbnail_url:   null,
+        image_url:       r.image_url,
+        video_id:        null,
+        video_thumb_url: null,
+        creative_body:   null,
+        creative_title:  null,
+        headlines:       r.headlines,
+        descriptions:    r.descriptions,
+        final_url:       r.final_url,
         spend:           sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
         roas:            sp > 0 && cv > 0 ? cv / sp : 0,
         cpl:             co > 0 ? sp / co : 0,
@@ -129,7 +146,7 @@ export default async function AdSetDetailPage({
   } else {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,ad_name,thumbnail_url,adset_name,spend,impressions,clicks,conversions,conversion_value')
+        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .eq('adset_id', adsetId)
@@ -151,7 +168,17 @@ export default async function AdSetDetailPage({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
         ad_type:         null,
+        ad_status:       r.ad_status,
+        ad_strength:     null,
         thumbnail_url:   r.thumbnail_url,
+        image_url:       r.image_url,
+        video_id:        r.video_id,
+        video_thumb_url: r.video_thumb_url,
+        creative_body:   r.creative_body,
+        creative_title:  r.creative_title,
+        headlines:       null,
+        descriptions:    null,
+        final_url:       null,
         spend:           sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
         roas:            sp > 0 && cv > 0 ? cv / sp : 0,
         cpl:             co > 0 ? sp / co : 0,

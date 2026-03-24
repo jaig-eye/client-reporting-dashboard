@@ -6,17 +6,17 @@ import { useRouter } from 'next/navigation'
 type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string }
 
 const SYNC_JOBS: SyncJob[] = [
-  { jobType: 'manual',   days: 30,  label: 'Sync 30 days'  },
-  { jobType: 'manual',   days: 90,  label: 'Sync 90 days'  },
+  { jobType: 'manual',   days: 30,  label: 'Sync 30 days'       },
+  { jobType: 'manual',   days: 90,  label: 'Sync 90 days'       },
   { jobType: 'backfill',            label: 'Full backfill (2 yrs)' },
 ]
 
 export default function ClientManualSync({ clientId }: { clientId: string }) {
   const router = useRouter()
-  const [status,       setStatus]       = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
-  const [records,      setRecords]      = useState<number | null>(null)
-  const [error,        setError]        = useState('')
-  const [activeLabel,  setActiveLabel]  = useState('')
+  const [status,      setStatus]      = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
+  const [records,     setRecords]     = useState<number | null>(null)
+  const [error,       setError]       = useState('')
+  const [activeLabel, setActiveLabel] = useState('')
 
   async function handleSync(job: SyncJob) {
     setStatus('syncing')
@@ -42,28 +42,65 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
     }
   }
 
+  const isSyncing = status === 'syncing'
+
   return (
-    <div>
+    <div className="space-y-2">
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         {SYNC_JOBS.map(job => (
           <button
             key={job.label}
             onClick={() => handleSync(job)}
-            disabled={status === 'syncing'}
+            disabled={isSyncing}
             className="btn btn-primary"
-            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem', opacity: isSyncing ? 0.6 : 1 }}
           >
-            {status === 'syncing' && activeLabel === job.label ? 'Syncing…' : job.label}
+            {isSyncing && activeLabel === job.label ? 'Syncing…' : job.label}
           </button>
         ))}
       </div>
+
+      {/* Progress bar */}
+      {isSyncing && (
+        <div>
+          {/* Indeterminate bar */}
+          <div style={{
+            height: 4,
+            borderRadius: 2,
+            background: 'var(--bg-subtle)',
+            overflow: 'hidden',
+            position: 'relative',
+          }}>
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              height: '100%',
+              width: '40%',
+              background: 'var(--blue)',
+              borderRadius: 2,
+              animation: 'syncSlide 1.4s ease-in-out infinite',
+            }} />
+          </div>
+          <style>{`
+            @keyframes syncSlide {
+              0%   { left: -40%; }
+              100% { left: 100%; }
+            }
+          `}</style>
+          <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
+            Syncing <strong>{activeLabel}</strong>… do not close or refresh this page.
+          </p>
+        </div>
+      )}
+
       {status === 'done' && records !== null && (
-        <p className="text-xs mt-1" style={{ color: 'var(--green)' }}>
-          Done — {records.toLocaleString()} rows synced
+        <p className="text-xs" style={{ color: 'var(--green)' }}>
+          ✓ Done — {records.toLocaleString()} rows synced
         </p>
       )}
       {status === 'error' && (
-        <p className="text-xs mt-1" style={{ color: 'var(--red)' }}>{error}</p>
+        <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>
       )}
     </div>
   )

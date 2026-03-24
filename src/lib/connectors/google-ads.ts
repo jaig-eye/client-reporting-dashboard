@@ -141,6 +141,14 @@ export interface GoogleAdsAdRawRow {
   ad_id: string
   ad_name: string
   ad_type: string
+  // Creative
+  headlines: string[]
+  descriptions: string[]
+  final_url: string | null
+  image_url: string | null
+  ad_strength: string | null
+  ad_status: string | null
+  // Performance
   date: string
   cost_micros: number
   impressions: number
@@ -189,6 +197,12 @@ export async function fetchGoogleAdMetrics(
       ad_group_ad.ad.id,
       ad_group_ad.ad.name,
       ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.responsive_search_ad.headlines,
+      ad_group_ad.ad.responsive_search_ad.descriptions,
+      ad_group_ad.ad.image_ad.image_url,
+      ad_group_ad.ad_strength,
+      ad_group_ad.status,
       segments.date,
       metrics.cost_micros,
       metrics.impressions,
@@ -203,26 +217,38 @@ export async function fetchGoogleAdMetrics(
   )
 
   return raw.map(row => {
-    const campaign  = row.campaign   as Record<string, unknown>
-    const adGroup   = row.ad_group   as Record<string, unknown>
+    const campaign  = row.campaign    as Record<string, unknown>
+    const adGroup   = row.ad_group    as Record<string, unknown>
     const adGroupAd = row.ad_group_ad as Record<string, unknown>
-    const ad        = adGroupAd?.ad  as Record<string, unknown>
-    const metrics   = row.metrics    as Record<string, unknown>
-    const segments  = row.segments   as Record<string, unknown>
+    const ad        = adGroupAd?.ad   as Record<string, unknown> | undefined
+    const rsa       = ad?.responsiveSearchAd as Record<string, unknown> | undefined
+    const imageAd   = ad?.imageAd           as Record<string, unknown> | undefined
+    const metrics   = row.metrics     as Record<string, unknown>
+    const segments  = row.segments    as Record<string, unknown>
+
+    const headlines    = ((rsa?.headlines    as Record<string, unknown>[] | undefined) ?? []).map(h => String(h.text ?? ''))
+    const descriptions = ((rsa?.descriptions as Record<string, unknown>[] | undefined) ?? []).map(d => String(d.text ?? ''))
+    const finalUrls    = (ad?.finalUrls as string[] | undefined) ?? []
 
     return {
-      campaign_id:       String(campaign?.id          || ''),
-      campaign_name:     String(campaign?.name        || ''),
-      ad_group_id:       String(adGroup?.id           || ''),
-      ad_group_name:     String(adGroup?.name         || ''),
-      ad_id:             String(ad?.id                || ''),
-      ad_name:           String(ad?.name              || ''),
-      ad_type:           String(ad?.type              || ''),
-      date:              String(segments?.date        || ''),
-      cost_micros:       Number(metrics?.costMicros   || 0),
-      impressions:       Number(metrics?.impressions  || 0),
-      clicks:            Number(metrics?.clicks       || 0),
-      conversions:       Number(metrics?.conversions  || 0),
+      campaign_id:       String(campaign?.id              || ''),
+      campaign_name:     String(campaign?.name            || ''),
+      ad_group_id:       String(adGroup?.id               || ''),
+      ad_group_name:     String(adGroup?.name             || ''),
+      ad_id:             String(ad?.id                    || ''),
+      ad_name:           String(ad?.name                  || ''),
+      ad_type:           String(ad?.type                  || ''),
+      headlines,
+      descriptions,
+      final_url:         finalUrls[0] ?? null,
+      image_url:         (imageAd?.imageUrl as string | undefined) ?? null,
+      ad_strength:       (adGroupAd?.adStrength as string | undefined) ?? null,
+      ad_status:         (adGroupAd?.status     as string | undefined) ?? null,
+      date:              String(segments?.date            || ''),
+      cost_micros:       Number(metrics?.costMicros       || 0),
+      impressions:       Number(metrics?.impressions      || 0),
+      clicks:            Number(metrics?.clicks           || 0),
+      conversions:       Number(metrics?.conversions      || 0),
       conversions_value: Number(metrics?.conversionsValue || 0),
     }
   })

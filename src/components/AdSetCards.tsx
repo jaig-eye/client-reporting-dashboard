@@ -7,19 +7,31 @@
 import { fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 
 export interface AdCardData {
-  ad_id:           string
-  ad_name:         string
-  ad_type:         string | null
-  thumbnail_url:   string | null
-  spend:           number
-  impressions:     number
-  clicks:          number
-  conversions:     number
-  conversionValue: number
-  roas:            number
-  cpl:             number
-  ctr:             number
-  adFuelSpend:     number
+  ad_id:             string
+  ad_name:           string
+  ad_type:           string | null
+  ad_status:         string | null
+  ad_strength:       string | null
+  // Creative
+  thumbnail_url:     string | null
+  image_url:         string | null
+  video_id:          string | null
+  video_thumb_url:   string | null
+  creative_body:     string | null
+  creative_title:    string | null
+  headlines:         string[] | null
+  descriptions:      string[] | null
+  final_url:         string | null
+  // Metrics
+  spend:             number
+  impressions:       number
+  clicks:            number
+  conversions:       number
+  conversionValue:   number
+  roas:              number
+  cpl:               number
+  ctr:               number
+  adFuelSpend:       number
 }
 
 export interface AdSetData {
@@ -167,36 +179,67 @@ export function AdCard({
     ? ad.ad_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
     : 'Ad'
 
+  // Best image to show: prefer high-res image_url, fall back to thumbnail
+  const previewImage = ad.image_url || ad.thumbnail_url || ad.video_thumb_url
+  const isVideo      = !!ad.video_id
+  // Best copy preview: for RSA use headlines, for Meta use creative_body/title
+  const copyPreview  = ad.creative_title || ad.creative_body || (ad.headlines?.[0]) || ''
+  const bodyPreview  = ad.creative_body || ad.descriptions?.[0] || ''
+
   return (
     <div
       className="card flex flex-col overflow-hidden"
       style={{ borderRadius: 8, padding: 0 }}
     >
-      {/* Thumbnail or placeholder */}
-      {ad.thumbnail_url ? (
-        <img
-          src={ad.thumbnail_url}
-          alt={ad.ad_name}
-          className="w-full object-cover flex-shrink-0"
-          style={{ aspectRatio: '1.91 / 1', background: 'var(--bg-subtle)' }}
-        />
+      {/* Creative preview */}
+      {previewImage ? (
+        <div className="relative w-full flex-shrink-0" style={{ aspectRatio: '1.91 / 1', background: 'var(--bg-subtle)' }}>
+          <img
+            src={previewImage}
+            alt={ad.ad_name}
+            className="w-full h-full object-cover"
+          />
+          {isVideo && (
+            <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="white" opacity="0.9">
+                <circle cx="16" cy="16" r="16" fill="rgba(0,0,0,0.5)" />
+                <polygon points="12,10 24,16 12,22" fill="white" />
+              </svg>
+            </div>
+          )}
+        </div>
       ) : (
         <div
-          className="w-full flex flex-col items-center justify-center flex-shrink-0"
+          className="w-full flex flex-col items-center justify-center flex-shrink-0 p-3"
           style={{
             aspectRatio: '1.91 / 1',
             background: 'var(--bg-subtle)',
             borderBottom: '1px solid var(--border-subtle)',
           }}
         >
-          <span className="text-xs font-medium" style={{ color: 'var(--text-faint)' }}>
-            {adTypeLabel}
-          </span>
+          {copyPreview ? (
+            <div className="text-center px-2">
+              {copyPreview && (
+                <p className="text-xs font-semibold leading-snug mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  {copyPreview.length > 60 ? copyPreview.slice(0, 60) + '…' : copyPreview}
+                </p>
+              )}
+              {bodyPreview && bodyPreview !== copyPreview && (
+                <p className="text-xs leading-snug" style={{ color: 'var(--text-muted)' }}>
+                  {bodyPreview.length > 80 ? bodyPreview.slice(0, 80) + '…' : bodyPreview}
+                </p>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs font-medium" style={{ color: 'var(--text-faint)' }}>
+              {adTypeLabel}
+            </span>
+          )}
         </div>
       )}
 
       {/* Card body */}
-      <div className="flex flex-col flex-1 p-3" style={{ gap: 8 }}>
+      <div className="flex flex-col flex-1 p-3" style={{ gap: 6 }}>
         {/* Ad name */}
         <p
           className="text-xs font-medium leading-snug"
@@ -212,9 +255,15 @@ export function AdCard({
           {ad.ad_name || ad.ad_id}
         </p>
 
+        {/* RSA headlines preview (Google) */}
+        {ad.headlines && ad.headlines.length > 0 && !previewImage && (
+          <p className="text-xs leading-snug" style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>
+            {ad.headlines.slice(0, 2).join(' | ')}
+          </p>
+        )}
+
         {/* Metrics */}
         <div className="mt-auto space-y-1.5">
-          {/* Spend */}
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Spend</span>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -226,10 +275,7 @@ export function AdCard({
             <>
               <div className="flex items-center justify-between">
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>ROAS</span>
-                <span
-                  className="text-xs font-semibold"
-                  style={{ color: showRoas ? roasColor : 'var(--text-faint)' }}
-                >
+                <span className="text-xs font-semibold" style={{ color: showRoas ? roasColor : 'var(--text-faint)' }}>
                   {showRoas ? fmtRoas(ad.roas) : '—'}
                 </span>
               </div>
@@ -257,7 +303,6 @@ export function AdCard({
             </>
           )}
 
-          {/* Divider + engagement */}
           <div
             className="flex items-center justify-between pt-1.5"
             style={{ borderTop: '1px solid var(--border-subtle)' }}
