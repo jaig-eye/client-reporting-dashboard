@@ -4,7 +4,7 @@ export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('clientId') || ''
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
-    redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google/callback`,
+    redirect_uri: `${(process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')}/api/auth/google/callback`,
     scope: 'https://www.googleapis.com/auth/adwords',
     response_type: 'code',
     access_type: 'offline',
