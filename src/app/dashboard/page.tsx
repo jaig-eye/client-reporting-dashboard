@@ -21,6 +21,8 @@ import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 
+export const dynamic = 'force-dynamic'
+
 function fmtDate(d: Date) {
   return d.toISOString().split('T')[0]
 }

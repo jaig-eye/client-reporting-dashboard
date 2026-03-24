@@ -9,6 +9,8 @@ import { getConnectorDef, isConnectorImplemented } from '@/lib/connectors/regist
 import type { ConnectorType } from '@/lib/types'
 import NewConnectorForm from './NewConnectorForm'
 
+export const dynamic = 'force-dynamic'
+
 export default async function NewConnectorPage({
   searchParams,
 }: {
