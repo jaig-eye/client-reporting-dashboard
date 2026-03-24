@@ -25,6 +25,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const auth   = (connector.auth   ?? {}) as Record<string, unknown>
   const config = (connector.config ?? {}) as Record<string, unknown>
 
+  // Debug: log what we have (redact token values)
+  console.log('discover: connector type:', connector.type)
+  console.log('discover: auth keys:', Object.keys(auth))
+  console.log('discover: config keys:', Object.keys(config))
+  console.log('discover: has developer_token:', !!auth.developer_token)
+  console.log('discover: has GOOGLE_DEVELOPER_TOKEN env:', !!process.env.GOOGLE_DEVELOPER_TOKEN)
+
   const adapter = connector.type === 'google_ads' ? googleAdsConnector
                 : connector.type === 'meta_ads'   ? metaAdsConnector
                 : null
