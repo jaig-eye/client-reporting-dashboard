@@ -118,7 +118,10 @@ async function listAccessibleCustomers(accessToken: string, developerToken?: str
       'developer-token': devToken,
     },
   })
-  if (!res.ok) throw new Error(`listAccessibleCustomers failed: ${res.status}`)
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`listAccessibleCustomers failed ${res.status}: ${text}`)
+  }
   const data = await res.json()
   return ((data.resourceNames || []) as string[]).map((r: string) =>
     r.replace('customers/', '')
@@ -359,24 +362,26 @@ export const googleAdsConnector: ConnectorAdapter = {
             AND customer_client.status = 'ENABLED'`,
           devToken
         )
-        return rows.map(row => {
+        const accounts = rows.map(row => {
           const cc = row.customer_client as Record<string, unknown>
           return {
             external_id:   String(cc?.id               || ''),
             external_name: String(cc?.descriptiveName  || cc?.id || ''),
             metadata: {
-              currency:    cc?.currencyCode,
-              is_manager:  cc?.manager,
-              is_test:     cc?.testAccount,
+              currency:   cc?.currencyCode,
+              is_manager: cc?.manager,
+              is_test:    cc?.testAccount,
             },
           }
         }).filter(a => a.external_id)
-      } catch {
-        // Fall back to listAccessibleCustomers if MCC query fails
+        if (accounts.length > 0) return accounts
+      } catch (e) {
+        console.warn('Google customer_client query failed, falling back:', e)
       }
     }
 
     // Fallback: list accessible customers (no names)
+    // Throws with detail if the API is not enabled or token is invalid
     const customerIds = await listAccessibleCustomers(accessToken, devToken)
     return customerIds.map(id => ({
       external_id:   id,
