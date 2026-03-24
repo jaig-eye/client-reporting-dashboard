@@ -15,6 +15,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, CampaignCategory } from '@/lib/types'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
 import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
@@ -295,7 +296,7 @@ export default async function DashboardPage({
                     border:       isActive ? '1px solid var(--blue)' : '1px solid var(--border)',
                   }}
                 >
-                  <span style={{ fontSize: '0.75rem' }}>{SOURCE_ICONS[conn.connector.type] ?? '📊'}</span>
+                  <ConnectorLogo type={conn.connector.type} size={16} />
                   {SOURCE_LABELS[conn.connector.type] ?? conn.connector.type}
                 </Link>
               )

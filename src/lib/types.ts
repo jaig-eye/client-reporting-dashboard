@@ -1,3 +1,5 @@
+import type React from 'react'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Core domain types for the Client Reporting Dashboard
 //
@@ -27,7 +29,8 @@ export interface ConnectorTypeDef {
   type: ConnectorType
   label: string
   description: string
-  icon: string        // SVG path or emoji fallback
+  icon: string        // text fallback (single character)
+  logo?: React.ComponentType<{ size?: number; className?: string }>  // branded SVG logo
   color: string       // Brand color hex
   authFlow: 'oauth' | 'token' | 'credentials'
 }

@@ -14,6 +14,7 @@ import { getAgencySettings } from '@/lib/agency-settings'
 import { applyAdFuel, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
+import { AdGroupTable } from '@/components/AdTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -127,20 +128,24 @@ export default async function CampaignDetailPage({
   }
 
   const adGroups = Array.from(setMap.entries())
-    .map(([setId, s]) => ({
-      setId,
-      setName:         s.setName,
-      spend:           s.spend,
-      impressions:     s.impressions,
-      clicks:          s.clicks,
-      conversions:     s.conversions,
-      conversionValue: s.conversionValue,
-      adCount:         s.adIds.size,
-      displaySpend:    adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend,
-      roas:            s.spend > 0 && s.conversionValue > 0 ? s.conversionValue / s.spend : 0,
-      cpl:             s.conversions > 0 ? s.spend / s.conversions : 0,
-      ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
-    }))
+    .map(([setId, s]) => {
+      const adsetQs = new URLSearchParams({ source, from: dateFrom, to: dateTo })
+      return {
+        setId,
+        setName:         s.setName,
+        spend:           s.spend,
+        displaySpend:    adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend,
+        impressions:     s.impressions,
+        clicks:          s.clicks,
+        conversions:     s.conversions,
+        conversionValue: s.conversionValue,
+        adCount:         s.adIds.size,
+        roas:            s.spend > 0 && s.conversionValue > 0 ? s.conversionValue / s.spend : 0,
+        cpl:             s.conversions > 0 ? s.spend / s.conversions : 0,
+        ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
+        href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
+      }
+    })
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals
@@ -226,7 +231,7 @@ export default async function CampaignDetailPage({
           conversionLabel={conversionLabel}
         />
 
-        {/* ── Ad Group list ────────────────────────────────────── */}
+        {/* ── Ad Group / Ad Set table ───────────────────────────── */}
         <div className="card p-6">
           <div className="mb-5">
             <h2 className="section-title">
@@ -234,80 +239,11 @@ export default async function CampaignDetailPage({
             </h2>
             <p className="section-desc">Click a {groupLabel.toLowerCase()} to see individual ads</p>
           </div>
-
-          {adGroups.length === 0 ? (
-            <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-              No ad-level data synced yet.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {adGroups.map(group => {
-                const adsetQs  = new URLSearchParams({ source, from: dateFrom, to: dateTo })
-                const adsetHref = `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(group.setId)}?${adsetQs}`
-
-                return (
-                  <Link
-                    key={group.setId}
-                    href={adsetHref}
-                    className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg"
-                    style={{
-                      background: 'var(--bg-subtle)',
-                      border: '1px solid var(--border-subtle)',
-                      textDecoration: 'none',
-                      display: 'flex',
-                    }}
-                  >
-                    <div className="min-w-0">
-                      {/* Label + name */}
-                      <p className="text-xs font-medium uppercase tracking-wide mb-0.5" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
-                        {groupLabel}
-                      </p>
-                      <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {group.setName || groupLabel}
-                      </p>
-                      {/* Metrics row */}
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <span className="font-medium">{fmt$(group.displaySpend)}</span>
-                        <span style={{ color: 'var(--border)' }}>·</span>
-                        {isEcom ? (
-                          <>
-                            <span
-                              className="font-medium"
-                              style={{ color: group.roas >= 3 ? 'var(--green)' : group.roas >= 1.5 ? '#d97706' : group.roas > 0 ? 'var(--red)' : 'var(--text-faint)' }}
-                            >
-                              {group.roas > 0 ? `${fmtRoas(group.roas)} ROAS` : 'No conv.'}
-                            </span>
-                            <span style={{ color: 'var(--border)' }}>·</span>
-                            <span>{fmt$(group.conversionValue)} revenue</span>
-                            <span style={{ color: 'var(--border)' }}>·</span>
-                            <span>{fmtNum(group.conversions)} orders</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>{group.conversions.toFixed(0)} {conversionLabel.toLowerCase()}</span>
-                            {group.cpl > 0 && (
-                              <>
-                                <span style={{ color: 'var(--border)' }}>·</span>
-                                <span>{fmtCurrency(group.cpl)} CPL</span>
-                              </>
-                            )}
-                            <span style={{ color: 'var(--border)' }}>·</span>
-                            <span>{fmtPct(group.ctr)} CTR</span>
-                          </>
-                        )}
-                        <span style={{ color: 'var(--border)' }}>·</span>
-                        <span style={{ color: 'var(--text-faint)' }}>{group.adCount} ad{group.adCount !== 1 ? 's' : ''}</span>
-                      </div>
-                    </div>
-
-                    <span className="text-xs font-medium flex-shrink-0" style={{ color: 'var(--blue)' }}>
-                      View Ads →
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
-          )}
+          <AdGroupTable
+            rows={adGroups}
+            isEcom={isEcom}
+            conversionLabel={conversionLabel}
+          />
         </div>
 
       </main>

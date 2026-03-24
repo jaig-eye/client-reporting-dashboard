@@ -10,12 +10,15 @@ import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
 import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
 import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
 import CopyButton from '@/components/CopyButton'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
 import ClientSyncButton from './ClientSyncButton'
 import ClientManualSync from './ClientManualSync'
 import EditClientInfo from './EditClientInfo'
 import DeleteClientButton from './DeleteClientButton'
 import ClientLogoUpload from './ClientLogoUpload'
 import ClientAdFuelCut from './ClientAdFuelCut'
+import ClientRawData from './ClientRawData'
+import ClientConversionMapping from './ClientConversionMapping'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +34,7 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes] = await Promise.all([
+  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('client_connections')
       .select('*, connector:connectors(*)')
@@ -43,16 +46,32 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(10),
-    db.from('agency_settings').select('ad_fuel_cut').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action').single(),
+    // Collect all discovered Meta action types for this client
+    db.from('meta_ads_metrics')
+      .select('discovered_actions')
+      .eq('client_id', id)
+      .not('discovered_actions', 'is', null)
+      .limit(200),
   ])
 
   const client = clientRes.data as Client | null
   if (!client) notFound()
 
-  const connections = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
-  const connectors  = (connectorsRes.data ?? []) as Connector[]
-  const recentJobs  = (recentJobsRes.data ?? []) as SyncJob[]
-  const globalCut   = (settingsRes.data as { ad_fuel_cut?: number } | null)?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
+  const connections  = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
+  const connectors   = (connectorsRes.data  ?? []) as Connector[]
+  const recentJobs   = (recentJobsRes.data  ?? []) as SyncJob[]
+  const agencySettings = settingsRes.data as { ad_fuel_cut?: number; default_lead_action?: string; default_purchase_action?: string } | null
+  const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
+  const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
+  const agencyPurch  = agencySettings?.default_purchase_action ?? 'purchase'
+
+  // Collect all unique discovered Meta action types for this client
+  const discoveredActions = Array.from(new Set(
+    (discoveredRes.data ?? []).flatMap(r => (r.discovered_actions as string[] | null) ?? [])
+  )).sort()
+
+  const clientWithActions = client as Client & { lead_action?: string | null; purchase_action?: string | null }
 
   // Index connections by connector type for quick lookup
   const connByType = new Map(connections.map(c => [c.connector.type, c]))
@@ -196,10 +215,13 @@ export default async function ClientDetailPage({
                   {/* Icon + description */}
                   <div className="flex items-start gap-3 flex-1 min-w-0">
                     <div
-                      className="h-9 w-9 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-                      style={{ background: state === 'coming-soon' ? '#d1d5db' : def.color }}
+                      className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ background: state === 'coming-soon' ? '#f3f4f6' : `${def.color}15`, border: `1px solid ${def.color}30` }}
                     >
-                      {def.icon}
+                      {def.logo
+                        ? <def.logo size={22} />
+                        : <span style={{ color: def.color, fontWeight: 700, fontSize: '0.9rem' }}>{def.icon}</span>
+                      }
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -271,6 +293,36 @@ export default async function ClientDetailPage({
               </div>
             )
           })}
+        </div>
+
+      </div>
+
+      {/* ── Full-width: Conversion Mapping + Raw Data ── */}
+      <div className="mt-6 space-y-6">
+
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Conversion Mapping</h2>
+          <p className="section-desc mb-4">
+            Map Meta action types to conversions for Lead Gen and Ecommerce campaigns.
+            The dropdown is populated automatically from synced Meta data.
+          </p>
+          <ClientConversionMapping
+            clientId={id}
+            leadAction={clientWithActions.lead_action ?? null}
+            purchaseAction={clientWithActions.purchase_action ?? null}
+            agencyLeadAction={agencyLead}
+            agencyPurchaseAction={agencyPurch}
+            discoveredActions={discoveredActions}
+          />
+        </div>
+
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Raw Data Inspector</h2>
+          <p className="section-desc mb-4">
+            Browse the raw synced campaign-level data for this client. Useful for diagnosing
+            sync issues and selecting the correct conversion fields.
+          </p>
+          <ClientRawData clientId={id} />
         </div>
 
       </div>

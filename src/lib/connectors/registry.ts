@@ -17,6 +17,7 @@ import type { ConnectorType, ConnectorTypeDef } from '../types'
 import type { ConnectorRegistryEntry, ConnectorAdapter } from './types'
 import { googleAdsConnector } from './google-ads'
 import { metaAdsConnector } from './meta-ads'
+import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo } from '@/components/ConnectorLogo'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UI DEFINITIONS
@@ -29,6 +30,7 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     label: 'Google Ads',
     description: 'Connect your Google Ads MCC to sync campaign performance data.',
     icon: 'G',
+    logo: GoogleAdsLogo,
     color: '#4285F4',
     authFlow: 'oauth',
   },
@@ -37,7 +39,8 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     label: 'Meta Ads',
     description: 'Connect via Meta System User token or OAuth for campaign data.',
     icon: 'f',
-    color: '#1877F2',
+    logo: MetaAdsLogo,
+    color: '#0081FB',
     authFlow: 'token',
   },
   google_analytics: {
@@ -45,6 +48,7 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     label: 'Google Analytics',
     description: 'Connect a GA4 property to sync traffic and conversion data.',
     icon: 'A',
+    logo: GALogo,
     color: '#E37400',
     authFlow: 'oauth',
   },
@@ -53,6 +57,7 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     label: 'Search Console',
     description: 'Connect Google Search Console for organic search performance.',
     icon: 'S',
+    logo: GSCLogo,
     color: '#34A853',
     authFlow: 'oauth',
   },

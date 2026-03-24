@@ -10,7 +10,9 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { applyAdFuel, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
-import { AdCard, type AdCardData, type DisplayMode } from '@/components/AdSetCards'
+import type { DisplayMode } from '@/components/AdSetCards'
+import type { AdCardData } from '@/components/AdSetCards'
+import { AdRowTable, type AdRow } from '@/components/AdTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -188,14 +190,41 @@ export default async function AdSetDetailPage({
     }
   }
 
-  const ads = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
+  const adCardList = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
 
-  // Group totals
-  const totSpend      = ads.reduce((t, a) => t + a.spend, 0)
-  const totClicks     = ads.reduce((t, a) => t + a.clicks, 0)
-  const totImpr       = ads.reduce((t, a) => t + a.impressions, 0)
-  const totConv       = ads.reduce((t, a) => t + a.conversions, 0)
-  const totCv         = ads.reduce((t, a) => t + a.conversionValue, 0)
+  // Convert AdCardData → AdRow for the table
+  const adRows: AdRow[] = adCardList.map(a => ({
+    ad_id:           a.ad_id,
+    ad_name:         a.ad_name,
+    ad_type:         a.ad_type,
+    ad_status:       a.ad_status,
+    ad_strength:     a.ad_strength,
+    image_url:       a.image_url,
+    video_id:        a.video_id,
+    video_thumb_url: a.video_thumb_url,
+    thumbnail_url:   a.thumbnail_url,
+    creative_body:   a.creative_body,
+    creative_title:  a.creative_title,
+    headlines:       a.headlines,
+    descriptions:    a.descriptions,
+    final_url:       a.final_url,
+    spend:           a.spend,
+    displaySpend:    adFuelCut > 0 ? a.adFuelSpend : a.spend,
+    impressions:     a.impressions,
+    clicks:          a.clicks,
+    conversions:     a.conversions,
+    conversionValue: a.conversionValue,
+    roas:            a.roas,
+    cpl:             a.cpl,
+    ctr:             a.ctr,
+  }))
+
+  // Group totals (for the KPI summary cards above the table)
+  const totSpend      = adCardList.reduce((t, a) => t + a.spend, 0)
+  const totClicks     = adCardList.reduce((t, a) => t + a.clicks, 0)
+  const totImpr       = adCardList.reduce((t, a) => t + a.impressions, 0)
+  const totConv       = adCardList.reduce((t, a) => t + a.conversions, 0)
+  const totCv         = adCardList.reduce((t, a) => t + a.conversionValue, 0)
   const totDisplaySpd = adFuelCut > 0 ? applyAdFuel(totSpend, adFuelCut) : totSpend
   const totRoas       = totSpend > 0 && totCv > 0 ? totCv / totSpend : 0
   const totCpl        = totConv > 0 ? totSpend / totConv : 0
@@ -308,32 +337,16 @@ export default async function AdSetDetailPage({
           </div>
         </div>
 
-        {/* ── Ad cards ────────────────────────────────────────── */}
+        {/* ── Ads table ───────────────────────────────────────── */}
         <div className="card p-6">
           <div className="mb-5">
-            <h2 className="section-title">{ads.length} Ad{ads.length !== 1 ? 's' : ''}</h2>
+            <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
           </div>
-
-          {ads.length === 0 ? (
-            <p className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
-              No ad-level data found for this {groupLabel.toLowerCase()}.
-            </p>
-          ) : (
-            <div
-              className="grid gap-3"
-              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' }}
-            >
-              {ads.map(ad => (
-                <AdCard
-                  key={ad.ad_id}
-                  ad={ad}
-                  isEcom={isEcom}
-                  adFuelCut={adFuelCut}
-                  conversionLabel={conversionLabel}
-                />
-              ))}
-            </div>
-          )}
+          <AdRowTable
+            rows={adRows}
+            isEcom={isEcom}
+            conversionLabel={conversionLabel}
+          />
         </div>
 
       </main>
