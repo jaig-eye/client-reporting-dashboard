@@ -59,7 +59,7 @@ export default function EditUserForm({ user }: { user: User }) {
     setDeleting(true)
     const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' })
     if (res.ok) {
-      router.push('/admin/users')
+      window.location.href = '/admin/users'
     } else {
       const d = await res.json().catch(() => ({}))
       setError(d.error || 'Failed to delete user')

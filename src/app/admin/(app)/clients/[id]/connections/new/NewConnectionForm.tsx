@@ -49,7 +49,7 @@ export default function NewConnectionForm({
         const d = await res.json()
         throw new Error(d.error || 'Failed to create connection')
       }
-      router.push(`/admin/clients/${clientId}?connected=${connectorType}`)
+      window.location.href = `/admin/clients/${clientId}?connected=${connectorType}`
       router.refresh()
     } catch (err) {
       setStatus('error')

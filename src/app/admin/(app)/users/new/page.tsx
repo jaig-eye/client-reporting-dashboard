@@ -36,7 +36,7 @@ export default function NewUserPage() {
       setError(data.error)
       setLoading(false)
     } else {
-      router.push('/admin/users')
+      window.location.href = '/admin/users'
     }
   }
 

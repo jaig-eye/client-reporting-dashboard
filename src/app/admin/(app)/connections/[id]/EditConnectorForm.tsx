@@ -164,7 +164,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
         const d = await res.json()
         throw new Error(d.error || 'Failed to delete')
       }
-      router.push('/admin/connections')
+      window.location.href = '/admin/connections'
       router.refresh()
     } catch (err) {
       setStatus('error')

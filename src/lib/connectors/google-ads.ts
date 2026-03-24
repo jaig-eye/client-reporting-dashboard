@@ -16,7 +16,7 @@
 
 import type { ConnectorAdapter, GoogleAdsRawRow, SyncResult, DiscoveredAccount } from './types'
 
-const API_VERSION = 'v17'
+const API_VERSION = 'v19'
 const BASE_URL = `https://googleads.googleapis.com/${API_VERSION}`
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 

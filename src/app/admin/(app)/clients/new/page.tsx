@@ -28,7 +28,7 @@ export default function NewClientPage() {
     })
     const data = await res.json()
     if (data.error) { setError(data.error); setLoading(false) }
-    else router.push(`/admin/clients/${data.id}`)
+    else window.location.href = `/admin/clients/${data.id}`
   }
 
   return (
