@@ -1,4 +1,4 @@
-const API_VERSION = 'v20'
+const API_VERSION = 'v23'
 const BASE_URL = `https://googleads.googleapis.com/${API_VERSION}`
 
 export async function refreshGoogleToken(refreshToken: string): Promise<string> {
