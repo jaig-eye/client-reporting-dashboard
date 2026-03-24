@@ -242,59 +242,24 @@ function fetchAdMetrics(dateStart, dateEnd) {
 // ── HTTP push ─────────────────────────────────────────────────────────────────
 
 function pushData(accountId, campaignRows, adRows) {
-  // Build the full payload including both campaign and ad rows
-  var fullPayload = {
-    account_id: accountId,
-    rows:       campaignRows,
-  };
-  if (adRows && adRows.length > 0) {
-    fullPayload.ad_rows = adRows;
-  }
-
-  // Split into batches based on campaign rows (ad rows go in the first batch)
+  // Send campaign rows in batches
   for (var i = 0; i < campaignRows.length; i += CONFIG.BATCH_SIZE) {
-    var batchPayload = {
+    postBatch({
       account_id: accountId,
       rows: campaignRows.slice(i, i + CONFIG.BATCH_SIZE),
-    };
-
-    // Include all ad_rows with the first campaign batch only
-    if (i === 0 && adRows && adRows.length > 0) {
-      // Send ad rows in their own separate batches
-      for (var j = 0; j < adRows.length; j += CONFIG.BATCH_SIZE) {
-        var adBatch = {
-          account_id: accountId,
-          rows: [],  // no campaign rows in ad-only batches
-          ad_rows: adRows.slice(j, j + CONFIG.BATCH_SIZE),
-        };
-        // Only include campaign rows in the first batch
-        if (j === 0) {
-          adBatch.rows = batchPayload.rows;
-        }
-        postBatch(adBatch);
-        if (j + CONFIG.BATCH_SIZE < adRows.length) {
-          Utilities.sleep(200);
-        }
-      }
-    } else if (i > 0) {
-      // Subsequent campaign batches (no ad rows)
-      postBatch(batchPayload);
-    }
-
-    if (i + CONFIG.BATCH_SIZE < campaignRows.length) {
-      Utilities.sleep(200);
-    }
+    });
+    if (i + CONFIG.BATCH_SIZE < campaignRows.length) Utilities.sleep(200);
   }
 
-  // Handle case where there are no campaign rows but there are ad rows
-  if (campaignRows.length === 0 && adRows && adRows.length > 0) {
-    for (var k = 0; k < adRows.length; k += CONFIG.BATCH_SIZE) {
+  // Send ad rows in separate batches (ingest endpoint accepts rows:[])
+  if (adRows && adRows.length > 0) {
+    for (var j = 0; j < adRows.length; j += CONFIG.BATCH_SIZE) {
       postBatch({
         account_id: accountId,
         rows: [],
-        ad_rows: adRows.slice(k, k + CONFIG.BATCH_SIZE),
+        ad_rows: adRows.slice(j, j + CONFIG.BATCH_SIZE),
       });
-      if (k + CONFIG.BATCH_SIZE < adRows.length) Utilities.sleep(200);
+      if (j + CONFIG.BATCH_SIZE < adRows.length) Utilities.sleep(200);
     }
   }
 }

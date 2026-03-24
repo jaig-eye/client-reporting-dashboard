@@ -200,7 +200,6 @@ export async function fetchGoogleAdMetrics(
       ad_group_ad.ad.final_urls,
       ad_group_ad.ad.responsive_search_ad.headlines,
       ad_group_ad.ad.responsive_search_ad.descriptions,
-      ad_group_ad.ad.image_ad.image_url,
       ad_group_ad.ad_strength,
       ad_group_ad.status,
       segments.date,
@@ -211,6 +210,7 @@ export async function fetchGoogleAdMetrics(
       metrics.conversions_value
     FROM ad_group_ad
     WHERE ad_group_ad.status != 'REMOVED'
+      AND metrics.impressions > 0
       AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
     ORDER BY segments.date DESC`,
     devToken
@@ -222,7 +222,6 @@ export async function fetchGoogleAdMetrics(
     const adGroupAd = row.ad_group_ad as Record<string, unknown>
     const ad        = adGroupAd?.ad   as Record<string, unknown> | undefined
     const rsa       = ad?.responsiveSearchAd as Record<string, unknown> | undefined
-    const imageAd   = ad?.imageAd           as Record<string, unknown> | undefined
     const metrics   = row.metrics     as Record<string, unknown>
     const segments  = row.segments    as Record<string, unknown>
 
@@ -241,7 +240,7 @@ export async function fetchGoogleAdMetrics(
       headlines,
       descriptions,
       final_url:         finalUrls[0] ?? null,
-      image_url:         (imageAd?.imageUrl as string | undefined) ?? null,
+      image_url:         null,
       ad_strength:       (adGroupAd?.adStrength as string | undefined) ?? null,
       ad_status:         (adGroupAd?.status     as string | undefined) ?? null,
       date:              String(segments?.date            || ''),

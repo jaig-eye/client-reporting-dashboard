@@ -19,15 +19,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const { clientId, connectionId, days } = body
+  const { clientId, connectionId, jobType, days } = body
   if (!clientId) {
     return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
   }
 
+  const resolvedJobType = jobType === 'backfill' ? 'backfill' : 'manual'
+
   try {
     const records = await syncClient(
       clientId,
-      'manual',
+      resolvedJobType,
       days ?? 3,
       connectionId
     )

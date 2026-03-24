@@ -62,6 +62,11 @@ export default async function CampaignDetailPage({
   const isGoogleAds  = source === 'google_ads'
   const groupLabel   = isGoogleAds ? 'Ad Group' : 'Ad Set'
 
+  // Conversion action for Meta remapping (same logic as dashboard overview)
+  const convAction: string | null = source === 'meta_ads'
+    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    : null
+
   // ── Fetch ad-level metrics ─────────────────────────────────────────────────
   type GoogleAdRow = {
     ad_id: string; ad_group_id: string; ad_group_name: string
@@ -72,6 +77,8 @@ export default async function CampaignDetailPage({
     ad_id: string; adset_id: string | null; adset_name: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
+    actions:      { action_type: string; value: string }[] | null
+    action_values: { action_type: string; value: string }[] | null
   }
 
   let campaignName = decodeURIComponent(campaignId)
@@ -112,7 +119,7 @@ export default async function CampaignDetailPage({
   } else {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value')
+        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -123,25 +130,37 @@ export default async function CampaignDetailPage({
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
     for (const r of (rows ?? []) as MetaAdRow[]) {
       const setId = r.adset_id ?? r.adset_name ?? 'unknown'
-      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversion_value)||0)
+      const sp = Number(r.spend) || 0
+      const im = Number(r.impressions) || 0
+      const cl = Number(r.clicks) || 0
+      let co = Number(r.conversions) || 0
+      let cv = Number(r.conversion_value) || 0
+      if (convAction) {
+        const found = (r.actions ?? []).find(a => a.action_type === convAction)
+        if (found) co = parseFloat(found.value) || 0
+        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
+        if (foundVal) cv = parseFloat(foundVal.value) || 0
+      }
+      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
     }
   }
 
   const adGroups = Array.from(setMap.entries())
     .map(([setId, s]) => {
       const adsetQs = new URLSearchParams({ source, from: dateFrom, to: dateTo })
+      const dSpend  = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
       return {
         setId,
         setName:         s.setName,
         spend:           s.spend,
-        displaySpend:    adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend,
+        displaySpend:    dSpend,
         impressions:     s.impressions,
         clicks:          s.clicks,
         conversions:     s.conversions,
         conversionValue: s.conversionValue,
         adCount:         s.adIds.size,
-        roas:            s.spend > 0 && s.conversionValue > 0 ? s.conversionValue / s.spend : 0,
-        cpl:             s.conversions > 0 ? s.spend / s.conversions : 0,
+        roas:            dSpend > 0 && s.conversionValue > 0 ? s.conversionValue / dSpend : 0,
+        cpl:             s.conversions > 0 ? dSpend / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
         href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
       }
@@ -270,10 +289,10 @@ function CampaignSummary({
 }) {
   const isEcom       = displayMode === 'ecommerce'
   const displaySpend = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
-  const roas         = spend > 0 && conversionValue > 0 ? conversionValue / spend : 0
-  const cpl          = conversions > 0 ? spend / conversions : 0
+  const roas         = displaySpend > 0 && conversionValue > 0 ? conversionValue / displaySpend : 0
+  const cpl          = conversions > 0 ? displaySpend / conversions : 0
   const ctr          = impressions > 0 ? clicks / impressions : 0
-  const cpc          = clicks > 0 ? spend / clicks : 0
+  const cpc          = clicks > 0 ? displaySpend / clicks : 0
   const roasColor    = roas >= 3 ? 'var(--green)' : roas >= 1.5 ? '#d97706' : 'var(--red)'
 
   return (

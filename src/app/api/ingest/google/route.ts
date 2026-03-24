@@ -12,7 +12,7 @@ import type { GoogleAdsAdRawRow } from '@/lib/connectors/google-ads'
  * Body:
  * {
  *   account_id: string          // Google Ads customer ID (digits only or with dashes)
- *   rows: Array<{               // Campaign-level (required)
+ *   rows: Array<{               // Campaign-level (may be empty in ad-only batches)
  *     campaign_id, campaign_name, date, spend, impressions, clicks,
  *     conversions, conversion_value, campaign_status?, campaign_type?
  *   }>
@@ -22,6 +22,9 @@ import type { GoogleAdsAdRawRow } from '@/lib/connectors/google-ads'
  *     conversions, conversion_value
  *   }>
  * }
+ *
+ * Note: rows may be empty ([]) when a batch contains only ad_rows.
+ * This is normal for large accounts where ad rows span multiple batches.
  */
 export async function POST(request: NextRequest) {
   const secret = request.headers.get('x-ingest-secret')
@@ -37,8 +40,10 @@ export async function POST(request: NextRequest) {
   }
 
   const { account_id, rows, ad_rows } = body
-  if (!account_id || !Array.isArray(rows) || rows.length === 0) {
-    return NextResponse.json({ error: 'account_id and rows are required' }, { status: 400 })
+  const hasRows   = Array.isArray(rows)    && rows.length    > 0
+  const hasAdRows = Array.isArray(ad_rows) && ad_rows.length > 0
+  if (!account_id || (!hasRows && !hasAdRows)) {
+    return NextResponse.json({ error: 'account_id with rows or ad_rows is required' }, { status: 400 })
   }
 
   const db = createAdminClient()
@@ -61,29 +66,29 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const validRows = (rows as Record<string, unknown>[]).filter(
-    r => r.campaign_id && r.date && typeof r.spend === 'number'
-  )
-  if (validRows.length === 0) {
-    return NextResponse.json({ error: 'No valid rows provided' }, { status: 400 })
+  // Campaign rows (may be absent in ad-only batches)
+  let inserted = 0
+  if (hasRows) {
+    const validRows = (rows as Record<string, unknown>[]).filter(
+      r => r.campaign_id && r.date && typeof r.spend === 'number'
+    )
+    if (validRows.length > 0) {
+      const googleRows = validRows.map(r => ({
+        campaign_id:              String(r.campaign_id),
+        campaign_name:            String(r.campaign_name ?? ''),
+        campaign_status:          (r.campaign_status as string) ?? null,
+        campaign_type:            (r.campaign_type as string) ?? null,
+        date:                     String(r.date).split('T')[0],
+        cost_micros:              Math.round(Number(r.spend) * 1_000_000),
+        impressions:              Number(r.impressions) || 0,
+        clicks:                   Number(r.clicks) || 0,
+        conversions:              Number(r.conversions) || 0,
+        conversions_value:        Number(r.conversion_value) || 0,
+        view_through_conversions: 0,
+      }))
+      inserted = await upsertGoogleAdsMetrics(db, connection.id, connection.client_id, googleRows)
+    }
   }
-
-  // Convert USD spend → cost_micros for the upsert function
-  const googleRows = validRows.map(r => ({
-    campaign_id:              String(r.campaign_id),
-    campaign_name:            String(r.campaign_name ?? ''),
-    campaign_status:          (r.campaign_status as string) ?? null,
-    campaign_type:            (r.campaign_type as string) ?? null,
-    date:                     String(r.date).split('T')[0],
-    cost_micros:              Math.round(Number(r.spend) * 1_000_000),
-    impressions:              Number(r.impressions) || 0,
-    clicks:                   Number(r.clicks) || 0,
-    conversions:              Number(r.conversions) || 0,
-    conversions_value:        Number(r.conversion_value) || 0,
-    view_through_conversions: 0,
-  }))
-
-  const inserted = await upsertGoogleAdsMetrics(db, connection.id, connection.client_id, googleRows)
 
   // Ad-level rows (optional — pushed by the updated MCC script for drill-down)
   let adInserted = 0

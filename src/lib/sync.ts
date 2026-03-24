@@ -134,8 +134,12 @@ export async function syncClient(
             resolvedFrom,
             resolvedTo
           )
-          await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
-        } catch { /* ad-level sync errors are non-fatal */ }
+          if (adRows.length > 0) {
+            await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
+          }
+        } catch (adErr) {
+          console.error(`[sync] Google Ads ad-level sync failed for connection ${connection.id}:`, adErr)
+        }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
           db,
@@ -152,8 +156,12 @@ export async function syncClient(
             resolvedFrom,
             resolvedTo
           )
-          await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
-        } catch { /* ad-level sync errors are non-fatal */ }
+          if (adRows.length > 0) {
+            await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
+          }
+        } catch (adErr) {
+          console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
+        }
       }
 
       totalRecords += recordCount

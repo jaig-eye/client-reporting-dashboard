@@ -60,6 +60,11 @@ export default async function AdSetDetailPage({
     ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
 
+  // Conversion action for Meta remapping
+  const convAction: string | null = source === 'meta_ads'
+    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    : null
+
   // ── Fetch ad-level metrics for this specific ad group / ad set ─────────────
   type GoogleAdRow = {
     ad_id: string; ad_name: string; ad_type: string | null; ad_group_name: string
@@ -77,6 +82,8 @@ export default async function AdSetDetailPage({
     ad_status: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
+    actions:       { action_type: string; value: string }[] | null
+    action_values: { action_type: string; value: string }[] | null
   }
 
   let campaignName = decodeURIComponent(campaignId)
@@ -94,8 +101,8 @@ export default async function AdSetDetailPage({
       ex.conversions     += ad.conversions
       ex.conversionValue += ad.conversionValue
       ex.adFuelSpend      = applyAdFuel(ex.spend, adFuelCut)
-      ex.roas             = ex.spend > 0 && ex.conversionValue > 0 ? ex.conversionValue / ex.spend : 0
-      ex.cpl              = ex.conversions > 0 ? ex.spend / ex.conversions : 0
+      ex.roas             = ex.adFuelSpend > 0 && ex.conversionValue > 0 ? ex.conversionValue / ex.adFuelSpend : 0
+      ex.cpl              = ex.conversions > 0 ? ex.adFuelSpend / ex.conversions : 0
       ex.ctr              = ex.impressions > 0 ? ex.clicks / ex.impressions : 0
     } else {
       adMap.set(ad.ad_id, { ...ad })
@@ -123,6 +130,7 @@ export default async function AdSetDetailPage({
       const cl = Number(r.clicks) || 0
       const im = Number(r.impressions) || 0
       const co = Number(r.conversions) || 0
+      const afs = applyAdFuel(sp, adFuelCut)
       upsertAd({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
@@ -139,16 +147,16 @@ export default async function AdSetDetailPage({
         descriptions:    r.descriptions,
         final_url:       r.final_url,
         spend:           sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
-        roas:            sp > 0 && cv > 0 ? cv / sp : 0,
-        cpl:             co > 0 ? sp / co : 0,
+        roas:            afs > 0 && cv > 0 ? cv / afs : 0,
+        cpl:             co > 0 ? afs / co : 0,
         ctr:             im > 0 ? cl / im : 0,
-        adFuelSpend:     applyAdFuel(sp, adFuelCut),
+        adFuelSpend:     afs,
       })
     }
   } else {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value')
+        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .eq('adset_id', adsetId)
@@ -162,10 +170,17 @@ export default async function AdSetDetailPage({
     for (const r of (rows ?? []) as MetaAdRow[]) {
       if (r.adset_name) groupName = r.adset_name
       const sp = Number(r.spend) || 0
-      const cv = Number(r.conversion_value) || 0
       const cl = Number(r.clicks) || 0
       const im = Number(r.impressions) || 0
-      const co = Number(r.conversions) || 0
+      let co = Number(r.conversions) || 0
+      let cv = Number(r.conversion_value) || 0
+      if (convAction) {
+        const found = (r.actions ?? []).find(a => a.action_type === convAction)
+        if (found) co = parseFloat(found.value) || 0
+        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
+        if (foundVal) cv = parseFloat(foundVal.value) || 0
+      }
+      const afs = applyAdFuel(sp, adFuelCut)
       upsertAd({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
@@ -182,10 +197,10 @@ export default async function AdSetDetailPage({
         descriptions:    null,
         final_url:       null,
         spend:           sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
-        roas:            sp > 0 && cv > 0 ? cv / sp : 0,
-        cpl:             co > 0 ? sp / co : 0,
+        roas:            afs > 0 && cv > 0 ? cv / afs : 0,
+        cpl:             co > 0 ? afs / co : 0,
         ctr:             im > 0 ? cl / im : 0,
-        adFuelSpend:     applyAdFuel(sp, adFuelCut),
+        adFuelSpend:     afs,
       })
     }
   }
@@ -226,8 +241,8 @@ export default async function AdSetDetailPage({
   const totConv       = adCardList.reduce((t, a) => t + a.conversions, 0)
   const totCv         = adCardList.reduce((t, a) => t + a.conversionValue, 0)
   const totDisplaySpd = adFuelCut > 0 ? applyAdFuel(totSpend, adFuelCut) : totSpend
-  const totRoas       = totSpend > 0 && totCv > 0 ? totCv / totSpend : 0
-  const totCpl        = totConv > 0 ? totSpend / totConv : 0
+  const totRoas       = totDisplaySpd > 0 && totCv > 0 ? totCv / totDisplaySpd : 0
+  const totCpl        = totConv > 0 ? totDisplaySpd / totConv : 0
   const totCtr        = totImpr > 0 ? totClicks / totImpr : 0
 
   const dateQs    = new URLSearchParams({ source, from: dateFrom, to: dateTo })
