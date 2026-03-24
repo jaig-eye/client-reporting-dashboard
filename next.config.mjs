@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Disable Next.js client-side router cache so every page navigation
+  // fetches fresh server data instead of serving a 30-second stale snapshot.
+  experimental: {
+    staleTimes: { dynamic: 0, static: 0 },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '**.supabase.co' }

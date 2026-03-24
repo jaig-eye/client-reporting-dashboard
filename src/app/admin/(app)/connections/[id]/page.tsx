@@ -73,7 +73,17 @@ export default async function ConnectorDetailPage({
             </div>
           </div>
 
-          <EditConnectorForm connector={connector} />
+          {connector.type === 'google_ads' &&
+          !(connector.auth as Record<string, unknown>)?.developer_token && (
+          <div
+            className="mb-4 rounded-xl px-4 py-3 text-sm"
+            style={{ background: 'var(--amber-subtle, #fffbeb)', border: '1px solid #fde68a', color: '#92400e' }}
+          >
+            <strong>Developer Token missing.</strong> Paste your Developer Token in the field below
+            and click Save Changes — required for syncing and account discovery.
+          </div>
+        )}
+        <EditConnectorForm connector={connector} />
         </div>
 
         {/* Connected client accounts */}
