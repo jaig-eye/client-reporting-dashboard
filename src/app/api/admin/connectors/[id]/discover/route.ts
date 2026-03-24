@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           connector_id:  id,
           external_id:   a.external_id,
           external_name: a.external_name,
-          metadata:      (a as Record<string, unknown>).metadata ?? null,
+          metadata:      a.metadata ?? null,
         })),
         { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
       )
