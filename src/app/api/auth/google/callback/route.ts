@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 export async function GET(request: NextRequest) {
   const code    = request.nextUrl.searchParams.get('code')
-  const appUrl  = process.env.NEXT_PUBLIC_APP_URL!
+  const appUrl  = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   if (!code) {
     return NextResponse.redirect(`${appUrl}/admin/connections?error=google_auth_failed`)

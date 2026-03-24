@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 export async function GET(request: NextRequest) {
   const code   = request.nextUrl.searchParams.get('code')
-  const appUrl = request.nextUrl.origin
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin).replace(/\/$/, '')
 
   if (!code) {
     return NextResponse.redirect(`${appUrl}/admin/connections?error=meta_auth_failed`)

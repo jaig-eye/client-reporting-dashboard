@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
-  const appUrl         = process.env.NEXT_PUBLIC_APP_URL!
+  const appUrl         = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
   const developerToken = request.nextUrl.searchParams.get('developer_token') ?? ''
   const mccCustomerId  = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
 
