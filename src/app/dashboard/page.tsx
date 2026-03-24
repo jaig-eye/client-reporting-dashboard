@@ -10,7 +10,6 @@
 
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
-import { Suspense } from 'react'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
@@ -81,63 +80,21 @@ export default async function DashboardPage({
   const requestedSource = params.source as string | undefined
   const showOverview    = !requestedSource || !availableSources.includes(requestedSource as never)
 
-  // ─── Platform Overview (no source selected) ────────────────────────────────
+  // ─── Auto-redirect to first available platform ─────────────────────────────
   if (showOverview) {
-    // Fetch aggregate metrics for every connection in parallel
-    const platformData = await Promise.all(
-      connections.map(async conn => {
-        const table = conn.connector.type === 'google_ads' ? 'google_ads_metrics' : 'meta_ads_metrics'
-        const { data } = await db
-          .from(table)
-          .select('spend,impressions,clicks,conversions,conversion_value,conversions_value')
-          .eq('connection_id', conn.id)
-          .gte('date', fmtDate(fromDate))
-          .lte('date', fmtDate(toDate))
-
-        const rows = (data ?? []) as Record<string, unknown>[]
-        type PlatTotals = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
-        const totals = rows.reduce<PlatTotals>(
-          (acc, m) => ({
-            spend:            acc.spend            + (Number(m.spend)            || 0),
-            impressions:      acc.impressions      + (Number(m.impressions)      || 0),
-            clicks:           acc.clicks           + (Number(m.clicks)           || 0),
-            conversions:      acc.conversions      + (Number(m.conversions)      || 0),
-            conversionValue:  acc.conversionValue  + (Number(m.conversion_value  || m.conversions_value) || 0),
-          }),
-          { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
-        )
-
-        return { conn, ...totals } as { conn: typeof conn } & PlatTotals
-      })
-    )
-
-    const syncedAtAll = connections
-      .map(c => c.last_synced_at)
-      .filter(Boolean)
-      .sort()
-      .at(-1)
-
-    const syncedAt = syncedAtAll
-      ? new Date(syncedAtAll).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-      : null
-
-    return (
-      <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <DashHeader
-          settings={settings}
-          client={client}
-          syncedAt={syncedAt}
-          fromDate={fromDate}
-          toDate={toDate}
-        />
-
-        <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
-          <div>
-            <h1 className="section-title text-lg">Advertising Platforms</h1>
-            <p className="section-desc mt-0.5">Select a platform to view campaign performance</p>
-          </div>
-
-          {connections.length === 0 && (
+    if (connections.length === 0) {
+      // No connections — show empty state
+      const syncedAt = null
+      return (
+        <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+          <DashHeader
+            settings={settings}
+            client={client}
+            syncedAt={syncedAt}
+            fromDate={fromDate}
+            toDate={toDate}
+          />
+          <main className="max-w-7xl mx-auto px-6 py-6">
             <div className="card p-12 text-center mt-4">
               <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                 Your dashboard is being set up
@@ -146,110 +103,19 @@ export default async function DashboardPage({
                 Your account manager will connect your ad accounts shortly.
               </p>
             </div>
-          )}
+          </main>
+        </div>
+      )
+    }
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {platformData.map(({ conn, spend, impressions, clicks, conversions, conversionValue }) => {
-              const sourceType  = conn.connector.type
-              const roas        = spend > 0 && conversionValue > 0 ? conversionValue / spend : 0
-              const cpl         = conversions > 0 ? spend / conversions : 0
-              const ctr         = impressions > 0 ? clicks / impressions : 0
-              const displaySpend = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
-              const syncedConn  = conn.last_synced_at
-                ? new Date(conn.last_synced_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                : null
-              const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}`
+    // Default to Google Ads, then Meta Ads, then whatever is first
+    const defaultSource =
+      availableSources.includes('google_ads') ? 'google_ads'
+      : availableSources.includes('meta_ads')  ? 'meta_ads'
+      : availableSources[0]
 
-              return (
-                <Link
-                  key={conn.id}
-                  href={`/dashboard?source=${sourceType}&${dateQuery}`}
-                  className="card block p-5 transition-all hover:shadow-md"
-                  style={{
-                    textDecoration: 'none',
-                    borderColor: 'var(--border)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {/* Platform header */}
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{SOURCE_ICONS[sourceType] ?? '📊'}</span>
-                      <div>
-                        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {SOURCE_LABELS[sourceType] ?? sourceType}
-                        </p>
-                        {conn.external_name && (
-                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {conn.external_name}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <span className="text-xs font-medium" style={{ color: 'var(--blue)' }}>
-                      View Campaigns →
-                    </span>
-                  </div>
-
-                  {/* Metrics */}
-                  {spend > 0 ? (
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}
-                        </span>
-                        <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {fmt$(displaySpend)}
-                        </span>
-                      </div>
-                      {conversions > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {conversionValue > 0 ? 'Revenue' : 'Conversions'}
-                          </span>
-                          <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {conversionValue > 0 ? fmt$(conversionValue) : fmtNum(conversions)}
-                          </span>
-                        </div>
-                      )}
-                      {cpl > 0 && conversionValue === 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>CPL</span>
-                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                            {fmtCurrency(cpl)}
-                          </span>
-                        </div>
-                      )}
-                      <div
-                        className="flex items-center justify-between pt-2"
-                        style={{ borderTop: '1px solid var(--border-subtle)' }}
-                      >
-                        <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                          {fmtNum(impressions)} impressions
-                        </span>
-                        <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                          {fmtPct(ctr)} CTR
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
-                      No data for this date range
-                    </p>
-                  )}
-
-                  {syncedConn && (
-                    <p className="text-xs mt-3" style={{ color: 'var(--text-faint)' }}>
-                      Updated {syncedConn}
-                    </p>
-                  )}
-                </Link>
-              )
-            })}
-          </div>
-        </main>
-      </div>
-    )
+    const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}`
+    redirect(`/dashboard?source=${defaultSource}&${dateQuery}`)
   }
 
   // ─── Campaign View (source selected) ──────────────────────────────────────
@@ -403,16 +269,37 @@ export default async function DashboardPage({
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
-        {/* ── Breadcrumb + back link ─────────────────────────── */}
-        <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-muted)' }}>
-          <Link href={`/dashboard?${dateQuery}`} style={{ color: 'var(--blue)', textDecoration: 'none' }}>
-            ← Platforms
-          </Link>
-          <span style={{ color: 'var(--border)' }}>/</span>
-          <span style={{ color: 'var(--text-primary)' }}>
-            {SOURCE_LABELS[activeSource] ?? activeSource}
-          </span>
-        </div>
+        {/* ── Platform pills ─────────────────────────────────── */}
+        {connections.length > 1 && (
+          <div className="flex items-center gap-2">
+            {connections.map(conn => {
+              const isActive = conn.connector.type === activeSource
+              return (
+                <Link
+                  key={conn.id}
+                  href={`/dashboard?source=${conn.connector.type}&${dateQuery}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.375rem',
+                    padding: '0.375rem 1rem',
+                    borderRadius: '9999px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 600,
+                    textDecoration: 'none',
+                    transition: 'all 0.15s',
+                    background:   isActive ? 'var(--blue)'         : 'var(--bg-subtle)',
+                    color:        isActive ? '#fff'                 : 'var(--text-muted)',
+                    border:       isActive ? '1px solid var(--blue)' : '1px solid var(--border)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.75rem' }}>{SOURCE_ICONS[conn.connector.type] ?? '📊'}</span>
+                  {SOURCE_LABELS[conn.connector.type] ?? conn.connector.type}
+                </Link>
+              )
+            })}
+          </div>
+        )}
 
         {/* ── Empty / no connection ──────────────────────────── */}
         {!activeConnection && (

@@ -11,6 +11,8 @@ import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/
 import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
 import CopyButton from '@/components/CopyButton'
 import ClientSyncButton from './ClientSyncButton'
+import ClientManualSync from './ClientManualSync'
+import EditClientInfo from './EditClientInfo'
 import DeleteClientButton from './DeleteClientButton'
 import ClientLogoUpload from './ClientLogoUpload'
 import ClientAdFuelCut from './ClientAdFuelCut'
@@ -80,11 +82,18 @@ export default async function ClientDetailPage({
         <div className="space-y-4">
           <div className="card p-5">
             <h2 className="section-title mb-3">Client Info</h2>
-            <div className="space-y-3 text-sm">
-              <InfoField label="Name"  value={client.name}  />
-              <InfoField label="Email" value={client.email} />
-              {client.slug && <InfoField label="Slug" value={client.slug} mono />}
-            </div>
+            <EditClientInfo
+              clientId={id}
+              name={client.name}
+              email={client.email}
+              slug={client.slug ?? ''}
+            />
+          </div>
+
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Manual Sync</h2>
+            <p className="section-desc mb-3">Pull the last 30 days for all connected accounts.</p>
+            <ClientManualSync clientId={id} />
           </div>
 
           <div className="card p-5">
@@ -122,6 +131,21 @@ export default async function ClientDetailPage({
                 {dashUrl}
               </span>
               <CopyButton text={dashUrl} />
+              <a
+                href={dashUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open dashboard in new tab"
+                style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+              >
+                {/* External link icon */}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </a>
             </div>
           </div>
 

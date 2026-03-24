@@ -1,16 +1,20 @@
-// POST /api/upload — upload a file to Vercel Blob storage.
+// POST /api/upload — upload a file to Supabase Storage.
 // Returns { url } on success.
-// Requires: npm install @vercel/blob
-// Requires: BLOB_READ_WRITE_TOKEN environment variable (set in Vercel dashboard)
+// Uses the existing Supabase service-role client — no extra env vars needed.
 //
 // Accepts multipart/form-data with:
 //   file   — the file to upload
 //   folder — optional prefix (e.g. "avatars", "logos", "clients")
+//
+// Supabase bucket: "uploads" — must be created and set to public in the
+// Supabase dashboard (Storage → New bucket → Name: uploads, Public: on).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/server'
 
-const MAX_SIZE = 4 * 1024 * 1024 // 4 MB
+const MAX_SIZE  = 4 * 1024 * 1024 // 4 MB
+const BUCKET    = 'uploads'
 
 export async function POST(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
@@ -18,14 +22,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json(
-      { error: 'Blob storage not configured. Add BLOB_READ_WRITE_TOKEN to your Vercel environment.' },
-      { status: 503 }
-    )
-  }
-
-  const form = await request.formData()
+  const form   = await request.formData()
   const file   = form.get('file') as File | null
   const folder = (form.get('folder') as string | null) ?? 'uploads'
 
@@ -37,27 +34,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Dynamic import so the app works even if @vercel/blob isn't installed yet
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { put } = require('@vercel/blob')
-
     const ext      = file.name.split('.').pop() ?? 'bin'
     const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const buffer   = Buffer.from(await file.arrayBuffer())
 
-    const blob = await put(filename, file, {
-      access:      'public',
-      contentType: file.type || 'application/octet-stream',
-    })
+    const db = createAdminClient()
+    const { error } = await db.storage
+      .from(BUCKET)
+      .upload(filename, buffer, {
+        contentType: file.type || 'application/octet-stream',
+        upsert: false,
+      })
 
-    return NextResponse.json({ url: blob.url })
+    if (error) throw new Error(error.message)
+
+    const { data: { publicUrl } } = db.storage.from(BUCKET).getPublicUrl(filename)
+    return NextResponse.json({ url: publicUrl })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('Cannot find module')) {
-      return NextResponse.json(
-        { error: 'Run `npm install @vercel/blob` to enable file uploads.' },
-        { status: 503 }
-      )
-    }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

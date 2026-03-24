@@ -266,17 +266,13 @@ async function fetchAdThumbnails(
 // Connector adapter implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Derive an access token from stored auth. Supports three modes:
- *  1. system_user_token — never expires, preferred
- *  2. access_token — long-lived OAuth or manually pasted token
- *  3. app_id + app_secret — generates an App Access Token ({id}|{secret})
+/** Resolve the access token from stored auth credentials.
+ *  Priority: system_user_token (never expires) → access_token (60-day OAuth token)
+ *  Note: App Access Tokens (app_id|app_secret) cannot access ad insights and are not used.
  */
 function resolveToken(auth: Record<string, unknown>): string | undefined {
   if (auth.system_user_token) return auth.system_user_token as string
   if (auth.access_token)      return auth.access_token      as string
-  if (auth.app_id && auth.app_secret) {
-    return `${auth.app_id}|${auth.app_secret}`
-  }
   return undefined
 }
 
