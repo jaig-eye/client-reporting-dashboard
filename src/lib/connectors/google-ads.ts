@@ -77,7 +77,7 @@ function isExpiringSoon(expiresAt?: string): boolean {
 // API helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Execute a GAQL query against the Google Ads API. */
+/** Execute a GAQL query against the Google Ads API with automatic pagination. */
 async function runQuery(
   customerId: string,
   mccCustomerId: string,
@@ -90,24 +90,35 @@ async function runQuery(
   const devToken = developerToken || process.env.GOOGLE_DEVELOPER_TOKEN
   if (!devToken) throw new Error('Google Ads developer token is missing. Add it in connector settings or set GOOGLE_DEVELOPER_TOKEN env var.')
 
-  const res = await fetch(`${BASE_URL}/customers/${id}/googleAds:search`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'developer-token': devToken,
-      'login-customer-id': mcc,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query }),
-  })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Google Ads query failed ${res.status}: ${text}`)
+  const headers = {
+    Authorization:       `Bearer ${accessToken}`,
+    'developer-token':   devToken,
+    'login-customer-id': mcc,
+    'Content-Type':      'application/json',
   }
+  const url = `${BASE_URL}/customers/${id}/googleAds:search`
 
-  const data = await res.json()
-  return (data.results || []) as Record<string, unknown>[]
+  const allResults: Record<string, unknown>[] = []
+  let pageToken: string | undefined
+
+  do {
+    const body: Record<string, unknown> = { query }
+    if (pageToken) body.pageToken = pageToken
+
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Google Ads query failed ${res.status}: ${text}`)
+    }
+
+    const data = await res.json() as Record<string, unknown>
+    const results = (data.results || []) as Record<string, unknown>[]
+    allResults.push(...results)
+    pageToken = data.nextPageToken as string | undefined
+  } while (pageToken)
+
+  return allResults
 }
 
 /** List all accessible customer accounts under the authenticated user. */

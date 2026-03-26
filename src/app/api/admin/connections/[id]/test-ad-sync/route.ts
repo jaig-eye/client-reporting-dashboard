@@ -70,6 +70,13 @@ export async function GET(
         dateFrom,
         dateTo
       )
+
+      // Also check what's actually in the DB for this connection
+      const { count: dbCount } = await db
+        .from('google_ads_ad_metrics')
+        .select('id', { count: 'exact', head: true })
+        .eq('connection_id', conn.id)
+
       const sample = rows.slice(0, 3).map(r => ({
         ad_id:         r.ad_id,
         ad_name:       r.ad_name,
@@ -82,13 +89,16 @@ export async function GET(
         impressions:   r.impressions,
       }))
       return NextResponse.json({
-        connector_type: connectorType,
-        external_id:    conn.external_id,
-        date_range:     { from: dateFrom, to: dateTo },
-        row_count:      rows.length,
+        connector_type:  connectorType,
+        external_id:     conn.external_id,
+        connection_id:   conn.id,
+        client_id:       conn.client_id,
+        date_range:      { from: dateFrom, to: dateTo },
+        api_row_count:   rows.length,
+        db_row_count:    dbCount,
         sample,
         note: rows.length === 0
-          ? 'Zero rows returned. This account likely uses Performance Max campaigns (which have no ad_group_ad entries) OR all ads have 0 impressions in this date range.'
+          ? 'Zero rows returned from API. Performance Max campaigns have no ad_group_ad entries.'
           : null,
       })
     }
