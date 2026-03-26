@@ -152,6 +152,9 @@ export default async function CampaignDetailPage({
     }
   }
 
+  // After data fetch: isPMax is now resolved
+  const displayGroupLabel = (isGoogleAds && isPMax) ? 'Asset Group' : groupLabel
+
   const adGroups = Array.from(setMap.entries())
     .map(([setId, s]) => {
       const adsetQs = new URLSearchParams({ source, from: dateFrom, to: dateTo })
@@ -261,13 +264,9 @@ export default async function CampaignDetailPage({
         <div className="card p-6">
           <div className="mb-5">
             <h2 className="section-title">
-              {isGoogleAds && isPMax ? 'Performance Max' : `${adGroups.length} ${groupLabel}${adGroups.length !== 1 ? 's' : ''}`}
+              {adGroups.length} {displayGroupLabel}{adGroups.length !== 1 ? 's' : ''}
             </h2>
-            <p className="section-desc">
-              {isGoogleAds && isPMax
-                ? 'pMax campaigns do not expose ad group data via the Google Ads API'
-                : `Click a ${groupLabel.toLowerCase()} to see individual ads`}
-            </p>
+            <p className="section-desc">Click a {displayGroupLabel.toLowerCase()} to see individual ads</p>
           </div>
           <AdGroupTable
             rows={adGroups}

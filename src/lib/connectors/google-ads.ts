@@ -196,7 +196,8 @@ export async function fetchGoogleAdMetrics(
   const mccId    = (config.mcc_customer_id as string | undefined) || externalId
   const devToken = (auth.developer_token as string | undefined) || undefined
 
-  const raw = await runQuery(
+  // Regular search/display/shopping ads via ad_group_ad
+  const rawAds = await runQuery(
     externalId,
     mccId,
     token,
@@ -225,16 +226,14 @@ export async function fetchGoogleAdMetrics(
     devToken
   )
 
-  return raw.map(row => {
+  const adRows: GoogleAdsAdRawRow[] = rawAds.map(row => {
     const campaign  = row.campaign   as Record<string, unknown>
-    const adGroup   = row.adGroup    as Record<string, unknown>   // Google API returns camelCase
-    const adGroupAd = row.adGroupAd  as Record<string, unknown>   // Google API returns camelCase
+    const adGroup   = row.adGroup    as Record<string, unknown>
+    const adGroupAd = row.adGroupAd  as Record<string, unknown>
     const ad        = adGroupAd?.ad  as Record<string, unknown> | undefined
     const metrics   = row.metrics    as Record<string, unknown>
     const segments  = row.segments   as Record<string, unknown>
-
     const finalUrls = (ad?.finalUrls as string[] | undefined) ?? []
-
     return {
       campaign_id:       String(campaign?.id              || ''),
       campaign_name:     String(campaign?.name            || ''),
@@ -257,6 +256,67 @@ export async function fetchGoogleAdMetrics(
       conversions_value: Number(metrics?.conversionsValue || 0),
     }
   })
+
+  // Performance Max asset groups — separate resource, same output shape.
+  // ad_id = ad_group_id = asset_group.id so they aggregate naturally in the UI.
+  let assetGroupRows: GoogleAdsAdRawRow[] = []
+  try {
+    const rawAssets = await runQuery(
+      externalId,
+      mccId,
+      token,
+      `SELECT
+        campaign.id,
+        campaign.name,
+        asset_group.id,
+        asset_group.name,
+        asset_group.status,
+        asset_group.ad_strength,
+        segments.date,
+        metrics.cost_micros,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.conversions_value
+      FROM asset_group
+      WHERE metrics.impressions > 0
+        AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+      ORDER BY segments.date DESC`,
+      devToken
+    )
+    assetGroupRows = rawAssets.map(row => {
+      const campaign    = row.campaign    as Record<string, unknown>
+      const assetGroup  = row.assetGroup  as Record<string, unknown>
+      const metrics     = row.metrics     as Record<string, unknown>
+      const segments    = row.segments    as Record<string, unknown>
+      const agId        = String(assetGroup?.id   || '')
+      return {
+        campaign_id:       String(campaign?.id              || ''),
+        campaign_name:     String(campaign?.name            || ''),
+        ad_group_id:       agId,
+        ad_group_name:     String(assetGroup?.name          || ''),
+        ad_id:             agId,
+        ad_name:           String(assetGroup?.name          || ''),
+        ad_type:           'ASSET_GROUP',
+        headlines:         [],
+        descriptions:      [],
+        final_url:         null,
+        image_url:         null,
+        ad_strength:       (assetGroup?.adStrength as string | undefined) ?? null,
+        ad_status:         (assetGroup?.status     as string | undefined) ?? null,
+        date:              String(segments?.date            || ''),
+        cost_micros:       Number(metrics?.costMicros       || 0),
+        impressions:       Number(metrics?.impressions      || 0),
+        clicks:            Number(metrics?.clicks           || 0),
+        conversions:       Number(metrics?.conversions      || 0),
+        conversions_value: Number(metrics?.conversionsValue || 0),
+      }
+    })
+  } catch {
+    // asset_group query may fail for accounts with no pMax campaigns — non-fatal
+  }
+
+  return [...adRows, ...assetGroupRows]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
