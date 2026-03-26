@@ -88,6 +88,45 @@ export async function GET(
         spend:         r.cost_micros / 1_000_000,
         impressions:   r.impressions,
       }))
+
+      // --- Write test: try upserting the first row to surface exact DB errors ---
+      let writeTest: { success: boolean; error: string | null; row?: Record<string, unknown> } = { success: false, error: 'no rows to test' }
+      const firstValid = rows.find(r => r.date && r.ad_id)
+      if (firstValid) {
+        const testRow = {
+          connection_id:     conn.id,
+          client_id:         conn.client_id,
+          campaign_id:       String(firstValid.campaign_id),
+          campaign_name:     String(firstValid.campaign_name || ''),
+          ad_group_id:       String(firstValid.ad_group_id),
+          ad_group_name:     String(firstValid.ad_group_name || ''),
+          ad_id:             String(firstValid.ad_id),
+          ad_name:           String(firstValid.ad_name || ''),
+          ad_type:           firstValid.ad_type || null,
+          ad_status:         firstValid.ad_status || null,
+          ad_strength:       firstValid.ad_strength || null,
+          headlines:         firstValid.headlines?.length    ? firstValid.headlines    : null,
+          descriptions:      firstValid.descriptions?.length ? firstValid.descriptions : null,
+          final_url:         firstValid.final_url   || null,
+          image_url:         firstValid.image_url   || null,
+          date:              String(firstValid.date).split('T')[0],
+          cost_micros:       Number(firstValid.cost_micros) || 0,
+          spend:             (Number(firstValid.cost_micros) || 0) / 1_000_000,
+          impressions:       Number(firstValid.impressions)      || 0,
+          clicks:            Number(firstValid.clicks)           || 0,
+          conversions:       Number(firstValid.conversions)      || 0,
+          conversions_value: Number(firstValid.conversions_value)|| 0,
+        }
+        const { error: writeError } = await db
+          .from('google_ads_ad_metrics')
+          .upsert(testRow, { onConflict: 'connection_id,ad_id,date', ignoreDuplicates: false })
+        writeTest = {
+          success: !writeError,
+          error:   writeError ? writeError.message : null,
+          row:     testRow,
+        }
+      }
+
       return NextResponse.json({
         connector_type:  connectorType,
         external_id:     conn.external_id,
@@ -96,6 +135,7 @@ export async function GET(
         date_range:      { from: dateFrom, to: dateTo },
         api_row_count:   rows.length,
         db_row_count:    dbCount,
+        write_test:      writeTest,
         sample,
         note: rows.length === 0
           ? 'Zero rows returned from API. Performance Max campaigns have no ad_group_ad entries.'
