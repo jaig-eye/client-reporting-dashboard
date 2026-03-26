@@ -33,13 +33,30 @@ export async function GET(
 
   const db = createAdminClient()
 
-  const { data: conn } = await db
+  // The [id] param may be either a client_connections.id OR a connectors.id
+  // (the admin UI links to connectors/[connectors.id]).
+  // Try client_connections.id first, then fall back to connector_id.
+  let { data: conn } = await db
     .from('client_connections')
     .select('*, connector:connectors(*)')
     .eq('id', connectionId)
+    .eq('status', 'active')
+    .limit(1)
     .single() as { data: (ClientConnection & { connector: Connector }) | null }
 
-  if (!conn) return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+  if (!conn) {
+    // Fall back: treat id as connectors.id and pick the first active connection
+    const { data: connByConnector } = await db
+      .from('client_connections')
+      .select('*, connector:connectors(*)')
+      .eq('connector_id', connectionId)
+      .eq('status', 'active')
+      .limit(1)
+      .single() as { data: (ClientConnection & { connector: Connector }) | null }
+    conn = connByConnector
+  }
+
+  if (!conn) return NextResponse.json({ error: 'No active connection found for this ID (tried client_connections.id and connector_id)' }, { status: 404 })
 
   const connectorType = conn.connector.type
   let auth = conn.connector.auth
