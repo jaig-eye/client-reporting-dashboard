@@ -320,6 +320,94 @@ export async function fetchGoogleAdMetrics(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// pMax asset group assets
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GooglePMaxAssetRawRow = {
+  campaign_id:      string
+  campaign_name:    string
+  asset_group_id:   string
+  asset_group_name: string
+  asset_id:         string
+  field_type:       string
+  text_content:     string | null
+  image_url:        string | null
+  video_id:         string | null
+}
+
+/**
+ * Fetch all creative assets for Performance Max asset groups.
+ * Not date-segmented — returns the current active asset set.
+ * Called by the sync engine alongside fetchGoogleAdMetrics.
+ */
+export async function fetchGooglePMaxAssets(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>
+): Promise<GooglePMaxAssetRawRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token   as string | undefined) || undefined
+
+  const raw = await runQuery(
+    externalId,
+    mccId,
+    accessToken,
+    `SELECT
+      campaign.id,
+      campaign.name,
+      asset_group.id,
+      asset_group.name,
+      asset_group_asset.field_type,
+      asset.id,
+      asset.image_asset.full_size.url,
+      asset.text_asset.text,
+      asset.youtube_video_asset.youtube_video_id
+    FROM asset_group_asset
+    WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+      AND asset_group_asset.status != 'REMOVED'`,
+    devToken
+  )
+
+  return raw
+    .map(row => {
+      const campaign        = row.campaign       as Record<string, unknown>
+      const assetGroup      = row.assetGroup     as Record<string, unknown>
+      const assetGroupAsset = row.assetGroupAsset as Record<string, unknown>
+      const asset           = row.asset          as Record<string, unknown>
+      const imageAsset      = asset?.imageAsset  as Record<string, unknown> | undefined
+      const fullSize        = imageAsset?.fullSize as Record<string, unknown> | undefined
+      const textAsset       = asset?.textAsset   as Record<string, unknown> | undefined
+      const videoAsset      = asset?.youtubeVideoAsset as Record<string, unknown> | undefined
+
+      return {
+        campaign_id:      String(campaign?.id           || ''),
+        campaign_name:    String(campaign?.name         || ''),
+        asset_group_id:   String(assetGroup?.id         || ''),
+        asset_group_name: String(assetGroup?.name       || ''),
+        asset_id:         String(asset?.id              || ''),
+        field_type:       String(assetGroupAsset?.fieldType || ''),
+        text_content:     (textAsset?.text    as string) || null,
+        image_url:        (fullSize?.url      as string) || null,
+        video_id:         (videoAsset?.youtubeVideoId as string) || null,
+      }
+    })
+    .filter(r => r.asset_group_id && r.asset_id)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter implementation
 // ─────────────────────────────────────────────────────────────────────────────
 

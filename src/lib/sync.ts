@@ -14,7 +14,8 @@
 
 import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
-import { fetchGoogleAdMetrics } from './connectors/google-ads'
+import { fetchGoogleAdMetrics, fetchGooglePMaxAssets } from './connectors/google-ads'
+import type { GooglePMaxAssetRawRow } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
@@ -146,6 +147,21 @@ export async function syncClient(
         } catch (adErr) {
           adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Google Ads ad-level sync failed for connection ${connection.id}:`, adErr)
+        }
+        // pMax asset group assets (best-effort — not date-ranged, fetches current active set)
+        try {
+          const assetRows = await fetchGooglePMaxAssets(
+            connection.external_id,
+            auth,
+            connection.connector.config
+          )
+          console.log(`[sync] Google Ads pMax assets: ${assetRows.length} rows for connection ${connection.id}`)
+          if (assetRows.length > 0) {
+            await upsertGooglePMaxAssets(db, connection.id, clientId, assetRows)
+          }
+        } catch (assetErr) {
+          // non-fatal — accounts with no pMax campaigns will error here
+          console.error(`[sync] Google Ads pMax asset sync failed for connection ${connection.id}:`, assetErr)
         }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
@@ -379,6 +395,44 @@ export async function upsertGoogleAdsAdMetrics(
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_ad_metrics upsert failed: ${error.message}`)
+  }
+
+  return mapped.length
+}
+
+/**
+ * Upsert pMax asset group creative assets into google_ads_asset_group_assets.
+ * On conflict (connection_id, asset_group_id, asset_id, field_type) the row is updated.
+ */
+export async function upsertGooglePMaxAssets(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GooglePMaxAssetRawRow[]
+): Promise<number> {
+  const mapped = rows.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    campaign_id:      r.campaign_id,
+    campaign_name:    r.campaign_name || null,
+    asset_group_id:   r.asset_group_id,
+    asset_group_name: r.asset_group_name || null,
+    asset_id:         r.asset_id,
+    field_type:       r.field_type,
+    text_content:     r.text_content,
+    image_url:        r.image_url,
+    video_id:         r.video_id,
+    synced_at:        new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('google_ads_asset_group_assets')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,asset_group_id,asset_id,field_type',
+        ignoreDuplicates: false,
+      })
+    if (error) throw new Error(`google_ads_asset_group_assets upsert failed: ${error.message}`)
   }
 
   return mapped.length

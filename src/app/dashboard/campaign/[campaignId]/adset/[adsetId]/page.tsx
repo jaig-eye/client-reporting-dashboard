@@ -109,8 +109,15 @@ export default async function AdSetDetailPage({
     }
   }
 
+  type PMaxAsset = {
+    asset_id: string; field_type: string
+    text_content: string | null; image_url: string | null; video_id: string | null
+  }
+  let pMaxAssets: PMaxAsset[] = []
+  let isPMaxGroup = false
+
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: assetRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
         .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value')
         .eq('client_id', client.id)
@@ -120,8 +127,14 @@ export default async function AdSetDetailPage({
         .lte('date', dateTo),
       db.from('google_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+      db.from('google_ads_asset_group_assets')
+        .select('asset_id,field_type,text_content,image_url,video_id')
+        .eq('client_id', client.id)
+        .eq('asset_group_id', adsetId),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
+    isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
+    pMaxAssets = (assetRows ?? []) as PMaxAsset[]
 
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       if (r.ad_group_name) groupName = r.ad_group_name
@@ -354,19 +367,170 @@ export default async function AdSetDetailPage({
           </div>
         </div>
 
-        {/* ── Ads table ───────────────────────────────────────── */}
-        <div className="card p-6">
-          <div className="mb-5">
-            <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
+        {/* ── pMax Asset Gallery OR regular Ads table ─────────── */}
+        {isPMaxGroup ? (
+          <PMaxAssetGallery assets={pMaxAssets} groupName={groupName} />
+        ) : (
+          <div className="card p-6">
+            <div className="mb-5">
+              <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
+            </div>
+            <AdRowTable
+              rows={adRows}
+              isEcom={isEcom}
+              conversionLabel={conversionLabel}
+            />
           </div>
-          <AdRowTable
-            rows={adRows}
-            isEcom={isEcom}
-            conversionLabel={conversionLabel}
-          />
-        </div>
+        )}
 
       </main>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pMax Asset Gallery
+// ─────────────────────────────────────────────────────────────────────────────
+
+const IMAGE_TYPES = new Set(['MARKETING_IMAGE', 'SQUARE_MARKETING_IMAGE', 'PORTRAIT_MARKETING_IMAGE'])
+const LOGO_TYPES  = new Set(['LOGO', 'LANDSCAPE_LOGO'])
+const TEXT_LABELS: Record<string, string> = {
+  HEADLINE:       'Headline',
+  LONG_HEADLINE:  'Long Headline',
+  DESCRIPTION:    'Description',
+  BUSINESS_NAME:  'Business Name',
+  CALL_TO_ACTION_SELECTION: 'Call to Action',
+}
+
+function PMaxAssetGallery({
+  assets,
+  groupName,
+}: {
+  assets:    { asset_id: string; field_type: string; text_content: string | null; image_url: string | null; video_id: string | null }[]
+  groupName: string
+}) {
+  const images   = assets.filter(a => IMAGE_TYPES.has(a.field_type) && a.image_url)
+  const logos    = assets.filter(a => LOGO_TYPES.has(a.field_type)  && a.image_url)
+  const videos   = assets.filter(a => a.field_type === 'YOUTUBE_VIDEO' && a.video_id)
+  const textRows = assets.filter(a => TEXT_LABELS[a.field_type]     && a.text_content)
+
+  const empty = images.length === 0 && logos.length === 0 && videos.length === 0 && textRows.length === 0
+
+  return (
+    <div className="card p-6 space-y-6">
+      <div>
+        <h2 className="section-title">Asset Group — {groupName}</h2>
+        <p className="section-desc">Creative assets used by this Performance Max asset group</p>
+      </div>
+
+      {empty && (
+        <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+          No assets synced yet. Run a sync to populate asset group creatives.
+        </p>
+      )}
+
+      {/* Images */}
+      {images.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Images</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {images.map(a => (
+              <div key={a.asset_id + a.field_type} className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+                <img
+                  src={a.image_url!}
+                  alt={a.field_type.replace(/_/g, ' ').toLowerCase()}
+                  className="w-full object-cover"
+                  style={{ maxHeight: 160 }}
+                />
+                <p className="text-xs px-2 py-1" style={{ color: 'var(--text-faint)' }}>
+                  {a.field_type.replace(/_/g, ' ').toLowerCase()}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Logos */}
+      {logos.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Logos</p>
+          <div className="flex flex-wrap gap-3">
+            {logos.map(a => (
+              <div key={a.asset_id + a.field_type} className="rounded-lg overflow-hidden border p-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-base)' }}>
+                <img src={a.image_url!} alt="logo" className="h-12 object-contain" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Videos */}
+      {videos.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Videos</p>
+          <div className="flex flex-wrap gap-3">
+            {videos.map(a => (
+              <a
+                key={a.asset_id}
+                href={`https://www.youtube.com/watch?v=${a.video_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-lg overflow-hidden border relative"
+                style={{ borderColor: 'var(--border)', width: 200 }}
+              >
+                <img
+                  src={`https://img.youtube.com/vi/${a.video_id}/mqdefault.jpg`}
+                  alt="video thumbnail"
+                  className="w-full object-cover"
+                />
+                <div
+                  className="absolute inset-0 flex items-center justify-center"
+                  style={{ background: 'rgba(0,0,0,0.3)' }}
+                >
+                  <div
+                    className="rounded-full flex items-center justify-center"
+                    style={{ width: 40, height: 40, background: 'rgba(255,255,255,0.9)' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="#333">
+                      <polygon points="5,3 13,8 5,13" />
+                    </svg>
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Text assets */}
+      {textRows.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Text Assets</p>
+          <div className="space-y-2">
+            {(['HEADLINE', 'LONG_HEADLINE', 'DESCRIPTION', 'BUSINESS_NAME', 'CALL_TO_ACTION_SELECTION'] as const).map(ft => {
+              const group = textRows.filter(a => a.field_type === ft)
+              if (!group.length) return null
+              return (
+                <div key={ft}>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{TEXT_LABELS[ft]}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {group.map(a => (
+                      <span
+                        key={a.asset_id}
+                        className="text-sm px-3 py-1 rounded-full border"
+                        style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-base)' }}
+                      >
+                        {a.text_content}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
