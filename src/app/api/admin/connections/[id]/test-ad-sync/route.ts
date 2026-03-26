@@ -89,53 +89,83 @@ export async function GET(
         impressions:   r.impressions,
       }))
 
-      // --- Write test: try upserting the first row to surface exact DB errors ---
-      let writeTest: { success: boolean; error: string | null; row?: Record<string, unknown> } = { success: false, error: 'no rows to test' }
-      const firstValid = rows.find(r => r.date && r.ad_id)
-      if (firstValid) {
-        const testRow = {
-          connection_id:     conn.id,
-          client_id:         conn.client_id,
-          campaign_id:       String(firstValid.campaign_id),
-          campaign_name:     String(firstValid.campaign_name || ''),
-          ad_group_id:       String(firstValid.ad_group_id),
-          ad_group_name:     String(firstValid.ad_group_name || ''),
-          ad_id:             String(firstValid.ad_id),
-          ad_name:           String(firstValid.ad_name || ''),
-          ad_type:           firstValid.ad_type || null,
-          ad_status:         firstValid.ad_status || null,
-          ad_strength:       firstValid.ad_strength || null,
-          headlines:         firstValid.headlines?.length    ? firstValid.headlines    : null,
-          descriptions:      firstValid.descriptions?.length ? firstValid.descriptions : null,
-          final_url:         firstValid.final_url   || null,
-          image_url:         firstValid.image_url   || null,
-          date:              String(firstValid.date).split('T')[0],
-          cost_micros:       Number(firstValid.cost_micros) || 0,
-          spend:             (Number(firstValid.cost_micros) || 0) / 1_000_000,
-          impressions:       Number(firstValid.impressions)      || 0,
-          clicks:            Number(firstValid.clicks)           || 0,
-          conversions:       Number(firstValid.conversions)      || 0,
-          conversions_value: Number(firstValid.conversions_value)|| 0,
-        }
-        const { error: writeError } = await db
-          .from('google_ads_ad_metrics')
-          .upsert(testRow, { onConflict: 'connection_id,ad_id,date', ignoreDuplicates: false })
-        writeTest = {
-          success: !writeError,
-          error:   writeError ? writeError.message : null,
-          row:     testRow,
-        }
+      // --- Full batch write test (mirrors upsertGoogleAdsAdMetrics exactly) ---
+      const valid = rows.filter(r => r.date && r.ad_id)
+
+      // Check for duplicate (ad_id, date) keys in the API result — these cause
+      // batch upsert failures because PostgreSQL can't resolve intra-batch conflicts.
+      const seen = new Set<string>()
+      const dupes: string[] = []
+      for (const r of valid) {
+        const key = `${r.ad_id}__${String(r.date).split('T')[0]}`
+        if (seen.has(key)) dupes.push(key)
+        else seen.add(key)
       }
 
+      const mapped = valid.map(r => ({
+        connection_id:     conn.id,
+        client_id:         conn.client_id,
+        campaign_id:       String(r.campaign_id),
+        campaign_name:     String(r.campaign_name || ''),
+        ad_group_id:       String(r.ad_group_id),
+        ad_group_name:     String(r.ad_group_name || ''),
+        ad_id:             String(r.ad_id),
+        ad_name:           String(r.ad_name || ''),
+        ad_type:           r.ad_type || null,
+        ad_status:         r.ad_status || null,
+        ad_strength:       r.ad_strength || null,
+        headlines:         r.headlines?.length    ? r.headlines    : null,
+        descriptions:      r.descriptions?.length ? r.descriptions : null,
+        final_url:         r.final_url   || null,
+        image_url:         r.image_url   || null,
+        date:              String(r.date).split('T')[0],
+        cost_micros:       Number(r.cost_micros) || 0,
+        spend:             (Number(r.cost_micros) || 0) / 1_000_000,
+        impressions:       Number(r.impressions)      || 0,
+        clicks:            Number(r.clicks)           || 0,
+        conversions:       Number(r.conversions)      || 0,
+        conversions_value: Number(r.conversions_value)|| 0,
+      }))
+
+      const batchErrors: string[] = []
+      let batchRowsWritten = 0
+      for (let i = 0; i < mapped.length; i += 200) {
+        const { error: batchErr } = await db
+          .from('google_ads_ad_metrics')
+          .upsert(mapped.slice(i, i + 200), { onConflict: 'connection_id,ad_id,date', ignoreDuplicates: false })
+        if (batchErr) batchErrors.push(`batch[${i}–${i + 200}]: ${batchErr.message}`)
+        else batchRowsWritten += mapped.slice(i, i + 200).length
+      }
+
+      // Recount after write
+      const { count: dbCountAfter } = await db
+        .from('google_ads_ad_metrics')
+        .select('id', { count: 'exact', head: true })
+        .eq('connection_id', conn.id)
+
+      // Last 5 sync jobs for this connection
+      const { data: syncJobs } = await db
+        .from('sync_jobs')
+        .select('id,job_type,status,record_count,notes,started_at,completed_at')
+        .eq('connection_id', conn.id)
+        .order('started_at', { ascending: false })
+        .limit(5)
+
       return NextResponse.json({
-        connector_type:  connectorType,
-        external_id:     conn.external_id,
-        connection_id:   conn.id,
-        client_id:       conn.client_id,
-        date_range:      { from: dateFrom, to: dateTo },
-        api_row_count:   rows.length,
-        db_row_count:    dbCount,
-        write_test:      writeTest,
+        connector_type:     connectorType,
+        external_id:        conn.external_id,
+        connection_id:      conn.id,
+        client_id:          conn.client_id,
+        date_range:         { from: dateFrom, to: dateTo },
+        api_row_count:      rows.length,
+        valid_row_count:    valid.length,
+        duplicate_keys:     dupes.length,
+        duplicate_examples: dupes.slice(0, 5),
+        db_row_count_before: dbCount,
+        db_row_count_after:  dbCountAfter,
+        batch_rows_written: batchRowsWritten,
+        batch_errors:       batchErrors,
+        last_sync_jobs:     syncJobs ?? [],
         sample,
         note: rows.length === 0
           ? 'Zero rows returned from API. Performance Max campaigns have no ad_group_ad entries.'
