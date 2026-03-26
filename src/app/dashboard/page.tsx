@@ -56,7 +56,7 @@ export default async function DashboardPage({
     const viewAs = params.viewAs
 
     const [clientsRes] = await Promise.all([
-      db.from('clients').select('id, name').eq('is_active', true).order('name'),
+      db.from('clients').select('id, name').order('name'),
     ])
     allClients = (clientsRes.data ?? []) as { id: string; name: string }[]
 
