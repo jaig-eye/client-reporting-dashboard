@@ -118,6 +118,7 @@ export async function syncClient(
 
       // Write to the platform-specific table — no merging
       let recordCount = 0
+      let adLevelError: string | undefined
       if (connection.connector.type === 'google_ads') {
         recordCount = await upsertGoogleAdsMetrics(
           db,
@@ -125,7 +126,7 @@ export async function syncClient(
           clientId,
           result.rows as GoogleAdsRawRow[]
         )
-        // Ad-level sync (best-effort — don't fail the job if this errors)
+        // Ad-level sync (best-effort — records error in job but doesn't fail it)
         try {
           const adRows = await fetchGoogleAdMetrics(
             connection.external_id,
@@ -134,10 +135,12 @@ export async function syncClient(
             resolvedFrom,
             resolvedTo
           )
+          console.log(`[sync] Google Ads ad-level: ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
             await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
           }
         } catch (adErr) {
+          adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Google Ads ad-level sync failed for connection ${connection.id}:`, adErr)
         }
       } else if (connection.connector.type === 'meta_ads') {
@@ -156,10 +159,12 @@ export async function syncClient(
             resolvedFrom,
             resolvedTo
           )
+          console.log(`[sync] Meta ad-level: ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
             await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
           }
         } catch (adErr) {
+          adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
         }
       }
@@ -172,7 +177,7 @@ export async function syncClient(
         .update({ last_synced_at: new Date().toISOString() })
         .eq('id', connection.id)
 
-      await completeSyncJob(db, jobId, 'success', recordCount)
+      await completeSyncJob(db, jobId, 'success', recordCount, adLevelError)
     } catch (err) {
       await completeSyncJob(db, jobId, 'error', 0, String(err))
       throw err

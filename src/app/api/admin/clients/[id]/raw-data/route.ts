@@ -45,5 +45,29 @@ export async function GET(
     return NextResponse.json({ rows: data ?? [] })
   }
 
+  if (source === 'google_ads_ads') {
+    const { data, error } = await db
+      .from('google_ads_ad_metrics')
+      .select('campaign_id,campaign_name,ad_group_id,ad_group_name,ad_id,ad_name,ad_type,date,spend,impressions,clicks,conversions,conversions_value')
+      .eq('client_id', clientId)
+      .order('date', { ascending: false })
+      .limit(limit)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ rows: data ?? [], count: data?.length ?? 0 })
+  }
+
+  if (source === 'meta_ads_ads') {
+    const { data, error } = await db
+      .from('meta_ads_ad_metrics')
+      .select('campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,date,spend,impressions,clicks,conversions,conversion_value,actions')
+      .eq('client_id', clientId)
+      .order('date', { ascending: false })
+      .limit(limit)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ rows: data ?? [], count: data?.length ?? 0 })
+  }
+
   return NextResponse.json({ error: 'Invalid source' }, { status: 400 })
 }
