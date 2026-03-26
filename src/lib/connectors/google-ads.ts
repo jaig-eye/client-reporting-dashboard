@@ -198,8 +198,6 @@ export async function fetchGoogleAdMetrics(
       ad_group_ad.ad.name,
       ad_group_ad.ad.type,
       ad_group_ad.ad.final_urls,
-      ad_group_ad.ad.responsive_search_ad.headlines,
-      ad_group_ad.ad.responsive_search_ad.descriptions,
       ad_group_ad.ad_strength,
       ad_group_ad.status,
       segments.date,
@@ -210,6 +208,7 @@ export async function fetchGoogleAdMetrics(
       metrics.conversions_value
     FROM ad_group_ad
     WHERE ad_group_ad.status != 'REMOVED'
+      AND campaign.advertising_channel_type != 'PERFORMANCE_MAX'
       AND metrics.impressions > 0
       AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
     ORDER BY segments.date DESC`,
@@ -221,13 +220,10 @@ export async function fetchGoogleAdMetrics(
     const adGroup   = row.ad_group    as Record<string, unknown>
     const adGroupAd = row.ad_group_ad as Record<string, unknown>
     const ad        = adGroupAd?.ad   as Record<string, unknown> | undefined
-    const rsa       = ad?.responsiveSearchAd as Record<string, unknown> | undefined
     const metrics   = row.metrics     as Record<string, unknown>
     const segments  = row.segments    as Record<string, unknown>
 
-    const headlines    = ((rsa?.headlines    as Record<string, unknown>[] | undefined) ?? []).map(h => String(h.text ?? ''))
-    const descriptions = ((rsa?.descriptions as Record<string, unknown>[] | undefined) ?? []).map(d => String(d.text ?? ''))
-    const finalUrls    = (ad?.finalUrls as string[] | undefined) ?? []
+    const finalUrls = (ad?.finalUrls as string[] | undefined) ?? []
 
     return {
       campaign_id:       String(campaign?.id              || ''),
@@ -237,8 +233,8 @@ export async function fetchGoogleAdMetrics(
       ad_id:             String(ad?.id                    || ''),
       ad_name:           String(ad?.name                  || ''),
       ad_type:           String(ad?.type                  || ''),
-      headlines,
-      descriptions,
+      headlines:         [],
+      descriptions:      [],
       final_url:         finalUrls[0] ?? null,
       image_url:         null,
       ad_strength:       (adGroupAd?.adStrength as string | undefined) ?? null,

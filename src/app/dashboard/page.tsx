@@ -171,12 +171,14 @@ export default async function DashboardPage({
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
         const campConvAction = campaignIsEcom ? (client!.purchase_action ?? null) : (client!.lead_action ?? null)
         if (campConvAction) {
+          // When a specific action type is configured, ONLY count that action.
+          // Never fall back to raw conversions (which is sum of all action types).
           const actions      = m.actions as MetaAction[]
           const actionValues = (m.action_values as MetaAction[] | null) ?? []
           const found        = actions.find(a => a.action_type === campConvAction)
           const foundVal     = actionValues.find(a => a.action_type === campConvAction)
-          if (found)    conversions      = parseFloat(found.value    || '0')
-          if (foundVal) conversion_value = parseFloat(foundVal.value || '0')
+          conversions      = found    ? (parseFloat(found.value    || '0')) : 0
+          conversion_value = foundVal ? (parseFloat(foundVal.value || '0')) : 0
         }
       }
 

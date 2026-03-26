@@ -136,10 +136,12 @@ export default async function CampaignDetailPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found = (r.actions ?? []).find(a => a.action_type === convAction)
-        if (found) co = parseFloat(found.value) || 0
+        // When a specific action type is configured, ONLY count that action.
+        // Never fall back to raw conversions (which is sum of all action types).
+        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
         const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        if (foundVal) cv = parseFloat(foundVal.value) || 0
+        co = found    ? (parseFloat(found.value)    || 0) : 0
+        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
     }
