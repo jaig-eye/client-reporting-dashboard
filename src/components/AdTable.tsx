@@ -29,16 +29,20 @@ export function AdGroupTable({
   rows,
   conversionLabel,
   isEcom,
+  isPMax = false,
 }: {
   rows:             AdGroupRow[]
   displayMode?:     DisplayMode
   conversionLabel:  string
   isEcom:           boolean
+  isPMax?:          boolean
 }) {
   if (rows.length === 0) {
     return (
       <p className="text-sm py-10 text-center" style={{ color: 'var(--text-muted)' }}>
-        No ad-level data synced yet.
+        {isPMax
+          ? 'Performance Max campaigns use asset groups — individual ad group data is not available via the Google Ads API.'
+          : 'No ad-level data synced yet.'}
       </p>
     )
   }

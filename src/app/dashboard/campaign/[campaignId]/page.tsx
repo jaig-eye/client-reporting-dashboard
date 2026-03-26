@@ -101,6 +101,8 @@ export default async function CampaignDetailPage({
     }
   }
 
+  let isPMax = false
+
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }] = await Promise.all([
       db.from('google_ads_ad_metrics')
@@ -110,9 +112,12 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+        .select('campaign_name,campaign_type').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
     ])
-    if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
+    const typedCampRow = campRow as { campaign_name: string; campaign_type: string | null } | null
+    if (typedCampRow) campaignName = typedCampRow.campaign_name
+    isPMax = typedCampRow?.campaign_type === 'PERFORMANCE_MAX'
+      || campaignName.toLowerCase().startsWith('pmax')
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversions_value)||0)
     }
@@ -256,14 +261,19 @@ export default async function CampaignDetailPage({
         <div className="card p-6">
           <div className="mb-5">
             <h2 className="section-title">
-              {adGroups.length} {groupLabel}{adGroups.length !== 1 ? 's' : ''}
+              {isGoogleAds && isPMax ? 'Performance Max' : `${adGroups.length} ${groupLabel}${adGroups.length !== 1 ? 's' : ''}`}
             </h2>
-            <p className="section-desc">Click a {groupLabel.toLowerCase()} to see individual ads</p>
+            <p className="section-desc">
+              {isGoogleAds && isPMax
+                ? 'pMax campaigns do not expose ad group data via the Google Ads API'
+                : `Click a ${groupLabel.toLowerCase()} to see individual ads`}
+            </p>
           </div>
           <AdGroupTable
             rows={adGroups}
             isEcom={isEcom}
             conversionLabel={conversionLabel}
+            isPMax={isGoogleAds && isPMax}
           />
         </div>
 
