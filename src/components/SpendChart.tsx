@@ -51,8 +51,8 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
         />
         <Tooltip
           formatter={(value: number, name: string) => [
-            name === 'spend' ? `$${value.toFixed(2)}` : value,
-            name === 'spend' ? 'Spend' : 'Conversions',
+            name === 'Spend' ? `$${value.toFixed(2)}` : value,
+            name,
           ]}
           contentStyle={{
             fontSize: 12,

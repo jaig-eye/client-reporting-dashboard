@@ -363,12 +363,13 @@ export async function upsertGoogleAdsAdMetrics(
   })
 
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('google_ads_ad_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,ad_id,date',
         ignoreDuplicates: false,
       })
+    if (error) throw new Error(`google_ads_ad_metrics upsert failed: ${error.message}`)
   }
 
   return mapped.length
@@ -416,12 +417,13 @@ export async function upsertMetaAdsAdMetrics(
   }))
 
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('meta_ads_ad_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,ad_id,date',
         ignoreDuplicates: false,
       })
+    if (error) throw new Error(`meta_ads_ad_metrics upsert failed: ${error.message}`)
   }
 
   return mapped.length
