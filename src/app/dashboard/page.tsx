@@ -14,7 +14,6 @@ import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { getAdminSession } from '@/lib/auth'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
@@ -23,7 +22,6 @@ import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
-import PreviewBanner from '@/components/PreviewBanner'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,14 +55,7 @@ export default async function DashboardPage({
   const client = clientResult.data as Client | null
   if (!client) redirect('/access')
 
-  // Admin preview mode: both admin_session and client_token are set
-  // (admin used /api/admin/preview/[clientId] to set the cookie)
-  const adminSession = await getAdminSession()
-  let previewClients: { id: string; name: string }[] = []
-  if (adminSession) {
-    const { data } = await db.from('clients').select('id, name').order('name')
-    previewClients = (data ?? []) as { id: string; name: string }[]
-  }
+
 
   const toDate   = params.to   ? new Date(params.to)   : new Date()
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -106,8 +97,7 @@ export default async function DashboardPage({
       const syncedAt = null
       return (
         <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-          {adminSession && <PreviewBanner client={client} allClients={previewClients} />}
-          <DashHeader
+              <DashHeader
             settings={settings}
             client={client}
             syncedAt={syncedAt}
@@ -295,7 +285,6 @@ export default async function DashboardPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      {adminSession && <PreviewBanner client={client} allClients={previewClients} />}
       <DashHeader
         settings={settings}
         client={client}

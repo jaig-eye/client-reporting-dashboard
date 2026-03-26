@@ -59,10 +59,10 @@ export default async function ClientsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Data Sources</th>
-                <th>Dashboard URL</th>
-                <th>Last Sync</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Client</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Data Sources</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Dashboard URL</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Last Sync</th>
                 <th></th>
               </tr>
             </thead>
