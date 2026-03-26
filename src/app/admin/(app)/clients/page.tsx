@@ -7,6 +7,7 @@ import Link from 'next/link'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import { getConnectorDef } from '@/lib/connectors/registry'
 import CopyButton from '@/components/CopyButton'
+import PreviewButton from '@/components/admin/PreviewButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,13 +124,16 @@ export default async function ClientsPage() {
                       </span>
                     </td>
                     <td>
-                      <Link
-                        href={`/admin/clients/${client.id}`}
-                        className="btn btn-secondary"
-                        style={{ padding: '0.375rem 0.75rem' }}
-                      >
-                        Manage →
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <PreviewButton clientId={client.id} />
+                        <Link
+                          href={`/admin/clients/${client.id}`}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.375rem 0.75rem' }}
+                        >
+                          Manage →
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 )

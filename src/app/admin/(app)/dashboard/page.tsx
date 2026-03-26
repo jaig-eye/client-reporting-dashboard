@@ -3,6 +3,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import PreviewButton from '@/components/admin/PreviewButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -53,14 +54,12 @@ export default async function AdminOverviewPage() {
           ) : (
             <div className="space-y-1">
               {clients.slice(0, 8).map(c => (
-                <Link key={c.id} href={`/admin/clients/${c.id}`}
-                  className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[var(--bg-subtle)]"
-                  style={{ textDecoration: 'none' }}>
-                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.name}</span>
-                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                    {new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </span>
-                </Link>
+                <div key={c.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[var(--bg-subtle)]">
+                  <Link href={`/admin/clients/${c.id}`} style={{ textDecoration: 'none', flex: 1 }}>
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.name}</span>
+                  </Link>
+                  <PreviewButton clientId={c.id} />
+                </div>
               ))}
             </div>
           )}

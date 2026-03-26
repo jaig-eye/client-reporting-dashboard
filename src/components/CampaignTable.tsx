@@ -30,7 +30,6 @@ export default function CampaignTable({
   dateFrom,
   dateTo,
   compare,
-  viewAs,
 }: {
   campaigns: Campaign[]
   adFuelCut?: number
@@ -39,7 +38,6 @@ export default function CampaignTable({
   dateFrom?: string
   dateTo?: string
   compare?: string
-  viewAs?: string
 }) {
   const showAdFuel = adFuelCut > 0
 
@@ -85,7 +83,6 @@ export default function CampaignTable({
       ...(dateFrom ? { from: dateFrom } : {}),
       ...(dateTo   ? { to:   dateTo   } : {}),
       ...(compare  ? { compare }        : {}),
-      ...(viewAs   ? { viewAs }         : {}),
     })
     return `/dashboard/campaign/${encodeURIComponent(c.campaign_id)}?${qs}`
   }

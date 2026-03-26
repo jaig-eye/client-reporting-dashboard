@@ -23,7 +23,7 @@ import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
-import ClientSwitcher from '@/components/ClientSwitcher'
+import PreviewBanner from '@/components/PreviewBanner'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,57 +39,31 @@ const SOURCE_LABELS: Record<string, string> = {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; source?: string; compare?: string; viewAs?: string }>
+  searchParams: Promise<{ from?: string; to?: string; source?: string; compare?: string }>
 }) {
-  const cookieStore   = await cookies()
-  const adminSession  = await getAdminSession()
-  const db            = createAdminClient()
-  const params        = await searchParams
+  const cookieStore  = await cookies()
+  const db           = createAdminClient()
+  const params       = await searchParams
 
-  let client: Client | null = null
-  let isAdmin = false
-  let allClients: { id: string; name: string }[] = []
+  // Pure client-token auth — unchanged for end clients
+  const token = cookieStore.get('client_token')?.value
+  if (!token) redirect('/access')
 
+  const clientResult = await db
+    .from('clients')
+    .select('*')
+    .eq('dashboard_token', token)
+    .single()
+  const client = clientResult.data as Client | null
+  if (!client) redirect('/access')
+
+  // Admin preview mode: both admin_session and client_token are set
+  // (admin used /api/admin/preview/[clientId] to set the cookie)
+  const adminSession = await getAdminSession()
+  let previewClients: { id: string; name: string }[] = []
   if (adminSession) {
-    // Admin viewing a client dashboard
-    isAdmin = true
-    const viewAs = params.viewAs
-
-    const [clientsRes] = await Promise.all([
-      db.from('clients').select('id, name').order('name'),
-    ])
-    allClients = (clientsRes.data ?? []) as { id: string; name: string }[]
-
-    if (viewAs) {
-      const { data } = await db.from('clients').select('*').eq('id', viewAs).single()
-      client = data as Client | null
-    }
-    if (!client && allClients.length > 0) {
-      // Auto-redirect to first client
-      const first = allClients[0]
-      const restParams = new URLSearchParams({ viewAs: first.id })
-      redirect(`/dashboard?${restParams.toString()}`)
-    }
-    if (!client) {
-      // No clients configured
-      return (
-        <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
-          No active clients found.
-        </div>
-      )
-    }
-  } else {
-    // Client visitor using dashboard_token
-    const token = cookieStore.get('client_token')?.value
-    if (!token) redirect('/access')
-
-    const clientResult = await db
-      .from('clients')
-      .select('*')
-      .eq('dashboard_token', token)
-      .single()
-    client = clientResult.data as Client | null
-    if (!client) redirect('/access')
+    const { data } = await db.from('clients').select('id, name').order('name')
+    previewClients = (data ?? []) as { id: string; name: string }[]
   }
 
   const toDate   = params.to   ? new Date(params.to)   : new Date()
@@ -132,6 +106,7 @@ export default async function DashboardPage({
       const syncedAt = null
       return (
         <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+          {adminSession && <PreviewBanner client={client} allClients={previewClients} />}
           <DashHeader
             settings={settings}
             client={client}
@@ -316,11 +291,11 @@ export default async function DashboardPage({
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : null
 
-  const viewAs    = params.viewAs
-  const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}${viewAs ? `&viewAs=${viewAs}` : ''}`
+  const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+      {adminSession && <PreviewBanner client={client} allClients={previewClients} />}
       <DashHeader
         settings={settings}
         client={client}
@@ -328,9 +303,6 @@ export default async function DashboardPage({
         fromDate={fromDate}
         toDate={toDate}
         compare={compare}
-        isAdmin={isAdmin}
-        allClients={allClients}
-        viewAs={params.viewAs}
       />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
@@ -535,7 +507,6 @@ export default async function DashboardPage({
                 dateFrom={fmtDate(fromDate)}
                 dateTo={fmtDate(toDate)}
                 compare={compare !== 'none' ? compare : undefined}
-                viewAs={viewAs}
               />
             </div>
           </>
@@ -557,9 +528,6 @@ function DashHeader({
   fromDate,
   toDate,
   compare,
-  isAdmin = false,
-  allClients = [],
-  viewAs,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   settings: any
@@ -568,9 +536,6 @@ function DashHeader({
   fromDate: Date
   toDate: Date
   compare?: string
-  isAdmin?: boolean
-  allClients?: { id: string; name: string }[]
-  viewAs?: string
 }) {
   return (
     <header
@@ -610,11 +575,6 @@ function DashHeader({
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
-          {isAdmin && allClients.length > 1 && (
-            <Suspense fallback={null}>
-              <ClientSwitcher clients={allClients} currentClientId={viewAs ?? client.id} />
-            </Suspense>
-          )}
           <ExportButtons clientId={client.id} />
           <Suspense fallback={null}>
             <DateRangePicker
