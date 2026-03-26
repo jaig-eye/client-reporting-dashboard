@@ -215,12 +215,12 @@ export async function fetchGoogleAdMetrics(
   )
 
   return raw.map(row => {
-    const campaign  = row.campaign    as Record<string, unknown>
-    const adGroup   = row.ad_group    as Record<string, unknown>
-    const adGroupAd = row.ad_group_ad as Record<string, unknown>
-    const ad        = adGroupAd?.ad   as Record<string, unknown> | undefined
-    const metrics   = row.metrics     as Record<string, unknown>
-    const segments  = row.segments    as Record<string, unknown>
+    const campaign  = row.campaign   as Record<string, unknown>
+    const adGroup   = row.adGroup    as Record<string, unknown>   // Google API returns camelCase
+    const adGroupAd = row.adGroupAd  as Record<string, unknown>   // Google API returns camelCase
+    const ad        = adGroupAd?.ad  as Record<string, unknown> | undefined
+    const metrics   = row.metrics    as Record<string, unknown>
+    const segments  = row.segments   as Record<string, unknown>
 
     const finalUrls = (ad?.finalUrls as string[] | undefined) ?? []
 
