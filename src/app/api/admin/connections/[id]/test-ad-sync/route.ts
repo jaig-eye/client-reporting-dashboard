@@ -146,10 +146,10 @@ export async function GET(
       // Last 5 sync jobs for this connection
       const { data: syncJobs } = await db
         .from('sync_jobs')
-        .select('id,job_type,status,record_count,notes,started_at,completed_at')
+        .select('id,job_type,status,records_synced,error_message,date_from,date_to,started_at,completed_at')
         .eq('connection_id', conn.id)
         .order('started_at', { ascending: false })
-        .limit(5)
+        .limit(10)
 
       return NextResponse.json({
         connector_type:     connectorType,
