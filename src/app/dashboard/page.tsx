@@ -8,11 +8,13 @@
 // Drill-down hierarchy: Platforms → Platform → Campaigns → Ad Sets → Ads
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
+import { getAdminSession } from '@/lib/auth'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
@@ -21,6 +23,7 @@ import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
+import ClientSwitcher from '@/components/ClientSwitcher'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,29 +39,74 @@ const SOURCE_LABELS: Record<string, string> = {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; source?: string }>
+  searchParams: Promise<{ from?: string; to?: string; source?: string; compare?: string; viewAs?: string }>
 }) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get('client_token')?.value
-  if (!token) redirect('/access')
+  const cookieStore   = await cookies()
+  const adminSession  = await getAdminSession()
+  const db            = createAdminClient()
+  const params        = await searchParams
 
-  const db = createAdminClient()
+  let client: Client | null = null
+  let isAdmin = false
+  let allClients: { id: string; name: string }[] = []
 
-  const clientResult = await db
-    .from('clients')
-    .select('*')
-    .eq('dashboard_token', token)
-    .single()
-  const client = clientResult.data as Client | null
-  if (!client) redirect('/access')
+  if (adminSession) {
+    // Admin viewing a client dashboard
+    isAdmin = true
+    const viewAs = params.viewAs
 
-  const params   = await searchParams
+    const [clientsRes] = await Promise.all([
+      db.from('clients').select('id, name').eq('is_active', true).order('name'),
+    ])
+    allClients = (clientsRes.data ?? []) as { id: string; name: string }[]
+
+    if (viewAs) {
+      const { data } = await db.from('clients').select('*').eq('id', viewAs).single()
+      client = data as Client | null
+    }
+    if (!client && allClients.length > 0) {
+      // Auto-redirect to first client
+      const first = allClients[0]
+      const restParams = new URLSearchParams({ viewAs: first.id })
+      redirect(`/dashboard?${restParams.toString()}`)
+    }
+    if (!client) {
+      // No clients configured
+      return (
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
+          No active clients found.
+        </div>
+      )
+    }
+  } else {
+    // Client visitor using dashboard_token
+    const token = cookieStore.get('client_token')?.value
+    if (!token) redirect('/access')
+
+    const clientResult = await db
+      .from('clients')
+      .select('*')
+      .eq('dashboard_token', token)
+      .single()
+    client = clientResult.data as Client | null
+    if (!client) redirect('/access')
+  }
+
   const toDate   = params.to   ? new Date(params.to)   : new Date()
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const compare  = params.compare ?? 'none'
 
   const periodMs  = toDate.getTime() - fromDate.getTime()
-  const priorTo   = new Date(fromDate.getTime() - 86400000)
-  const priorFrom = new Date(priorTo.getTime() - periodMs)
+  let priorTo:   Date
+  let priorFrom: Date
+  if (compare === 'last_year') {
+    priorFrom = new Date(fromDate); priorFrom.setFullYear(priorFrom.getFullYear() - 1)
+    priorTo   = new Date(toDate);   priorTo.setFullYear(priorTo.getFullYear() - 1)
+  } else {
+    priorTo   = new Date(fromDate.getTime() - 86400000)
+    priorFrom = new Date(priorTo.getTime() - periodMs)
+  }
+  const showCompare = compare !== 'none'
 
   const [settings, connectionsRes] = await Promise.all([
     getAgencySettings(),
@@ -90,6 +138,7 @@ export default async function DashboardPage({
             syncedAt={syncedAt}
             fromDate={fromDate}
             toDate={toDate}
+            compare={compare}
           />
           <main className="max-w-7xl mx-auto px-6 py-6">
             <div className="card p-12 text-center mt-4">
@@ -267,7 +316,8 @@ export default async function DashboardPage({
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : null
 
-  const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}`
+  const viewAs    = params.viewAs
+  const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}${viewAs ? `&viewAs=${viewAs}` : ''}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -277,6 +327,10 @@ export default async function DashboardPage({
         syncedAt={syncedAt}
         fromDate={fromDate}
         toDate={toDate}
+        compare={compare}
+        isAdmin={isAdmin}
+        allClients={allClients}
+        viewAs={params.viewAs}
       />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
@@ -343,7 +397,7 @@ export default async function DashboardPage({
               <MetricCard
                 label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'}
                 value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)}
-                delta={calcDelta(current.spend, prior.spend)}
+                delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined}
                 invertDelta
                 sub={undefined}
                 delay={0}
@@ -353,19 +407,19 @@ export default async function DashboardPage({
                   <MetricCard
                     label="ROAS"
                     value={fmtRoas(current.roas)}
-                    delta={calcDelta(current.roas, prior.roas)}
+                    delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
                     delay={1}
                   />
                   <MetricCard
                     label="Revenue"
                     value={fmt$(current.conversionValue)}
-                    delta={calcDelta(current.conversionValue, prior.conversionValue)}
+                    delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
                     delay={2}
                   />
                   <MetricCard
                     label="Orders"
                     value={fmtNum(current.conversions)}
-                    delta={calcDelta(current.conversions, prior.conversions)}
+                    delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
                     delay={3}
                   />
                 </>
@@ -374,20 +428,20 @@ export default async function DashboardPage({
                   <MetricCard
                     label="Leads"
                     value={fmtNum(current.conversions)}
-                    delta={calcDelta(current.conversions, prior.conversions)}
+                    delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
                     delay={1}
                   />
                   <MetricCard
                     label="CPL"
                     value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'}
-                    delta={calcDelta(current.cpl, prior.cpl)}
+                    delta={showCompare ? calcDelta(current.cpl, prior.cpl) : undefined}
                     invertDelta
                     delay={2}
                   />
                   <MetricCard
                     label="Clicks"
                     value={fmtNum(current.clicks)}
-                    delta={calcDelta(current.clicks, prior.clicks)}
+                    delta={showCompare ? calcDelta(current.clicks, prior.clicks) : undefined}
                     sub={`${fmtPct(current.ctr)} CTR`}
                     delay={3}
                   />
@@ -402,14 +456,14 @@ export default async function DashboardPage({
                   <MetricCard
                     label="Clicks"
                     value={fmtNum(current.clicks)}
-                    delta={calcDelta(current.clicks, prior.clicks)}
+                    delta={showCompare ? calcDelta(current.clicks, prior.clicks) : undefined}
                     sub={`${fmtPct(current.ctr)} CTR`}
                     delay={0}
                   />
                   <MetricCard
                     label="Avg. CPC"
                     value={fmtCurrency(current.cpc)}
-                    delta={calcDelta(current.cpc, prior.cpc)}
+                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
                     invertDelta
                     delay={1}
                   />
@@ -419,13 +473,13 @@ export default async function DashboardPage({
                   <MetricCard
                     label="CTR"
                     value={fmtPct(current.ctr)}
-                    delta={calcDelta(current.ctr, prior.ctr)}
+                    delta={showCompare ? calcDelta(current.ctr, prior.ctr) : undefined}
                     delay={0}
                   />
                   <MetricCard
                     label="Avg. CPC"
                     value={fmtCurrency(current.cpc)}
-                    delta={calcDelta(current.cpc, prior.cpc)}
+                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
                     invertDelta
                     delay={1}
                   />
@@ -434,13 +488,13 @@ export default async function DashboardPage({
               <MetricCard
                 label="Impressions"
                 value={fmtNum(current.impressions)}
-                delta={calcDelta(current.impressions, prior.impressions)}
+                delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
                 delay={2}
               />
               <MetricCard
                 label="CPM"
                 value={fmtCurrency(current.cpm)}
-                delta={calcDelta(current.cpm, prior.cpm)}
+                delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
                 invertDelta
                 delay={3}
               />
@@ -450,9 +504,19 @@ export default async function DashboardPage({
             <div className="card p-6">
               <div className="mb-4">
                 <h2 className="section-title">Daily Performance</h2>
-                <p className="section-desc">{fmtDate(fromDate)} – {fmtDate(toDate)}</p>
+                <p className="section-desc">
+                  {fmtDate(fromDate)} – {fmtDate(toDate)}
+                  {showCompare && (
+                    <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>
+                      vs {fmtDate(priorFrom)} – {fmtDate(priorTo)}
+                    </span>
+                  )}
+                </p>
               </div>
-              <SpendChart data={dailyTrend} />
+              <SpendChart
+                data={dailyTrend}
+                priorData={showCompare ? getDailyTrend(priorMetrics as never[]) : undefined}
+              />
             </div>
 
             {/* Campaign breakdown */}
@@ -470,6 +534,8 @@ export default async function DashboardPage({
                 connectionId={activeConnection?.id}
                 dateFrom={fmtDate(fromDate)}
                 dateTo={fmtDate(toDate)}
+                compare={compare !== 'none' ? compare : undefined}
+                viewAs={viewAs}
               />
             </div>
           </>
@@ -490,6 +556,10 @@ function DashHeader({
   syncedAt,
   fromDate,
   toDate,
+  compare,
+  isAdmin = false,
+  allClients = [],
+  viewAs,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   settings: any
@@ -497,6 +567,10 @@ function DashHeader({
   syncedAt: string | null
   fromDate: Date
   toDate: Date
+  compare?: string
+  isAdmin?: boolean
+  allClients?: { id: string; name: string }[]
+  viewAs?: string
 }) {
   return (
     <header
@@ -536,8 +610,19 @@ function DashHeader({
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+          {isAdmin && allClients.length > 1 && (
+            <Suspense fallback={null}>
+              <ClientSwitcher clients={allClients} currentClientId={viewAs ?? client.id} />
+            </Suspense>
+          )}
           <ExportButtons clientId={client.id} />
-          <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} />
+          <Suspense fallback={null}>
+            <DateRangePicker
+              from={fromDate.toISOString().split('T')[0]}
+              to={toDate.toISOString().split('T')[0]}
+              compare={compare}
+            />
+          </Suspense>
         </div>
       </div>
     </header>

@@ -72,8 +72,8 @@ export function applyAdFuel(rawSpend: number, cutPct: number): number {
   return rawSpend / (1 - cutPct)
 }
 
-export function calcDelta(current: number, prior: number): number {
-  if (prior === 0) return current > 0 ? 100 : 0
+export function calcDelta(current: number, prior: number): number | undefined {
+  if (prior === 0) return undefined
   return ((current - prior) / Math.abs(prior)) * 100
 }
 

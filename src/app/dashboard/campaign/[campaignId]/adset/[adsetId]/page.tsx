@@ -8,6 +8,7 @@ import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
+import { getAdminSession } from '@/lib/auth'
 import { applyAdFuel, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
@@ -21,18 +22,11 @@ export default async function AdSetDetailPage({
   searchParams,
 }: {
   params:       Promise<{ campaignId: string; adsetId: string }>
-  searchParams: Promise<{ source?: string; from?: string; to?: string }>
+  searchParams: Promise<{ source?: string; from?: string; to?: string; compare?: string; viewAs?: string }>
 }) {
   const cookieStore = await cookies()
-  const token = cookieStore.get('client_token')?.value
-  if (!token) redirect('/access')
-
-  const db = createAdminClient()
-
-  const { data: clientData } = await db
-    .from('clients').select('*').eq('dashboard_token', token).single()
-  const client = clientData as Client | null
-  if (!client) redirect('/access')
+  const db          = createAdminClient()
+  const adminSess   = await getAdminSession()
 
   const { campaignId, adsetId: rawAdsetId } = await params
   const adsetId  = decodeURIComponent(rawAdsetId)
@@ -40,6 +34,20 @@ export default async function AdSetDetailPage({
   const source   = sp.source ?? 'google_ads'
   const dateFrom = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
   const dateTo   = sp.to ?? new Date().toISOString().split('T')[0]
+  const compare  = sp.compare
+  const viewAs   = sp.viewAs
+
+  let client: Client | null = null
+  if (adminSess && viewAs) {
+    const { data } = await db.from('clients').select('*').eq('id', viewAs).single()
+    client = data as Client | null
+  } else {
+    const token = cookieStore.get('client_token')?.value
+    if (!token) redirect('/access')
+    const { data } = await db.from('clients').select('*').eq('dashboard_token', token).single()
+    client = data as Client | null
+  }
+  if (!client) redirect('/access')
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
@@ -260,10 +268,13 @@ export default async function AdSetDetailPage({
   const totCpl        = totConv > 0 ? totDisplaySpd / totConv : 0
   const totCtr        = totImpr > 0 ? totClicks / totImpr : 0
 
-  const dateQs    = new URLSearchParams({ source, from: dateFrom, to: dateTo })
+  const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
+  if (compare) dateQsObj.compare = compare
+  if (viewAs)  dateQsObj.viewAs  = viewAs
+  const dateQs    = new URLSearchParams(dateQsObj)
   const campHref  = `/dashboard/campaign/${encodeURIComponent(campaignId)}?${dateQs}`
-  const platHref  = `/dashboard?source=${source}&from=${dateFrom}&to=${dateTo}`
-  const rootHref  = `/dashboard?from=${dateFrom}&to=${dateTo}`
+  const platHref  = `/dashboard?${dateQs}`
+  const rootHref  = `/dashboard?${dateQs}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>

@@ -13,7 +13,13 @@ import {
 } from 'recharts'
 import type { DailyMetric } from '@/lib/types'
 
-export default function SpendChart({ data }: { data: DailyMetric[] }) {
+export default function SpendChart({
+  data,
+  priorData,
+}: {
+  data:       DailyMetric[]
+  priorData?: DailyMetric[]
+}) {
   if (!data.length) {
     return (
       <div className="h-64 flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -22,11 +28,17 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
     )
   }
 
-  const formatted = data.map(d => ({
-    ...d,
-    date: d.date.slice(5),
-    spend: Number(d.spend.toFixed(2)),
-    conversions: Number(d.conversions.toFixed(1)),
+  // Merge current + prior into a single array keyed by index so bars align side-by-side.
+  // Prior values are injected as `priorSpend` / `priorConversions`.
+  const formatted = data.map((d, i) => ({
+    date:             d.date.slice(5),
+    spend:            Number(d.spend.toFixed(2)),
+    conversions:      Number(d.conversions.toFixed(1)),
+    ...(priorData?.[i] ? {
+      priorSpend:       Number(priorData[i].spend.toFixed(2)),
+      priorConversions: Number(priorData[i].conversions.toFixed(1)),
+      priorDate:        priorData[i].date.slice(5),
+    } : {}),
   }))
 
   return (
@@ -50,10 +62,10 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
           axisLine={false}
         />
         <Tooltip
-          formatter={(value: number, name: string) => [
-            name === 'Spend' ? `$${value.toFixed(2)}` : value,
-            name,
-          ]}
+          formatter={(value: number, name: string) => {
+            if (name === 'Spend' || name === 'Prior Spend') return [`$${value.toFixed(2)}`, name]
+            return [value, name]
+          }}
           contentStyle={{
             fontSize: 12,
             borderRadius: 8,
@@ -65,6 +77,8 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
           cursor={{ fill: 'rgba(0,0,0,0.03)' }}
         />
         <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
+
+        {/* Current period */}
         <Bar yAxisId="spend" dataKey="spend" fill="#2563eb" opacity={0.8} radius={[3, 3, 0, 0]} name="Spend" />
         <Line
           yAxisId="conversions"
@@ -75,6 +89,30 @@ export default function SpendChart({ data }: { data: DailyMetric[] }) {
           dot={false}
           name="Conversions"
         />
+
+        {/* Prior period (shown only when priorData provided) */}
+        {priorData && priorData.length > 0 && (
+          <>
+            <Bar
+              yAxisId="spend"
+              dataKey="priorSpend"
+              fill="#93c5fd"
+              opacity={0.5}
+              radius={[3, 3, 0, 0]}
+              name="Prior Spend"
+            />
+            <Line
+              yAxisId="conversions"
+              type="monotone"
+              dataKey="priorConversions"
+              stroke="#6ee7b7"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              dot={false}
+              name="Prior Conversions"
+            />
+          </>
+        )}
       </ComposedChart>
     </ResponsiveContainer>
   )

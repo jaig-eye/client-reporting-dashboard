@@ -4,6 +4,7 @@
 
 import { fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
 import type { DisplayMode } from './AdSetCards'
+import LightboxImage from './LightboxImage'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ad Group / Ad Set table
@@ -294,32 +295,22 @@ function AdTableRow({
   const statusUpper = (row.ad_status ?? '').toUpperCase()
   const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
   const copyPreview = row.creative_title || row.creative_body || row.headlines?.[0] || ''
-  const typeLabel   = row.ad_type
+  const derivedType = row.ad_type
     ? row.ad_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-    : '—'
+    : isVideo ? 'Video' : previewImg ? 'Image' : '—'
 
   return (
     <tr>
       {/* Thumbnail */}
       <td style={{ padding: '6px 8px' }}>
         {previewImg ? (
-          <div style={{ position: 'relative', width: 40, height: 40 }}>
-            <img
-              src={previewImg}
-              alt={row.ad_name}
-              style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4, display: 'block' }}
-            />
-            {isVideo && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-                justifyContent: 'center', background: 'rgba(0,0,0,0.35)', borderRadius: 4,
-              }}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="white">
-                  <polygon points="4,2 14,8 4,14" />
-                </svg>
-              </div>
-            )}
-          </div>
+          <LightboxImage
+            src={previewImg}
+            alt={row.ad_name}
+            width={40}
+            height={40}
+            videoId={row.video_id ?? undefined}
+          />
         ) : (
           <div style={{
             width: 40, height: 40, borderRadius: 4,
@@ -355,7 +346,7 @@ function AdTableRow({
         )}
       </td>
 
-      <td className="text-xs" style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{typeLabel}</td>
+      <td className="text-xs" style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{derivedType}</td>
 
       <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
         {fmt$(row.displaySpend)}
