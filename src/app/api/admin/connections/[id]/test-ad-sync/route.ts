@@ -143,6 +143,18 @@ export async function GET(
         .select('id', { count: 'exact', head: true })
         .eq('connection_id', conn.id)
 
+      // Verify dashboard query path: same filters the campaign detail page uses
+      const firstCampaignId = mapped[0]?.campaign_id ?? null
+      const { count: dashQueryCount, error: dashQueryError } = firstCampaignId
+        ? await db
+            .from('google_ads_ad_metrics')
+            .select('id', { count: 'exact', head: true })
+            .eq('client_id', conn.client_id)
+            .eq('campaign_id', firstCampaignId)
+            .gte('date', dateFrom)
+            .lte('date', dateTo)
+        : { count: null, error: null }
+
       // Last 5 sync jobs for this connection
       const { data: syncJobs } = await db
         .from('sync_jobs')
@@ -166,6 +178,13 @@ export async function GET(
         batch_rows_written: batchRowsWritten,
         batch_errors:       batchErrors,
         last_sync_jobs:     syncJobs ?? [],
+        dashboard_query:    {
+          client_id:    conn.client_id,
+          campaign_id:  firstCampaignId,
+          date_range:   { from: dateFrom, to: dateTo },
+          count:        dashQueryCount,
+          error:        dashQueryError?.message ?? null,
+        },
         sample,
         note: rows.length === 0
           ? 'Zero rows returned from API. Performance Max campaigns have no ad_group_ad entries.'
