@@ -138,6 +138,10 @@ export async function syncClient(
           console.log(`[sync] Google Ads ad-level: ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
             await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
+          } else {
+            // 0 rows is not an error — common for Performance Max accounts
+            // (PMax uses asset_group, not ad_group_ad)
+            adLevelError = 'Ad-level: 0 rows returned — account may use Performance Max campaigns (PMax ads are not supported at ad-group level)'
           }
         } catch (adErr) {
           adLevelError = `Ad-level sync failed: ${String(adErr)}`

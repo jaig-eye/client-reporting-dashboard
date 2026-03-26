@@ -208,7 +208,6 @@ export async function fetchGoogleAdMetrics(
       metrics.conversions_value
     FROM ad_group_ad
     WHERE ad_group_ad.status != 'REMOVED'
-      AND campaign.advertising_channel_type != 'PERFORMANCE_MAX'
       AND metrics.impressions > 0
       AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
     ORDER BY segments.date DESC`,

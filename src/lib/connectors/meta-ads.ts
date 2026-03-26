@@ -106,10 +106,30 @@ export interface MetaAdRawRow {
   conversion_value: number
 }
 
+/** Split a date range into chunks of at most maxDays each. */
+function chunkDateRange(from: string, to: string, maxDays: number): { from: string; to: string }[] {
+  const chunks: { from: string; to: string }[] = []
+  let cur = new Date(from)
+  const end = new Date(to)
+  while (cur <= end) {
+    const chunkEnd = new Date(cur)
+    chunkEnd.setDate(chunkEnd.getDate() + maxDays - 1)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+    chunks.push({
+      from: cur.toISOString().split('T')[0],
+      to:   chunkEnd.toISOString().split('T')[0],
+    })
+    cur = new Date(chunkEnd)
+    cur.setDate(cur.getDate() + 1)
+  }
+  return chunks
+}
+
 /**
  * Fetch ad-level metrics for a Meta ad account over a date range.
  * Includes thumbnail_url fetched from the creative API in a batch request.
- * Called by the sync engine after campaign-level sync.
+ * Long date ranges are automatically split into 30-day chunks to avoid the
+ * Meta API "Please reduce the amount of data" error on large backfills.
  */
 export async function fetchMetaAdMetrics(
   externalId: string,
@@ -122,8 +142,14 @@ export async function fetchMetaAdMetrics(
 
   const rows: MetaAdRawRow[] = []
 
-  // Build initial insights URL at the ad level
-  let nextUrl: string | null = (() => {
+  // Collect all ad_ids so we can batch-fetch creative assets once at the end
+  const adIdSet = new Set<string>()
+  const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url' | 'image_url' | 'video_id' | 'video_thumb_url' | 'creative_body' | 'creative_title' | 'creative_link_url' | 'ad_status'>)[] = []
+
+  // Split into 30-day chunks — Meta API errors on large date ranges at ad level
+  const chunks = chunkDateRange(dateFrom, dateTo, 30)
+
+  for (const chunk of chunks) {
     const base = new URL(`${BASE_URL}/${externalId}/insights`)
     base.searchParams.set('access_token', accessToken)
     base.searchParams.set('level', 'ad')
@@ -144,72 +170,66 @@ export async function fetchMetaAdMetrics(
         'action_values',
       ].join(',')
     )
-    base.searchParams.set(
-      'time_range',
-      JSON.stringify({ since: dateFrom, until: dateTo })
-    )
+    base.searchParams.set('time_range', JSON.stringify({ since: chunk.from, until: chunk.to }))
     base.searchParams.set('time_increment', '1')
     base.searchParams.set('limit', '500')
-    return base.toString()
-  })()
 
-  // Collect all ad_ids so we can batch-fetch creative assets
-  const adIdSet = new Set<string>()
-  const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url' | 'image_url' | 'video_id' | 'video_thumb_url' | 'creative_body' | 'creative_title' | 'creative_link_url' | 'ad_status'>)[] = []
+    let nextUrl: string | null = base.toString()
 
-  while (nextUrl) {
-    const res = await fetch(nextUrl)
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Meta API error ${res.status}: ${text}`)
+    while (nextUrl) {
+      const res = await fetch(nextUrl)
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Meta API error ${res.status}: ${text}`)
+      }
+
+      const data = (await res.json()) as Record<string, unknown>
+      const dayRows = (data.data || []) as Record<string, unknown>[]
+
+      for (const day of dayRows) {
+        const rawActions      = (day.actions       || []) as Record<string, unknown>[]
+        const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
+
+        const actions = rawActions.map(a => ({
+          action_type: String(a.action_type || ''),
+          value:       String(a.value       || '0'),
+        }))
+        const actionValues = rawActionValues.map(a => ({
+          action_type: String(a.action_type || ''),
+          value:       String(a.value       || '0'),
+        }))
+
+        const conversions     = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+        const conversionValue = actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
+
+        const adId = String(day.ad_id || '')
+        if (adId) adIdSet.add(adId)
+
+        rawRows.push({
+          campaign_id:      String(day.campaign_id   || ''),
+          campaign_name:    String(day.campaign_name || ''),
+          adset_id:         String(day.adset_id      || ''),
+          adset_name:       String(day.adset_name    || ''),
+          ad_id:            adId,
+          ad_name:          String(day.ad_name       || ''),
+          date:             String(day.date_start     || ''),
+          spend:            parseFloat(String(day.spend       || '0')),
+          impressions:      parseInt(  String(day.impressions || '0'), 10),
+          clicks:           parseInt(  String(day.clicks      || '0'), 10),
+          reach:            parseInt(  String(day.reach       || '0'), 10),
+          actions,
+          action_values:    actionValues,
+          conversions,
+          conversion_value: conversionValue,
+        })
+      }
+
+      const paging = data.paging as Record<string, unknown> | undefined
+      nextUrl = (paging?.next as string) || null
     }
-
-    const data = (await res.json()) as Record<string, unknown>
-    const dayRows = (data.data || []) as Record<string, unknown>[]
-
-    for (const day of dayRows) {
-      const rawActions      = (day.actions       || []) as Record<string, unknown>[]
-      const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
-
-      const actions = rawActions.map(a => ({
-        action_type: String(a.action_type || ''),
-        value:       String(a.value       || '0'),
-      }))
-      const actionValues = rawActionValues.map(a => ({
-        action_type: String(a.action_type || ''),
-        value:       String(a.value       || '0'),
-      }))
-
-      const conversions     = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-      const conversionValue = actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-
-      const adId = String(day.ad_id || '')
-      if (adId) adIdSet.add(adId)
-
-      rawRows.push({
-        campaign_id:      String(day.campaign_id   || ''),
-        campaign_name:    String(day.campaign_name || ''),
-        adset_id:         String(day.adset_id      || ''),
-        adset_name:       String(day.adset_name    || ''),
-        ad_id:            adId,
-        ad_name:          String(day.ad_name       || ''),
-        date:             String(day.date_start     || ''),
-        spend:            parseFloat(String(day.spend       || '0')),
-        impressions:      parseInt(  String(day.impressions || '0'), 10),
-        clicks:           parseInt(  String(day.clicks      || '0'), 10),
-        reach:            parseInt(  String(day.reach       || '0'), 10),
-        actions,
-        action_values:    actionValues,
-        conversions,
-        conversion_value: conversionValue,
-      })
-    }
-
-    const paging = data.paging as Record<string, unknown> | undefined
-    nextUrl = (paging?.next as string) || null
   }
 
-  // Batch-fetch creative assets for all unique ad_ids
+  // Batch-fetch creative assets for all unique ad_ids (once across all chunks)
   const creativeMap = await fetchAdCreatives(Array.from(adIdSet), accessToken)
 
   // Merge creative data into rows
