@@ -32,30 +32,24 @@ export default async function PreviewIndexPage() {
             <Link
               key={client.id}
               href={`/admin/preview/${client.id}`}
-              style={{ textDecoration: 'none' }}
+              className="card p-5 flex items-center gap-4 group"
+              style={{ textDecoration: 'none', border: '1px solid var(--border)', transition: 'border-color 0.15s' }}
             >
-              <div
-                className="card p-5 flex items-center gap-4 transition-all cursor-pointer"
-                style={{ border: '1px solid var(--border)' }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--blue)')}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
-              >
-                {client.logo_url ? (
-                  <img src={client.logo_url} alt={client.name} className="h-10 w-10 object-contain rounded" style={{ flexShrink: 0 }} />
-                ) : (
-                  <div
-                    className="h-10 w-10 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-                    style={{ background: 'var(--blue)', flexShrink: 0 }}
-                  >
-                    {client.name.slice(0, 1).toUpperCase()}
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</p>
-                  {client.email && <p className="text-xs truncate mt-0.5" style={{ color: 'var(--text-faint)' }}>{client.email}</p>}
+              {client.logo_url ? (
+                <img src={client.logo_url} alt={client.name} className="h-10 w-10 object-contain rounded" style={{ flexShrink: 0 }} />
+              ) : (
+                <div
+                  className="h-10 w-10 rounded-lg flex items-center justify-center text-white text-sm font-bold"
+                  style={{ background: 'var(--blue)', flexShrink: 0 }}
+                >
+                  {client.name.slice(0, 1).toUpperCase()}
                 </div>
-                <span className="ml-auto text-lg" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→</span>
+              )}
+              <div className="min-w-0">
+                <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</p>
+                {client.email && <p className="text-xs truncate mt-0.5" style={{ color: 'var(--text-faint)' }}>{client.email}</p>}
               </div>
+              <span className="ml-auto text-lg" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→</span>
             </Link>
           ))}
         </div>
