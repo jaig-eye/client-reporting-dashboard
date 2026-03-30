@@ -15,6 +15,7 @@ import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
+import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
 
 export const dynamic = 'force-dynamic'
 
@@ -278,6 +279,39 @@ export default async function AdSetDetailPage({
     .sort((a, b) => b.impressions - a.impressions)
 
   // ── Search ad copy rows ───────────────────────────────────────────────────
+  // ── Negative keywords ────────────────────────────────────────────────────
+  type NegDbRow = { keyword_id: string; keyword_text: string; match_type: string | null; level: string }
+  let negativeKeywords: NegativeKeywordRow[] = []
+  if (isGoogleAds && !isPMaxGroup) {
+    const { data: negData } = await db
+      .from('google_ads_negative_keywords')
+      .select('keyword_id,keyword_text,match_type,level')
+      .eq('client_id', client.id)
+      .eq('campaign_id', campaignId)
+    negativeKeywords = (negData ?? []).map((r: NegDbRow) => ({
+      keyword_id:   r.keyword_id,
+      keyword_text: r.keyword_text,
+      match_type:   r.match_type,
+      level:        (r.level === 'adgroup' ? 'adgroup' : 'campaign') as 'campaign' | 'adgroup',
+    }))
+    // Also filter ad-group-specific negatives for this adset
+    const { data: agNegData } = await db
+      .from('google_ads_negative_keywords')
+      .select('keyword_id,keyword_text,match_type,level')
+      .eq('client_id', client.id)
+      .eq('campaign_id', campaignId)
+      .eq('ad_group_id', adsetId)
+    const agNegIds = new Set((agNegData ?? []).map((r: NegDbRow) => r.keyword_id))
+    // Combine: campaign-level + this ad group's negatives, dedup
+    const allNegIds = new Set(negativeKeywords.map(r => r.keyword_id + r.level))
+    for (const r of (agNegData ?? []) as NegDbRow[]) {
+      if (!allNegIds.has(r.keyword_id + r.level)) {
+        negativeKeywords.push({ keyword_id: r.keyword_id, keyword_text: r.keyword_text, match_type: r.match_type, level: 'adgroup' })
+      }
+    }
+    void agNegIds  // suppress unused warning
+  }
+
   const searchAdCopyRows: SearchAdCopyRow[] = isGoogleAds && !isPMaxGroup
     ? adCardList.map(a => ({
         ad_id:        a.ad_id,
@@ -473,6 +507,27 @@ export default async function AdSetDetailPage({
                 <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>
                   No ad copy or keyword data yet — run a sync to populate.
                 </p>
+              </div>
+            )}
+            {/* Negative keywords */}
+            {negativeKeywords.length > 0 && (
+              <div className="card p-6 space-y-4">
+                <div>
+                  <h2 className="section-title">Negative Keywords</h2>
+                  <p className="section-desc">Keywords excluded from this campaign / ad group</p>
+                </div>
+                {negativeKeywords.some(k => k.level === 'campaign') && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Campaign-level</p>
+                    <NegativeKeywordList rows={negativeKeywords} level="campaign" />
+                  </div>
+                )}
+                {negativeKeywords.some(k => k.level === 'adgroup') && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Ad Group-level</p>
+                    <NegativeKeywordList rows={negativeKeywords} level="adgroup" />
+                  </div>
+                )}
               </div>
             )}
           </>

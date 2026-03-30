@@ -8,6 +8,7 @@ import { applyAdFuel, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/m
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
+import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,6 +96,30 @@ export default async function AdminPreviewCampaignPage({
   const displayGroupLabel = (isGoogleAds && isPMax) ? 'Asset Group' : groupLabel
   const baseUrl = `/admin/preview/${clientId}`
 
+  // Campaign-level keyword breakdown (Search only)
+  type KwCampRow = { keyword_text: string; match_type: string | null; spend: number; impressions: number; clicks: number; conversions: number }
+  type KwKey = string
+  const kwCampMap = new Map<KwKey, { text: string; matchType: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
+  if (isGoogleAds && !isPMax) {
+    const { data: kwData } = await db
+      .from('google_ads_keywords')
+      .select('keyword_text,match_type,spend,impressions,clicks,conversions')
+      .eq('client_id', clientId)
+      .eq('campaign_id', campaignId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+    for (const kw of (kwData ?? []) as KwCampRow[]) {
+      const key: KwKey = `${kw.keyword_text}|||${kw.match_type ?? ''}`
+      const ex = kwCampMap.get(key)
+      if (ex) { ex.spend += Number(kw.spend)||0; ex.impressions += Number(kw.impressions)||0; ex.clicks += Number(kw.clicks)||0; ex.conversions += Number(kw.conversions)||0 }
+      else kwCampMap.set(key, { text: kw.keyword_text, matchType: kw.match_type ?? null, spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0, clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0 })
+    }
+  }
+  const campaignKeywordRows: KeywordRow[] = Array.from(kwCampMap.values()).map(k => {
+    const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+    return { keyword_text: k.text, match_type: k.matchType, keyword_status: null, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
+  }).sort((a, b) => b.impressions - a.impressions)
+
   const adGroups = Array.from(setMap.entries()).map(([setId, s]) => {
     const qsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
     if (compare) qsObj.compare = compare
@@ -157,6 +182,14 @@ export default async function AdminPreviewCampaignPage({
           <h2 className="section-title mb-4">{displayGroupLabel}s</h2>
           <AdGroupTable rows={adGroups} conversionLabel={conversionLabel} isEcom={isEcom} isPMax={isGoogleAds && isPMax} />
         </div>
+
+        {campaignKeywordRows.length > 0 && (
+          <div className="card p-6">
+            <h2 className="section-title mb-1">Keywords</h2>
+            <p className="section-desc mb-4">{campaignKeywordRows.length} keyword{campaignKeywordRows.length !== 1 ? 's' : ''} across all ad groups</p>
+            <KeywordTable rows={campaignKeywordRows} conversionLabel={conversionLabel} isEcom={isEcom} adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'} />
+          </div>
+        )}
       </main>
     </div>
   )

@@ -141,6 +141,123 @@ async function listAccessibleCustomers(accessToken: string, developerToken?: str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Negative keywords (campaign-level + ad-group-level, not date-segmented)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GoogleAdsNegativeKeywordRawRow {
+  campaign_id:   string
+  campaign_name: string
+  ad_group_id:   string | null   // null = campaign-level
+  ad_group_name: string | null
+  keyword_id:    string
+  keyword_text:  string
+  match_type:    string
+  level:         'campaign' | 'adgroup'
+}
+
+/**
+ * Fetch campaign-level and ad-group-level negative keywords.
+ * Not date-segmented — returns the current active set.
+ */
+export async function fetchGoogleNegativeKeywords(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>
+): Promise<GoogleAdsNegativeKeywordRawRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token   as string | undefined) || undefined
+
+  const results: GoogleAdsNegativeKeywordRawRow[] = []
+
+  // Campaign-level negatives
+  try {
+    const raw = await runQuery(
+      externalId, mccId, accessToken,
+      `SELECT
+        campaign.id,
+        campaign.name,
+        campaign_criterion.criterion_id,
+        campaign_criterion.keyword.text,
+        campaign_criterion.keyword.match_type
+      FROM campaign_criterion
+      WHERE campaign_criterion.type = 'KEYWORD'
+        AND campaign_criterion.negative = true`,
+      devToken
+    )
+    for (const row of raw) {
+      const campaign  = row.campaign          as Record<string, unknown>
+      const criterion = row.campaignCriterion as Record<string, unknown>
+      const keyword   = criterion?.keyword    as Record<string, unknown> | undefined
+      results.push({
+        campaign_id:   String(campaign?.id              || ''),
+        campaign_name: String(campaign?.name            || ''),
+        ad_group_id:   null,
+        ad_group_name: null,
+        keyword_id:    String(criterion?.criterionId    || ''),
+        keyword_text:  String(keyword?.text             || ''),
+        match_type:    String(keyword?.matchType        || ''),
+        level:         'campaign',
+      })
+    }
+  } catch {
+    // non-fatal
+  }
+
+  // Ad-group-level negatives
+  try {
+    const raw = await runQuery(
+      externalId, mccId, accessToken,
+      `SELECT
+        campaign.id,
+        campaign.name,
+        ad_group.id,
+        ad_group.name,
+        ad_group_criterion.criterion_id,
+        ad_group_criterion.keyword.text,
+        ad_group_criterion.keyword.match_type
+      FROM ad_group_criterion
+      WHERE ad_group_criterion.type = 'KEYWORD'
+        AND ad_group_criterion.negative = true
+        AND ad_group_criterion.status != 'REMOVED'`,
+      devToken
+    )
+    for (const row of raw) {
+      const campaign  = row.campaign          as Record<string, unknown>
+      const adGroup   = row.adGroup           as Record<string, unknown>
+      const criterion = row.adGroupCriterion  as Record<string, unknown>
+      const keyword   = criterion?.keyword    as Record<string, unknown> | undefined
+      results.push({
+        campaign_id:   String(campaign?.id              || ''),
+        campaign_name: String(campaign?.name            || ''),
+        ad_group_id:   String(adGroup?.id               || '') || null,
+        ad_group_name: String(adGroup?.name             || '') || null,
+        keyword_id:    String(criterion?.criterionId    || ''),
+        keyword_text:  String(keyword?.text             || ''),
+        match_type:    String(keyword?.matchType        || ''),
+        level:         'adgroup',
+      })
+    }
+  } catch {
+    // non-fatal
+  }
+
+  return results.filter(r => r.keyword_id && r.keyword_text)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Keyword-level metrics (Search campaigns)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -320,6 +437,10 @@ export async function fetchGoogleAdMetrics(
       ad_group_ad.ad.expanded_text_ad.headline_part3,
       ad_group_ad.ad.expanded_text_ad.description,
       ad_group_ad.ad.expanded_text_ad.description2,
+      ad_group_ad.ad.demand_gen_multi_asset_ad.headlines,
+      ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions,
+      ad_group_ad.ad.demand_gen_video_responsive_ad.headlines,
+      ad_group_ad.ad.demand_gen_video_responsive_ad.descriptions,
       ad_group_ad.ad_strength,
       ad_group_ad.status,
       segments.date,
@@ -358,8 +479,26 @@ export async function fetchGoogleAdMetrics(
       .filter(Boolean).map(String)
     const etaDescs = [eta?.description, eta?.description2].filter(Boolean).map(String)
 
-    const headlines    = rsaHeadlines.length > 0 ? rsaHeadlines : etaHeadlines
-    const descriptions = rsaDescs.length    > 0 ? rsaDescs     : etaDescs
+    // Demand Gen multi-asset and video-responsive copy
+    const dgm          = ad?.demandGenMultiAssetAd     as Record<string, unknown> | undefined
+    const dgv          = ad?.demandGenVideoResponsiveAd as Record<string, unknown> | undefined
+    const dgmHeadlines = ((dgm?.headlines as Array<Record<string, unknown>>) ?? [])
+      .map(h => String(h.text || '')).filter(Boolean)
+    const dgmDescs     = ((dgm?.descriptions as Array<Record<string, unknown>>) ?? [])
+      .map(d => String(d.text || '')).filter(Boolean)
+    const dgvHeadlines = ((dgv?.headlines as Array<Record<string, unknown>>) ?? [])
+      .map(h => String(h.text || '')).filter(Boolean)
+    const dgvDescs     = ((dgv?.descriptions as Array<Record<string, unknown>>) ?? [])
+      .map(d => String(d.text || '')).filter(Boolean)
+
+    const headlines    = rsaHeadlines.length > 0 ? rsaHeadlines
+      : etaHeadlines.length > 0 ? etaHeadlines
+      : dgmHeadlines.length > 0 ? dgmHeadlines
+      : dgvHeadlines
+    const descriptions = rsaDescs.length > 0 ? rsaDescs
+      : etaDescs.length > 0 ? etaDescs
+      : dgmDescs.length > 0 ? dgmDescs
+      : dgvDescs
 
     return {
       campaign_id:       String(campaign?.id              || ''),

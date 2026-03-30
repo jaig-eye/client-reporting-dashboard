@@ -14,8 +14,8 @@
 
 import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
-import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords } from './connectors/google-ads'
-import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow } from './connectors/google-ads'
+import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords, fetchGoogleNegativeKeywords } from './connectors/google-ads'
+import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
@@ -177,8 +177,21 @@ export async function syncClient(
             await upsertGoogleAdsKeywords(db, connection.id, clientId, kwRows)
           }
         } catch (kwErr) {
-          // non-fatal — accounts with only PMax may have no keyword_view data
           console.error(`[sync] Google Ads keyword sync failed for connection ${connection.id}:`, kwErr)
+        }
+        // Negative keywords (best-effort, non-dated snapshot)
+        try {
+          const negRows = await fetchGoogleNegativeKeywords(
+            connection.external_id,
+            auth,
+            connection.connector.config
+          )
+          console.log(`[sync] Google Ads negative keywords: ${negRows.length} rows for connection ${connection.id}`)
+          if (negRows.length > 0) {
+            await upsertGoogleAdsNegativeKeywords(db, connection.id, clientId, negRows)
+          }
+        } catch (negErr) {
+          console.error(`[sync] Google Ads negative keyword sync failed for connection ${connection.id}:`, negErr)
         }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
@@ -499,6 +512,47 @@ export async function upsertGoogleAdsKeywords(
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_keywords upsert failed: ${error.message}`)
+  }
+
+  return mapped.length
+}
+
+/**
+ * Upsert Google Ads negative keywords into google_ads_negative_keywords.
+ * On conflict (connection_id, keyword_id, level) the row is replaced — this is a
+ * non-dated snapshot so each sync replaces the current state.
+ */
+export async function upsertGoogleAdsNegativeKeywords(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GoogleAdsNegativeKeywordRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.keyword_id && r.keyword_text)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    campaign_id:   r.campaign_id,
+    campaign_name: r.campaign_name || null,
+    ad_group_id:   r.ad_group_id   || null,
+    ad_group_name: r.ad_group_name || null,
+    keyword_id:    r.keyword_id,
+    keyword_text:  r.keyword_text,
+    match_type:    r.match_type    || null,
+    level:         r.level,
+    synced_at:     new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 500) {
+    const { error } = await db
+      .from('google_ads_negative_keywords')
+      .upsert(mapped.slice(i, i + 500), {
+        onConflict: 'connection_id,keyword_id,level',
+        ignoreDuplicates: false,
+      })
+    if (error) throw new Error(`google_ads_negative_keywords upsert failed: ${error.message}`)
   }
 
   return mapped.length
