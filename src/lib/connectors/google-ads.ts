@@ -141,6 +141,109 @@ async function listAccessibleCustomers(accessToken: string, developerToken?: str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Keyword-level metrics (Search campaigns)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GoogleAdsKeywordRawRow {
+  campaign_id:       string
+  campaign_name:     string
+  ad_group_id:       string
+  ad_group_name:     string
+  keyword_id:        string
+  keyword_text:      string
+  match_type:        string
+  keyword_status:    string | null
+  date:              string
+  cost_micros:       number
+  impressions:       number
+  clicks:            number
+  conversions:       number
+  conversions_value: number
+}
+
+/**
+ * Fetch keyword-level metrics for Search campaigns over a date range.
+ * Only keywords with at least one impression in the range are returned.
+ */
+export async function fetchGoogleSearchKeywords(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string
+): Promise<GoogleAdsKeywordRawRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token   as string | undefined) || undefined
+
+  const raw = await runQuery(
+    externalId,
+    mccId,
+    accessToken,
+    `SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_criterion.criterion_id,
+      ad_group_criterion.keyword.text,
+      ad_group_criterion.keyword.match_type,
+      ad_group_criterion.status,
+      segments.date,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM keyword_view
+    WHERE ad_group_criterion.type = 'KEYWORD'
+      AND ad_group_criterion.status != 'REMOVED'
+      AND metrics.impressions > 0
+      AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+    ORDER BY segments.date DESC`,
+    devToken
+  )
+
+  return raw.map(row => {
+    const campaign  = row.campaign           as Record<string, unknown>
+    const adGroup   = row.adGroup            as Record<string, unknown>
+    const criterion = row.adGroupCriterion   as Record<string, unknown>
+    const keyword   = criterion?.keyword     as Record<string, unknown> | undefined
+    const metrics   = row.metrics            as Record<string, unknown>
+    const segments  = row.segments           as Record<string, unknown>
+
+    return {
+      campaign_id:       String(campaign?.id              || ''),
+      campaign_name:     String(campaign?.name            || ''),
+      ad_group_id:       String(adGroup?.id               || ''),
+      ad_group_name:     String(adGroup?.name             || ''),
+      keyword_id:        String(criterion?.criterionId    || ''),
+      keyword_text:      String(keyword?.text             || ''),
+      match_type:        String(keyword?.matchType        || ''),
+      keyword_status:    (criterion?.status as string)    ?? null,
+      date:              String(segments?.date            || ''),
+      cost_micros:       Number(metrics?.costMicros       || 0),
+      impressions:       Number(metrics?.impressions      || 0),
+      clicks:            Number(metrics?.clicks           || 0),
+      conversions:       Number(metrics?.conversions      || 0),
+      conversions_value: Number(metrics?.conversionsValue || 0),
+    }
+  }).filter(r => r.keyword_id && r.date)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ad-level metrics fetch (for campaign drill-down)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -196,7 +299,7 @@ export async function fetchGoogleAdMetrics(
   const mccId    = (config.mcc_customer_id as string | undefined) || externalId
   const devToken = (auth.developer_token as string | undefined) || undefined
 
-  // Regular search/display/shopping ads via ad_group_ad
+  // Regular search/display/shopping ads via ad_group_ad (includes RSA and ETA copy)
   const rawAds = await runQuery(
     externalId,
     mccId,
@@ -210,6 +313,13 @@ export async function fetchGoogleAdMetrics(
       ad_group_ad.ad.name,
       ad_group_ad.ad.type,
       ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.responsive_search_ad.headlines,
+      ad_group_ad.ad.responsive_search_ad.descriptions,
+      ad_group_ad.ad.expanded_text_ad.headline_part1,
+      ad_group_ad.ad.expanded_text_ad.headline_part2,
+      ad_group_ad.ad.expanded_text_ad.headline_part3,
+      ad_group_ad.ad.expanded_text_ad.description,
+      ad_group_ad.ad.expanded_text_ad.description2,
       ad_group_ad.ad_strength,
       ad_group_ad.status,
       segments.date,
@@ -234,6 +344,23 @@ export async function fetchGoogleAdMetrics(
     const metrics   = row.metrics    as Record<string, unknown>
     const segments  = row.segments   as Record<string, unknown>
     const finalUrls = (ad?.finalUrls as string[] | undefined) ?? []
+
+    // RSA headlines/descriptions
+    const rsa          = ad?.responsiveSearchAd as Record<string, unknown> | undefined
+    const rsaHeadlines = ((rsa?.headlines as Array<Record<string, unknown>>) ?? [])
+      .map(h => String(h.text || '')).filter(Boolean)
+    const rsaDescs     = ((rsa?.descriptions as Array<Record<string, unknown>>) ?? [])
+      .map(d => String(d.text || '')).filter(Boolean)
+
+    // ETA headlines/descriptions (legacy format)
+    const eta = ad?.expandedTextAd as Record<string, unknown> | undefined
+    const etaHeadlines = [eta?.headlinePart1, eta?.headlinePart2, eta?.headlinePart3]
+      .filter(Boolean).map(String)
+    const etaDescs = [eta?.description, eta?.description2].filter(Boolean).map(String)
+
+    const headlines    = rsaHeadlines.length > 0 ? rsaHeadlines : etaHeadlines
+    const descriptions = rsaDescs.length    > 0 ? rsaDescs     : etaDescs
+
     return {
       campaign_id:       String(campaign?.id              || ''),
       campaign_name:     String(campaign?.name            || ''),
@@ -242,8 +369,8 @@ export async function fetchGoogleAdMetrics(
       ad_id:             String(ad?.id                    || ''),
       ad_name:           String(ad?.name                  || ''),
       ad_type:           String(ad?.type                  || ''),
-      headlines:         [],
-      descriptions:      [],
+      headlines,
+      descriptions,
       final_url:         finalUrls[0] ?? null,
       image_url:         null,
       ad_strength:       (adGroupAd?.adStrength as string | undefined) ?? null,

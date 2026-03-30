@@ -26,12 +26,13 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/admin/dashboard',         label: 'Overview',         icon: '◈',  matchPrefix: false },
-  { href: '/admin/clients',           label: 'Clients',          icon: '⊡',  matchPrefix: true  },
-  { href: '/admin/connections',       label: 'Data Connections', icon: '⟳',  matchPrefix: true  },
-  { href: '/admin/users',             label: 'Users',            icon: '◎',  matchPrefix: true  },
-  { href: '/admin/settings',          label: 'Agency Settings',  icon: '⊙',  matchPrefix: true  },
-  { href: '/admin/system',            label: 'System',           icon: '⚙',  matchPrefix: true  },
+  { href: '/admin/dashboard',         label: 'Overview',           icon: '◈',  matchPrefix: false },
+  { href: '/admin/clients',           label: 'Clients',            icon: '⊡',  matchPrefix: true  },
+  { href: '/admin/preview',           label: 'Preview Dashboards', icon: '▷',  matchPrefix: true  },
+  { href: '/admin/connections',       label: 'Data Connections',   icon: '⟳',  matchPrefix: true  },
+  { href: '/admin/users',             label: 'Users',              icon: '◎',  matchPrefix: true  },
+  { href: '/admin/settings',          label: 'Agency Settings',    icon: '⊙',  matchPrefix: true  },
+  { href: '/admin/system',            label: 'System',             icon: '⚙',  matchPrefix: true  },
 ]
 
 interface SidebarProps {

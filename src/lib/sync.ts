@@ -14,8 +14,8 @@
 
 import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
-import { fetchGoogleAdMetrics, fetchGooglePMaxAssets } from './connectors/google-ads'
-import type { GooglePMaxAssetRawRow } from './connectors/google-ads'
+import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords } from './connectors/google-ads'
+import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
@@ -162,6 +162,23 @@ export async function syncClient(
         } catch (assetErr) {
           // non-fatal — accounts with no pMax campaigns will error here
           console.error(`[sync] Google Ads pMax asset sync failed for connection ${connection.id}:`, assetErr)
+        }
+        // Keyword-level metrics for Search campaigns (best-effort)
+        try {
+          const kwRows = await fetchGoogleSearchKeywords(
+            connection.external_id,
+            auth,
+            connection.connector.config,
+            resolvedFrom,
+            resolvedTo
+          )
+          console.log(`[sync] Google Ads keywords: ${kwRows.length} rows for connection ${connection.id}`)
+          if (kwRows.length > 0) {
+            await upsertGoogleAdsKeywords(db, connection.id, clientId, kwRows)
+          }
+        } catch (kwErr) {
+          // non-fatal — accounts with only PMax may have no keyword_view data
+          console.error(`[sync] Google Ads keyword sync failed for connection ${connection.id}:`, kwErr)
         }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
@@ -433,6 +450,55 @@ export async function upsertGooglePMaxAssets(
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_asset_group_assets upsert failed: ${error.message}`)
+  }
+
+  return mapped.length
+}
+
+/**
+ * Upsert Google Ads keyword-level metrics into google_ads_keywords.
+ * On conflict (connection_id, keyword_id, date) the row is updated.
+ */
+export async function upsertGoogleAdsKeywords(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GoogleAdsKeywordRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.keyword_id && r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => {
+    const spend = Number(r.cost_micros) / 1_000_000
+    return {
+      connection_id:     connectionId,
+      client_id:         clientId,
+      campaign_id:       r.campaign_id,
+      campaign_name:     r.campaign_name || null,
+      ad_group_id:       r.ad_group_id,
+      ad_group_name:     r.ad_group_name || null,
+      keyword_id:        r.keyword_id,
+      keyword_text:      r.keyword_text,
+      match_type:        r.match_type || null,
+      keyword_status:    r.keyword_status || null,
+      date:              r.date,
+      spend,
+      impressions:       Number(r.impressions)      || 0,
+      clicks:            Number(r.clicks)           || 0,
+      conversions:       Number(r.conversions)      || 0,
+      conversions_value: Number(r.conversions_value)|| 0,
+      synced_at:         new Date().toISOString(),
+    }
+  })
+
+  for (let i = 0; i < mapped.length; i += 500) {
+    const { error } = await db
+      .from('google_ads_keywords')
+      .upsert(mapped.slice(i, i + 500), {
+        onConflict: 'connection_id,keyword_id,date',
+        ignoreDuplicates: false,
+      })
+    if (error) throw new Error(`google_ads_keywords upsert failed: ${error.message}`)
   }
 
   return mapped.length

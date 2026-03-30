@@ -123,16 +123,6 @@ export default async function AdminPreviewCampaignPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      {/* Admin bar */}
-      <div style={{ background: '#1e293b', color: '#e2e8f0', padding: '0 1.5rem', height: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#64748b', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.7rem', textTransform: 'uppercase' }}>Admin Preview</span>
-          <span style={{ color: '#475569' }}>·</span>
-          <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{client.name}</span>
-        </div>
-        <Link href={`/admin/clients/${clientId}`} style={{ color: '#60a5fa', textDecoration: 'none', fontSize: '0.75rem', fontWeight: 500 }}>Admin Settings →</Link>
-      </div>
-
       <header className="sticky top-0 z-10 border-b" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
           {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain" />}

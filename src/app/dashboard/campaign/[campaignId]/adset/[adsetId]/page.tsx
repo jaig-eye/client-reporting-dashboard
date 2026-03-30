@@ -13,6 +13,8 @@ import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
+import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
+import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 
 export const dynamic = 'force-dynamic'
 
@@ -223,6 +225,77 @@ export default async function AdSetDetailPage({
 
   const adCardList = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
 
+  // ── Keyword data (Google Search only) ────────────────────────────────────
+  type KwDbRow = {
+    keyword_id: string; keyword_text: string; match_type: string | null
+    keyword_status: string | null; spend: number; impressions: number
+    clicks: number; conversions: number
+  }
+  const keywordMap = new Map<string, { text: string; matchType: string | null; status: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
+  if (isGoogleAds && !isPMaxGroup) {
+    const { data: kwData } = await db
+      .from('google_ads_keywords')
+      .select('keyword_id,keyword_text,match_type,keyword_status,spend,impressions,clicks,conversions')
+      .eq('client_id', client.id)
+      .eq('campaign_id', campaignId)
+      .eq('ad_group_id', adsetId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+    for (const kw of (kwData ?? []) as KwDbRow[]) {
+      const ex = keywordMap.get(kw.keyword_id)
+      if (ex) {
+        ex.spend       += Number(kw.spend)       || 0
+        ex.impressions += Number(kw.impressions) || 0
+        ex.clicks      += Number(kw.clicks)      || 0
+        ex.conversions += Number(kw.conversions) || 0
+      } else {
+        keywordMap.set(kw.keyword_id, {
+          text: kw.keyword_text, matchType: kw.match_type, status: kw.keyword_status,
+          spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0,
+          clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0,
+        })
+      }
+    }
+  }
+
+  const keywordRows: KeywordRow[] = Array.from(keywordMap.values())
+    .map(k => {
+      const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+      return {
+        keyword_text:   k.text,
+        match_type:     k.matchType,
+        keyword_status: k.status,
+        impressions:    k.impressions,
+        clicks:         k.clicks,
+        conversions:    k.conversions,
+        spend:          k.spend,
+        displaySpend:   dSpend,
+        ctr:            k.impressions > 0 ? k.clicks / k.impressions : 0,
+        cpc:            k.clicks > 0      ? dSpend / k.clicks        : 0,
+        cpl:            k.conversions > 0 ? dSpend / k.conversions   : 0,
+      }
+    })
+    .sort((a, b) => b.impressions - a.impressions)
+
+  // ── Search ad copy rows ───────────────────────────────────────────────────
+  const searchAdCopyRows: SearchAdCopyRow[] = isGoogleAds && !isPMaxGroup
+    ? adCardList.map(a => ({
+        ad_id:        a.ad_id,
+        ad_name:      a.ad_name,
+        ad_type:      a.ad_type,
+        ad_status:    a.ad_status,
+        ad_strength:  a.ad_strength,
+        headlines:    a.headlines,
+        descriptions: a.descriptions,
+        final_url:    a.final_url,
+        impressions:  a.impressions,
+        clicks:       a.clicks,
+        conversions:  a.conversions,
+        displaySpend: adFuelCut > 0 ? a.adFuelSpend : a.spend,
+        ctr:          a.impressions > 0 ? a.clicks / a.impressions : 0,
+      }))
+    : []
+
   // Convert AdCardData → AdRow for the table
   const adRows: AdRow[] = adCardList.map(a => ({
     ad_id:           a.ad_id,
@@ -370,9 +443,39 @@ export default async function AdSetDetailPage({
           </div>
         </div>
 
-        {/* ── pMax Asset Gallery OR regular Ads table ─────────── */}
+        {/* ── pMax Asset Gallery OR Search/Display breakdown ───── */}
         {isPMaxGroup ? (
           <PMaxAssetGallery assets={pMaxAssets} groupName={groupName} />
+        ) : isGoogleAds ? (
+          <>
+            {/* Search Ad Copy */}
+            {searchAdCopyRows.length > 0 && (
+              <div className="card p-6">
+                <h2 className="section-title mb-4">{searchAdCopyRows.length} Ad{searchAdCopyRows.length !== 1 ? 's' : ''}</h2>
+                <SearchAdCopy ads={searchAdCopyRows} />
+              </div>
+            )}
+            {/* Keyword breakdown */}
+            {keywordRows.length > 0 && (
+              <div className="card p-6">
+                <h2 className="section-title mb-1">Keywords</h2>
+                <p className="section-desc mb-4">{keywordRows.length} keyword{keywordRows.length !== 1 ? 's' : ''} in this ad group</p>
+                <KeywordTable
+                  rows={keywordRows}
+                  conversionLabel={conversionLabel}
+                  isEcom={isEcom}
+                  adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'}
+                />
+              </div>
+            )}
+            {searchAdCopyRows.length === 0 && keywordRows.length === 0 && (
+              <div className="card p-6">
+                <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                  No ad copy or keyword data yet — run a sync to populate.
+                </p>
+              </div>
+            )}
+          </>
         ) : (
           <div className="card p-6">
             <div className="mb-5">
