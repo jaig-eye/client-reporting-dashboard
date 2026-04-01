@@ -303,7 +303,7 @@ export default async function AdSetDetailPage({
         co = found    ? (parseFloat(found.value)    || 0) : 0
         cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
       }
-      return { date: r.date, spend: r.spend, conversions: co, conversion_value: cv, clicks: r.clicks }
+      return { date: r.date, spend: r.spend, conversions: co, conversion_value: cv, clicks: r.clicks, impressions: Number(r.impressions) || 0 }
     }
     dailyTrend = getDailyTrend((rows ?? []).map(remapMeta))
     priorDailyTrend = getDailyTrend((priorRows ?? []).map(remapMeta))
