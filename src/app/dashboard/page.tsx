@@ -13,7 +13,7 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAgencySettings } from '@/lib/agency-settings'
+import { getAgencySettings, pctOfBenchmark } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
@@ -22,6 +22,7 @@ import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
+import EfficiencyScore from '@/components/EfficiencyScore'
 
 export const dynamic = 'force-dynamic'
 
@@ -229,6 +230,30 @@ export default async function DashboardPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dailyTrend = getDailyTrend(currentMetrics as any[])
 
+  // ─── Efficiency Score (only rendered when client.show_benchmarks is true) ──
+  const effectiveBenchmarks = {
+    benchmark_roas:      client.benchmark_roas      ?? settings.benchmark_roas,
+    benchmark_ctr:       client.benchmark_ctr       ?? settings.benchmark_ctr,
+    benchmark_cpc:       client.benchmark_cpc       ?? settings.benchmark_cpc,
+    benchmark_conv_rate: client.benchmark_conv_rate ?? settings.benchmark_conv_rate,
+    benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
+  }
+  const convRate = current.clicks > 0 ? current.conversions / current.clicks : 0
+  const ctrPct  = pctOfBenchmark(current.ctr,  effectiveBenchmarks.benchmark_ctr,  false)
+  const cpcPct  = pctOfBenchmark(current.cpc,  effectiveBenchmarks.benchmark_cpc,  true)
+  const crPct   = pctOfBenchmark(convRate,     effectiveBenchmarks.benchmark_conv_rate, false)
+  const cpmPct  = pctOfBenchmark(current.cpm,  effectiveBenchmarks.benchmark_cpm,  true)
+  const roasPct = pctOfBenchmark(current.roas, effectiveBenchmarks.benchmark_roas, false)
+  const effScore = isEcomDash
+    ? Math.min(100, Math.round(roasPct * 0.35 + crPct * 0.25 + ctrPct * 0.20 + cpcPct * 0.20))
+    : Math.min(100, Math.round(crPct   * 0.35 + ctrPct * 0.30 + cpcPct * 0.25 + cpmPct * 0.10))
+  const benchComponents = [
+    ...(isEcomDash ? [{ label: 'ROAS', pct: roasPct, actual: fmtRoas(current.roas), benchmark: fmtRoas(effectiveBenchmarks.benchmark_roas) }] : []),
+    { label: 'CTR',        pct: ctrPct, actual: fmtPct(current.ctr),        benchmark: fmtPct(effectiveBenchmarks.benchmark_ctr) },
+    { label: 'Conv. Rate', pct: crPct,  actual: fmtPct(convRate),            benchmark: fmtPct(effectiveBenchmarks.benchmark_conv_rate) },
+    { label: 'Avg. CPC',  pct: cpcPct, actual: fmtCurrency(current.cpc),    benchmark: fmtCurrency(effectiveBenchmarks.benchmark_cpc) },
+    { label: 'CPM',        pct: cpmPct, actual: fmtCurrency(current.cpm),   benchmark: fmtCurrency(effectiveBenchmarks.benchmark_cpm) },
+  ]
   // Build per-campaign aggregation (skip hidden campaigns)
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
@@ -466,6 +491,11 @@ export default async function DashboardPage({
                 delay={3}
               />
             </div>
+
+            {/* Performance benchmarks (admin-toggleable per client) */}
+            {client.show_benchmarks && (
+              <EfficiencyScore score={effScore} components={benchComponents} />
+            )}
 
             {/* Daily performance chart */}
             <div className="card p-6">

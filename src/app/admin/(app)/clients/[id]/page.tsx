@@ -184,6 +184,15 @@ export default async function ClientDetailPage({
                 </svg>
               </a>
             </div>
+            <div className="mt-3">
+              <Link
+                href={`/admin/preview/${id}`}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
+              >
+                Preview Dashboard →
+              </Link>
+            </div>
           </div>
 
           {recentJobs.length > 0 && (

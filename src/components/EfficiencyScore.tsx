@@ -2,13 +2,13 @@ import { scoreColor } from '@/lib/agency-settings'
 
 interface ComponentScore {
   label: string
-  pct: number          // 0–100, percent of benchmark
-  actual: string       // formatted actual value
-  benchmark: string    // formatted benchmark value
+  pct: number       // 0–100, percent of benchmark achieved
+  actual: string    // formatted actual value
+  benchmark: string // formatted benchmark target
 }
 
 interface Props {
-  score: number        // 0–100
+  score: number     // 0–100
   components: ComponentScore[]
 }
 
@@ -17,32 +17,23 @@ export default function EfficiencyScore({ score, components }: Props) {
   const radius = 52
   const circumference = 2 * Math.PI * radius
   const offset = circumference * (1 - score / 100)
-
   const label =
     score >= 71 ? 'Strong' :
     score >= 41 ? 'Needs Work' :
     'Underperforming'
 
   return (
-    <div className="rounded-2xl border p-5" style={{
-      background: 'rgba(255,255,255,0.025)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      borderColor: 'rgba(255,255,255,0.07)',
-    }}>
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-4">
+    <div className="card p-5">
+      <p className="text-xs font-semibold uppercase tracking-wide mb-5" style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
         Marketing Efficiency Score
       </p>
 
-      <div className="flex items-center gap-6">
+      <div className="flex items-start gap-8 flex-wrap">
         {/* Ring gauge */}
-        <div className="flex-shrink-0 flex flex-col items-center gap-1">
-          <svg viewBox="0 0 120 120" className="w-28 h-28">
+        <div className="flex flex-col items-center gap-2 flex-shrink-0">
+          <svg viewBox="0 0 120 120" style={{ width: '6.5rem', height: '6.5rem' }}>
             {/* Track */}
-            <circle
-              cx="60" cy="60" r={radius}
-              fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="10"
-            />
+            <circle cx="60" cy="60" r={radius} fill="none" stroke="var(--bg-subtle)" strokeWidth="10" />
             {/* Progress */}
             <circle
               cx="60" cy="60" r={radius}
@@ -55,45 +46,46 @@ export default function EfficiencyScore({ score, components }: Props) {
               transform="rotate(-90 60 60)"
               style={{ transition: 'stroke-dashoffset 0.6s ease' }}
             />
-            {/* Score */}
-            <text
-              x="60" y="54"
-              textAnchor="middle" dominantBaseline="middle"
-              fill="white" fontSize="26" fontWeight="700"
-            >
+            {/* Score number */}
+            <text x="60" y="52" textAnchor="middle" dominantBaseline="middle"
+              fontSize="26" fontWeight="700" fill="var(--text-primary)">
               {score}
             </text>
-            <text
-              x="60" y="73"
-              textAnchor="middle"
-              fill="#475569" fontSize="11"
-            >
-              / 100
+            <text x="60" y="72" textAnchor="middle" fontSize="11" fill="var(--text-muted)">
+              OUT OF 100
             </text>
           </svg>
-          <span className="text-xs font-medium" style={{ color }}>{label}</span>
+          <span className="text-xs font-semibold" style={{ color }}>{label}</span>
         </div>
 
         {/* Component breakdown */}
-        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+        <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-4" style={{ minWidth: 0 }}>
           {components.map(c => (
             <div key={c.label}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-slate-400">{c.label}</span>
-                <span className="text-xs font-medium" style={{ color: scoreColor(c.pct) }}>
-                  {c.pct}%
-                </span>
+              <div className="flex items-start justify-between gap-1 mb-1">
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                  {c.label}
+                </p>
+                <p className="text-xs flex-shrink-0" style={{ color: 'var(--text-faint)' }}>
+                  {c.benchmark} benchmark
+                </p>
               </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <p className="text-xl font-bold mb-1.5" style={{ color: scoreColor(c.pct) }}>
+                {c.actual}
+              </p>
+              <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: 'var(--bg-subtle)' }}>
                 <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{ width: `${c.pct}%`, backgroundColor: scoreColor(c.pct) }}
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.min(c.pct, 100)}%`,
+                    backgroundColor: scoreColor(c.pct),
+                    transition: 'width 0.5s ease',
+                  }}
                 />
               </div>
-              <div className="flex justify-between mt-0.5">
-                <span className="text-[10px] text-slate-600">{c.actual}</span>
-                <span className="text-[10px] text-slate-600">target {c.benchmark}</span>
-              </div>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {c.pct}% of benchmark
+              </p>
             </div>
           ))}
         </div>
