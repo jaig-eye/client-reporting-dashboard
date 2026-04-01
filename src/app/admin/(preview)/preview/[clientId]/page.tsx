@@ -283,7 +283,14 @@ export default async function AdminPreviewPage({
                   {showCompare && <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>vs {fmtDate(priorFrom)} – {fmtDate(priorTo)}</span>}
                 </p>
               </div>
-              <SpendChart data={dailyTrend} priorData={showCompare ? getDailyTrend(priorMetrics as never[]) : undefined} />
+              <SpendChart
+                data={dailyTrend}
+                priorData={showCompare ? getDailyTrend(priorMetrics as never[]) : undefined}
+                colorSpend={settings.chart_color_spend}
+                colorPriorSpend={settings.chart_color_prior_spend}
+                colorConversions={settings.chart_color_conversions}
+                colorPriorConversions={settings.chart_color_prior_conversions}
+              />
             </div>
 
             <div className="card p-6">

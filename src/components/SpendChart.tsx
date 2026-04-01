@@ -16,9 +16,17 @@ import type { DailyMetric } from '@/lib/types'
 export default function SpendChart({
   data,
   priorData,
+  colorSpend             = '#93c5fd',
+  colorPriorSpend        = '#94a3b8',
+  colorConversions       = '#059669',
+  colorPriorConversions  = '#34d399',
 }: {
   data:       DailyMetric[]
   priorData?: DailyMetric[]
+  colorSpend?:            string
+  colorPriorSpend?:       string
+  colorConversions?:      string
+  colorPriorConversions?: string
 }) {
   if (!data.length) {
     return (
@@ -96,23 +104,23 @@ export default function SpendChart({
         />
         <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
 
-        {/* Current period — light bar so conversion line stands out */}
+        {/* Current period spend bar */}
         <Bar
           yAxisId="spend"
           dataKey="spend"
-          fill="#93c5fd"
+          fill={colorSpend}
           opacity={0.65}
           radius={[3, 3, 0, 0]}
           name="Spend"
           maxBarSize={isCompare ? 12 : 24}
         />
 
-        {/* Prior period bar */}
+        {/* Prior period spend bar */}
         {isCompare && (
           <Bar
             yAxisId="spend"
             dataKey="priorSpend"
-            fill="#94a3b8"
+            fill={colorPriorSpend}
             opacity={0.7}
             radius={[3, 3, 0, 0]}
             name="Prior Spend"
@@ -120,25 +128,25 @@ export default function SpendChart({
           />
         )}
 
-        {/* Current conversions line — prominent */}
+        {/* Current conversions line */}
         <Line
           yAxisId="conversions"
           type="monotone"
           dataKey="conversions"
-          stroke="#059669"
+          stroke={colorConversions}
           strokeWidth={3}
-          dot={{ fill: '#059669', r: 2, strokeWidth: 0 }}
+          dot={{ fill: colorConversions, r: 2, strokeWidth: 0 }}
           activeDot={{ r: 5, strokeWidth: 0 }}
           name="Conversions"
         />
 
-        {/* Prior conversions line — lighter dashed */}
+        {/* Prior conversions line — dashed */}
         {isCompare && (
           <Line
             yAxisId="conversions"
             type="monotone"
             dataKey="priorConversions"
-            stroke="#34d399"
+            stroke={colorPriorConversions}
             strokeWidth={1.5}
             strokeDasharray="5 4"
             dot={false}

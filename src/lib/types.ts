@@ -157,6 +157,11 @@ export interface AgencySettings {
   app_version: string
   primary_user_id?: string
   updated_at: string
+  /** Chart series colors — all are CSS hex strings. */
+  chart_color_spend?:             string
+  chart_color_prior_spend?:       string
+  chart_color_conversions?:       string
+  chart_color_prior_conversions?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

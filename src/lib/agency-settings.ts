@@ -16,6 +16,10 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   cron_enabled: true,
   app_version: '',
   updated_at: '',
+  chart_color_spend:             '#93c5fd',
+  chart_color_prior_spend:       '#94a3b8',
+  chart_color_conversions:       '#059669',
+  chart_color_prior_conversions: '#34d399',
 }
 
 export async function getAgencySettings(): Promise<AgencySettings> {

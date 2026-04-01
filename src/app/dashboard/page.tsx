@@ -483,6 +483,10 @@ export default async function DashboardPage({
               <SpendChart
                 data={dailyTrend}
                 priorData={showCompare ? getDailyTrend(priorMetrics as never[]) : undefined}
+                colorSpend={settings.chart_color_spend}
+                colorPriorSpend={settings.chart_color_prior_spend}
+                colorConversions={settings.chart_color_conversions}
+                colorPriorConversions={settings.chart_color_prior_conversions}
               />
             </div>
 

@@ -290,10 +290,23 @@ export default async function AdSetDetailPage({
       priorTotals.conversions     += co
       priorTotals.conversionValue += cv
     }
+    // Remap conversions for chart using convAction (same as KPI cards — avoids raw total)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dailyTrend = getDailyTrend(rows as any[])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    priorDailyTrend = getDailyTrend(priorRows as any[])
+    const remapMeta = (r: any) => {
+      let co = Number(r.conversions) || 0
+      let cv = Number(r.conversion_value) || 0
+      if (convAction) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const found    = (r.actions       ?? []).find((a: any) => a.action_type === convAction)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const foundVal = (r.action_values ?? []).find((a: any) => a.action_type === convAction)
+        co = found    ? (parseFloat(found.value)    || 0) : 0
+        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+      }
+      return { date: r.date, spend: r.spend, conversions: co, conversion_value: cv, clicks: r.clicks }
+    }
+    dailyTrend = getDailyTrend((rows ?? []).map(remapMeta))
+    priorDailyTrend = getDailyTrend((priorRows ?? []).map(remapMeta))
   }
 
   const adCardList = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
@@ -599,6 +612,10 @@ export default async function AdSetDetailPage({
             <SpendChart
               data={dailyTrend}
               priorData={showCompare && priorDailyTrend.length > 0 ? priorDailyTrend : undefined}
+              colorSpend={settings.chart_color_spend}
+              colorPriorSpend={settings.chart_color_prior_spend}
+              colorConversions={settings.chart_color_conversions}
+              colorPriorConversions={settings.chart_color_prior_conversions}
             />
           </div>
         )}

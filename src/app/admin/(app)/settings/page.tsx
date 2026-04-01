@@ -7,31 +7,39 @@
 import { useEffect, useState } from 'react'
 
 interface Settings {
-  agency_name:              string
-  agency_logo_url:          string
-  benchmark_roas:           number
-  benchmark_ctr:            number
-  benchmark_cpc:            number
-  benchmark_conv_rate:      number
-  benchmark_cpm:            number
-  default_date_range_days:  number
-  default_conversion_value: number
-  ad_fuel_cut:              number
-  cron_enabled:             boolean
+  agency_name:                    string
+  agency_logo_url:                string
+  benchmark_roas:                 number
+  benchmark_ctr:                  number
+  benchmark_cpc:                  number
+  benchmark_conv_rate:            number
+  benchmark_cpm:                  number
+  default_date_range_days:        number
+  default_conversion_value:       number
+  ad_fuel_cut:                    number
+  cron_enabled:                   boolean
+  chart_color_spend:              string
+  chart_color_prior_spend:        string
+  chart_color_conversions:        string
+  chart_color_prior_conversions:  string
 }
 
 const DEFAULT: Settings = {
-  agency_name:              '',
-  agency_logo_url:          '',
-  benchmark_roas:           3,
-  benchmark_ctr:            0.03,
-  benchmark_cpc:            3,
-  benchmark_conv_rate:      0.03,
-  benchmark_cpm:            15,
-  default_date_range_days:  30,
-  default_conversion_value: 0,
-  ad_fuel_cut:              0.20,
-  cron_enabled:             true,
+  agency_name:                    '',
+  agency_logo_url:                '',
+  benchmark_roas:                 3,
+  benchmark_ctr:                  0.03,
+  benchmark_cpc:                  3,
+  benchmark_conv_rate:            0.03,
+  benchmark_cpm:                  15,
+  default_date_range_days:        30,
+  default_conversion_value:       0,
+  ad_fuel_cut:                    0.20,
+  cron_enabled:                   true,
+  chart_color_spend:              '#93c5fd',
+  chart_color_prior_spend:        '#94a3b8',
+  chart_color_conversions:        '#059669',
+  chart_color_prior_conversions:  '#34d399',
 }
 
 export default function AgencySettingsPage() {
@@ -221,6 +229,30 @@ export default function AgencySettingsPage() {
           </FormField>
         </div>
 
+        {/* Chart Colors */}
+        <div className="card p-6 space-y-4">
+          <div>
+            <h2 className="section-title">Chart Colors</h2>
+            <p className="section-desc">
+              Customize the colors used in the Daily Performance chart on all client dashboards.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Spend (current period)">
+              <ColorInput value={form.chart_color_spend} onChange={v => field('chart_color_spend', v)} />
+            </FormField>
+            <FormField label="Spend (prior period)">
+              <ColorInput value={form.chart_color_prior_spend} onChange={v => field('chart_color_prior_spend', v)} />
+            </FormField>
+            <FormField label="Conversions (current period)">
+              <ColorInput value={form.chart_color_conversions} onChange={v => field('chart_color_conversions', v)} />
+            </FormField>
+            <FormField label="Conversions (prior period)">
+              <ColorInput value={form.chart_color_prior_conversions} onChange={v => field('chart_color_prior_conversions', v)} />
+            </FormField>
+          </div>
+        </div>
+
         {error && <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>}
 
         <div className="flex items-center gap-3">
@@ -274,6 +306,31 @@ function FormField({ label, hint, children }: { label: string; hint?: string; ch
         {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
       </label>
       {children}
+    </div>
+  )
+}
+
+function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={value || '#000000'}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '2.5rem', height: '2.25rem', padding: '0.15rem', border: '1px solid var(--border)', borderRadius: '0.375rem', cursor: 'pointer', background: 'var(--bg-surface)' }}
+      />
+      <input
+        type="text"
+        className="input"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="#000000"
+        style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+      />
+      <div
+        style={{ width: '2rem', height: '2rem', borderRadius: '0.375rem', border: '1px solid var(--border)', background: value, flexShrink: 0 }}
+        title="Preview"
+      />
     </div>
   )
 }
