@@ -220,7 +220,7 @@ export default async function DashboardPage({
   }
 
   const currentMetrics = normalise((curRes.data  ?? []) as Record<string, unknown>[])
-  const priorMetrics   = normalise((priorRes.data ?? []) as Record<string, unknown>[])
+  const priorMetrics   = normalise((priorRes.data ?? []) as unknown as Record<string, unknown>[])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const current    = summarizeMetrics(currentMetrics as any[])
