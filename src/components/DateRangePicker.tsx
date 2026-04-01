@@ -3,21 +3,13 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
-const PRESETS = [
-  { label: 'Last 7 days',  type: 'rolling', days: 7  },
-  { label: 'Last 30 days', type: 'rolling', days: 30 },
-  { label: 'Last 90 days', type: 'rolling', days: 90 },
-  { label: 'This Month',   type: 'month',   current: true },
-  { label: 'Last Month',   type: 'month',   current: false },
-]
-
-const COMPARE_OPTIONS = [
-  { value: 'prior_period', label: 'Previous period' },
-  { value: 'last_year',    label: 'Same period last year' },
-  { value: 'none',         label: 'No comparison' },
-]
-
 function fmtD(d: Date) { return d.toISOString().split('T')[0] }
+
+function getRollingRange(days: number): [string, string] {
+  const to   = new Date()
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  return [fmtD(from), fmtD(to)]
+}
 
 function getMonthRange(current: boolean): [string, string] {
   const now = new Date()
@@ -30,6 +22,58 @@ function getMonthRange(current: boolean): [string, string] {
     return [fmtD(from), fmtD(to)]
   }
 }
+
+function getThisYearRange(): [string, string] {
+  const now  = new Date()
+  const from = new Date(now.getFullYear(), 0, 1)
+  return [fmtD(from), fmtD(now)]
+}
+
+function getLastYearRange(): [string, string] {
+  const now  = new Date()
+  const from = new Date(now.getFullYear() - 1, 0, 1)
+  const to   = new Date(now.getFullYear() - 1, 11, 31)
+  return [fmtD(from), fmtD(to)]
+}
+
+type PresetId = 'last7' | 'last30' | 'last90' | 'mtd' | 'lastMonth' | 'ytd' | 'lastYear'
+
+const PRESETS: { id: PresetId; label: string }[] = [
+  { id: 'last7',     label: 'Last 7 days'  },
+  { id: 'last30',    label: 'Last 30 days' },
+  { id: 'last90',    label: 'Last 90 days' },
+  { id: 'mtd',       label: 'Month to Date' },
+  { id: 'lastMonth', label: 'Last Month'   },
+  { id: 'ytd',       label: 'Year to Date' },
+  { id: 'lastYear',  label: 'Last Year'    },
+]
+
+function presetRange(id: PresetId): [string, string] {
+  switch (id) {
+    case 'last7':     return getRollingRange(7)
+    case 'last30':    return getRollingRange(30)
+    case 'last90':    return getRollingRange(90)
+    case 'mtd':       return getMonthRange(true)
+    case 'lastMonth': return getMonthRange(false)
+    case 'ytd':       return getThisYearRange()
+    case 'lastYear':  return getLastYearRange()
+  }
+}
+
+/** Try to detect which preset the current from/to matches (best-effort). */
+function detectPreset(from: string, to: string): PresetId | null {
+  for (const p of PRESETS) {
+    const [f, t] = presetRange(p.id)
+    if (f === from && t === to) return p.id
+  }
+  return null
+}
+
+const COMPARE_OPTIONS = [
+  { value: 'prior_period', label: 'Previous period'          },
+  { value: 'last_year',    label: 'Same period last year'    },
+  { value: 'none',         label: 'No comparison'            },
+]
 
 export default function DateRangePicker({
   from,
@@ -46,6 +90,7 @@ export default function DateRangePicker({
   const [localFrom, setLocalFrom] = useState(from)
   const [localTo,   setLocalTo]   = useState(to)
   const [cmp,       setCmp]       = useState(compare)
+  const activePreset = detectPreset(from, to)
 
   function buildUrl(f: string, t: string, c = cmp) {
     const p = new URLSearchParams(searchParams.toString())
@@ -56,15 +101,11 @@ export default function DateRangePicker({
     return `?${p.toString()}`
   }
 
-  function applyPreset(preset: (typeof PRESETS)[number]) {
-    if (preset.type === 'month') {
-      const [f, t] = getMonthRange(preset.current!)
-      router.push(buildUrl(f, t))
-    } else {
-      const t = new Date()
-      const f = new Date(Date.now() - preset.days! * 24 * 60 * 60 * 1000)
-      router.push(buildUrl(fmtD(f), fmtD(t)))
-    }
+  function applyPreset(id: PresetId) {
+    const [f, t] = presetRange(id)
+    setLocalFrom(f)
+    setLocalTo(t)
+    router.push(buildUrl(f, t))
     setOpen(false)
   }
 
@@ -78,6 +119,8 @@ export default function DateRangePicker({
     router.push(buildUrl(from, to, value))
   }
 
+  const presetLabel = activePreset ? PRESETS.find(p => p.id === activePreset)?.label : null
+
   return (
     <div style={{ position: 'relative' }}>
       <button
@@ -90,7 +133,7 @@ export default function DateRangePicker({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
-        <span className="text-sm">{from} – {to}</span>
+        <span className="text-sm">{presetLabel ?? `${from} – ${to}`}</span>
         {cmp && cmp !== 'none' && (
           <span className="text-xs px-1.5 py-0.5 rounded" style={{
             background: 'var(--blue)', color: '#fff', fontSize: '0.7rem', fontWeight: 600,
@@ -107,25 +150,32 @@ export default function DateRangePicker({
           />
           <div
             style={{
-              position: 'absolute', right: 0, top: 42, width: 288, zIndex: 50,
+              position: 'absolute', right: 0, top: 42, width: 296, zIndex: 50,
               background: 'var(--bg-surface)', border: '1px solid var(--border)',
               borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', padding: '12px 0',
             }}
           >
             {/* Presets */}
             <div style={{ padding: '0 4px 8px' }}>
-              {PRESETS.map(p => (
-                <button
-                  key={p.label}
-                  onClick={() => applyPreset(p)}
-                  className="w-full text-left text-sm px-3 py-2 rounded-lg transition-colors"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  {p.label}
-                </button>
-              ))}
+              {PRESETS.map(p => {
+                const isActive = activePreset === p.id
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => applyPreset(p.id)}
+                    className="w-full text-left text-sm px-3 py-2 rounded-lg transition-colors"
+                    style={{
+                      color:      isActive ? 'var(--blue)'          : 'var(--text-secondary)',
+                      fontWeight: isActive ? 600                     : 400,
+                      background: isActive ? 'var(--bg-subtle)'     : 'transparent',
+                    }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-subtle)' }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+                  >
+                    {p.label}
+                  </button>
+                )
+              })}
             </div>
 
             {/* Custom range */}

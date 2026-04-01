@@ -3,12 +3,13 @@
 // Bottom of the drill-down: shows individual ad cards within one ad group/set.
 // Navigation: Platforms → Platform → Campaign → Ad Group (here) → Ads
 
+import React, { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
@@ -16,6 +17,7 @@ import { AdRowTable, type AdRow } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
+import DateRangePicker from '@/components/DateRangePicker'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,7 +45,24 @@ export default async function AdSetDetailPage({
   const source   = sp.source ?? 'google_ads'
   const dateFrom = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
   const dateTo   = sp.to ?? new Date().toISOString().split('T')[0]
-  const compare  = sp.compare
+  const compare     = sp.compare
+  const showCompare = !!(compare && compare !== 'none')
+
+  function d2s(d: Date) { return d.toISOString().split('T')[0] }
+  const fromDate = new Date(dateFrom)
+  const toDate   = new Date(dateTo)
+  const periodMs = toDate.getTime() - fromDate.getTime()
+  let priorFrom: string
+  let priorTo:   string
+  if (compare === 'last_year') {
+    priorFrom = `${fromDate.getFullYear() - 1}${dateFrom.slice(4)}`
+    priorTo   = `${toDate.getFullYear() - 1}${dateTo.slice(4)}`
+  } else {
+    const pTo   = new Date(fromDate.getTime() - 86400000)
+    const pFrom = new Date(pTo.getTime() - periodMs)
+    priorFrom   = d2s(pFrom)
+    priorTo     = d2s(pTo)
+  }
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
@@ -117,11 +136,12 @@ export default async function AdSetDetailPage({
     asset_id: string; field_type: string
     text_content: string | null; image_url: string | null; video_id: string | null
   }
+  const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
   let pMaxAssets: PMaxAsset[] = []
   let isPMaxGroup = false
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }, { data: assetRows }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
         .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value')
         .eq('client_id', client.id)
@@ -135,6 +155,15 @@ export default async function AdSetDetailPage({
         .select('asset_id,field_type,text_content,image_url,video_id')
         .eq('client_id', client.id)
         .eq('asset_group_id', adsetId),
+      showCompare
+        ? db.from('google_ads_ad_metrics')
+            .select('spend,impressions,clicks,conversions,conversions_value')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .eq('ad_group_id', adsetId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
     isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
@@ -170,8 +199,15 @@ export default async function AdSetDetailPage({
         adFuelSpend:     afs,
       })
     }
+    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
+      priorTotals.spend           += Number(r.spend)             || 0
+      priorTotals.impressions     += Number(r.impressions)       || 0
+      priorTotals.clicks          += Number(r.clicks)            || 0
+      priorTotals.conversions     += Number(r.conversions)       || 0
+      priorTotals.conversionValue += Number(r.conversions_value) || 0
+    }
   } else {
-    const [{ data: rows }, { data: campRow }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
         .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
@@ -181,6 +217,15 @@ export default async function AdSetDetailPage({
         .lte('date', dateTo),
       db.from('meta_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+      showCompare
+        ? db.from('meta_ads_ad_metrics')
+            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .eq('adset_id', adsetId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
 
@@ -221,6 +266,22 @@ export default async function AdSetDetailPage({
         ctr:             im > 0 ? cl / im : 0,
         adFuelSpend:     afs,
       })
+    }
+    for (const r of (priorRows ?? []) as MetaAdRow[]) {
+      const sp = Number(r.spend) || 0
+      let co   = Number(r.conversions) || 0
+      let cv   = Number(r.conversion_value) || 0
+      if (convAction) {
+        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
+        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
+        co = found    ? (parseFloat(found.value)    || 0) : 0
+        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+      }
+      priorTotals.spend           += sp
+      priorTotals.impressions     += Number(r.impressions) || 0
+      priorTotals.clicks          += Number(r.clicks)      || 0
+      priorTotals.conversions     += co
+      priorTotals.conversionValue += cv
     }
   }
 
@@ -382,15 +443,22 @@ export default async function AdSetDetailPage({
         className="sticky top-0 z-10 border-b"
         style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
       >
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
-          {settings.agency_logo_url && (
-            <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain" />
-          )}
-          <span className="hidden sm:block text-sm" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
-          <span style={{ color: 'var(--border)' }}>|</span>
-          <div className="flex items-center gap-2">
-            {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain" />}
-            <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            {settings.agency_logo_url && (
+              <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain flex-shrink-0" />
+            )}
+            <span className="hidden sm:block text-sm flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
+            <span style={{ color: 'var(--border)' }}>|</span>
+            <div className="flex items-center gap-2 min-w-0">
+              {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain flex-shrink-0" />}
+              <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
+            </div>
+          </div>
+          <div className="flex-shrink-0">
+            <Suspense fallback={null}>
+              <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
+            </Suspense>
           </div>
         </div>
       </header>
@@ -433,49 +501,71 @@ export default async function AdSetDetailPage({
         </div>
 
         {/* ── Group KPI summary ───────────────────────────────── */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="card p-4">
-            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}</p>
-            <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(totDisplaySpd)}</p>
-          </div>
-          {isEcom ? (
-            <>
+        {(() => {
+          const prior = showCompare ? priorTotals : null
+          const priorDisplaySpd = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
+          const priorRoas = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
+          const priorCpl  = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
+          const priorCtr  = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
+          function DB({ delta, invert = false }: { delta: number | undefined; invert?: boolean }) {
+            if (delta === undefined || delta === 0) return null
+            const good = invert ? delta <= 0 : delta >= 0
+            return <span style={{ fontSize: '0.7rem', fontWeight: 600, color: good ? 'var(--green)' : 'var(--red)' }}>{delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%</span>
+          }
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>ROAS</p>
-                <p className="text-xl font-bold" style={{ color: totRoas >= 3 ? 'var(--green)' : totRoas >= 1.5 ? '#d97706' : totRoas > 0 ? 'var(--red)' : 'var(--text-faint)' }}>
-                  {totRoas > 0 ? fmtRoas(totRoas) : '—'}
-                </p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}</p>
+                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(totDisplaySpd)}</p>
+                <DB delta={calcDelta(totDisplaySpd, priorDisplaySpd)} invert />
               </div>
+              {isEcom ? (
+                <>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>ROAS</p>
+                    <p className="text-xl font-bold" style={{ color: totRoas >= 3 ? 'var(--green)' : totRoas >= 1.5 ? '#d97706' : totRoas > 0 ? 'var(--red)' : 'var(--text-faint)' }}>
+                      {totRoas > 0 ? fmtRoas(totRoas) : '—'}
+                    </p>
+                    <DB delta={calcDelta(totRoas, priorRoas)} />
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Revenue</p>
+                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCv > 0 ? fmt$(totCv) : '—'}</p>
+                    <DB delta={calcDelta(totCv, prior?.conversionValue ?? 0)} />
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Orders</p>
+                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</p>
+                    <DB delta={calcDelta(totConv, prior?.conversions ?? 0)} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{conversionLabel}</p>
+                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? totConv.toFixed(0) : '—'}</p>
+                    <DB delta={calcDelta(totConv, prior?.conversions ?? 0)} />
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CPL</p>
+                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</p>
+                    <DB delta={calcDelta(totCpl, priorCpl)} invert />
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CTR</p>
+                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(totCtr)}</p>
+                    <DB delta={calcDelta(totCtr, priorCtr)} />
+                  </div>
+                </>
+              )}
               <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Revenue</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCv > 0 ? fmt$(totCv) : '—'}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Clicks</p>
+                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(totClicks)}</p>
+                <DB delta={calcDelta(totClicks, prior?.clicks ?? 0)} />
               </div>
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Orders</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</p>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{conversionLabel}</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? totConv.toFixed(0) : '—'}</p>
-              </div>
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CPL</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</p>
-              </div>
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CTR</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(totCtr)}</p>
-              </div>
-            </>
-          )}
-          <div className="card p-4">
-            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Clicks</p>
-            <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(totClicks)}</p>
-          </div>
-        </div>
+            </div>
+          )
+        })()}
 
         {/* ── pMax Asset Gallery OR Search/Display breakdown ───── */}
         {isPMaxGroup ? (

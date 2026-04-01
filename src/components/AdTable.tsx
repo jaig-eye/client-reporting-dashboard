@@ -1,7 +1,10 @@
+'use client'
+
 // AdTable — Ads-Manager-style table layout for ad groups/sets and individual ads.
-// Matches the column layout from Meta/Google Ads Manager (see reference screenshots).
+// Matches the column layout from Meta/Google Ads Manager.
 // Used in: campaign/[campaignId] (ad groups) and campaign/[campaignId]/adset/[adsetId] (ads)
 
+import React, { useState } from 'react'
 import { fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
 import type { DisplayMode } from './AdSetCards'
 import LightboxImage from './LightboxImage'
@@ -26,6 +29,8 @@ export interface AdGroupRow {
   href:             string   // link target for drill-down
 }
 
+type AdGroupSortKey = 'setName' | 'displaySpend' | 'conversions' | 'conversionValue' | 'roas' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'adCount'
+
 export function AdGroupTable({
   rows,
   conversionLabel,
@@ -38,6 +43,28 @@ export function AdGroupTable({
   isEcom:           boolean
   isPMax?:          boolean
 }) {
+  const [sortKey, setSortKey] = useState<AdGroupSortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(key: AdGroupSortKey) {
+    if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
+    else if (sortDir === 'desc') setSortDir('asc')
+    else setSortKey(null)
+  }
+
+  function SortTh({ sk, align = 'right', children }: { sk: AdGroupSortKey; align?: 'left' | 'right'; children: React.ReactNode }) {
+    const isActive = sortKey === sk
+    return (
+      <th
+        onClick={() => toggleSort(sk)}
+        style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+      >
+        {children}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+      </th>
+    )
+  }
+
   if (rows.length === 0) {
     return (
       <p className="text-sm py-10 text-center" style={{ color: 'var(--text-muted)' }}>
@@ -47,6 +74,13 @@ export function AdGroupTable({
       </p>
     )
   }
+
+  const sorted = sortKey === null ? rows : [...rows].sort((a, b) => {
+    const av = a[sortKey]
+    const bv = b[sortKey]
+    if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(String(bv)) : String(bv).localeCompare(av)
+    return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
+  })
 
   const totSpend  = rows.reduce((s, r) => s + r.displaySpend, 0)
   const totImpr   = rows.reduce((s, r) => s + r.impressions, 0)
@@ -62,29 +96,29 @@ export function AdGroupTable({
       <table className="data-table" style={{ minWidth: 680 }}>
         <thead>
           <tr>
-            <th style={{ minWidth: 200 }}>Ad Set / Group</th>
-            <th style={{ textAlign: 'right' }}>Spend</th>
+            <SortTh sk="setName" align="left">Ad Set / Group</SortTh>
+            <SortTh sk="displaySpend">Spend</SortTh>
             {isEcom ? (
               <>
-                <th style={{ textAlign: 'right' }}>ROAS</th>
-                <th style={{ textAlign: 'right' }}>Revenue</th>
-                <th style={{ textAlign: 'right' }}>Orders</th>
+                <SortTh sk="roas">ROAS</SortTh>
+                <SortTh sk="conversionValue">Revenue</SortTh>
+                <SortTh sk="conversions">Orders</SortTh>
               </>
             ) : (
               <>
-                <th style={{ textAlign: 'right' }}>{conversionLabel}</th>
-                <th style={{ textAlign: 'right' }}>Cost / Result</th>
+                <SortTh sk="conversions">{conversionLabel}</SortTh>
+                <SortTh sk="cpl">Cost / Result</SortTh>
               </>
             )}
-            <th style={{ textAlign: 'right' }}>Impressions</th>
-            <th style={{ textAlign: 'right' }}>Clicks</th>
-            <th style={{ textAlign: 'right' }}>CTR</th>
-            <th style={{ textAlign: 'right' }}>Ads</th>
+            <SortTh sk="impressions">Impressions</SortTh>
+            <SortTh sk="clicks">Clicks</SortTh>
+            <SortTh sk="ctr">CTR</SortTh>
+            <SortTh sk="adCount">Ads</SortTh>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(row => (
+          {sorted.map(row => (
             <AdGroupTableRow key={row.setId} row={row} isEcom={isEcom} conversionLabel={conversionLabel} />
           ))}
         </tbody>
@@ -198,6 +232,8 @@ export interface AdRow {
   ctr:               number
 }
 
+type AdRowSortKey = 'ad_name' | 'displaySpend' | 'conversions' | 'conversionValue' | 'roas' | 'cpl' | 'impressions' | 'clicks' | 'ctr'
+
 export function AdRowTable({
   rows,
   isEcom,
@@ -207,6 +243,28 @@ export function AdRowTable({
   isEcom:           boolean
   conversionLabel:  string
 }) {
+  const [sortKey, setSortKey] = useState<AdRowSortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(key: AdRowSortKey) {
+    if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
+    else if (sortDir === 'desc') setSortDir('asc')
+    else setSortKey(null)
+  }
+
+  function SortTh({ sk, align = 'right', children }: { sk: AdRowSortKey; align?: 'left' | 'right'; children: React.ReactNode }) {
+    const isActive = sortKey === sk
+    return (
+      <th
+        onClick={() => toggleSort(sk)}
+        style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+      >
+        {children}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+      </th>
+    )
+  }
+
   if (rows.length === 0) {
     return (
       <p className="text-sm py-10 text-center" style={{ color: 'var(--text-muted)' }}>
@@ -214,6 +272,13 @@ export function AdRowTable({
       </p>
     )
   }
+
+  const sorted = sortKey === null ? rows : [...rows].sort((a, b) => {
+    const av = a[sortKey]
+    const bv = b[sortKey]
+    if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(String(bv)) : String(bv).localeCompare(av)
+    return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
+  })
 
   const totSpend  = rows.reduce((s, r) => s + r.displaySpend, 0)
   const totImpr   = rows.reduce((s, r) => s + r.impressions, 0)
@@ -230,27 +295,27 @@ export function AdRowTable({
         <thead>
           <tr>
             <th style={{ width: 48 }}></th>
-            <th style={{ minWidth: 220 }}>Ad</th>
+            <SortTh sk="ad_name" align="left">Ad</SortTh>
             <th>Type</th>
-            <th style={{ textAlign: 'right' }}>Spend</th>
+            <SortTh sk="displaySpend">Spend</SortTh>
             {isEcom ? (
               <>
-                <th style={{ textAlign: 'right' }}>ROAS</th>
-                <th style={{ textAlign: 'right' }}>Revenue</th>
+                <SortTh sk="roas">ROAS</SortTh>
+                <SortTh sk="conversionValue">Revenue</SortTh>
               </>
             ) : (
               <>
-                <th style={{ textAlign: 'right' }}>{conversionLabel}</th>
-                <th style={{ textAlign: 'right' }}>Cost / Result</th>
+                <SortTh sk="conversions">{conversionLabel}</SortTh>
+                <SortTh sk="cpl">Cost / Result</SortTh>
               </>
             )}
-            <th style={{ textAlign: 'right' }}>Impressions</th>
-            <th style={{ textAlign: 'right' }}>Clicks</th>
-            <th style={{ textAlign: 'right' }}>CTR</th>
+            <SortTh sk="impressions">Impressions</SortTh>
+            <SortTh sk="clicks">Clicks</SortTh>
+            <SortTh sk="ctr">CTR</SortTh>
           </tr>
         </thead>
         <tbody>
-          {rows.map(row => (
+          {sorted.map(row => (
             <AdTableRow key={row.ad_id} row={row} isEcom={isEcom} conversionLabel={conversionLabel} />
           ))}
         </tbody>

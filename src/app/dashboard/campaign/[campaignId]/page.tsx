@@ -6,16 +6,18 @@
 //
 // Navigation: Platforms → Platform → Campaign (here) → Ad Group → Ads
 
+import React, { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
+import DateRangePicker from '@/components/DateRangePicker'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +44,24 @@ export default async function CampaignDetailPage({
   const source   = sp.source ?? 'google_ads'
   const dateFrom = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
   const dateTo   = sp.to ?? new Date().toISOString().split('T')[0]
-  const compare  = sp.compare
+  const compare      = sp.compare
+  const showCompare  = !!(compare && compare !== 'none')
+
+  function d2s(d: Date) { return d.toISOString().split('T')[0] }
+  const fromDate  = new Date(dateFrom)
+  const toDate    = new Date(dateTo)
+  const periodMs  = toDate.getTime() - fromDate.getTime()
+  let priorFrom: string
+  let priorTo:   string
+  if (compare === 'last_year') {
+    priorFrom = `${fromDate.getFullYear() - 1}${dateFrom.slice(4)}`
+    priorTo   = `${toDate.getFullYear() - 1}${dateTo.slice(4)}`
+  } else {
+    const pTo   = new Date(fromDate.getTime() - 86400000)
+    const pFrom = new Date(pTo.getTime() - periodMs)
+    priorFrom   = d2s(pFrom)
+    priorTo     = d2s(pTo)
+  }
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
@@ -103,10 +122,11 @@ export default async function CampaignDetailPage({
     }
   }
 
+  const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
   let isPMax = false
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
         .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value')
         .eq('client_id', client.id)
@@ -115,6 +135,14 @@ export default async function CampaignDetailPage({
         .lte('date', dateTo),
       db.from('google_ads_metrics')
         .select('campaign_name,campaign_type').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+      showCompare
+        ? db.from('google_ads_ad_metrics')
+            .select('spend,impressions,clicks,conversions,conversions_value')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
     ])
     const typedCampRow = campRow as { campaign_name: string; campaign_type: string | null } | null
     if (typedCampRow) campaignName = typedCampRow.campaign_name
@@ -123,8 +151,15 @@ export default async function CampaignDetailPage({
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversions_value)||0)
     }
+    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
+      priorTotals.spend           += Number(r.spend)            || 0
+      priorTotals.impressions     += Number(r.impressions)      || 0
+      priorTotals.clicks          += Number(r.clicks)           || 0
+      priorTotals.conversions     += Number(r.conversions)      || 0
+      priorTotals.conversionValue += Number(r.conversions_value) || 0
+    }
   } else {
-    const [{ data: rows }, { data: campRow }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
         .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
@@ -133,6 +168,14 @@ export default async function CampaignDetailPage({
         .lte('date', dateTo),
       db.from('meta_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+      showCompare
+        ? db.from('meta_ads_ad_metrics')
+            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
     for (const r of (rows ?? []) as MetaAdRow[]) {
@@ -143,14 +186,28 @@ export default async function CampaignDetailPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        // When a specific action type is configured, ONLY count that action.
-        // Never fall back to raw conversions (which is sum of all action types).
         const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
         const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
         co = found    ? (parseFloat(found.value)    || 0) : 0
         cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
+    }
+    for (const r of (priorRows ?? []) as MetaAdRow[]) {
+      const sp = Number(r.spend) || 0
+      let co = Number(r.conversions) || 0
+      let cv = Number(r.conversion_value) || 0
+      if (convAction) {
+        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
+        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
+        co = found    ? (parseFloat(found.value)    || 0) : 0
+        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+      }
+      priorTotals.spend           += sp
+      priorTotals.impressions     += Number(r.impressions) || 0
+      priorTotals.clicks          += Number(r.clicks)      || 0
+      priorTotals.conversions     += co
+      priorTotals.conversionValue += cv
     }
   }
 
@@ -251,15 +308,22 @@ export default async function CampaignDetailPage({
         className="sticky top-0 z-10 border-b"
         style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
       >
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
-          {settings.agency_logo_url && (
-            <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain" />
-          )}
-          <span className="hidden sm:block text-sm" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
-          <span style={{ color: 'var(--border)' }}>|</span>
-          <div className="flex items-center gap-2">
-            {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain" />}
-            <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            {settings.agency_logo_url && (
+              <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain flex-shrink-0" />
+            )}
+            <span className="hidden sm:block text-sm flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
+            <span style={{ color: 'var(--border)' }}>|</span>
+            <div className="flex items-center gap-2 min-w-0">
+              {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain flex-shrink-0" />}
+              <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
+            </div>
+          </div>
+          <div className="flex-shrink-0">
+            <Suspense fallback={null}>
+              <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
+            </Suspense>
           </div>
         </div>
       </header>
@@ -315,6 +379,7 @@ export default async function CampaignDetailPage({
           adFuelCut={adFuelCut}
           displayMode={displayMode}
           conversionLabel={conversionLabel}
+          prior={showCompare ? priorTotals : undefined}
         />
 
         {/* ── Ad Group / Ad Set table ───────────────────────────── */}
@@ -356,9 +421,21 @@ export default async function CampaignDetailPage({
 // Campaign KPI summary — adapts to display mode
 // ─────────────────────────────────────────────────────────────────────────────
 
+type PriorTotalsType = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
+
+function DeltaBadge({ delta, invert = false }: { delta: number | undefined; invert?: boolean }) {
+  if (delta === undefined || delta === 0) return null
+  const isGood = invert ? delta <= 0 : delta >= 0
+  return (
+    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: isGood ? 'var(--green)' : 'var(--red)' }}>
+      {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
+    </span>
+  )
+}
+
 function CampaignSummary({
   spend, impressions, clicks, conversions, conversionValue,
-  adFuelCut, displayMode, conversionLabel,
+  adFuelCut, displayMode, conversionLabel, prior,
 }: {
   spend:            number
   impressions:      number
@@ -368,19 +445,27 @@ function CampaignSummary({
   adFuelCut:        number
   displayMode:      DisplayMode
   conversionLabel:  string
+  prior?:           PriorTotalsType
 }) {
-  const isEcom       = displayMode === 'ecommerce'
-  const displaySpend = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
-  const roas         = displaySpend > 0 && conversionValue > 0 ? conversionValue / displaySpend : 0
-  const cpl          = conversions > 0 ? displaySpend / conversions : 0
-  const ctr          = impressions > 0 ? clicks / impressions : 0
-  const cpc          = clicks > 0 ? displaySpend / clicks : 0
-  const roasColor    = roas >= 3 ? 'var(--green)' : roas >= 1.5 ? '#d97706' : 'var(--red)'
+  const isEcom        = displayMode === 'ecommerce'
+  const displaySpend  = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
+  const roas          = displaySpend > 0 && conversionValue > 0 ? conversionValue / displaySpend : 0
+  const cpl           = conversions > 0 ? displaySpend / conversions : 0
+  const ctr           = impressions > 0 ? clicks / impressions : 0
+  const cpc           = clicks > 0 ? displaySpend / clicks : 0
+  const roasColor     = roas >= 3 ? 'var(--green)' : roas >= 1.5 ? '#d97706' : 'var(--red)'
+
+  const priorDisplaySpend = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
+  const priorRoas = prior && priorDisplaySpend > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpend : 0
+  const priorCpl  = prior && prior.conversions > 0 ? priorDisplaySpend / prior.conversions : 0
+  const priorCtr  = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
+  const priorCpc  = prior && prior.clicks > 0 ? priorDisplaySpend / prior.clicks : 0
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
       <StatCard label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}>
         <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(displaySpend)}</span>
+        <DeltaBadge delta={calcDelta(displaySpend, priorDisplaySpend)} invert />
       </StatCard>
 
       {isEcom ? (
@@ -389,21 +474,25 @@ function CampaignSummary({
             <span className="text-xl font-bold" style={{ color: roas > 0 ? roasColor : 'var(--text-faint)' }}>
               {roas > 0 ? fmtRoas(roas) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(roas, priorRoas)} />
           </StatCard>
           <StatCard label="Revenue">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {conversionValue > 0 ? fmt$(conversionValue) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(conversionValue, prior?.conversionValue ?? 0)} />
           </StatCard>
           <StatCard label="Orders">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {conversions > 0 ? fmtNum(conversions) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(conversions, prior?.conversions ?? 0)} />
           </StatCard>
           <StatCard label="CPC">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {cpc > 0 ? fmtCurrency(cpc) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(cpc, priorCpc)} invert />
           </StatCard>
         </>
       ) : (
@@ -412,17 +501,21 @@ function CampaignSummary({
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {conversions > 0 ? conversions.toFixed(0) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(conversions, prior?.conversions ?? 0)} />
           </StatCard>
           <StatCard label="CPL">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
               {cpl > 0 ? fmtCurrency(cpl) : '—'}
             </span>
+            <DeltaBadge delta={calcDelta(cpl, priorCpl)} invert />
           </StatCard>
           <StatCard label="Clicks">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(clicks)}</span>
+            <DeltaBadge delta={calcDelta(clicks, prior?.clicks ?? 0)} />
           </StatCard>
           <StatCard label="CTR">
             <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(ctr)}</span>
+            <DeltaBadge delta={calcDelta(ctr, priorCtr)} />
           </StatCard>
         </>
       )}

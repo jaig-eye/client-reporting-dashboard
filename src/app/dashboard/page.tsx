@@ -146,7 +146,7 @@ export default async function DashboardPage({
       : Promise.resolve({ data: [] }),
     activeConnection
       ? db.from(table)
-          .select('spend,impressions,clicks,conversions,conversion_value,conversions_value,actions,action_values')
+          .select('spend,impressions,clicks,conversions,conversion_value,conversions_value,actions,action_values,date')
           .eq('connection_id', activeConnection.id)
           .gte('date', fmtDate(priorFrom))
           .lte('date', fmtDate(priorTo))

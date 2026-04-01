@@ -28,24 +28,35 @@ export default function SpendChart({
     )
   }
 
-  // Merge current + prior into a single array keyed by index so bars align side-by-side.
-  // Prior values are injected as `priorSpend` / `priorConversions`.
+  const isCompare = !!(priorData && priorData.length > 0)
+
+  // Merge current + prior by index so bars align side-by-side per day slot.
   const formatted = data.map((d, i) => ({
-    date:             d.date.slice(5),
-    spend:            Number(d.spend.toFixed(2)),
-    conversions:      Number(d.conversions.toFixed(1)),
-    ...(priorData?.[i] ? {
-      priorSpend:       Number(priorData[i].spend.toFixed(2)),
-      priorConversions: Number(priorData[i].conversions.toFixed(1)),
-      priorDate:        priorData[i].date.slice(5),
+    date:        d.date.slice(5),
+    spend:       Number(d.spend.toFixed(2)),
+    conversions: Number(d.conversions.toFixed(1)),
+    ...(isCompare && priorData![i] ? {
+      priorSpend:       Number(priorData![i].spend.toFixed(2)),
+      priorConversions: Number(priorData![i].conversions.toFixed(1)),
+      priorDate:        priorData![i].date.slice(5),
     } : {}),
   }))
 
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <ComposedChart data={formatted} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+      <ComposedChart
+        data={formatted}
+        margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+        barCategoryGap={isCompare ? '18%' : '25%'}
+        barGap={2}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: '#6b7280' }}
+          tickLine={false}
+          axisLine={false}
+        />
         <YAxis
           yAxisId="spend"
           orientation="left"
@@ -66,6 +77,13 @@ export default function SpendChart({
             if (name === 'Spend' || name === 'Prior Spend') return [`$${value.toFixed(2)}`, name]
             return [value, name]
           }}
+          labelFormatter={(label, payload) => {
+            if (isCompare && payload?.[0]) {
+              const priorDate = payload[0].payload?.priorDate
+              if (priorDate) return `${label} vs ${priorDate}`
+            }
+            return label
+          }}
           contentStyle={{
             fontSize: 12,
             borderRadius: 8,
@@ -78,40 +96,54 @@ export default function SpendChart({
         />
         <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
 
-        {/* Current period */}
-        <Bar yAxisId="spend" dataKey="spend" fill="#2563eb" opacity={0.8} radius={[3, 3, 0, 0]} name="Spend" />
+        {/* Current period — light bar so conversion line stands out */}
+        <Bar
+          yAxisId="spend"
+          dataKey="spend"
+          fill="#93c5fd"
+          opacity={0.65}
+          radius={[3, 3, 0, 0]}
+          name="Spend"
+          maxBarSize={isCompare ? 12 : 24}
+        />
+
+        {/* Prior period bar — even lighter */}
+        {isCompare && (
+          <Bar
+            yAxisId="spend"
+            dataKey="priorSpend"
+            fill="#dbeafe"
+            opacity={0.55}
+            radius={[3, 3, 0, 0]}
+            name="Prior Spend"
+            maxBarSize={12}
+          />
+        )}
+
+        {/* Current conversions line — prominent */}
         <Line
           yAxisId="conversions"
           type="monotone"
           dataKey="conversions"
           stroke="#059669"
-          strokeWidth={2}
-          dot={false}
+          strokeWidth={3}
+          dot={{ fill: '#059669', r: 2, strokeWidth: 0 }}
+          activeDot={{ r: 5, strokeWidth: 0 }}
           name="Conversions"
         />
 
-        {/* Prior period (shown only when priorData provided) */}
-        {priorData && priorData.length > 0 && (
-          <>
-            <Bar
-              yAxisId="spend"
-              dataKey="priorSpend"
-              fill="#93c5fd"
-              opacity={0.5}
-              radius={[3, 3, 0, 0]}
-              name="Prior Spend"
-            />
-            <Line
-              yAxisId="conversions"
-              type="monotone"
-              dataKey="priorConversions"
-              stroke="#6ee7b7"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              dot={false}
-              name="Prior Conversions"
-            />
-          </>
+        {/* Prior conversions line — lighter dashed */}
+        {isCompare && (
+          <Line
+            yAxisId="conversions"
+            type="monotone"
+            dataKey="priorConversions"
+            stroke="#34d399"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            dot={false}
+            name="Prior Conversions"
+          />
         )}
       </ComposedChart>
     </ResponsiveContainer>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 
 interface Campaign {
@@ -20,7 +20,7 @@ interface Campaign {
   display_mode?: string | null   // 'lead_gen' | 'ecommerce'
 }
 
-type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversions' | 'roas' | 'cpl'
+type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversions' | 'roas' | 'cpl' | 'impressions' | 'ctr' | 'cpm'
 
 export default function CampaignTable({
   campaigns,
@@ -43,17 +43,18 @@ export default function CampaignTable({
 }) {
   const showAdFuel = adFuelCut > 0
 
-  const [sortKey, setSortKey] = useState<SortKey>('spend')
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   function toggleSort(key: SortKey) {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortKey(key); setSortDir('desc') }
+    if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
+    else if (sortDir === 'desc') setSortDir('asc')
+    else setSortKey(null)
   }
 
-  const sorted = [...campaigns].sort((a, b) => {
-    const av = a[sortKey] ?? a.spend
-    const bv = b[sortKey] ?? b.spend
+  const sorted = sortKey === null ? campaigns : [...campaigns].sort((a, b) => {
+    const av = a[sortKey] ?? 0
+    const bv = b[sortKey] ?? 0
     if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(String(bv)) : String(bv).localeCompare(av)
     return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
   })
@@ -67,12 +68,11 @@ export default function CampaignTable({
   }
 
   function SortTh({ sk, children }: { sk: SortKey; children: React.ReactNode }) {
+    const isActive = sortKey === sk
     return (
-      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
         {children}
-        {sortKey === sk && (
-          <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>
-        )}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
       </th>
     )
   }
@@ -103,9 +103,10 @@ export default function CampaignTable({
             {isEcomDash ? (
               <SortTh sk="roas">ROAS</SortTh>
             ) : (
-              <th style={{ color: 'var(--text-muted)' }}>CTR</th>
+              <SortTh sk="ctr">CTR</SortTh>
             )}
             <SortTh sk="cpl">CPL</SortTh>
+            <SortTh sk="impressions">Impr.</SortTh>
             <th>Mode</th>
             <th>Source</th>
           </tr>
@@ -157,6 +158,9 @@ export default function CampaignTable({
                 )}
                 <td style={{ color: 'var(--text-muted)' }}>
                   {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
+                <td style={{ color: 'var(--text-muted)' }}>
+                  {c.impressions > 0 ? c.impressions.toLocaleString() : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
                 <td>
                   <span
