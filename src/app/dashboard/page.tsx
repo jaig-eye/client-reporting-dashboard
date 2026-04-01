@@ -17,12 +17,14 @@ import { getAgencySettings, pctOfBenchmark } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import MetricCard from '@/components/MetricCard'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import EfficiencyScore from '@/components/EfficiencyScore'
+import SparkMetricCard from '@/components/SparkMetricCard'
+import KeywordSummary from '@/components/KeywordSummary'
+import type { AggKeyword } from '@/components/KeywordSummary'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,7 +145,7 @@ export default async function DashboardPage({
   // Meta conversions based on the per-campaign display_mode before summarising.
   // Prior period uses ad-level tables (same source as campaign/adset drill-downs)
   // to ensure consistent data coverage.
-  const [curRes, priorRes, assignmentsRes] = await Promise.all([
+  const [curRes, priorRes, assignmentsRes, kwRes, negKwRes] = await Promise.all([
     activeConnection
       ? db.from(table)
           .select('*')
@@ -162,6 +164,20 @@ export default async function DashboardPage({
       .select('campaign_id, display_mode, hidden')
       .eq('client_id', client.id)
       .eq('source', activeSource),
+    // Keywords (Google Ads only)
+    activeSource === 'google_ads' && activeConnection
+      ? db.from('google_ads_keywords')
+          .select('keyword_text,spend,impressions,clicks,conversions')
+          .eq('client_id', client.id)
+          .eq('connection_id', activeConnection.id)
+          .gte('date', fmtDate(fromDate))
+          .lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as { keyword_text: string; spend: number; impressions: number; clicks: number; conversions: number }[] }),
+    activeSource === 'google_ads'
+      ? db.from('google_ads_negative_keywords')
+          .select('id', { count: 'exact', head: true })
+          .eq('client_id', client.id)
+      : Promise.resolve({ data: null, count: 0 }),
   ])
 
   const assignmentsData = (assignmentsRes.data ?? []) as { campaign_id: string; display_mode: string; hidden: boolean }[]
@@ -312,6 +328,43 @@ export default async function DashboardPage({
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : null
 
+  // ─── Daily series for sparklines ────────────────────────────────────────
+  const dailyMap = new Map<string, { spend: number; clicks: number; impressions: number; conversions: number; conversion_value: number }>()
+  for (const r of currentMetrics) {
+    const ex = dailyMap.get(r.date)
+    if (ex) {
+      ex.spend           += r.spend;          ex.clicks      += r.clicks
+      ex.impressions     += r.impressions;    ex.conversions += r.conversions
+      ex.conversion_value+= r.conversion_value
+    } else {
+      dailyMap.set(r.date, { spend: r.spend, clicks: r.clicks, impressions: r.impressions, conversions: r.conversions, conversion_value: r.conversion_value })
+    }
+  }
+  const ds = Array.from(dailyMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v)
+  const spendSpark     = ds.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
+  const convSpark      = ds.map(d => ({ v: d.conversions }))
+  const convValueSpark = ds.map(d => ({ v: d.conversion_value }))
+  const cplSpark       = ds.map(d => ({ v: d.conversions > 0 ? (adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend) / d.conversions : 0 }))
+  const roasSpark      = ds.map(d => { const s = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: s > 0 ? d.conversion_value / s : 0 } })
+  const ctrSpark       = ds.map(d => ({ v: d.impressions > 0 ? d.clicks / d.impressions : 0 }))
+  const cpmSpark       = ds.map(d => ({ v: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0 }))
+  const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
+
+  // ─── Keyword aggregation (Google Ads only) ───────────────────────────────
+  const kwRaw = (kwRes.data ?? []) as { keyword_text: string; spend: number; impressions: number; clicks: number; conversions: number }[]
+  const kwMap = new Map<string, AggKeyword>()
+  for (const r of kwRaw) {
+    const key = r.keyword_text.toLowerCase()
+    const ex  = kwMap.get(key)
+    if (ex) { ex.impressions += r.impressions; ex.clicks += r.clicks; ex.conversions += Number(r.conversions); ex.spend += Number(r.spend) }
+    else kwMap.set(key, { text: r.keyword_text, impressions: r.impressions, clicks: r.clicks, conversions: Number(r.conversions), spend: Number(r.spend) })
+  }
+  const keywords     = Array.from(kwMap.values())
+  const negativeCount = (negKwRes as { count?: number | null }).count ?? 0
+
+  // Conversion label for keyword section
+  const kwConvLabel = isEcomDash ? 'Purchases' : 'Leads'
+
   const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}`
 
   return (
@@ -384,120 +437,93 @@ export default async function DashboardPage({
 
         {currentMetrics.length > 0 && (
           <>
-            {/* Row 1: primary KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard
+            {/* ── Metric cards with sparklines ──────────────────────────── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <SparkMetricCard
                 label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'}
                 value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)}
                 delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined}
                 invertDelta
-                sub={undefined}
+                sparkData={spendSpark}
+                sparkColor={settings.chart_color_spend ?? '#93c5fd'}
                 delay={0}
               />
               {isEcomDash ? (
                 <>
-                  <MetricCard
-                    label="ROAS"
-                    value={fmtRoas(current.roas)}
-                    delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
-                    delay={1}
-                  />
-                  <MetricCard
+                  <SparkMetricCard
                     label="Revenue"
                     value={fmt$(current.conversionValue)}
                     delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
-                    delay={2}
+                    sparkData={convValueSpark}
+                    sparkColor="#10b981"
+                    delay={1}
                   />
-                  <MetricCard
-                    label="Orders"
-                    value={fmtNum(current.conversions)}
-                    delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
-                    delay={3}
+                  <SparkMetricCard
+                    label="ROAS"
+                    value={fmtRoas(current.roas)}
+                    delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
+                    sparkData={roasSpark}
+                    sparkColor="#8b5cf6"
+                    delay={2}
                   />
                 </>
               ) : (
                 <>
-                  <MetricCard
+                  <SparkMetricCard
                     label="Leads"
                     value={fmtNum(current.conversions)}
                     delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
+                    sparkData={convSpark}
+                    sparkColor="#10b981"
                     delay={1}
                   />
-                  <MetricCard
-                    label="CPL"
+                  <SparkMetricCard
+                    label="Cost Per Lead"
                     value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'}
                     delta={showCompare ? calcDelta(current.cpl, prior.cpl) : undefined}
                     invertDelta
+                    sparkData={cplSpark}
+                    sparkColor="#f59e0b"
                     delay={2}
                   />
-                  <MetricCard
-                    label="Clicks"
-                    value={fmtNum(current.clicks)}
-                    delta={showCompare ? calcDelta(current.clicks, prior.clicks) : undefined}
-                    sub={`${fmtPct(current.ctr)} CTR`}
-                    delay={3}
-                  />
                 </>
               )}
-            </div>
-
-            {/* Row 2: secondary KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {isEcomDash ? (
-                <>
-                  <MetricCard
-                    label="Clicks"
-                    value={fmtNum(current.clicks)}
-                    delta={showCompare ? calcDelta(current.clicks, prior.clicks) : undefined}
-                    sub={`${fmtPct(current.ctr)} CTR`}
-                    delay={0}
-                  />
-                  <MetricCard
-                    label="Avg. CPC"
-                    value={fmtCurrency(current.cpc)}
-                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
-                    invertDelta
-                    delay={1}
-                  />
-                </>
-              ) : (
-                <>
-                  <MetricCard
-                    label="CTR"
-                    value={fmtPct(current.ctr)}
-                    delta={showCompare ? calcDelta(current.ctr, prior.ctr) : undefined}
-                    delay={0}
-                  />
-                  <MetricCard
-                    label="Avg. CPC"
-                    value={fmtCurrency(current.cpc)}
-                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
-                    invertDelta
-                    delay={1}
-                  />
-                </>
-              )}
-              <MetricCard
-                label="Impressions"
-                value={fmtNum(current.impressions)}
-                delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
-                delay={2}
+              <SparkMetricCard
+                label="CTR"
+                value={fmtPct(current.ctr)}
+                delta={showCompare ? calcDelta(current.ctr, prior.ctr) : undefined}
+                sparkData={ctrSpark}
+                sparkColor="#3b82f6"
+                benchmark={{ actual: current.ctr, target: effectiveBenchmarks.benchmark_ctr, actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), color: '#3b82f6' }}
+                delay={3}
               />
-              <MetricCard
+              <SparkMetricCard
+                label="Conv. Rate"
+                value={fmtPct(convRate)}
+                delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
+                sparkData={crSpark}
+                sparkColor="#10b981"
+                benchmark={{ actual: convRate, target: effectiveBenchmarks.benchmark_conv_rate, actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), color: '#10b981' }}
+                delay={4}
+              />
+              <SparkMetricCard
                 label="CPM"
                 value={fmtCurrency(current.cpm)}
                 delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
                 invertDelta
-                delay={3}
+                sparkData={cpmSpark}
+                sparkColor="#f59e0b"
+                benchmark={{ actual: current.cpm, target: effectiveBenchmarks.benchmark_cpm, actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), color: '#f59e0b' }}
+                delay={5}
               />
             </div>
 
-            {/* Performance benchmarks (admin-toggleable per client) */}
+            {/* ── Marketing Efficiency Score (admin-toggleable) ─────────── */}
             {client.show_benchmarks && (
               <EfficiencyScore score={effScore} components={benchComponents} />
             )}
 
-            {/* Daily performance chart */}
+            {/* ── Daily Performance chart ───────────────────────────────── */}
             <div className="card p-6">
               <div className="mb-4">
                 <h2 className="section-title">Daily Performance</h2>
@@ -520,7 +546,22 @@ export default async function DashboardPage({
               />
             </div>
 
-            {/* Campaign breakdown */}
+            {/* ── Keyword Intelligence (Google Ads only) ────────────────── */}
+            {activeSource === 'google_ads' && keywords.length > 0 && (
+              <div>
+                <div className="page-header mb-4" style={{ paddingBottom: 0 }}>
+                  <h2 className="section-title" style={{ fontSize: '1rem' }}>Keyword Intelligence</h2>
+                  <p className="section-desc">{keywords.length} keywords · {fmtDate(fromDate)} – {fmtDate(toDate)}</p>
+                </div>
+                <KeywordSummary
+                  keywords={keywords}
+                  negativeCount={negativeCount}
+                  conversionLabel={kwConvLabel}
+                />
+              </div>
+            )}
+
+            {/* ── Campaign breakdown ────────────────────────────────────── */}
             <div className="card p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
