@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client } from '@/lib/types'
 import PreviewClientSwitcher from '@/components/admin/PreviewClientSwitcher'
+import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 
 export default async function PreviewClientLayout({
   children,
@@ -54,6 +55,7 @@ export default async function PreviewClientLayout({
           Admin Settings →
         </Link>
       </div>
+      <DashboardNavigationRefresher />
       {children}
     </div>
   )
