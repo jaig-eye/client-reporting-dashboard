@@ -95,6 +95,10 @@ export default async function AdminPreviewPage({
   const activeSource     = requestedSource!
   const activeConnection = connections.find(c => c.connector.type === activeSource)
   const table            = activeSource === 'google_ads' ? 'google_ads_metrics' : 'meta_ads_metrics'
+  const adLevelTable     = activeSource === 'google_ads' ? 'google_ads_ad_metrics' : 'meta_ads_ad_metrics'
+  const adLevelSelect    = activeSource === 'google_ads'
+    ? 'campaign_id,spend,impressions,clicks,conversions,conversions_value,date'
+    : 'campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date'
   const isMetaSource     = activeSource === 'meta_ads'
 
   const [curRes, priorRes, assignmentsRes] = await Promise.all([
@@ -102,9 +106,9 @@ export default async function AdminPreviewPage({
       ? db.from(table).select('*').eq('connection_id', activeConnection.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       : Promise.resolve({ data: [] }),
-    activeConnection
-      ? db.from(table).select('spend,impressions,clicks,conversions,conversion_value,conversions_value,actions,action_values')
-          .eq('connection_id', activeConnection.id)
+    showCompare && activeConnection
+      ? db.from(adLevelTable).select(adLevelSelect)
+          .eq('client_id', clientId)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: [] }),
     db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
@@ -151,7 +155,7 @@ export default async function AdminPreviewPage({
   }
 
   const currentMetrics = normalise((curRes.data  ?? []) as Record<string, unknown>[])
-  const priorMetrics   = normalise((priorRes.data ?? []) as Record<string, unknown>[])
+  const priorMetrics   = normalise((priorRes.data ?? []) as unknown as Record<string, unknown>[])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const current    = summarizeMetrics(currentMetrics as any[])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
