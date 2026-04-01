@@ -132,10 +132,16 @@ export default async function DashboardPage({
   const activeSource     = requestedSource!
   const activeConnection = connections.find(c => c.connector.type === activeSource)
   const table            = activeSource === 'google_ads' ? 'google_ads_metrics' : 'meta_ads_metrics'
+  const adLevelTable     = activeSource === 'google_ads' ? 'google_ads_ad_metrics' : 'meta_ads_ad_metrics'
+  const adLevelSelect    = activeSource === 'google_ads'
+    ? 'campaign_id,spend,impressions,clicks,conversions,conversions_value,date'
+    : 'campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date'
   const isMetaSource     = activeSource === 'meta_ads'
 
   // Fetch metrics AND campaign assignments in parallel so we can remap
   // Meta conversions based on the per-campaign display_mode before summarising.
+  // Prior period uses ad-level tables (same source as campaign/adset drill-downs)
+  // to ensure consistent data coverage.
   const [curRes, priorRes, assignmentsRes] = await Promise.all([
     activeConnection
       ? db.from(table)
@@ -144,10 +150,10 @@ export default async function DashboardPage({
           .gte('date', fmtDate(fromDate))
           .lte('date', fmtDate(toDate))
       : Promise.resolve({ data: [] }),
-    activeConnection
-      ? db.from(table)
-          .select('spend,impressions,clicks,conversions,conversion_value,conversions_value,actions,action_values,date')
-          .eq('connection_id', activeConnection.id)
+    showCompare && activeConnection
+      ? db.from(adLevelTable)
+          .select(adLevelSelect)
+          .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom))
           .lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: [] }),
