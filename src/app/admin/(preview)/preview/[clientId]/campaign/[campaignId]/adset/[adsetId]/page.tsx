@@ -5,8 +5,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas } from '@/lib/metrics'
-import type { Client } from '@/lib/types'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas, getDailyTrend } from '@/lib/metrics'
+import type { Client, DailyMetric } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
@@ -14,6 +14,7 @@ import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
 import DateRangePicker from '@/components/DateRangePicker'
+import SpendChart from '@/components/SpendChart'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,13 +120,15 @@ export default async function AdminPreviewAdSetPage({
     text_content: string | null; image_url: string | null; video_id: string | null
   }
   const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
+  let dailyTrend: DailyMetric[] = []
+  let priorDailyTrend: DailyMetric[] = []
   let pMaxAssets: PMaxAsset[] = []
   let isPMaxGroup = false
 
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value')
+        .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value,date')
         .eq('client_id', clientId)
         .eq('campaign_id', campaignId)
         .eq('ad_group_id', adsetId)
@@ -138,10 +141,10 @@ export default async function AdminPreviewAdSetPage({
         .eq('client_id', clientId)
         .eq('asset_group_id', adsetId),
       showCompare
-        ? db.from('google_ads_ad_metrics').select('spend,impressions,clicks,conversions,conversions_value')
+        ? db.from('google_ads_ad_metrics').select('date,spend,impressions,clicks,conversions,conversions_value')
             .eq('client_id', clientId).eq('campaign_id', campaignId).eq('ad_group_id', adsetId)
             .gte('date', priorFrom).lte('date', priorTo)
-        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
+        : Promise.resolve({ data: [] as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
     isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
@@ -177,17 +180,21 @@ export default async function AdminPreviewAdSetPage({
         adFuelSpend:     afs,
       })
     }
-    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
+    for (const r of (priorRows ?? []) as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
       priorTotals.spend           += Number(r.spend)             || 0
       priorTotals.impressions     += Number(r.impressions)       || 0
       priorTotals.clicks          += Number(r.clicks)            || 0
       priorTotals.conversions     += Number(r.conversions)       || 0
       priorTotals.conversionValue += Number(r.conversions_value) || 0
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dailyTrend = getDailyTrend((rows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    priorDailyTrend = getDailyTrend((priorRows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
   } else {
     const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', clientId)
         .eq('campaign_id', campaignId)
         .eq('adset_id', adsetId)
@@ -197,7 +204,7 @@ export default async function AdminPreviewAdSetPage({
         .select('campaign_name').eq('client_id', clientId).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       showCompare
         ? db.from('meta_ads_ad_metrics')
-            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
             .eq('client_id', clientId)
             .eq('campaign_id', campaignId)
             .eq('adset_id', adsetId)
@@ -259,6 +266,10 @@ export default async function AdminPreviewAdSetPage({
       priorTotals.conversions     += co
       priorTotals.conversionValue += cv
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dailyTrend = getDailyTrend(rows as any[])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    priorDailyTrend = getDailyTrend(priorRows as any[])
   }
 
   const adCardList = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
@@ -421,6 +432,12 @@ export default async function AdminPreviewAdSetPage({
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
         <div>
+          <Link
+            href={campHref}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none', padding: '0.3rem 0.75rem 0.3rem 0.5rem', borderRadius: '0.5rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', marginBottom: '0.75rem' }}
+          >
+            ← {campaignName}
+          </Link>
           <div className="flex items-center gap-1.5 text-xs mb-3 flex-wrap" style={{ color: 'var(--text-faint)' }}>
             <Link href={dashHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Dashboard</Link>
             <span>/</span>
@@ -509,6 +526,25 @@ export default async function AdminPreviewAdSetPage({
             </div>
           )
         })()}
+
+        {/* Daily performance chart */}
+        {dailyTrend.length > 0 && (
+          <div className="card p-6">
+            <div className="mb-4">
+              <h2 className="section-title">Daily Performance</h2>
+              <p className="section-desc">
+                {dateFrom} – {dateTo}
+                {showCompare && priorDailyTrend.length > 0 && (
+                  <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>vs {priorFrom} – {priorTo}</span>
+                )}
+              </p>
+            </div>
+            <SpendChart
+              data={dailyTrend}
+              priorData={showCompare && priorDailyTrend.length > 0 ? priorDailyTrend : undefined}
+            />
+          </div>
+        )}
 
         {/* pMax Asset Gallery OR Search/Display breakdown */}
         {isPMaxGroup ? (

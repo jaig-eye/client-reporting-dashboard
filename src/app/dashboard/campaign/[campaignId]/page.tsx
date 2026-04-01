@@ -330,8 +330,14 @@ export default async function CampaignDetailPage({
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-        {/* ── Breadcrumb ─────────────────────────────────────── */}
+        {/* ── Back + Breadcrumb ──────────────────────────────── */}
         <div>
+          <Link
+            href={backHref}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none', padding: '0.3rem 0.75rem 0.3rem 0.5rem', borderRadius: '0.5rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', marginBottom: '0.75rem' }}
+          >
+            ← {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
+          </Link>
           <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: 'var(--text-faint)' }}>
             <Link href={`/dashboard?${dateQs}`} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
               Platforms

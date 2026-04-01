@@ -123,13 +123,13 @@ export default async function ClientsPage() {
                           : '—'}
                       </span>
                     </td>
-                    <td>
-                      <div className="flex items-center gap-2">
+                    <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                      <div className="flex items-center justify-end gap-2">
                         <PreviewButton clientId={client.id} />
                         <Link
                           href={`/admin/clients/${client.id}`}
                           className="btn btn-secondary"
-                          style={{ padding: '0.375rem 0.75rem' }}
+                          style={{ padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
                         >
                           Manage →
                         </Link>

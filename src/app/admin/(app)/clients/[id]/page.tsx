@@ -96,7 +96,7 @@ export default async function ClientDetailPage({
       {sp.synced && <Notice type="success">Sync complete.</Notice>}
       {sp.error  && <Notice type="error">Error: {sp.error.replace(/_/g, ' ')}</Notice>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* ── Left: client info + dashboard link + recent jobs ── */}
         <div className="space-y-4">
@@ -194,7 +194,7 @@ export default async function ClientDetailPage({
         </div>
 
         {/* ── Right: source-specific connection cards ── */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="space-y-4">
           <h2 className="section-title">Data Sources</h2>
 
           {ALL_CONNECTOR_TYPES.map(type => {

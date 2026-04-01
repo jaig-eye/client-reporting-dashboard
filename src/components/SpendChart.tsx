@@ -107,13 +107,13 @@ export default function SpendChart({
           maxBarSize={isCompare ? 12 : 24}
         />
 
-        {/* Prior period bar — even lighter */}
+        {/* Prior period bar */}
         {isCompare && (
           <Bar
             yAxisId="spend"
             dataKey="priorSpend"
-            fill="#dbeafe"
-            opacity={0.55}
+            fill="#94a3b8"
+            opacity={0.7}
             radius={[3, 3, 0, 0]}
             name="Prior Spend"
             maxBarSize={12}
