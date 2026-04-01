@@ -127,6 +127,14 @@ export interface Client {
    * NULL = use agency default_purchase_action.
    */
   purchase_action?: string | null
+  /** Per-client benchmark overrides (null = use agency global). */
+  benchmark_roas?:      number | null
+  benchmark_ctr?:       number | null
+  benchmark_cpc?:       number | null
+  benchmark_conv_rate?: number | null
+  benchmark_cpm?:       number | null
+  /** When true, shows the Performance Benchmarks section on the client dashboard. */
+  show_benchmarks?: boolean
   created_at: string
   updated_at: string
 }

@@ -20,6 +20,7 @@ import ClientAdFuelCut from './ClientAdFuelCut'
 import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
+import ClientBenchmarks from './ClientBenchmarks'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,7 +48,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(10),
-    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm').single(),
     // Collect all discovered Meta action types for this client
     db.from('meta_ads_metrics')
       .select('discovered_actions')
@@ -62,10 +63,26 @@ export default async function ClientDetailPage({
   const connections  = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
   const connectors   = (connectorsRes.data  ?? []) as Connector[]
   const recentJobs   = (recentJobsRes.data  ?? []) as SyncJob[]
-  const agencySettings = settingsRes.data as { ad_fuel_cut?: number; default_lead_action?: string; default_purchase_action?: string } | null
+  const agencySettings = settingsRes.data as {
+    ad_fuel_cut?: number
+    default_lead_action?: string
+    default_purchase_action?: string
+    benchmark_roas?: number
+    benchmark_ctr?: number
+    benchmark_cpc?: number
+    benchmark_conv_rate?: number
+    benchmark_cpm?: number
+  } | null
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
   const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
   const agencyPurch  = agencySettings?.default_purchase_action ?? 'purchase'
+  const globalBenchmarks = {
+    benchmark_roas:      agencySettings?.benchmark_roas      ?? DEFAULT_SETTINGS.benchmark_roas,
+    benchmark_ctr:       agencySettings?.benchmark_ctr       ?? DEFAULT_SETTINGS.benchmark_ctr,
+    benchmark_cpc:       agencySettings?.benchmark_cpc       ?? DEFAULT_SETTINGS.benchmark_cpc,
+    benchmark_conv_rate: agencySettings?.benchmark_conv_rate ?? DEFAULT_SETTINGS.benchmark_conv_rate,
+    benchmark_cpm:       agencySettings?.benchmark_cpm       ?? DEFAULT_SETTINGS.benchmark_cpm,
+  }
 
   // Collect all unique discovered Meta action types for this client
   const discoveredActions = Array.from(new Set(
@@ -300,6 +317,25 @@ export default async function ClientDetailPage({
 
       {/* ── Full-width: Campaign Manager + Conversion Mapping + Raw Data ── */}
       <div className="mt-6 space-y-6">
+
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Performance Benchmarks</h2>
+          <p className="section-desc mb-4">
+            Toggle visibility on the client dashboard and optionally override the global benchmark targets for this client.
+          </p>
+          <ClientBenchmarks
+            clientId={id}
+            showBenchmarks={!!client.show_benchmarks}
+            globalDefaults={globalBenchmarks}
+            current={{
+              benchmark_roas:      client.benchmark_roas,
+              benchmark_ctr:       client.benchmark_ctr,
+              benchmark_cpc:       client.benchmark_cpc,
+              benchmark_conv_rate: client.benchmark_conv_rate,
+              benchmark_cpm:       client.benchmark_cpm,
+            }}
+          />
+        </div>
 
         <div className="card p-5">
           <h2 className="section-title mb-1">Campaign Settings</h2>

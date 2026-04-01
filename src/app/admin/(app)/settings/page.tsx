@@ -15,7 +15,6 @@ interface Settings {
   benchmark_conv_rate:            number
   benchmark_cpm:                  number
   default_date_range_days:        number
-  default_conversion_value:       number
   ad_fuel_cut:                    number
   cron_enabled:                   boolean
   chart_color_spend:              string
@@ -33,7 +32,6 @@ const DEFAULT: Settings = {
   benchmark_conv_rate:            0.03,
   benchmark_cpm:                  15,
   default_date_range_days:        30,
-  default_conversion_value:       0,
   ad_fuel_cut:                    0.20,
   cron_enabled:                   true,
   chart_color_spend:              '#93c5fd',
@@ -194,22 +192,6 @@ export default function AgencySettingsPage() {
                 onChange={e => field('default_date_range_days', parseInt(e.target.value))} />
             </FormField>
           </div>
-        </div>
-
-        {/* Conversion Value Defaults */}
-        <div className="card p-6 space-y-4">
-          <div>
-            <h2 className="section-title">Conversion Value Default</h2>
-            <p className="section-desc">
-              Applied when no client or campaign-level override is set.
-              Hierarchy: campaign override → client override → this value.
-            </p>
-          </div>
-          <FormField label="Default Conversion Value ($)" hint="Leave as 0 if not applicable">
-            <input type="number" step="0.01" min="0" className="input"
-              value={form.default_conversion_value}
-              onChange={e => field('default_conversion_value', parseFloat(e.target.value) || 0)} />
-          </FormField>
         </div>
 
         {/* Ad Fuel */}
