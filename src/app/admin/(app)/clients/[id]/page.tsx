@@ -21,6 +21,7 @@ import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
 import ClientBenchmarks from './ClientBenchmarks'
+import ClientMetricVisibility from './ClientMetricVisibility'
 
 export const dynamic = 'force-dynamic'
 
@@ -343,6 +344,17 @@ export default async function ClientDetailPage({
               benchmark_conv_rate: client.benchmark_conv_rate,
               benchmark_cpm:       client.benchmark_cpm,
             }}
+          />
+        </div>
+
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Metric Visibility</h2>
+          <p className="section-desc mb-4">
+            Control which metric cards and sections are visible on the client dashboard. Toggle off anything you don&apos;t want the client to see.
+          </p>
+          <ClientMetricVisibility
+            clientId={id}
+            initialHidden={Array.isArray(client.hidden_metrics) ? client.hidden_metrics : []}
           />
         </div>
 

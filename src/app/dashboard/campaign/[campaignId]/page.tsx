@@ -16,7 +16,7 @@ import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } fr
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
-import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
+import SparkMetricCard from '@/components/SparkMetricCard'
 import DateRangePicker from '@/components/DateRangePicker'
 
 export const dynamic = 'force-dynamic'
@@ -90,12 +90,12 @@ export default async function CampaignDetailPage({
 
   // ── Fetch ad-level metrics ─────────────────────────────────────────────────
   type GoogleAdRow = {
-    ad_id: string; ad_group_id: string; ad_group_name: string
+    ad_id: string; ad_group_id: string; ad_group_name: string; date: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number
   }
   type MetaAdRow = {
-    ad_id: string; adset_id: string | null; adset_name: string | null
+    ad_id: string; adset_id: string | null; adset_name: string | null; date: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     actions:      { action_type: string; value: string }[] | null
@@ -125,10 +125,23 @@ export default async function CampaignDetailPage({
   const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
   let isPMax = false
 
+  // Daily series for sparklines
+  type DayAgg = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
+  const dailyMap = new Map<string, DayAgg>()
+
+  function upsertDay(date: string, sp: number, im: number, cl: number, co: number, cv: number) {
+    const ex = dailyMap.get(date)
+    if (ex) {
+      ex.spend += sp; ex.impressions += im; ex.clicks += cl; ex.conversions += co; ex.conversionValue += cv
+    } else {
+      dailyMap.set(date, { spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv })
+    }
+  }
+
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value')
+        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -149,7 +162,10 @@ export default async function CampaignDetailPage({
     isPMax = typedCampRow?.campaign_type === 'PERFORMANCE_MAX'
       || campaignName.toLowerCase().startsWith('pmax')
     for (const r of (rows ?? []) as GoogleAdRow[]) {
-      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, Number(r.conversions)||0, Number(r.conversions_value)||0)
+      const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
+      const co = Number(r.conversions)||0, cv = Number(r.conversions_value)||0
+      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, sp, im, cl, co, cv)
+      upsertDay(r.date, sp, im, cl, co, cv)
     }
     for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
       priorTotals.spend           += Number(r.spend)            || 0
@@ -161,7 +177,7 @@ export default async function CampaignDetailPage({
   } else {
     const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -192,6 +208,7 @@ export default async function CampaignDetailPage({
         cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
+      upsertDay(r.date, sp, im, cl, co, cv)
     }
     for (const r of (priorRows ?? []) as MetaAdRow[]) {
       const sp = Number(r.spend) || 0
@@ -213,57 +230,6 @@ export default async function CampaignDetailPage({
 
   // After data fetch: isPMax is now resolved
   const displayGroupLabel = (isGoogleAds && isPMax) ? 'Asset Group' : groupLabel
-
-  // ── Campaign-level keywords (Search only — skip PMax / Meta) ─────────────
-  type KwCampRow = {
-    keyword_text: string; match_type: string | null; spend: number
-    impressions: number; clicks: number; conversions: number
-  }
-  type KwKey = string  // `${keyword_text}|||${match_type}`
-  const kwCampMap = new Map<KwKey, { text: string; matchType: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
-  if (isGoogleAds && !isPMax) {
-    const { data: kwData } = await db
-      .from('google_ads_keywords')
-      .select('keyword_text,match_type,spend,impressions,clicks,conversions')
-      .eq('client_id', client.id)
-      .eq('campaign_id', campaignId)
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
-    for (const kw of (kwData ?? []) as KwCampRow[]) {
-      const key: KwKey = `${kw.keyword_text}|||${kw.match_type ?? ''}`
-      const ex = kwCampMap.get(key)
-      if (ex) {
-        ex.spend       += Number(kw.spend)       || 0
-        ex.impressions += Number(kw.impressions) || 0
-        ex.clicks      += Number(kw.clicks)      || 0
-        ex.conversions += Number(kw.conversions) || 0
-      } else {
-        kwCampMap.set(key, {
-          text: kw.keyword_text, matchType: kw.match_type ?? null,
-          spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0,
-          clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0,
-        })
-      }
-    }
-  }
-  const campaignKeywordRows: KeywordRow[] = Array.from(kwCampMap.values())
-    .map(k => {
-      const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
-      return {
-        keyword_text:   k.text,
-        match_type:     k.matchType,
-        keyword_status: null,
-        impressions:    k.impressions,
-        clicks:         k.clicks,
-        conversions:    k.conversions,
-        spend:          k.spend,
-        displaySpend:   dSpend,
-        ctr:            k.impressions > 0 ? k.clicks / k.impressions : 0,
-        cpc:            k.clicks > 0      ? dSpend / k.clicks        : 0,
-        cpl:            k.conversions > 0 ? dSpend / k.conversions   : 0,
-      }
-    })
-    .sort((a, b) => b.impressions - a.impressions)
 
   const adGroups = Array.from(setMap.entries())
     .map(([setId, s]) => {
@@ -295,6 +261,28 @@ export default async function CampaignDetailPage({
   const totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
   const totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
   const totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
+
+  // KPI derived values
+  const displaySpend      = adFuelCut > 0 ? applyAdFuel(totSpend, adFuelCut) : totSpend
+  const roas              = displaySpend > 0 && totConversionValue > 0 ? totConversionValue / displaySpend : 0
+  const cpl               = totConversions > 0 ? displaySpend / totConversions : 0
+  const ctr               = totImpressions > 0 ? totClicks / totImpressions : 0
+  const priorDisplaySpend = adFuelCut > 0 ? applyAdFuel(priorTotals.spend, adFuelCut) : priorTotals.spend
+  const priorRoas         = priorDisplaySpend > 0 && priorTotals.conversionValue > 0 ? priorTotals.conversionValue / priorDisplaySpend : 0
+  const priorCpl          = priorTotals.conversions > 0 ? priorDisplaySpend / priorTotals.conversions : 0
+  const priorCtr          = priorTotals.impressions > 0 ? priorTotals.clicks / priorTotals.impressions : 0
+
+  // Sparkline series from daily aggregation
+  const sortedDays = Array.from(dailyMap.entries()).sort(([a], [b]) => a.localeCompare(b))
+  const spendSeries = sortedDays.map(([, v]) => ({ v: adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend }))
+  const convSeries  = sortedDays.map(([, v]) => ({ v: v.conversions }))
+  const cvSeries    = sortedDays.map(([, v]) => ({ v: v.conversionValue }))
+  const cplSeries   = sortedDays.map(([, v]) => {
+    const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
+    return { v: v.conversions > 0 ? ds / v.conversions : 0 }
+  })
+  const ctrSeries   = sortedDays.map(([, v]) => ({ v: v.impressions > 0 ? v.clicks / v.impressions : 0 }))
+  const clicksSeries = sortedDays.map(([, v]) => ({ v: v.clicks }))
 
   const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
   if (compare) dateQsObj.compare = compare
@@ -376,17 +364,96 @@ export default async function CampaignDetailPage({
         </div>
 
         {/* ── Campaign KPI summary ────────────────────────────── */}
-        <CampaignSummary
-          spend={totSpend}
-          impressions={totImpressions}
-          clicks={totClicks}
-          conversions={totConversions}
-          conversionValue={totConversionValue}
-          adFuelCut={adFuelCut}
-          displayMode={displayMode}
-          conversionLabel={conversionLabel}
-          prior={showCompare ? priorTotals : undefined}
-        />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <SparkMetricCard
+            label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}
+            value={fmt$(displaySpend)}
+            delta={showCompare ? calcDelta(displaySpend, priorDisplaySpend) : undefined}
+            invertDelta
+            sparkData={spendSeries}
+            sparkColor="var(--blue)"
+            delay={0}
+          />
+          {isEcom ? (
+            <>
+              <SparkMetricCard
+                label="ROAS"
+                value={roas > 0 ? fmtRoas(roas) : '—'}
+                delta={showCompare && priorRoas > 0 ? calcDelta(roas, priorRoas) : undefined}
+                sparkData={sortedDays.map(([, v]) => {
+                  const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
+                  return { v: ds > 0 && v.conversionValue > 0 ? v.conversionValue / ds : 0 }
+                })}
+                sparkColor="var(--green)"
+                delay={1}
+              />
+              <SparkMetricCard
+                label="Revenue"
+                value={totConversionValue > 0 ? fmt$(totConversionValue) : '—'}
+                delta={showCompare ? calcDelta(totConversionValue, priorTotals.conversionValue) : undefined}
+                sparkData={cvSeries}
+                sparkColor="var(--green)"
+                delay={2}
+              />
+              <SparkMetricCard
+                label={conversionLabel}
+                value={totConversions > 0 ? fmtNum(totConversions) : '—'}
+                delta={showCompare ? calcDelta(totConversions, priorTotals.conversions) : undefined}
+                sparkData={convSeries}
+                sparkColor="#8b5cf6"
+                delay={3}
+              />
+            </>
+          ) : (
+            <>
+              <SparkMetricCard
+                label={conversionLabel}
+                value={totConversions > 0 ? totConversions.toFixed(0) : '—'}
+                delta={showCompare ? calcDelta(totConversions, priorTotals.conversions) : undefined}
+                sparkData={convSeries}
+                sparkColor="var(--green)"
+                delay={1}
+              />
+              <SparkMetricCard
+                label="CPL"
+                value={cpl > 0 ? fmtCurrency(cpl) : '—'}
+                delta={showCompare && priorCpl > 0 ? calcDelta(cpl, priorCpl) : undefined}
+                invertDelta
+                sparkData={cplSeries}
+                sparkColor="#f59e0b"
+                delay={2}
+              />
+              <SparkMetricCard
+                label="CTR"
+                value={fmtPct(ctr)}
+                delta={showCompare ? calcDelta(ctr, priorCtr) : undefined}
+                sparkData={ctrSeries}
+                sparkColor="var(--blue)"
+                delay={3}
+              />
+            </>
+          )}
+        </div>
+
+        {/* ── Clicks card (always visible) ─────────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <SparkMetricCard
+            label="Clicks"
+            value={fmtNum(totClicks)}
+            delta={showCompare ? calcDelta(totClicks, priorTotals.clicks) : undefined}
+            sparkData={clicksSeries}
+            sparkColor="#8b5cf6"
+            delay={4}
+          />
+          <SparkMetricCard
+            label="Impressions"
+            value={fmtNum(totImpressions)}
+            delta={showCompare ? calcDelta(totImpressions, priorTotals.impressions) : undefined}
+            sparkData={sortedDays.map(([, v]) => ({ v: v.impressions }))}
+            sparkColor="var(--text-muted)"
+            delay={5}
+          />
+        </div>
 
         {/* ── Ad Group / Ad Set table ───────────────────────────── */}
         <div className="card p-6">
@@ -404,136 +471,7 @@ export default async function CampaignDetailPage({
           />
         </div>
 
-        {/* ── Campaign-level keyword breakdown (Search only) ──────── */}
-        {campaignKeywordRows.length > 0 && (
-          <div className="card p-6">
-            <h2 className="section-title mb-1">Keywords</h2>
-            <p className="section-desc mb-4">{campaignKeywordRows.length} keyword{campaignKeywordRows.length !== 1 ? 's' : ''} across all ad groups</p>
-            <KeywordTable
-              rows={campaignKeywordRows}
-              conversionLabel={conversionLabel}
-              isEcom={isEcom}
-              adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'}
-            />
-          </div>
-        )}
-
       </main>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Campaign KPI summary — adapts to display mode
-// ─────────────────────────────────────────────────────────────────────────────
-
-type PriorTotalsType = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
-
-function DeltaBadge({ delta, invert = false }: { delta: number | undefined; invert?: boolean }) {
-  if (delta === undefined || delta === 0) return null
-  const isGood = invert ? delta <= 0 : delta >= 0
-  return (
-    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: isGood ? 'var(--green)' : 'var(--red)' }}>
-      {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
-    </span>
-  )
-}
-
-function CampaignSummary({
-  spend, impressions, clicks, conversions, conversionValue,
-  adFuelCut, displayMode, conversionLabel, prior,
-}: {
-  spend:            number
-  impressions:      number
-  clicks:           number
-  conversions:      number
-  conversionValue:  number
-  adFuelCut:        number
-  displayMode:      DisplayMode
-  conversionLabel:  string
-  prior?:           PriorTotalsType
-}) {
-  const isEcom        = displayMode === 'ecommerce'
-  const displaySpend  = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
-  const roas          = displaySpend > 0 && conversionValue > 0 ? conversionValue / displaySpend : 0
-  const cpl           = conversions > 0 ? displaySpend / conversions : 0
-  const ctr           = impressions > 0 ? clicks / impressions : 0
-  const cpc           = clicks > 0 ? displaySpend / clicks : 0
-  const roasColor     = roas >= 3 ? 'var(--green)' : roas >= 1.5 ? '#d97706' : 'var(--red)'
-
-  const priorDisplaySpend = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
-  const priorRoas = prior && priorDisplaySpend > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpend : 0
-  const priorCpl  = prior && prior.conversions > 0 ? priorDisplaySpend / prior.conversions : 0
-  const priorCtr  = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
-  const priorCpc  = prior && prior.clicks > 0 ? priorDisplaySpend / prior.clicks : 0
-
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-      <StatCard label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}>
-        <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(displaySpend)}</span>
-        <DeltaBadge delta={calcDelta(displaySpend, priorDisplaySpend)} invert />
-      </StatCard>
-
-      {isEcom ? (
-        <>
-          <StatCard label="ROAS">
-            <span className="text-xl font-bold" style={{ color: roas > 0 ? roasColor : 'var(--text-faint)' }}>
-              {roas > 0 ? fmtRoas(roas) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(roas, priorRoas)} />
-          </StatCard>
-          <StatCard label="Revenue">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {conversionValue > 0 ? fmt$(conversionValue) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(conversionValue, prior?.conversionValue ?? 0)} />
-          </StatCard>
-          <StatCard label="Orders">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {conversions > 0 ? fmtNum(conversions) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(conversions, prior?.conversions ?? 0)} />
-          </StatCard>
-          <StatCard label="CPC">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {cpc > 0 ? fmtCurrency(cpc) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(cpc, priorCpc)} invert />
-          </StatCard>
-        </>
-      ) : (
-        <>
-          <StatCard label={conversionLabel}>
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {conversions > 0 ? conversions.toFixed(0) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(conversions, prior?.conversions ?? 0)} />
-          </StatCard>
-          <StatCard label="CPL">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {cpl > 0 ? fmtCurrency(cpl) : '—'}
-            </span>
-            <DeltaBadge delta={calcDelta(cpl, priorCpl)} invert />
-          </StatCard>
-          <StatCard label="Clicks">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(clicks)}</span>
-            <DeltaBadge delta={calcDelta(clicks, prior?.clicks ?? 0)} />
-          </StatCard>
-          <StatCard label="CTR">
-            <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(ctr)}</span>
-            <DeltaBadge delta={calcDelta(ctr, priorCtr)} />
-          </StatCard>
-        </>
-      )}
-    </div>
-  )
-}
-
-function StatCard({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="card p-4">
-      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      <div className="flex items-baseline gap-1 flex-wrap">{children}</div>
     </div>
   )
 }

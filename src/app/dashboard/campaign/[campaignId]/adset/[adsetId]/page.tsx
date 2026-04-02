@@ -19,6 +19,7 @@ import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
+import SparkMetricCard from '@/components/SparkMetricCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -532,67 +533,95 @@ export default async function AdSetDetailPage({
 
         {/* ── Group KPI summary ───────────────────────────────── */}
         {(() => {
-          const prior = showCompare ? priorTotals : null
+          const prior           = showCompare ? priorTotals : null
           const priorDisplaySpd = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
-          const priorRoas = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
-          const priorCpl  = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
-          const priorCtr  = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
-          function DB({ delta, invert = false }: { delta: number | undefined; invert?: boolean }) {
-            if (delta === undefined || delta === 0) return null
-            const good = invert ? delta <= 0 : delta >= 0
-            return <span style={{ fontSize: '0.7rem', fontWeight: 600, color: good ? 'var(--green)' : 'var(--red)' }}>{delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%</span>
-          }
+          const priorRoas       = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
+          const priorCpl        = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
+          const priorCtr        = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
+          const spendSpark      = dailyTrend.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
+          const convSpark       = dailyTrend.map(d => ({ v: d.conversions }))
+          const clicksSpark     = dailyTrend.map(d => ({ v: d.clicks }))
+          const cplSpark        = dailyTrend.map(d => {
+            const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend
+            return { v: d.conversions > 0 ? ds / d.conversions : 0 }
+          })
+          const ctrSpark        = dailyTrend.map(d => ({ v: d.clicks }))
+          const roasSpark       = dailyTrend.map(d => ({ v: d.roas }))
           return (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(totDisplaySpd)}</p>
-                <DB delta={calcDelta(totDisplaySpd, priorDisplaySpd)} invert />
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <SparkMetricCard
+                label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}
+                value={fmt$(totDisplaySpd)}
+                delta={prior ? calcDelta(totDisplaySpd, priorDisplaySpd) : undefined}
+                invertDelta
+                sparkData={spendSpark}
+                sparkColor="var(--blue)"
+                delay={0}
+              />
               {isEcom ? (
                 <>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>ROAS</p>
-                    <p className="text-xl font-bold" style={{ color: totRoas >= 3 ? 'var(--green)' : totRoas >= 1.5 ? '#d97706' : totRoas > 0 ? 'var(--red)' : 'var(--text-faint)' }}>
-                      {totRoas > 0 ? fmtRoas(totRoas) : '—'}
-                    </p>
-                    <DB delta={calcDelta(totRoas, priorRoas)} />
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Revenue</p>
-                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCv > 0 ? fmt$(totCv) : '—'}</p>
-                    <DB delta={calcDelta(totCv, prior?.conversionValue ?? 0)} />
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Orders</p>
-                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</p>
-                    <DB delta={calcDelta(totConv, prior?.conversions ?? 0)} />
-                  </div>
+                  <SparkMetricCard
+                    label="ROAS"
+                    value={totRoas > 0 ? fmtRoas(totRoas) : '—'}
+                    delta={prior && priorRoas > 0 ? calcDelta(totRoas, priorRoas) : undefined}
+                    sparkData={roasSpark}
+                    sparkColor="var(--green)"
+                    delay={1}
+                  />
+                  <SparkMetricCard
+                    label="Revenue"
+                    value={totCv > 0 ? fmt$(totCv) : '—'}
+                    delta={prior ? calcDelta(totCv, prior.conversionValue) : undefined}
+                    sparkData={dailyTrend.map(d => ({ v: d.roas * (adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend) }))}
+                    sparkColor="var(--green)"
+                    delay={2}
+                  />
+                  <SparkMetricCard
+                    label={conversionLabel}
+                    value={totConv > 0 ? fmtNum(totConv) : '—'}
+                    delta={prior ? calcDelta(totConv, prior.conversions) : undefined}
+                    sparkData={convSpark}
+                    sparkColor="#8b5cf6"
+                    delay={3}
+                  />
                 </>
               ) : (
                 <>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{conversionLabel}</p>
-                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totConv > 0 ? totConv.toFixed(0) : '—'}</p>
-                    <DB delta={calcDelta(totConv, prior?.conversions ?? 0)} />
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CPL</p>
-                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</p>
-                    <DB delta={calcDelta(totCpl, priorCpl)} invert />
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>CTR</p>
-                    <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPct(totCtr)}</p>
-                    <DB delta={calcDelta(totCtr, priorCtr)} />
-                  </div>
+                  <SparkMetricCard
+                    label={conversionLabel}
+                    value={totConv > 0 ? totConv.toFixed(0) : '—'}
+                    delta={prior ? calcDelta(totConv, prior.conversions) : undefined}
+                    sparkData={convSpark}
+                    sparkColor="var(--green)"
+                    delay={1}
+                  />
+                  <SparkMetricCard
+                    label="CPL"
+                    value={totCpl > 0 ? fmtCurrency(totCpl) : '—'}
+                    delta={prior && priorCpl > 0 ? calcDelta(totCpl, priorCpl) : undefined}
+                    invertDelta
+                    sparkData={cplSpark}
+                    sparkColor="#f59e0b"
+                    delay={2}
+                  />
+                  <SparkMetricCard
+                    label="CTR"
+                    value={fmtPct(totCtr)}
+                    delta={prior ? calcDelta(totCtr, priorCtr) : undefined}
+                    sparkData={ctrSpark}
+                    sparkColor="var(--blue)"
+                    delay={3}
+                  />
                 </>
               )}
-              <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Clicks</p>
-                <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(totClicks)}</p>
-                <DB delta={calcDelta(totClicks, prior?.clicks ?? 0)} />
-              </div>
+              <SparkMetricCard
+                label="Clicks"
+                value={fmtNum(totClicks)}
+                delta={prior ? calcDelta(totClicks, prior.clicks) : undefined}
+                sparkData={clicksSpark}
+                sparkColor="#8b5cf6"
+                delay={4}
+              />
             </div>
           )
         })()}

@@ -135,6 +135,11 @@ export interface Client {
   benchmark_cpm?:       number | null
   /** When true, shows the Performance Benchmarks section on the client dashboard. */
   show_benchmarks?: boolean
+  /**
+   * Metric card IDs hidden from the client dashboard.
+   * Valid IDs: spend, leads, cpl, roas, ctr, conv_rate, cpm, daily_chart, campaigns
+   */
+  hidden_metrics?: string[] | null
   created_at: string
   updated_at: string
 }
