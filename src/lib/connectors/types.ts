@@ -37,7 +37,7 @@ export interface MetaAdsRawRow {
   campaign_id: string
   campaign_name: string
   objective: string
-  campaign_status: string   // ACTIVE | PAUSED | ARCHIVED | DELETED
+  campaign_status?: string  // ACTIVE | PAUSED | ARCHIVED | DELETED
   date: string              // YYYY-MM-DD
   spend: number
   impressions: number
