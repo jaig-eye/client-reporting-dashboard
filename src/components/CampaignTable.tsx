@@ -23,7 +23,6 @@ type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'c
 
 export default function CampaignTable({
   campaigns,
-  daysInPeriod = 30,
   connectionId,
   dateFrom,
   dateTo,
@@ -31,7 +30,6 @@ export default function CampaignTable({
   campaignBasePath = '/dashboard/campaign',
 }: {
   campaigns: Campaign[]
-  daysInPeriod?: number
   connectionId?: string
   dateFrom?: string
   dateTo?: string
@@ -84,8 +82,6 @@ export default function CampaignTable({
     return `${campaignBasePath}/${encodeURIComponent(c.campaign_id)}?${qs}`
   }
 
-  const days = Math.max(1, daysInPeriod)
-
   // Totals
   const totSpend = campaigns.reduce((s, c) => s + c.spend, 0)
   const totImpr  = campaigns.reduce((s, c) => s + c.impressions, 0)
@@ -102,7 +98,6 @@ export default function CampaignTable({
           <tr>
             <SortTh sk="campaign_name" left>Campaign</SortTh>
             <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-            <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>
             <SortTh sk="spend">Cost</SortTh>
             <SortTh sk="impressions">Impr.</SortTh>
             <SortTh sk="clicks">Clicks</SortTh>
@@ -117,7 +112,6 @@ export default function CampaignTable({
           {sorted.map((c, i) => {
             const link      = drillLink(c)
             const isEcom    = c.display_mode === 'ecommerce'
-            const dailyBudg = c.spend / days
             const statusUp  = (c.status ?? '').toUpperCase()
             const isActive  = !c.status || statusUp === 'ENABLED' || statusUp === 'ACTIVE'
             const isPaused  = statusUp === 'PAUSED'
@@ -158,9 +152,6 @@ export default function CampaignTable({
                     <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
                   )}
                 </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                  ${dailyBudg.toFixed(0)}/d
-                </td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                   {c.impressions > 0 ? c.impressions.toLocaleString() : <span style={{ color: 'var(--text-faint)' }}>—</span>}
@@ -199,7 +190,6 @@ export default function CampaignTable({
               {campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}
             </td>
             <td></td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>${(totSpend / days).toFixed(0)}/d</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>${totSpend.toFixed(2)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr.toLocaleString()}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totClick.toLocaleString()}</td>

@@ -471,7 +471,6 @@ export default async function CampaignDetailPage({
           <AdGroupTable
             rows={adGroups}
             conversionLabel={conversionLabel}
-            daysInPeriod={daysInPeriod}
             isPMax={isGoogleAds && isPMax}
           />
         </div>

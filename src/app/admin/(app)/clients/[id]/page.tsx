@@ -22,6 +22,7 @@ import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
 import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
+import ClientDirectConnections from './ClientDirectConnections'
 
 export const dynamic = 'force-dynamic'
 
@@ -327,6 +328,18 @@ export default async function ClientDetailPage({
 
       {/* ── Full-width: Campaign Manager + Conversion Mapping + Raw Data ── */}
       <div className="mt-6 space-y-6">
+
+        {/* Direct connections for GHL / WordPress */}
+        <div className="card p-5">
+          <h2 className="section-title mb-1">Client Direct Connections</h2>
+          <p className="section-desc mb-4">
+            GoHighLevel and WordPress are configured per-client since each client has their own credentials.
+          </p>
+          <ClientDirectConnections
+            clientId={id}
+            existingTypes={connections.filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress').map(c => c.connector.type as 'ghl' | 'wordpress')}
+          />
+        </div>
 
         <div className="card p-5">
           <h2 className="section-title mb-1">Performance Benchmarks</h2>

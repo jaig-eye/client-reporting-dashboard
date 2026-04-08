@@ -494,6 +494,43 @@ export default async function DashboardPage({
                   benchmark={{ actual: current.cpm, target: effectiveBenchmarks.benchmark_cpm, actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), color: '#f59e0b' }}
                   delay={5} />
               )}
+
+              {/* ── Additional toggleable metric cards ── */}
+              {!hiddenMetrics.has('conversions') && (
+                <SparkMetricCard label="Conversions" value={fmtNum(current.conversions)}
+                  delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
+                  sparkData={convSpark} sparkColor={settings.chart_color_conversions ?? '#10b981'} delay={6} />
+              )}
+              {!hiddenMetrics.has('conversion_value') && isEcomDash && (
+                <SparkMetricCard label="Conv. Value" value={fmt$(current.conversionValue)}
+                  delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
+                  sparkData={convValueSpark} sparkColor="#8b5cf6" delay={7} />
+              )}
+              {!hiddenMetrics.has('roas') && isEcomDash && (
+                <SparkMetricCard label="ROAS" value={fmtRoas(current.roas)}
+                  delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
+                  sparkData={roasSpark} sparkColor="#8b5cf6" delay={8} />
+              )}
+              {!hiddenMetrics.has('impressions') && (
+                <SparkMetricCard label="Impressions" value={fmtNum(current.impressions)}
+                  delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
+                  sparkData={ds.map(d => ({ v: d.impressions }))} sparkColor="#6366f1" delay={9} />
+              )}
+              {!hiddenMetrics.has('cpc') && (
+                <SparkMetricCard label="Avg. CPC" value={current.cpc > 0 ? fmtCurrency(current.cpc) : '—'}
+                  delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
+                  invertDelta sparkData={ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 }))} sparkColor="#f59e0b" delay={10} />
+              )}
+              {!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0 && (
+                <SparkMetricCard label="Reach" value={fmtNum(current.reach ?? 0)}
+                  delta={showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined}
+                  sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 }))} sparkColor="#06b6d4" delay={11} />
+              )}
+              {!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0 && (
+                <SparkMetricCard label="Frequency" value={(current.frequency ?? 0).toFixed(2)}
+                  delta={showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined}
+                  sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 }))} sparkColor="#f97316" delay={12} />
+              )}
             </div>
 
             {/* Daily Performance chart */}
@@ -529,7 +566,6 @@ export default async function DashboardPage({
                 </div>
                 <CampaignTable
                   campaigns={campaigns}
-                  daysInPeriod={daysInPeriod}
                   connectionId={isAllSources ? undefined : activeConnection?.id}
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}

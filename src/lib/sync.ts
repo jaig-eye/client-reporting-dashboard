@@ -225,6 +225,27 @@ export async function syncClient(
           clientId,
           result.rows as unknown as GhlRawRow[]
         )
+      } else if (connection.connector.type === 'google_analytics') {
+        recordCount = await upsertGA4Metrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as unknown as import('./connectors/google-analytics').GA4RawRow[]
+        )
+      } else if (connection.connector.type === 'google_search_console') {
+        recordCount = await upsertGSCMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as unknown as import('./connectors/google-search-console').GSCRawRow[]
+        )
+      } else if (connection.connector.type === 'google_business_profile') {
+        recordCount = await upsertGBPMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as unknown as import('./connectors/google-business-profile').GBPRawRow[]
+        )
       }
       // WordPress connector: no metrics to sync (write-only connector)
 
@@ -349,6 +370,7 @@ export async function upsertMetaAdsMetrics(
       campaign_id:       String(r.campaign_id),
       campaign_name:     String(r.campaign_name || ''),
       objective:         r.objective || null,
+      campaign_status:   r.campaign_status || null,
       date:              String(r.date).split('T')[0],
       spend,
       impressions,
@@ -751,4 +773,113 @@ function computeDateRange(days: number): [string, string] {
   const from = new Date(to)
   from.setDate(from.getDate() - (days - 1))
   return [fmt(from), fmt(to)]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GA4 / GSC / GBP upsert functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function upsertGA4Metrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-analytics').GA4RawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:        connectionId,
+    client_id:            clientId,
+    date:                 r.date,
+    channel_group:        r.channel_group || null,
+    sessions:             r.sessions,
+    users:                r.users,
+    new_users:            r.new_users,
+    page_views:           r.page_views,
+    conversions:          r.conversions,
+    bounce_rate:          r.bounce_rate,
+    avg_session_duration: r.avg_session_duration,
+    synced_at:            new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('ga4_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date,channel_group',
+        ignoreDuplicates: false,
+      })
+  }
+  return mapped.length
+}
+
+export async function upsertGSCMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-search-console').GSCRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    date:          r.date,
+    query:         r.query   || null,
+    page:          r.page    || null,
+    country:       r.country || null,
+    clicks:        r.clicks,
+    impressions:   r.impressions,
+    ctr:           r.ctr,
+    position:      r.position,
+    synced_at:     new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('gsc_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date,query,page,country',
+        ignoreDuplicates: false,
+      })
+  }
+  return mapped.length
+}
+
+export async function upsertGBPMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-business-profile').GBPRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.location_id)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:      connectionId,
+    client_id:          clientId,
+    date:               r.date,
+    location_id:        r.location_id,
+    location_name:      r.location_name || null,
+    views_search:       r.views_search,
+    views_maps:         r.views_maps,
+    website_clicks:     r.website_clicks,
+    call_clicks:        r.call_clicks,
+    direction_clicks:   r.direction_clicks,
+    reviews_count:      r.reviews_count,
+    reviews_avg_rating: r.reviews_avg_rating || null,
+    synced_at:          new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('gbp_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,location_id,date',
+        ignoreDuplicates: false,
+      })
+  }
+  return mapped.length
 }

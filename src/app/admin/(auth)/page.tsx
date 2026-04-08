@@ -4,7 +4,7 @@
 // Super admin: leave email blank, enter master password.
 // Regular admin: enter email + password set by super admin.
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function AdminLoginPage() {
@@ -13,6 +13,16 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState('')
   const [loading,  setLoading]  = useState(false)
+  const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
+    agency_name: 'LaunchLocal', agency_logo_url: null,
+  })
+
+  useEffect(() => {
+    fetch('/api/settings/branding')
+      .then(r => r.json())
+      .then(d => setBranding(d))
+      .catch(() => {})
+  }, [])
 
   const isSuperAdmin = email.trim() === ''
 
@@ -41,14 +51,24 @@ export default function AdminLoginPage() {
     >
       <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
         <div className="mb-6">
-          <div
-            className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-3"
-            style={{ background: 'var(--blue)' }}
-          >
-            A
+          <div className="mb-3">
+            {branding.agency_logo_url ? (
+              <img
+                src={branding.agency_logo_url}
+                alt={branding.agency_name}
+                style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
+              />
+            ) : (
+              <div
+                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg"
+                style={{ background: 'var(--blue)' }}
+              >
+                {branding.agency_name.charAt(0).toUpperCase()}
+              </div>
+            )}
           </div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            Admin Login
+            {branding.agency_name}
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
             Sign in to access the agency dashboard.

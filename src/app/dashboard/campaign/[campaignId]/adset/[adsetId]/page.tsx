@@ -441,8 +441,6 @@ export default async function AdSetDetailPage({
       }))
     : []
 
-  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
-
   // Convert AdCardData → AdRow for the table
   const adRows: AdRow[] = adCardList.map(a => {
     const cost = adFuelCut > 0 ? a.adFuelSpend : a.spend
@@ -723,46 +721,43 @@ export default async function AdSetDetailPage({
               </div>
             )}
 
-            <TabContainer
-              tabs={[
-                { label: 'Keywords', count: keywordRows.length },
-                { label: 'Ads', count: adRows.length },
-                ...(negativeKeywords.length > 0 ? [{ label: 'Negative Keywords', count: negativeKeywords.length }] : []),
-              ]}
-              panels={[
-                /* Keywords tab */
-                <div key="kw">
-                  {keywordRows.length > 0 ? (
+            {(() => {
+              const tabDefs: { label: string; count: number }[] = []
+              const panels: React.ReactNode[] = []
+
+              if (keywordRows.length > 0) {
+                tabDefs.push({ label: 'Keywords', count: keywordRows.length })
+                panels.push(
+                  <div key="kw">
                     <KeywordTable
                       rows={keywordRows}
                       conversionLabel={conversionLabel}
                       isEcom={isEcom}
                       adFuelLabel="Cost"
                     />
-                  ) : (
-                    <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-                      No keyword data for this period.
-                    </p>
-                  )}
-                </div>,
-                /* Ads tab */
-                <div key="ads">
-                  {searchAdCopyRows.length > 0 ? (
-                    <SearchAdCopy ads={searchAdCopyRows} />
-                  ) : adRows.length > 0 ? (
-                    <AdRowTable
-                      rows={adRows}
-                      conversionLabel={conversionLabel}
-                      daysInPeriod={daysInPeriod}
-                    />
-                  ) : (
-                    <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-                      No ad data for this period.
-                    </p>
-                  )}
-                </div>,
-                /* Negative Keywords tab */
-                ...(negativeKeywords.length > 0 ? [(
+                  </div>
+                )
+              }
+
+              if (searchAdCopyRows.length > 0 || adRows.length > 0) {
+                tabDefs.push({ label: 'Ads', count: searchAdCopyRows.length || adRows.length })
+                panels.push(
+                  <div key="ads">
+                    {searchAdCopyRows.length > 0 ? (
+                      <SearchAdCopy ads={searchAdCopyRows} />
+                    ) : (
+                      <AdRowTable
+                        rows={adRows}
+                        conversionLabel={conversionLabel}
+                      />
+                    )}
+                  </div>
+                )
+              }
+
+              if (negativeKeywords.length > 0) {
+                tabDefs.push({ label: 'Negative Keywords', count: negativeKeywords.length })
+                panels.push(
                   <div key="neg" className="space-y-4">
                     {negativeKeywords.some(k => k.level === 'campaign') && (
                       <div>
@@ -777,9 +772,12 @@ export default async function AdSetDetailPage({
                       </div>
                     )}
                   </div>
-                )] : []),
-              ]}
-            />
+                )
+              }
+
+              if (tabDefs.length === 0) return null
+              return <TabContainer tabs={tabDefs} panels={panels} />
+            })()}
           </div>
         ) : (
           /* Meta or Google non-Search: just the ads table */
@@ -790,7 +788,6 @@ export default async function AdSetDetailPage({
             <AdRowTable
               rows={adRows}
               conversionLabel={conversionLabel}
-              daysInPeriod={daysInPeriod}
             />
           </div>
         )}

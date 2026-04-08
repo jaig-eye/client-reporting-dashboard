@@ -233,7 +233,7 @@ export default async function AdminPreviewCampaignPage({
 
         <div className="card p-6">
           <h2 className="section-title mb-4">{displayGroupLabel}s</h2>
-          <AdGroupTable rows={adGroups} conversionLabel={conversionLabel} daysInPeriod={daysInPeriod} isPMax={isGoogleAds && isPMax} />
+          <AdGroupTable rows={adGroups} conversionLabel={conversionLabel} isPMax={isGoogleAds && isPMax} />
         </div>
 
         {campaignKeywordRows.length > 0 && (

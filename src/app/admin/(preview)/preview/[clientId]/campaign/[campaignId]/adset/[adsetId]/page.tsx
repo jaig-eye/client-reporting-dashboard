@@ -616,7 +616,7 @@ export default async function AdminPreviewAdSetPage({
             <div className="mb-5">
               <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
             </div>
-            <AdRowTable rows={adRows} conversionLabel={conversionLabel} daysInPeriod={daysInPeriod} />
+            <AdRowTable rows={adRows} conversionLabel={conversionLabel} />
           </div>
         )}
 

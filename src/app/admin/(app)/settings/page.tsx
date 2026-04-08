@@ -241,57 +241,61 @@ export default function AgencySettingsPage() {
           </div>
         </div>
 
-        {error && <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>}
+        {/* AI Configuration */}
+        <div className="card p-6">
+          <h2 className="section-title mb-1">AI Configuration</h2>
+          <p className="section-desc mb-4">
+            Configure the AI model used for content generation and future insights features.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Provider">
+              <select
+                className="input"
+                value={form.ai_provider}
+                onChange={e => setForm(f => ({ ...f, ai_provider: e.target.value }))}
+              >
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+              </select>
+            </FormField>
+            <FormField label="Model">
+              <input
+                className="input"
+                type="text"
+                value={form.ai_model}
+                onChange={e => setForm(f => ({ ...f, ai_model: e.target.value }))}
+                placeholder={form.ai_provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'}
+              />
+            </FormField>
+            <div className="sm:col-span-2">
+              <FormField label="API Key" hint="stored securely, never exposed to clients">
+                <input
+                  className="input"
+                  type="password"
+                  value={form.ai_api_key}
+                  onChange={e => setForm(f => ({ ...f, ai_api_key: e.target.value }))}
+                  placeholder={form.ai_api_key ? '••••••••••' : 'Enter API key…'}
+                />
+              </FormField>
+            </div>
+          </div>
+        </div>
 
-        <div className="flex items-center gap-3">
+        {/* Sticky save bar */}
+        <div style={{
+          position: 'sticky', bottom: 0,
+          background: 'var(--bg-surface)',
+          borderTop: '1px solid var(--border)',
+          padding: '12px 0', zIndex: 10,
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+        }}>
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
-          {saved && (
-            <span className="text-sm" style={{ color: 'var(--green)' }}>Saved ✓</span>
-          )}
+          {saved  && <span className="text-sm" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {error  && <span className="text-sm" style={{ color: 'var(--red)' }}>{error}</span>}
         </div>
       </form>
-
-      {/* AI Configuration */}
-      <div className="card p-6 mt-5">
-        <h2 className="section-title mb-1">AI Configuration</h2>
-        <p className="section-desc mb-4">
-          Configure the AI model used for content generation and future insights features.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormField label="Provider">
-            <select
-              className="input"
-              value={form.ai_provider}
-              onChange={e => setForm(f => ({ ...f, ai_provider: e.target.value }))}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-          </FormField>
-          <FormField label="Model">
-            <input
-              className="input"
-              type="text"
-              value={form.ai_model}
-              onChange={e => setForm(f => ({ ...f, ai_model: e.target.value }))}
-              placeholder={form.ai_provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'}
-            />
-          </FormField>
-          <div className="sm:col-span-2">
-            <FormField label="API Key" hint="stored securely, never exposed to clients">
-              <input
-                className="input"
-                type="password"
-                value={form.ai_api_key}
-                onChange={e => setForm(f => ({ ...f, ai_api_key: e.target.value }))}
-                placeholder={form.ai_api_key ? '••••••••••' : 'Enter API key…'}
-              />
-            </FormField>
-          </div>
-        </div>
-      </div>
 
       {/* Sync Schedule */}
       <div className="card p-6 mt-5">

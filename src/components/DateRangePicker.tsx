@@ -11,6 +11,16 @@ function getRollingRange(days: number): [string, string] {
   return [fmtD(from), fmtD(to)]
 }
 
+function getTodayRange(): [string, string] {
+  const d = fmtD(new Date())
+  return [d, d]
+}
+
+function getYesterdayRange(): [string, string] {
+  const y = new Date(Date.now() - 24 * 60 * 60 * 1000)
+  return [fmtD(y), fmtD(y)]
+}
+
 function getMonthRange(current: boolean): [string, string] {
   const now = new Date()
   if (current) {
@@ -36,10 +46,13 @@ function getLastYearRange(): [string, string] {
   return [fmtD(from), fmtD(to)]
 }
 
-type PresetId = 'last7' | 'last30' | 'last90' | 'mtd' | 'lastMonth' | 'ytd' | 'lastYear'
+type PresetId = 'today' | 'yesterday' | 'last7' | 'last14' | 'last30' | 'last90' | 'mtd' | 'lastMonth' | 'ytd' | 'lastYear'
 
 const PRESETS: { id: PresetId; label: string }[] = [
+  { id: 'today',     label: 'Today'        },
+  { id: 'yesterday', label: 'Yesterday'    },
   { id: 'last7',     label: 'Last 7 days'  },
+  { id: 'last14',    label: 'Last 14 days' },
   { id: 'last30',    label: 'Last 30 days' },
   { id: 'last90',    label: 'Last 90 days' },
   { id: 'mtd',       label: 'Month to Date' },
@@ -50,7 +63,10 @@ const PRESETS: { id: PresetId; label: string }[] = [
 
 function presetRange(id: PresetId): [string, string] {
   switch (id) {
+    case 'today':     return getTodayRange()
+    case 'yesterday': return getYesterdayRange()
     case 'last7':     return getRollingRange(7)
+    case 'last14':    return getRollingRange(14)
     case 'last30':    return getRollingRange(30)
     case 'last90':    return getRollingRange(90)
     case 'mtd':       return getMonthRange(true)

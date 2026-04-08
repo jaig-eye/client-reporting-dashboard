@@ -6,6 +6,8 @@ interface MetricRow {
   clicks: number
   conversions: number
   conversion_value: number
+  reach?: number
+  frequency?: number
   date?: string
 }
 
@@ -16,17 +18,31 @@ export function summarizeMetrics(rows: MetricRow[]): MetricSummary {
   const conversions     = rows.reduce((s, r) => s + Number(r.conversions), 0)
   const conversionValue = rows.reduce((s, r) => s + Number(r.conversion_value), 0)
 
+  // Reach: sum (unique reach is already deduplicated per day by Meta)
+  const reach = rows.reduce((s, r) => s + Number(r.reach ?? 0), 0)
+
+  // Frequency: impressions-weighted average across rows
+  const freqImprTotal = rows.reduce((s, r) => s + Number(r.impressions), 0)
+  const freqWeighted  = rows.reduce((s, r) => {
+    const imp  = Number(r.impressions)
+    const freq = Number(r.frequency ?? 0)
+    return s + freq * imp
+  }, 0)
+  const frequency = freqImprTotal > 0 ? freqWeighted / freqImprTotal : 0
+
   return {
     spend,
     impressions,
     clicks,
     conversions,
     conversionValue,
-    roas: spend > 0 ? conversionValue / spend : 0,
-    ctr:  impressions > 0 ? clicks / impressions : 0,
-    cpc:  clicks > 0 ? spend / clicks : 0,
-    cpl:  conversions > 0 ? spend / conversions : 0,
-    cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
+    roas:      spend > 0 ? conversionValue / spend : 0,
+    ctr:       impressions > 0 ? clicks / impressions : 0,
+    cpc:       clicks > 0 ? spend / clicks : 0,
+    cpl:       conversions > 0 ? spend / conversions : 0,
+    cpm:       impressions > 0 ? (spend / impressions) * 1000 : 0,
+    reach,
+    frequency,
   }
 }
 

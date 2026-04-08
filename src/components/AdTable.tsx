@@ -31,17 +31,14 @@ type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions
 export function AdGroupTable({
   rows,
   conversionLabel,
-  daysInPeriod = 30,
   isPMax = false,
 }: {
   rows:             AdGroupRow[]
   conversionLabel:  string
-  daysInPeriod?:    number
   isPMax?:          boolean
 }) {
   const [sortKey, setSortKey] = useState<AdGroupSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const days = Math.max(1, daysInPeriod)
 
   function toggleSort(key: AdGroupSortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
@@ -93,7 +90,6 @@ export function AdGroupTable({
         <thead>
           <tr>
             <SortTh sk="setName" align="left">Ad Set / Group</SortTh>
-            <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>Daily Budget</th>
             <SortTh sk="spend">Cost</SortTh>
             <SortTh sk="impressions">Impr.</SortTh>
             <SortTh sk="clicks">Clicks</SortTh>
@@ -112,9 +108,6 @@ export function AdGroupTable({
                 <a href={row.href} style={{ color: 'var(--blue)', fontWeight: 500, textDecoration: 'none', fontSize: '0.85rem' }}>
                   {row.setName || row.setId}
                 </a>
-              </td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                ${(row.spend / days).toFixed(0)}/d
               </td>
               <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
                 {fmt$(row.spend)}
@@ -143,7 +136,6 @@ export function AdGroupTable({
             <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {rows.length} ad set{rows.length !== 1 ? 's' : ''}
             </td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>${(totSpend / days).toFixed(0)}/d</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
@@ -194,15 +186,12 @@ type AdRowSortKey = 'ad_name' | 'spend' | 'conversions' | 'cpl' | 'impressions' 
 export function AdRowTable({
   rows,
   conversionLabel,
-  daysInPeriod = 30,
 }: {
   rows:             AdRow[]
   conversionLabel:  string
-  daysInPeriod?:    number
 }) {
   const [sortKey, setSortKey] = useState<AdRowSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const days = Math.max(1, daysInPeriod)
 
   function toggleSort(key: AdRowSortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
@@ -254,7 +243,6 @@ export function AdRowTable({
             <th style={{ width: 48 }}></th>
             <SortTh sk="ad_name" align="left">Ad</SortTh>
             <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-            <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>Daily Budget</th>
             <SortTh sk="spend">Cost</SortTh>
             <SortTh sk="impressions">Impr.</SortTh>
             <SortTh sk="clicks">Clicks</SortTh>
@@ -323,9 +311,6 @@ export function AdRowTable({
                     {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
                   </span>
                 </td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  ${(row.spend / days).toFixed(0)}/d
-                </td>
                 <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
                   {fmt$(row.spend)}
                 </td>
@@ -352,7 +337,6 @@ export function AdRowTable({
               {rows.length} ad{rows.length !== 1 ? 's' : ''}
             </td>
             <td></td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>${(totSpend / days).toFixed(0)}/d</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>

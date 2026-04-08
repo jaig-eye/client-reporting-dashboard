@@ -23,6 +23,7 @@ export type ConnectorType =
   | 'meta_ads'
   | 'google_analytics'
   | 'google_search_console'
+  | 'google_business_profile'
   | 'ghl'
   | 'wordpress'
 

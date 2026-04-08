@@ -17,6 +17,9 @@ import type { ConnectorType, ConnectorTypeDef } from '../types'
 import type { ConnectorRegistryEntry, ConnectorAdapter } from './types'
 import { googleAdsConnector } from './google-ads'
 import { metaAdsConnector } from './meta-ads'
+import { googleAnalyticsConnector } from './google-analytics'
+import { googleSearchConsoleConnector } from './google-search-console'
+import { googleBusinessProfileConnector } from './google-business-profile'
 import { ghlConnector } from './ghl'
 import { wordpressConnector } from './wordpress'
 import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo, GhlLogo, WpLogo } from '@/components/ConnectorLogo'
@@ -63,6 +66,15 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     color: '#34A853',
     authFlow: 'oauth',
   },
+  google_business_profile: {
+    type: 'google_business_profile',
+    label: 'Google Business Profile',
+    description: 'Connect Google Business Profile to track views, calls, and reviews.',
+    icon: 'B',
+    logo: GALogo,   // reuse GA logo as placeholder until a GBP logo component is added
+    color: '#0F9D58',
+    authFlow: 'oauth',
+  },
   ghl: {
     type: 'ghl',
     label: 'GoHighLevel',
@@ -90,12 +102,13 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONNECTOR_ADAPTERS: Partial<Record<ConnectorType, ConnectorAdapter>> = {
-  google_ads: googleAdsConnector,
-  meta_ads:   metaAdsConnector,
-  ghl:        ghlConnector,
-  wordpress:  wordpressConnector,
-  // google_analytics:       not yet implemented
-  // google_search_console:  not yet implemented
+  google_ads:              googleAdsConnector,
+  meta_ads:                metaAdsConnector,
+  google_analytics:        googleAnalyticsConnector,
+  google_search_console:   googleSearchConsoleConnector,
+  google_business_profile: googleBusinessProfileConnector,
+  ghl:                     ghlConnector,
+  wordpress:               wordpressConnector,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +121,7 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'meta_ads',
   'google_analytics',
   'google_search_console',
+  'google_business_profile',
   'ghl',
   'wordpress',
 ]

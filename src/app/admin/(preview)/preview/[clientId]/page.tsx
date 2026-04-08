@@ -393,7 +393,7 @@ export default async function AdminPreviewPage({
                     <p className="section-desc">{campaigns.length} campaigns</p>
                   </div>
                 </div>
-                <CampaignTable campaigns={campaigns} daysInPeriod={daysInPeriod}
+                <CampaignTable campaigns={campaigns}
                   connectionId={isAllSources ? undefined : activeConnection?.id}
                   dateFrom={fmtDate(fromDate)} dateTo={fmtDate(toDate)}
                   compare={compare !== 'none' ? compare : undefined}
