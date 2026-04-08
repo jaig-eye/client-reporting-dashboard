@@ -20,6 +20,8 @@ export default function SpendChart({
   colorPriorSpend        = '#94a3b8',
   colorConversions       = '#059669',
   colorPriorConversions  = '#34d399',
+  spendLabel             = 'Spend',
+  conversionsLabel       = 'Conversions',
 }: {
   data:       DailyMetric[]
   priorData?: DailyMetric[]
@@ -27,6 +29,8 @@ export default function SpendChart({
   colorPriorSpend?:       string
   colorConversions?:      string
   colorPriorConversions?: string
+  spendLabel?:            string
+  conversionsLabel?:      string
 }) {
   if (!data.length) {
     return (
@@ -82,7 +86,7 @@ export default function SpendChart({
         />
         <Tooltip
           formatter={(value: number, name: string) => {
-            if (name === 'Spend' || name === 'Prior Spend') return [`$${value.toFixed(2)}`, name]
+            if (name === spendLabel || name === 'Prior Spend') return [`$${value.toFixed(2)}`, name]
             return [value, name]
           }}
           labelFormatter={(label, payload) => {
@@ -111,7 +115,7 @@ export default function SpendChart({
           fill={colorSpend}
           opacity={0.65}
           radius={[3, 3, 0, 0]}
-          name="Spend"
+          name={spendLabel}
           maxBarSize={isCompare ? 12 : 24}
         />
 
@@ -137,7 +141,7 @@ export default function SpendChart({
           strokeWidth={3}
           dot={{ fill: colorConversions, r: 2, strokeWidth: 0 }}
           activeDot={{ r: 5, strokeWidth: 0 }}
-          name="Conversions"
+          name={conversionsLabel}
         />
 
         {/* Prior conversions line — dashed */}
