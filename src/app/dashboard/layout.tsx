@@ -40,9 +40,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
         .eq('status', 'active')
 
       activeConnectorTypes = (
-        (connectionsData ?? []) as { connector: Pick<Connector, 'type'> }[]
+        (connectionsData ?? []) as unknown as { connector: { type: ConnectorType } | null }[]
       )
-        .map(c => c.connector.type as ConnectorType)
+        .map(c => c.connector?.type)
+        .filter((v): v is ConnectorType => !!v)
         .filter((v, i, arr) => arr.indexOf(v) === i)
     }
   }

@@ -40,9 +40,10 @@ export default async function PreviewClientLayout({
     .eq('status', 'active')
 
   const activeConnectorTypes: ConnectorType[] = (
-    (connectionsData ?? []) as { connector: Pick<Connector, 'type'> }[]
+    (connectionsData ?? []) as unknown as { connector: { type: ConnectorType } | null }[]
   )
-    .map(c => c.connector.type as ConnectorType)
+    .map(c => c.connector?.type)
+    .filter((v): v is ConnectorType => !!v)
     .filter((v, i, arr) => arr.indexOf(v) === i)
 
   // Build a preview-aware base URL prefix so sidebar links go to preview routes
