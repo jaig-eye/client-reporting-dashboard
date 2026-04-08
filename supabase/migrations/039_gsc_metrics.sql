@@ -17,9 +17,11 @@ CREATE TABLE IF NOT EXISTS gsc_metrics (
   ctr           NUMERIC(8,6),   -- 0.0 to 1.0
   position      NUMERIC(8,2),   -- average position (1-based)
   raw_data      JSONB,
-  synced_at     TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(connection_id, date, COALESCE(query, ''), COALESCE(page, ''), COALESCE(country, ''))
+  synced_at     TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gsc_unique_row
+  ON gsc_metrics(connection_id, date, COALESCE(query, ''), COALESCE(page, ''), COALESCE(country, ''));
 
 CREATE INDEX IF NOT EXISTS idx_gsc_client_date
   ON gsc_metrics(client_id, date);
