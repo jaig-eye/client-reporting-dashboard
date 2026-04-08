@@ -36,7 +36,7 @@ export default async function ContentPage() {
   const connections = (wpConnections ?? []) as unknown as WpConnection[]
 
   // Also get client names for display
-  const clientIds = [...new Set(connections.map(c => c.client_id))]
+  const clientIds = Array.from(new Set(connections.map(c => c.client_id)))
   const { data: clients } = clientIds.length > 0
     ? await db.from('clients').select('id, name').in('id', clientIds)
     : { data: [] }
