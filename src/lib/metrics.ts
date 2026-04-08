@@ -1,4 +1,4 @@
-import type { MetricSummary, DailyMetric } from './types'
+import type { MetricSummary, DailyMetric, MetaAction } from './types'
 
 interface MetricRow {
   spend: number
@@ -98,4 +98,38 @@ export function fmtRoas(n: number): string {
 
 export function fmtCurrency(n: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+}
+
+/**
+ * Resolve Meta conversion count using primary action, falling back to secondary.
+ * Tries primaryAction first; if no conversions found, tries fallbackAction.
+ */
+export function resolveMetaConversions(
+  actions: MetaAction[] | null | undefined,
+  actionValues: MetaAction[] | null | undefined,
+  primaryAction: string,
+  fallbackAction?: string | null,
+): { conversions: number; conversionValue: number } {
+  const acts    = actions      ?? []
+  const actVals = actionValues ?? []
+
+  // Try primary action
+  const primary    = acts.find(a => a.action_type === primaryAction)
+  const primaryVal = actVals.find(a => a.action_type === primaryAction)
+  const pConv = primary    ? parseFloat(primary.value    || '0') : 0
+  const pCV   = primaryVal ? parseFloat(primaryVal.value || '0') : 0
+
+  if (pConv > 0) return { conversions: pConv, conversionValue: pCV }
+
+  // Try fallback action
+  if (fallbackAction) {
+    const fb    = acts.find(a => a.action_type === fallbackAction)
+    const fbVal = actVals.find(a => a.action_type === fallbackAction)
+    return {
+      conversions:     fb    ? parseFloat(fb.value    || '0') : 0,
+      conversionValue: fbVal ? parseFloat(fbVal.value || '0') : 0,
+    }
+  }
+
+  return { conversions: 0, conversionValue: 0 }
 }

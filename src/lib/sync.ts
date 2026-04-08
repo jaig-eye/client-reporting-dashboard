@@ -17,6 +17,7 @@ import { getConnectorAdapter } from './connectors/registry'
 import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords, fetchGoogleNegativeKeywords } from './connectors/google-ads'
 import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
+import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import type { GoogleAdsAdRawRow } from './connectors/google-ads'
@@ -217,7 +218,15 @@ export async function syncClient(
           adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
         }
+      } else if (connection.connector.type === 'ghl') {
+        recordCount = await upsertGhlMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as unknown as GhlRawRow[]
+        )
       }
+      // WordPress connector: no metrics to sync (write-only connector)
 
       totalRecords += recordCount
 
@@ -641,6 +650,49 @@ async function upsertCampaignAssignments(
         ignoreDuplicates: true, // never overwrite admin-set fields
       })
   }
+}
+
+/**
+ * Upsert GoHighLevel CRM metrics into ghl_metrics.
+ * On conflict (connection_id, date) the row is updated.
+ */
+export async function upsertGhlMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GhlRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    date:             String(r.date).split('T')[0],
+    contacts_created: r.contacts_created,
+    total_calls:      r.total_calls,
+    missed_calls:     r.missed_calls,
+    forms_submitted:  r.forms_submitted,
+    reviews_sent:     r.reviews_sent,
+    reviews_received: r.reviews_received,
+    spam_leads:       r.spam_leads,
+    emails_sent:      r.emails_sent,
+    sms_sent:         r.sms_sent,
+    raw_data:         r.raw_data ?? {},
+    synced_at:        new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('ghl_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date',
+        ignoreDuplicates: false,
+      })
+    if (error) throw new Error(`ghl_metrics upsert failed: ${error.message}`)
+  }
+
+  return mapped.length
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas, getDailyTrend } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas, getDailyTrend, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, DailyMetric } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
@@ -20,6 +20,7 @@ import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/Negat
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import TabContainer from '@/components/TabContainer'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,9 +86,16 @@ export default async function AdSetDetailPage({
     ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
 
-  // Conversion action for Meta remapping
+  // Conversion action for Meta remapping with fallback
   const convAction: string | null = source === 'meta_ads'
-    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    ? (isEcom
+        ? (client.purchase_action ?? settings.default_purchase_action ?? 'purchase')
+        : (client.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped'))
+    : null
+  const convActionFallback: string | null = source === 'meta_ads'
+    ? (isEcom
+        ? (client.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
+        : (client.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead'))
     : null
 
   // ── Fetch ad-level metrics for this specific ad group / ad set ─────────────
@@ -245,12 +253,9 @@ export default async function AdSetDetailPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        // When a specific action type is configured, ONLY count that action.
-        // Never fall back to raw conversions (which is sum of all action types).
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
       }
       const afs = applyAdFuel(sp, adFuelCut)
       upsertAd({
@@ -280,10 +285,9 @@ export default async function AdSetDetailPage({
       let co   = Number(r.conversions) || 0
       let cv   = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
       }
       priorTotals.spend           += sp
       priorTotals.impressions     += Number(r.impressions) || 0
@@ -291,18 +295,15 @@ export default async function AdSetDetailPage({
       priorTotals.conversions     += co
       priorTotals.conversionValue += cv
     }
-    // Remap conversions for chart using convAction (same as KPI cards — avoids raw total)
+    // Remap conversions for chart using convAction with fallback
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const remapMeta = (r: any) => {
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const found    = (r.actions       ?? []).find((a: any) => a.action_type === convAction)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const foundVal = (r.action_values ?? []).find((a: any) => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
       }
       return { date: r.date, spend: r.spend, conversions: co, conversion_value: cv, clicks: r.clicks, impressions: Number(r.impressions) || 0 }
     }
@@ -316,31 +317,31 @@ export default async function AdSetDetailPage({
   type KwDbRow = {
     keyword_id: string; keyword_text: string; match_type: string | null
     keyword_status: string | null; spend: number; impressions: number
-    clicks: number; conversions: number
+    clicks: number; conversions: number; date: string
   }
-  const keywordMap = new Map<string, { text: string; matchType: string | null; status: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
+  type KwAgg = { text: string; matchType: string | null; status: string | null; spend: number; impressions: number; clicks: number; conversions: number; daily: Map<string, { spend: number; conversions: number; clicks: number }> }
+  const keywordMap = new Map<string, KwAgg>()
   if (isGoogleAds && !isPMaxGroup) {
     const { data: kwData } = await db
       .from('google_ads_keywords')
-      .select('keyword_id,keyword_text,match_type,keyword_status,spend,impressions,clicks,conversions')
+      .select('keyword_id,keyword_text,match_type,keyword_status,spend,impressions,clicks,conversions,date')
       .eq('client_id', client.id)
       .eq('campaign_id', campaignId)
       .eq('ad_group_id', adsetId)
       .gte('date', dateFrom)
       .lte('date', dateTo)
     for (const kw of (kwData ?? []) as KwDbRow[]) {
+      const sp = Number(kw.spend)||0, im = Number(kw.impressions)||0, cl = Number(kw.clicks)||0, co = Number(kw.conversions)||0
       const ex = keywordMap.get(kw.keyword_id)
       if (ex) {
-        ex.spend       += Number(kw.spend)       || 0
-        ex.impressions += Number(kw.impressions) || 0
-        ex.clicks      += Number(kw.clicks)      || 0
-        ex.conversions += Number(kw.conversions) || 0
+        ex.spend += sp; ex.impressions += im; ex.clicks += cl; ex.conversions += co
+        const dayEx = ex.daily.get(kw.date)
+        if (dayEx) { dayEx.spend += sp; dayEx.conversions += co; dayEx.clicks += cl }
+        else ex.daily.set(kw.date, { spend: sp, conversions: co, clicks: cl })
       } else {
-        keywordMap.set(kw.keyword_id, {
-          text: kw.keyword_text, matchType: kw.match_type, status: kw.keyword_status,
-          spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0,
-          clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0,
-        })
+        const daily = new Map<string, { spend: number; conversions: number; clicks: number }>()
+        daily.set(kw.date, { spend: sp, conversions: co, clicks: cl })
+        keywordMap.set(kw.keyword_id, { text: kw.keyword_text, matchType: kw.match_type, status: kw.keyword_status, spend: sp, impressions: im, clicks: cl, conversions: co, daily })
       }
     }
   }
@@ -363,6 +364,30 @@ export default async function AdSetDetailPage({
       }
     })
     .sort((a, b) => b.impressions - a.impressions)
+
+  // Converting keywords — filtered + enriched with daily sparkline data
+  const convertingKeywords = Array.from(keywordMap.entries())
+    .filter(([, k]) => k.conversions > 0)
+    .sort(([, a], [, b]) => b.conversions - a.conversions)
+    .slice(0, 8)
+    .map(([id, k]) => {
+      const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+      const dailySorted = Array.from(k.daily.entries()).sort(([a], [b]) => a.localeCompare(b))
+      return {
+        id,
+        text:       k.text,
+        matchType:  k.matchType,
+        conversions: k.conversions,
+        spend:       dSpend,
+        cpl:         k.conversions > 0 ? dSpend / k.conversions : 0,
+        ctr:         k.impressions > 0 ? k.clicks / k.impressions : 0,
+        sparkConv:   dailySorted.map(([, d]) => ({ v: d.conversions })),
+        sparkSpend:  dailySorted.map(([, d]) => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend })),
+      }
+    })
+  const totalKeywords      = keywordMap.size
+  const convertingKwCount  = Array.from(keywordMap.values()).filter(k => k.conversions > 0).length
+  const convertingKwPct    = totalKeywords > 0 ? (convertingKwCount / totalKeywords * 100) : 0
 
   // ── Search ad copy rows ───────────────────────────────────────────────────
   // ── Negative keywords ────────────────────────────────────────────────────
@@ -416,32 +441,36 @@ export default async function AdSetDetailPage({
       }))
     : []
 
+  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
+
   // Convert AdCardData → AdRow for the table
-  const adRows: AdRow[] = adCardList.map(a => ({
-    ad_id:           a.ad_id,
-    ad_name:         a.ad_name,
-    ad_type:         a.ad_type,
-    ad_status:       a.ad_status,
-    ad_strength:     a.ad_strength,
-    image_url:       a.image_url,
-    video_id:        a.video_id,
-    video_thumb_url: a.video_thumb_url,
-    thumbnail_url:   a.thumbnail_url,
-    creative_body:   a.creative_body,
-    creative_title:  a.creative_title,
-    headlines:       a.headlines,
-    descriptions:    a.descriptions,
-    final_url:       a.final_url,
-    spend:           a.spend,
-    displaySpend:    adFuelCut > 0 ? a.adFuelSpend : a.spend,
-    impressions:     a.impressions,
-    clicks:          a.clicks,
-    conversions:     a.conversions,
-    conversionValue: a.conversionValue,
-    roas:            a.roas,
-    cpl:             a.cpl,
-    ctr:             a.ctr,
-  }))
+  const adRows: AdRow[] = adCardList.map(a => {
+    const cost = adFuelCut > 0 ? a.adFuelSpend : a.spend
+    return {
+      ad_id:           a.ad_id,
+      ad_name:         a.ad_name,
+      ad_type:         a.ad_type,
+      ad_status:       a.ad_status,
+      ad_strength:     a.ad_strength,
+      image_url:       a.image_url,
+      video_id:        a.video_id,
+      video_thumb_url: a.video_thumb_url,
+      thumbnail_url:   a.thumbnail_url,
+      creative_body:   a.creative_body,
+      creative_title:  a.creative_title,
+      headlines:       a.headlines,
+      descriptions:    a.descriptions,
+      final_url:       a.final_url,
+      spend:           cost,
+      impressions:     a.impressions,
+      clicks:          a.clicks,
+      conversions:     a.conversions,
+      conversionValue: a.conversionValue,
+      cpl:             a.cpl,
+      ctr:             a.ctr,
+      convRate:        a.clicks > 0 ? a.conversions / a.clicks : 0,
+    }
+  })
 
   // Group totals (for the KPI summary cards above the table)
   const totSpend      = adCardList.reduce((t, a) => t + a.spend, 0)
@@ -550,7 +579,7 @@ export default async function AdSetDetailPage({
           return (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               <SparkMetricCard
-                label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}
+                label="Cost"
                 value={fmt$(totDisplaySpd)}
                 delta={prior ? calcDelta(totDisplaySpd, priorDisplaySpd) : undefined}
                 invertDelta
@@ -649,69 +678,119 @@ export default async function AdSetDetailPage({
           </div>
         )}
 
-        {/* ── pMax Asset Gallery OR Search/Display breakdown ───── */}
+        {/* ── pMax Asset Gallery OR Tabbed breakdown ───── */}
         {isPMaxGroup ? (
           <PMaxAssetGallery assets={pMaxAssets} groupName={groupName} />
-        ) : isGoogleAds ? (
-          <>
-            {/* Search Ad Copy */}
-            {searchAdCopyRows.length > 0 && (
-              <div className="card p-6">
-                <h2 className="section-title mb-4">{searchAdCopyRows.length} Ad{searchAdCopyRows.length !== 1 ? 's' : ''}</h2>
-                <SearchAdCopy ads={searchAdCopyRows} />
-              </div>
-            )}
-            {/* Keyword breakdown */}
-            {keywordRows.length > 0 && (
-              <div className="card p-6">
-                <h2 className="section-title mb-1">Keywords</h2>
-                <p className="section-desc mb-4">{keywordRows.length} keyword{keywordRows.length !== 1 ? 's' : ''} in this ad group</p>
-                <KeywordTable
-                  rows={keywordRows}
-                  conversionLabel={conversionLabel}
-                  isEcom={isEcom}
-                  adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'}
-                />
-              </div>
-            )}
-            {searchAdCopyRows.length === 0 && keywordRows.length === 0 && (
-              <div className="card p-6">
-                <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>
-                  No ad copy or keyword data yet — run a sync to populate.
-                </p>
-              </div>
-            )}
-            {/* Negative keywords */}
-            {negativeKeywords.length > 0 && (
-              <div className="card p-6 space-y-4">
-                <div>
-                  <h2 className="section-title">Negative Keywords</h2>
-                  <p className="section-desc">Keywords excluded from this campaign / ad group</p>
+        ) : isGoogleAds && (keywordRows.length > 0 || negativeKeywords.length > 0) ? (
+          /* Google Search: tabbed view with Keywords, Ads, Negative Keywords */
+          <div className="card p-6">
+            {/* Keyword Intelligence summary (above tabs) */}
+            {convertingKeywords.length > 0 && (
+              <div className="mb-5">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <h2 className="section-title">Keyword Intelligence</h2>
+                    <p className="section-desc">Top converting keywords in this ad group</p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="text-right">
+                      <p className="text-2xl font-bold" style={{ color: 'var(--green)' }}>
+                        {convertingKwCount}<span className="text-sm font-normal" style={{ color: 'var(--text-muted)' }}>/{totalKeywords}</span>
+                      </p>
+                      <p className="text-xs" style={{ color: 'var(--text-faint)' }}>converting ({convertingKwPct.toFixed(0)}%)</p>
+                    </div>
+                    <div style={{ width: 48, height: 48, position: 'relative' }}>
+                      <svg viewBox="0 0 48 48" style={{ transform: 'rotate(-90deg)' }}>
+                        <circle cx="24" cy="24" r="20" fill="none" stroke="var(--border)" strokeWidth="4" />
+                        <circle cx="24" cy="24" r="20" fill="none" stroke="var(--green)" strokeWidth="4" strokeDasharray={`${convertingKwPct * 1.257} 125.7`} strokeLinecap="round" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
-                {negativeKeywords.some(k => k.level === 'campaign') && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Campaign-level</p>
-                    <NegativeKeywordList rows={negativeKeywords} level="campaign" />
-                  </div>
-                )}
-                {negativeKeywords.some(k => k.level === 'adgroup') && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Ad Group-level</p>
-                    <NegativeKeywordList rows={negativeKeywords} level="adgroup" />
-                  </div>
-                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {convertingKeywords.map((kw, i) => (
+                    <SparkMetricCard
+                      key={kw.id}
+                      label={kw.text}
+                      value={`${kw.conversions} ${conversionLabel.toLowerCase()}`}
+                      sub={`CPL ${fmtCurrency(kw.cpl)} · CTR ${fmtPct(kw.ctr)}`}
+                      sparkData={kw.sparkConv}
+                      sparkColor="var(--green)"
+                      delay={i}
+                    />
+                  ))}
+                </div>
               </div>
             )}
-          </>
+
+            <TabContainer
+              tabs={[
+                { label: 'Keywords', count: keywordRows.length },
+                { label: 'Ads', count: adRows.length },
+                ...(negativeKeywords.length > 0 ? [{ label: 'Negative Keywords', count: negativeKeywords.length }] : []),
+              ]}
+              panels={[
+                /* Keywords tab */
+                <div key="kw">
+                  {keywordRows.length > 0 ? (
+                    <KeywordTable
+                      rows={keywordRows}
+                      conversionLabel={conversionLabel}
+                      isEcom={isEcom}
+                      adFuelLabel="Cost"
+                    />
+                  ) : (
+                    <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+                      No keyword data for this period.
+                    </p>
+                  )}
+                </div>,
+                /* Ads tab */
+                <div key="ads">
+                  {searchAdCopyRows.length > 0 ? (
+                    <SearchAdCopy ads={searchAdCopyRows} />
+                  ) : adRows.length > 0 ? (
+                    <AdRowTable
+                      rows={adRows}
+                      conversionLabel={conversionLabel}
+                      daysInPeriod={daysInPeriod}
+                    />
+                  ) : (
+                    <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+                      No ad data for this period.
+                    </p>
+                  )}
+                </div>,
+                /* Negative Keywords tab */
+                ...(negativeKeywords.length > 0 ? [(
+                  <div key="neg" className="space-y-4">
+                    {negativeKeywords.some(k => k.level === 'campaign') && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Campaign-level</p>
+                        <NegativeKeywordList rows={negativeKeywords} level="campaign" />
+                      </div>
+                    )}
+                    {negativeKeywords.some(k => k.level === 'adgroup') && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>Ad Group-level</p>
+                        <NegativeKeywordList rows={negativeKeywords} level="adgroup" />
+                      </div>
+                    )}
+                  </div>
+                )] : []),
+              ]}
+            />
+          </div>
         ) : (
+          /* Meta or Google non-Search: just the ads table */
           <div className="card p-6">
             <div className="mb-5">
               <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
             </div>
             <AdRowTable
               rows={adRows}
-              isEcom={isEcom}
               conversionLabel={conversionLabel}
+              daysInPeriod={daysInPeriod}
             />
           </div>
         )}

@@ -5,9 +5,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas, getDailyTrend } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtPct, fmtCurrency, fmtRoas, getDailyTrend, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, DailyMetric } from '@/lib/types'
-import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
@@ -64,13 +63,16 @@ export default async function AdminPreviewAdSetPage({
     .eq('campaign_id', campaignId)
     .maybeSingle()
 
-  const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
+  const displayMode     = (assignmentData?.display_mode as string | null) ?? 'lead_gen'
   const conversionLabel = (assignmentData?.conversion_label as string | null)
     ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
 
   const convAction: string | null = source === 'meta_ads'
-    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    ? (isEcom ? (client.purchase_action ?? settings.default_purchase_action ?? 'purchase') : (client.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped'))
+    : null
+  const convActionFallback: string | null = source === 'meta_ads'
+    ? (isEcom ? (client.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null) : (client.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead'))
     : null
 
   type GoogleAdRow = {
@@ -222,10 +224,8 @@ export default async function AdminPreviewAdSetPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions; cv = resolved.conversionValue
       }
       const afs = applyAdFuel(sp, adFuelCut)
       upsertAd({
@@ -255,10 +255,8 @@ export default async function AdminPreviewAdSetPage({
       let co   = Number(r.conversions) || 0
       let cv   = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions; cv = resolved.conversionValue
       }
       priorTotals.spend           += sp
       priorTotals.impressions     += Number(r.impressions) || 0
@@ -266,18 +264,13 @@ export default async function AdminPreviewAdSetPage({
       priorTotals.conversions     += co
       priorTotals.conversionValue += cv
     }
-    // Remap conversions for chart using convAction (same as KPI cards — avoids raw total)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const remapMeta = (r: any) => {
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const found    = (r.actions       ?? []).find((a: any) => a.action_type === convAction)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const foundVal = (r.action_values ?? []).find((a: any) => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions; cv = resolved.conversionValue
       }
       return { date: r.date, spend: r.spend, conversions: co, conversion_value: cv, clicks: r.clicks, impressions: Number(r.impressions) || 0 }
     }
@@ -383,31 +376,35 @@ export default async function AdminPreviewAdSetPage({
       }))
     : []
 
-  const adRows: AdRow[] = adCardList.map(a => ({
-    ad_id:           a.ad_id,
-    ad_name:         a.ad_name,
-    ad_type:         a.ad_type,
-    ad_status:       a.ad_status,
-    ad_strength:     a.ad_strength,
-    image_url:       a.image_url,
-    video_id:        a.video_id,
-    video_thumb_url: a.video_thumb_url,
-    thumbnail_url:   a.thumbnail_url,
-    creative_body:   a.creative_body,
-    creative_title:  a.creative_title,
-    headlines:       a.headlines,
-    descriptions:    a.descriptions,
-    final_url:       a.final_url,
-    spend:           a.spend,
-    displaySpend:    adFuelCut > 0 ? a.adFuelSpend : a.spend,
-    impressions:     a.impressions,
-    clicks:          a.clicks,
-    conversions:     a.conversions,
-    conversionValue: a.conversionValue,
-    roas:            a.roas,
-    cpl:             a.cpl,
-    ctr:             a.ctr,
-  }))
+  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
+
+  const adRows: AdRow[] = adCardList.map(a => {
+    const cost = adFuelCut > 0 ? a.adFuelSpend : a.spend
+    return {
+      ad_id:           a.ad_id,
+      ad_name:         a.ad_name,
+      ad_type:         a.ad_type,
+      ad_status:       a.ad_status,
+      ad_strength:     a.ad_strength,
+      image_url:       a.image_url,
+      video_id:        a.video_id,
+      video_thumb_url: a.video_thumb_url,
+      thumbnail_url:   a.thumbnail_url,
+      creative_body:   a.creative_body,
+      creative_title:  a.creative_title,
+      headlines:       a.headlines,
+      descriptions:    a.descriptions,
+      final_url:       a.final_url,
+      spend:           cost,
+      impressions:     a.impressions,
+      clicks:          a.clicks,
+      conversions:     a.conversions,
+      conversionValue: a.conversionValue,
+      cpl:             a.conversions > 0 ? cost / a.conversions : 0,
+      ctr:             a.impressions > 0 ? a.clicks / a.impressions : 0,
+      convRate:        a.clicks > 0 ? a.conversions / a.clicks : 0,
+    }
+  })
 
   const totSpend      = adCardList.reduce((t, a) => t + a.spend, 0)
   const totClicks     = adCardList.reduce((t, a) => t + a.clicks, 0)
@@ -488,7 +485,7 @@ export default async function AdminPreviewAdSetPage({
           return (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="card p-4">
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Cost</p>
                 <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmt$(totDisplaySpd)}</p>
                 <DB delta={calcDelta(totDisplaySpd, priorDisplaySpd)} invert />
               </div>
@@ -582,7 +579,7 @@ export default async function AdminPreviewAdSetPage({
                   rows={keywordRows}
                   conversionLabel={conversionLabel}
                   isEcom={isEcom}
-                  adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'}
+                  adFuelLabel="Cost"
                 />
               </div>
             )}
@@ -619,7 +616,7 @@ export default async function AdminPreviewAdSetPage({
             <div className="mb-5">
               <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
             </div>
-            <AdRowTable rows={adRows} isEcom={isEcom} conversionLabel={conversionLabel} />
+            <AdRowTable rows={adRows} conversionLabel={conversionLabel} daysInPeriod={daysInPeriod} />
           </div>
         )}
 

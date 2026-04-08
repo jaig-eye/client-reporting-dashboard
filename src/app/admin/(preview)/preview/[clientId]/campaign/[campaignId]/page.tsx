@@ -5,9 +5,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, resolveMetaConversions } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
-import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -54,13 +53,15 @@ export default async function AdminPreviewCampaignPage({
     .from('client_campaign_assignments').select('display_mode, conversion_label')
     .eq('client_id', clientId).eq('source', source).eq('campaign_id', campaignId).maybeSingle()
 
-  const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
+  const displayMode     = (assignmentData?.display_mode as string | null) ?? 'lead_gen'
   const conversionLabel = (assignmentData?.conversion_label as string | null) ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
   const isEcom          = displayMode === 'ecommerce'
   const isGoogleAds     = source === 'google_ads'
   const groupLabel      = isGoogleAds ? 'Ad Group' : 'Ad Set'
   const convAction: string | null = source === 'meta_ads'
-    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null)) : null
+    ? (isEcom ? (client.purchase_action ?? settings.default_purchase_action ?? 'purchase') : (client.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped')) : null
+  const convActionFallback: string | null = source === 'meta_ads'
+    ? (isEcom ? (client.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null) : (client.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead')) : null
 
   type GoogleAdRow = { ad_id: string; ad_group_id: string; ad_group_name: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }
   type MetaAdRow   = { ad_id: string; adset_id: string | null; adset_name: string | null; spend: number; impressions: number; clicks: number; conversions: number; conversion_value: number; actions: { action_type: string; value: string }[] | null; action_values: { action_type: string; value: string }[] | null }
@@ -114,18 +115,16 @@ export default async function AdminPreviewCampaignPage({
       const setId = r.adset_id ?? r.adset_name ?? 'unknown'
       let co = Number(r.conversions) || 0; let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found ? parseFloat(found.value) || 0 : 0; cv = foundVal ? parseFloat(foundVal.value) || 0 : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions; cv = resolved.conversionValue
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, Number(r.spend)||0, Number(r.impressions)||0, Number(r.clicks)||0, co, cv)
     }
     for (const r of (priorRows ?? []) as MetaAdRow[]) {
       let co = Number(r.conversions) || 0; let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found = (r.actions ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found ? parseFloat(found.value) || 0 : 0; cv = foundVal ? parseFloat(foundVal.value) || 0 : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions; cv = resolved.conversionValue
       }
       priorTotals.spend += Number(r.spend)||0; priorTotals.impressions += Number(r.impressions)||0
       priorTotals.clicks += Number(r.clicks)||0; priorTotals.conversions += co; priorTotals.conversionValue += cv
@@ -159,17 +158,19 @@ export default async function AdminPreviewCampaignPage({
     return { keyword_text: k.text, match_type: k.matchType, keyword_status: null, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
   }).sort((a, b) => b.impressions - a.impressions)
 
+  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
+
   const adGroups = Array.from(setMap.entries()).map(([setId, s]) => {
     const qsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
     if (compare) qsObj.compare = compare
-    const dSpend = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
+    const cost = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
     return {
-      setId, setName: s.setName, spend: s.spend, displaySpend: dSpend,
+      setId, setName: s.setName, spend: cost,
       impressions: s.impressions, clicks: s.clicks, conversions: s.conversions, conversionValue: s.conversionValue,
       adCount: s.adIds.size,
-      roas: dSpend > 0 && s.conversionValue > 0 ? s.conversionValue / dSpend : 0,
-      cpl:  s.conversions > 0 ? dSpend / s.conversions : 0,
-      ctr:  s.impressions > 0 ? s.clicks / s.impressions : 0,
+      cpl:      s.conversions > 0 ? cost / s.conversions : 0,
+      ctr:      s.impressions > 0 ? s.clicks / s.impressions : 0,
+      convRate: s.clicks > 0 ? s.conversions / s.clicks : 0,
       href: `${baseUrl}/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${new URLSearchParams(qsObj)}`,
     }
   }).sort((a, b) => b.spend - a.spend)
@@ -232,14 +233,14 @@ export default async function AdminPreviewCampaignPage({
 
         <div className="card p-6">
           <h2 className="section-title mb-4">{displayGroupLabel}s</h2>
-          <AdGroupTable rows={adGroups} conversionLabel={conversionLabel} isEcom={isEcom} isPMax={isGoogleAds && isPMax} />
+          <AdGroupTable rows={adGroups} conversionLabel={conversionLabel} daysInPeriod={daysInPeriod} isPMax={isGoogleAds && isPMax} />
         </div>
 
         {campaignKeywordRows.length > 0 && (
           <div className="card p-6">
             <h2 className="section-title mb-1">Keywords</h2>
             <p className="section-desc mb-4">{campaignKeywordRows.length} keyword{campaignKeywordRows.length !== 1 ? 's' : ''} across all ad groups</p>
-            <KeywordTable rows={campaignKeywordRows} conversionLabel={conversionLabel} isEcom={isEcom} adFuelLabel={adFuelCut > 0 ? 'Ad Fuel Cost' : 'Spend'} />
+            <KeywordTable rows={campaignKeywordRows} conversionLabel={conversionLabel} adFuelLabel="Cost" />
           </div>
         )}
       </main>
@@ -275,7 +276,7 @@ function CampaignSummary({ spend, impressions, clicks, conversions, conversionVa
 
   const items = isEcom
     ? [
-        { label: adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
+        { label: 'Cost', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
         { label: 'ROAS',         value: roas > 0 ? fmtRoas(roas) : '—',                                       delta: <D cur={roas}           pri={priorRoas}                    /> },
         { label: 'Revenue',      value: conversionValue > 0 ? fmt$(conversionValue) : '—',                     delta: <D cur={conversionValue} pri={prior?.conversionValue ?? 0} /> },
         { label: conversionLabel, value: conversions > 0 ? fmtNum(conversions) : '—',                          delta: <D cur={conversions}    pri={prior?.conversions ?? 0}      /> },
@@ -285,7 +286,7 @@ function CampaignSummary({ spend, impressions, clicks, conversions, conversionVa
         { label: 'Avg. CPC',     value: cpc > 0 ? fmtCurrency(cpc) : '—',                                     delta: <D cur={cpc}            pri={priorCpc}                 inv /> },
       ]
     : [
-        { label: adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
+        { label: 'Cost', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
         { label: conversionLabel, value: conversions > 0 ? fmtNum(conversions) : '—',                          delta: <D cur={conversions}    pri={prior?.conversions ?? 0}      /> },
         { label: 'CPL',          value: cpl > 0 ? fmtCurrency(cpl) : '—',                                     delta: <D cur={cpl}            pri={priorCpl}                 inv /> },
         { label: 'Impressions',  value: fmtNum(impressions),                                                    delta: <D cur={impressions}    pri={prior?.impressions ?? 0}      /> },

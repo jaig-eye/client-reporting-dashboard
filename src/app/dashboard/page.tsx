@@ -15,7 +15,7 @@ import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings, pctOfBenchmark } from '@/lib/agency-settings'
-import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
+import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import SpendChart from '@/components/SpendChart'
@@ -167,8 +167,29 @@ export default async function DashboardPage({
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
   const isEcomDash = ecomCount > leadCount
 
+  // ─── CRM (GHL) data ──────────────────────────────────────────────────────
+  const hasGhl = availableSources.includes('ghl')
+  let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0 }
+  if (hasGhl) {
+    const { data: ghlRows } = await db.from('ghl_metrics')
+      .select('contacts_created,total_calls,missed_calls,forms_submitted,spam_leads,emails_sent,sms_sent')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate))
+      .lte('date', fmtDate(toDate))
+    for (const r of (ghlRows ?? []) as { contacts_created: number; total_calls: number; missed_calls: number; forms_submitted: number; spam_leads: number; emails_sent: number; sms_sent: number }[]) {
+      ghlTotals.contacts    += Number(r.contacts_created) || 0
+      ghlTotals.calls       += Number(r.total_calls)      || 0
+      ghlTotals.missedCalls += Number(r.missed_calls)     || 0
+      ghlTotals.forms       += Number(r.forms_submitted)  || 0
+      ghlTotals.spam        += Number(r.spam_leads)       || 0
+      ghlTotals.emailsSent  += Number(r.emails_sent)      || 0
+      ghlTotals.smsSent     += Number(r.sms_sent)         || 0
+    }
+  }
+
   type NormRow = {
     campaign_id: string; campaign_name: string; date: string; _source: string
+    campaign_status?: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     roas: number; ctr: number; cpc: number; cpm: number
@@ -179,23 +200,29 @@ export default async function DashboardPage({
       let conversions      = Number(m.conversions) || 0
       let conversion_value = Number(m.conversion_value ?? m.conversions_value ?? 0)
 
-      // Meta rows carry an actions array — apply per-campaign action remapping
+      // Meta rows carry an actions array — apply per-campaign action remapping with fallback
       if (Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
-        const campConvAction = campaignIsEcom ? (client!.purchase_action ?? null) : (client!.lead_action ?? null)
-        if (campConvAction) {
-          const actions      = m.actions as MetaAction[]
-          const actionValues = (m.action_values as MetaAction[] | null) ?? []
-          const found        = actions.find(a => a.action_type === campConvAction)
-          const foundVal     = actionValues.find(a => a.action_type === campConvAction)
-          conversions      = found    ? parseFloat(found.value    || '0') : 0
-          conversion_value = foundVal ? parseFloat(foundVal.value || '0') : 0
-        }
+        const primary = campaignIsEcom
+          ? (client!.purchase_action ?? settings.default_purchase_action ?? 'purchase')
+          : (client!.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped')
+        const fallback = campaignIsEcom
+          ? (client!.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
+          : (client!.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead')
+        const resolved = resolveMetaConversions(
+          m.actions as MetaAction[],
+          (m.action_values as MetaAction[] | null) ?? [],
+          primary,
+          fallback,
+        )
+        conversions      = resolved.conversions
+        conversion_value = resolved.conversionValue
       }
 
       return {
         campaign_id:      String(m.campaign_id   || ''),
         campaign_name:    String(m.campaign_name || ''),
+        campaign_status:  (m.campaign_status as string | null) ?? null,
         _source:          rowSource,
         date:             String(m.date          || ''),
         spend:            Number(m.spend)         || 0,
@@ -256,6 +283,7 @@ export default async function DashboardPage({
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
+    status?: string | null
   }>()
   for (const row of currentMetrics) {
     const assignment = assignmentMap.get(row.campaign_id)
@@ -272,30 +300,31 @@ export default async function DashboardPage({
       campMap.set(row.campaign_id, {
         name: row.campaign_name, spend: row.spend, impressions: row.impressions,
         clicks: row.clicks, conversions: row.conversions, conversionValue: row.conversion_value,
-        display_mode: mode, _source: row._source,
+        display_mode: mode, _source: row._source, status: row.campaign_status,
       })
     }
   }
 
+  // Calculate days in period for daily budget column
+  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
+
   const campaigns = Array.from(campMap.entries())
     .map(([id, c]) => {
-      const dSpend = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
+      const cost = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
       return {
         campaign_id:     id,
         campaign_name:   c.name,
         source:          c._source as never,
-        spend:           c.spend,
+        status:          c.status ?? null,
+        spend:           cost,
         impressions:     c.impressions,
         clicks:          c.clicks,
         conversions:     c.conversions,
         conversionValue: c.conversionValue,
-        roas:            dSpend > 0 ? c.conversionValue / dSpend : 0,
-        cpl:             c.conversions > 0 ? dSpend / c.conversions : 0,
         ctr:             c.impressions > 0 ? c.clicks / c.impressions : 0,
-        cpm:             c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
-        adFuelSpend:     applyAdFuel(c.spend, adFuelCut),
+        convRate:        c.clicks > 0 ? c.conversions / c.clicks : 0,
+        cpl:             c.conversions > 0 ? cost / c.conversions : 0,
         display_mode:    c.display_mode,
-        hidden:          false,
       }
     })
     .sort((a, b) => b.spend - a.spend)
@@ -420,7 +449,7 @@ export default async function DashboardPage({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {!hiddenMetrics.has('spend') && (
                 <SparkMetricCard
-                  label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'}
+                  label="Total Cost"
                   value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)}
                   delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined}
                   invertDelta sparkData={spendSpark} sparkColor={settings.chart_color_spend ?? '#93c5fd'} delay={0}
@@ -500,13 +529,45 @@ export default async function DashboardPage({
                 </div>
                 <CampaignTable
                   campaigns={campaigns}
-                  adFuelCut={adFuelCut}
-                  isEcomDash={isEcomDash}
+                  daysInPeriod={daysInPeriod}
                   connectionId={isAllSources ? undefined : activeConnection?.id}
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
                   compare={compare !== 'none' ? compare : undefined}
                 />
+              </div>
+            )}
+
+            {/* CRM Activity (GoHighLevel) */}
+            {hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
+              <div className="card p-6">
+                <div className="mb-4">
+                  <h2 className="section-title">CRM Activity</h2>
+                  <p className="section-desc">GoHighLevel data for {fmtDate(fromDate)} – {fmtDate(toDate)}</p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Contacts</p>
+                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.contacts)}</p>
+                    {ghlTotals.spam > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--red)' }}>{ghlTotals.spam} spam</p>}
+                  </div>
+                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Total Calls</p>
+                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.calls)}</p>
+                    {ghlTotals.missedCalls > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--amber, #f59e0b)' }}>{ghlTotals.missedCalls} missed</p>}
+                  </div>
+                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Forms Submitted</p>
+                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.forms)}</p>
+                  </div>
+                  {(ghlTotals.emailsSent > 0 || ghlTotals.smsSent > 0) && (
+                    <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
+                      <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Outreach</p>
+                      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.emailsSent + ghlTotals.smsSent)}</p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{ghlTotals.emailsSent} emails · {ghlTotals.smsSent} SMS</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </>

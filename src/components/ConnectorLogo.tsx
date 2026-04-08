@@ -17,6 +17,8 @@ export function ConnectorLogo({
     case 'meta_ads':          return <MetaAdsLogo    size={size} className={className} />
     case 'google_analytics':  return <GALogo         size={size} className={className} />
     case 'google_search_console': return <GSCLogo    size={size} className={className} />
+    case 'ghl':               return <GhlLogo      size={size} className={className} />
+    case 'wordpress':         return <WpLogo       size={size} className={className} />
     default:                  return <DefaultLogo    size={size} className={className} label={type} />
   }
 }
@@ -78,6 +80,30 @@ export function GSCLogo({ size = 20, className }: { size?: number; className?: s
     <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
       <circle cx="11" cy="11" r="7" stroke="#34A853" strokeWidth="2.5" fill="none" />
       <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="#34A853" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+// ── GoHighLevel ──────────────────────────────────────────────────────────────
+export function GhlLogo({ size = 20, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+      <rect width="24" height="24" rx="5" fill="#FF6B35" />
+      <text x="12" y="16.5" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white" fontFamily="Arial, sans-serif">
+        GHL
+      </text>
+    </svg>
+  )
+}
+
+// ── WordPress ────────────────────────────────────────────────────────────────
+export function WpLogo({ size = 20, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+      <circle cx="12" cy="12" r="10" fill="#21759B" />
+      <text x="12" y="16.5" textAnchor="middle" fontSize="12" fontWeight="bold" fill="white" fontFamily="serif">
+        W
+      </text>
     </svg>
   )
 }

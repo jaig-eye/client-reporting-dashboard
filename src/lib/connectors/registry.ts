@@ -17,7 +17,9 @@ import type { ConnectorType, ConnectorTypeDef } from '../types'
 import type { ConnectorRegistryEntry, ConnectorAdapter } from './types'
 import { googleAdsConnector } from './google-ads'
 import { metaAdsConnector } from './meta-ads'
-import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo } from '@/components/ConnectorLogo'
+import { ghlConnector } from './ghl'
+import { wordpressConnector } from './wordpress'
+import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo, GhlLogo, WpLogo } from '@/components/ConnectorLogo'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UI DEFINITIONS
@@ -61,6 +63,24 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     color: '#34A853',
     authFlow: 'oauth',
   },
+  ghl: {
+    type: 'ghl',
+    label: 'GoHighLevel',
+    description: 'Connect your GHL CRM for contacts, calls, forms, and reviews.',
+    icon: 'G',
+    logo: GhlLogo,
+    color: '#FF6B35',
+    authFlow: 'credentials',
+  },
+  wordpress: {
+    type: 'wordpress',
+    label: 'WordPress',
+    description: 'Connect a WordPress site to publish content and manage posts.',
+    icon: 'W',
+    logo: WpLogo,
+    color: '#21759B',
+    authFlow: 'credentials',
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +92,8 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
 const CONNECTOR_ADAPTERS: Partial<Record<ConnectorType, ConnectorAdapter>> = {
   google_ads: googleAdsConnector,
   meta_ads:   metaAdsConnector,
+  ghl:        ghlConnector,
+  wordpress:  wordpressConnector,
   // google_analytics:       not yet implemented
   // google_search_console:  not yet implemented
 }
@@ -86,6 +108,8 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'meta_ads',
   'google_analytics',
   'google_search_console',
+  'ghl',
+  'wordpress',
 ]
 
 /** Returns the UI definition for a connector type. */

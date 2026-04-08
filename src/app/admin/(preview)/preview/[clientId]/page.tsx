@@ -7,7 +7,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings, pctOfBenchmark } from '@/lib/agency-settings'
-import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel } from '@/lib/metrics'
+import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import SpendChart from '@/components/SpendChart'
@@ -148,12 +148,14 @@ export default async function AdminPreviewPage({
   const ecomCount     = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
   const leadCount     = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
   const isEcomDash    = ecomCount > leadCount
+  const daysInPeriod  = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
 
   type NormRow = {
     campaign_id: string; campaign_name: string; date: string; _source: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     roas: number; ctr: number; cpc: number; cpm: number
+    campaign_status: string
   }
 
   function normalise(rows: Record<string, unknown>[], rowSource: string): NormRow[] {
@@ -162,15 +164,17 @@ export default async function AdminPreviewPage({
       let conversion_value = Number(m.conversion_value ?? m.conversions_value ?? 0)
       if (Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
-        const campConvAction = campaignIsEcom ? (client!.purchase_action ?? null) : (client!.lead_action ?? null)
-        if (campConvAction) {
-          const actions      = m.actions as MetaAction[]
-          const actionValues = (m.action_values as MetaAction[] | null) ?? []
-          const found        = actions.find(a => a.action_type === campConvAction)
-          const foundVal     = actionValues.find(a => a.action_type === campConvAction)
-          conversions      = found    ? parseFloat(found.value    || '0') : 0
-          conversion_value = foundVal ? parseFloat(foundVal.value || '0') : 0
-        }
+        const primary = campaignIsEcom
+          ? (client!.purchase_action ?? settings.default_purchase_action ?? 'purchase')
+          : (client!.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped')
+        const fallback = campaignIsEcom
+          ? (client!.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
+          : (client!.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead')
+        const actions      = m.actions as MetaAction[]
+        const actionValues = (m.action_values as MetaAction[] | null) ?? []
+        const resolved     = resolveMetaConversions(actions, actionValues, primary, fallback)
+        conversions      = resolved.conversions
+        conversion_value = resolved.conversionValue
       }
       return {
         campaign_id: String(m.campaign_id || ''), campaign_name: String(m.campaign_name || ''),
@@ -178,6 +182,7 @@ export default async function AdminPreviewPage({
         impressions: Number(m.impressions) || 0, clicks: Number(m.clicks) || 0,
         conversions, conversion_value,
         roas: Number(m.roas) || 0, ctr: Number(m.ctr) || 0, cpc: Number(m.cpc) || 0, cpm: Number(m.cpm) || 0,
+        campaign_status: String(m.campaign_status || ''),
       }
     })
   }
@@ -225,6 +230,7 @@ export default async function AdminPreviewPage({
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
+    status: string
   }>()
   for (const row of currentMetrics) {
     const assignment = assignmentMap.get(row.campaign_id)
@@ -238,22 +244,21 @@ export default async function AdminPreviewPage({
       campMap.set(row.campaign_id, {
         name: row.campaign_name, spend: row.spend, impressions: row.impressions,
         clicks: row.clicks, conversions: row.conversions, conversionValue: row.conversion_value,
-        display_mode: mode, _source: row._source,
+        display_mode: mode, _source: row._source, status: row.campaign_status,
       })
     }
   }
 
   const campaigns = Array.from(campMap.entries()).map(([id, c]) => {
-    const dSpend = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
+    const cost = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
     return {
       campaign_id: id, campaign_name: c.name, source: c._source as never,
-      spend: c.spend, impressions: c.impressions, clicks: c.clicks,
+      spend: cost, impressions: c.impressions, clicks: c.clicks,
       conversions: c.conversions, conversionValue: c.conversionValue,
-      roas: dSpend > 0 ? c.conversionValue / dSpend : 0,
-      cpl:  c.conversions > 0 ? dSpend / c.conversions : 0,
-      ctr:  c.impressions > 0 ? c.clicks / c.impressions : 0,
-      cpm:  c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
-      adFuelSpend: applyAdFuel(c.spend, adFuelCut), display_mode: c.display_mode, hidden: false,
+      cpl:      c.conversions > 0 ? cost / c.conversions : 0,
+      ctr:      c.impressions > 0 ? c.clicks / c.impressions : 0,
+      convRate: c.clicks > 0 ? c.conversions / c.clicks : 0,
+      status:   c.status, display_mode: c.display_mode,
     }
   }).sort((a, b) => b.spend - a.spend)
 
@@ -340,7 +345,7 @@ export default async function AdminPreviewPage({
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {!hiddenMetrics.has('spend') && (
-                <SparkMetricCard label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Total Spend'} value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)} delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined} invertDelta sparkData={spendSpark} sparkColor={settings.chart_color_spend ?? '#93c5fd'} delay={0} />
+                <SparkMetricCard label="Total Cost" value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)} delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined} invertDelta sparkData={spendSpark} sparkColor={settings.chart_color_spend ?? '#93c5fd'} delay={0} />
               )}
               {!hiddenMetrics.has('leads') && (isEcomDash ? (
                 <SparkMetricCard label="Revenue" value={fmt$(current.conversionValue)} delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined} sparkData={convValueSpark} sparkColor="#10b981" delay={1} />
@@ -388,7 +393,7 @@ export default async function AdminPreviewPage({
                     <p className="section-desc">{campaigns.length} campaigns</p>
                   </div>
                 </div>
-                <CampaignTable campaigns={campaigns} adFuelCut={adFuelCut} isEcomDash={isEcomDash}
+                <CampaignTable campaigns={campaigns} daysInPeriod={daysInPeriod}
                   connectionId={isAllSources ? undefined : activeConnection?.id}
                   dateFrom={fmtDate(fromDate)} dateTo={fmtDate(toDate)}
                   compare={compare !== 'none' ? compare : undefined}

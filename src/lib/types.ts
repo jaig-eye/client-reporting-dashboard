@@ -23,6 +23,8 @@ export type ConnectorType =
   | 'meta_ads'
   | 'google_analytics'
   | 'google_search_console'
+  | 'ghl'
+  | 'wordpress'
 
 /** Display metadata for each connector type — used in the UI. */
 export interface ConnectorTypeDef {
@@ -122,11 +124,15 @@ export interface Client {
    * NULL = use agency default_lead_action.
    */
   lead_action?: string | null
+  /** Fallback action if primary lead action not found. NULL = use agency default. */
+  lead_action_fallback?: string | null
   /**
    * Meta conversion action override for Ecommerce campaigns.
    * NULL = use agency default_purchase_action.
    */
   purchase_action?: string | null
+  /** Fallback action if primary purchase action not found. NULL = use agency default. */
+  purchase_action_fallback?: string | null
   /** Per-client benchmark overrides (null = use agency global). */
   benchmark_roas?:      number | null
   benchmark_ctr?:       number | null
@@ -166,6 +172,14 @@ export interface AgencySettings {
    * ad_fuel_spend = raw_spend / (1 - ad_fuel_cut)
    */
   ad_fuel_cut: number
+  /** Default Meta conversion action type for lead-gen campaigns (e.g. 'onsite_conversion.lead_grouped'). */
+  default_lead_action?: string
+  /** Fallback action when primary lead action not found (e.g. 'lead'). */
+  default_lead_action_fallback?: string
+  /** Default Meta conversion action type for ecommerce campaigns (e.g. 'purchase'). */
+  default_purchase_action?: string
+  /** Fallback action when primary purchase action not found. */
+  default_purchase_action_fallback?: string
   cron_enabled: boolean
   app_version: string
   primary_user_id?: string
@@ -175,6 +189,10 @@ export interface AgencySettings {
   chart_color_prior_spend?:       string
   chart_color_conversions?:       string
   chart_color_prior_conversions?: string
+  /** AI model configuration for content generation and insights. */
+  ai_provider?: string
+  ai_model?: string
+  ai_api_key?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,6 +261,42 @@ export interface MetaAdsMetric {
 export interface MetaAction {
   action_type: string
   value: string
+}
+
+/** GoHighLevel CRM metrics (daily CRM activity snapshot per location). */
+export interface GhlMetric {
+  id: string
+  connection_id: string
+  client_id: string
+  date: string
+  contacts_created: number
+  total_calls: number
+  missed_calls: number
+  forms_submitted: number
+  reviews_sent: number
+  reviews_received: number
+  spam_leads: number
+  emails_sent: number
+  sms_sent: number
+  raw_data?: Record<string, unknown>
+  synced_at: string
+}
+
+/** GA4 website traffic metrics (daily). */
+export interface Ga4Metric {
+  id: string
+  connection_id: string
+  client_id: string
+  date: string
+  sessions: number
+  users: number
+  new_users: number
+  page_views: number
+  bounce_rate: number
+  avg_session_duration: number
+  conversions: number
+  raw_data?: Record<string, unknown>
+  synced_at: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

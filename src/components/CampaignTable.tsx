@@ -3,29 +3,27 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 
-interface Campaign {
+export interface Campaign {
   campaign_id: string
   campaign_name: string
-  source: string
-  spend: number
+  source: string          // kept for drill-down URL, not displayed
+  status?: string | null  // ENABLED, PAUSED, REMOVED, etc.
+  spend: number           // cost after markup ("Cost")
+  impressions: number
   clicks: number
   conversions: number
   conversionValue: number
-  roas: number
-  cpl: number
   ctr: number
-  impressions: number
-  cpm: number
-  adFuelSpend?: number
-  display_mode?: string | null   // 'lead_gen' | 'ecommerce'
+  convRate: number        // conversions / clicks
+  cpl: number
+  display_mode?: string | null
 }
 
-type SortKey = 'campaign_name' | 'spend' | 'adFuelSpend' | 'clicks' | 'conversions' | 'roas' | 'cpl' | 'impressions' | 'ctr' | 'cpm'
+type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'convRate' | 'cpl'
 
 export default function CampaignTable({
   campaigns,
-  adFuelCut = 0,
-  isEcomDash = false,
+  daysInPeriod = 30,
   connectionId,
   dateFrom,
   dateTo,
@@ -33,16 +31,13 @@ export default function CampaignTable({
   campaignBasePath = '/dashboard/campaign',
 }: {
   campaigns: Campaign[]
-  adFuelCut?: number
-  isEcomDash?: boolean
+  daysInPeriod?: number
   connectionId?: string
   dateFrom?: string
   dateTo?: string
   compare?: string
   campaignBasePath?: string
 }) {
-  const showAdFuel = adFuelCut > 0
-
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -67,10 +62,10 @@ export default function CampaignTable({
     )
   }
 
-  function SortTh({ sk, children }: { sk: SortKey; children: React.ReactNode }) {
+  function SortTh({ sk, children, left }: { sk: SortKey; children: React.ReactNode; left?: boolean }) {
     const isActive = sortKey === sk
     return (
-      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: left ? 'left' : 'right' }}>
         {children}
         {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
       </th>
@@ -89,33 +84,43 @@ export default function CampaignTable({
     return `${campaignBasePath}/${encodeURIComponent(c.campaign_id)}?${qs}`
   }
 
+  const days = Math.max(1, daysInPeriod)
+
+  // Totals
+  const totSpend = campaigns.reduce((s, c) => s + c.spend, 0)
+  const totImpr  = campaigns.reduce((s, c) => s + c.impressions, 0)
+  const totClick = campaigns.reduce((s, c) => s + c.clicks, 0)
+  const totConv  = campaigns.reduce((s, c) => s + c.conversions, 0)
+  const totCtr   = totImpr > 0 ? totClick / totImpr : 0
+  const totCR    = totClick > 0 ? totConv / totClick : 0
+  const totCpl   = totConv > 0 ? totSpend / totConv : 0
+
   return (
     <div className="overflow-x-auto">
-      <table className="data-table">
+      <table className="data-table" style={{ minWidth: 860 }}>
         <thead>
           <tr>
-            <SortTh sk="campaign_name">Campaign</SortTh>
-            <SortTh sk={showAdFuel ? 'adFuelSpend' : 'spend'}>
-              {showAdFuel ? 'Ad Fuel Cost' : 'Spend'}
-            </SortTh>
-            <SortTh sk="clicks">Clicks</SortTh>
-            <SortTh sk="conversions">Conv.</SortTh>
-            {isEcomDash ? (
-              <SortTh sk="roas">ROAS</SortTh>
-            ) : (
-              <SortTh sk="ctr">CTR</SortTh>
-            )}
-            <SortTh sk="cpl">CPL</SortTh>
+            <SortTh sk="campaign_name" left>Campaign</SortTh>
+            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+            <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>
+            <SortTh sk="spend">Cost</SortTh>
             <SortTh sk="impressions">Impr.</SortTh>
-            <th>Mode</th>
-            <th>Source</th>
+            <SortTh sk="clicks">Clicks</SortTh>
+            <SortTh sk="ctr">CTR</SortTh>
+            <SortTh sk="conversions">Conv.</SortTh>
+            <SortTh sk="convRate">Conv Rate</SortTh>
+            <SortTh sk="cpl">CPL</SortTh>
+            <th style={{ whiteSpace: 'nowrap' }}>Mode</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((c, i) => {
-            const rowIsEcom    = c.display_mode === 'ecommerce'
-            const link         = drillLink(c)
-            const displaySpend = showAdFuel ? (c.adFuelSpend ?? c.spend) : c.spend
+            const link      = drillLink(c)
+            const isEcom    = c.display_mode === 'ecommerce'
+            const dailyBudg = c.spend / days
+            const statusUp  = (c.status ?? '').toUpperCase()
+            const isActive  = !c.status || statusUp === 'ENABLED' || statusUp === 'ACTIVE'
+            const isPaused  = statusUp === 'PAUSED'
 
             return (
               <tr key={i}>
@@ -136,59 +141,75 @@ export default function CampaignTable({
                     <span className="block truncate">{c.campaign_name}</span>
                   )}
                 </td>
-                <td style={{ color: 'var(--text-muted)' }}>${displaySpend.toFixed(2)}</td>
-                <td style={{ color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
-                <td style={{ color: 'var(--text-muted)' }}>
-                  {c.conversions.toFixed(1)}
+                <td>
+                  {c.status ? (
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontSize: '0.7rem', fontWeight: 600,
+                      color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                    }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                      }} />
+                      {isActive ? 'Active' : isPaused ? 'Paused' : statusUp.charAt(0) + statusUp.slice(1).toLowerCase()}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                  )}
                 </td>
-                {isEcomDash ? (
-                  <td className="font-semibold whitespace-nowrap">
-                    {rowIsEcom && c.roas > 0 ? (
-                      <span style={{ color: c.roas >= 3 ? 'var(--green)' : c.roas >= 1.5 ? '#d97706' : 'var(--red)' }}>
-                        {c.roas.toFixed(2)}x
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)' }}>—</span>
-                    )}
-                  </td>
-                ) : (
-                  <td style={{ color: 'var(--text-muted)' }}>
-                    {c.ctr > 0 ? `${(c.ctr * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                  </td>
-                )}
-                <td style={{ color: 'var(--text-muted)' }}>
-                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  ${dailyBudg.toFixed(0)}/d
                 </td>
-                <td style={{ color: 'var(--text-muted)' }}>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                   {c.impressions > 0 ? c.impressions.toLocaleString() : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {c.ctr > 0 ? `${(c.ctr * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {c.conversions > 0 ? c.conversions.toFixed(1) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {c.convRate > 0 ? `${(c.convRate * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
                 <td>
                   <span
                     className="badge"
-                    style={rowIsEcom
+                    style={isEcom
                       ? { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }
                       : { background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }
                     }
                   >
-                    {rowIsEcom ? 'Ecom' : 'Lead Gen'}
-                  </span>
-                </td>
-                <td>
-                  <span
-                    className="badge"
-                    style={{
-                      background: c.source === 'google_ads' ? '#eff6ff' : '#f5f3ff',
-                      color:      c.source === 'google_ads' ? '#2563eb' : '#7c3aed',
-                      border:     c.source === 'google_ads' ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
-                    }}
-                  >
-                    {c.source === 'google_ads' ? 'Google' : 'Meta'}
+                    {isEcom ? 'Ecom' : 'Lead Gen'}
                   </span>
                 </td>
               </tr>
             )
           })}
         </tbody>
+        <tfoot>
+          <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
+            <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}
+            </td>
+            <td></td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>${(totSpend / days).toFixed(0)}/d</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>${totSpend.toFixed(2)}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr.toLocaleString()}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totClick.toLocaleString()}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? `${(totCtr * 100).toFixed(2)}%` : '—'}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? totConv.toFixed(1) : '—'}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? `${(totCR * 100).toFixed(2)}%` : '—'}</td>
+            <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? `$${totCpl.toFixed(2)}` : '—'}</td>
+            <td></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   )

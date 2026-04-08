@@ -49,7 +49,7 @@ export default function KeywordTable({
   rows,
   conversionLabel = 'Conv.',
   isEcom = false,
-  adFuelLabel = 'Spend',
+  adFuelLabel = 'Cost',
 }: {
   rows: KeywordRow[]
   conversionLabel?: string
@@ -96,6 +96,7 @@ export default function KeywordTable({
         <thead>
           <tr>
             <SortTh sk="keyword_text">Keyword</SortTh>
+            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
             <th style={{ whiteSpace: 'nowrap' }}>Match</th>
             <SortTh sk="impressions" right>Impressions</SortTh>
             <SortTh sk="clicks" right>Clicks</SortTh>
@@ -107,33 +108,51 @@ export default function KeywordTable({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r, i) => (
-            <tr key={i}>
-              <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: 300 }}>
-                <span title={r.keyword_text} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.keyword_text}
-                </span>
-              </td>
-              <td>{matchBadge(r.match_type)}</td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.impressions.toLocaleString()}</td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.clicks.toLocaleString()}</td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                {r.ctr > 0 ? `${(r.ctr * 100).toFixed(2)}%` : '—'}
-              </td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(r.displaySpend)}</td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                {r.cpc > 0 ? `$${r.cpc.toFixed(2)}` : '—'}
-              </td>
-              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                {r.conversions > 0 ? r.conversions.toFixed(1) : '—'}
-              </td>
-              {!isEcom && (
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {r.cpl > 0 ? `$${r.cpl.toFixed(2)}` : '—'}
+          {sorted.map((r, i) => {
+            const statusUpper = (r.keyword_status ?? '').toUpperCase()
+            const isEnabled   = !r.keyword_status || statusUpper === 'ENABLED'
+            const isPaused    = statusUpper === 'PAUSED'
+            return (
+              <tr key={i}>
+                <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: 300 }}>
+                  <span title={r.keyword_text} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.keyword_text}
+                  </span>
                 </td>
-              )}
-            </tr>
-          ))}
+                <td>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: '0.7rem', fontWeight: 600,
+                    color: isEnabled ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                  }}>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%',
+                      background: isEnabled ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                    }} />
+                    {isEnabled ? 'Enabled' : isPaused ? 'Paused' : (statusUpper || '—')}
+                  </span>
+                </td>
+                <td>{matchBadge(r.match_type)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.impressions.toLocaleString()}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.clicks.toLocaleString()}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {r.ctr > 0 ? `${(r.ctr * 100).toFixed(2)}%` : '—'}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(r.displaySpend)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {r.cpc > 0 ? `$${r.cpc.toFixed(2)}` : '—'}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {r.conversions > 0 ? r.conversions.toFixed(1) : '—'}
+                </td>
+                {!isEcom && (
+                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                    {r.cpl > 0 ? `$${r.cpl.toFixed(2)}` : '—'}
+                  </td>
+                )}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

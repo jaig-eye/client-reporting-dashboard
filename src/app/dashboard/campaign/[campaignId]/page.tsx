@@ -12,7 +12,7 @@ import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
-import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency } from '@/lib/metrics'
+import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, resolveMetaConversions } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
@@ -83,9 +83,16 @@ export default async function CampaignDetailPage({
   const isGoogleAds  = source === 'google_ads'
   const groupLabel   = isGoogleAds ? 'Ad Group' : 'Ad Set'
 
-  // Conversion action for Meta remapping (same logic as dashboard overview)
+  // Conversion action for Meta remapping with fallback
   const convAction: string | null = source === 'meta_ads'
-    ? (isEcom ? (client.purchase_action ?? null) : (client.lead_action ?? null))
+    ? (isEcom
+        ? (client.purchase_action ?? settings.default_purchase_action ?? 'purchase')
+        : (client.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped'))
+    : null
+  const convActionFallback: string | null = source === 'meta_ads'
+    ? (isEcom
+        ? (client.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
+        : (client.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead'))
     : null
 
   // ── Fetch ad-level metrics ─────────────────────────────────────────────────
@@ -202,10 +209,9 @@ export default async function CampaignDetailPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
@@ -215,10 +221,9 @@ export default async function CampaignDetailPage({
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
       if (convAction) {
-        const found    = (r.actions       ?? []).find(a => a.action_type === convAction)
-        const foundVal = (r.action_values ?? []).find(a => a.action_type === convAction)
-        co = found    ? (parseFloat(found.value)    || 0) : 0
-        cv = foundVal ? (parseFloat(foundVal.value) || 0) : 0
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
       }
       priorTotals.spend           += sp
       priorTotals.impressions     += Number(r.impressions) || 0
@@ -230,40 +235,40 @@ export default async function CampaignDetailPage({
 
   // After data fetch: isPMax is now resolved
   const displayGroupLabel = (isGoogleAds && isPMax) ? 'Asset Group' : groupLabel
+  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
 
   const adGroups = Array.from(setMap.entries())
     .map(([setId, s]) => {
       const adsetQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
       if (compare) adsetQsObj.compare = compare
       const adsetQs = new URLSearchParams(adsetQsObj)
-      const dSpend  = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
+      const cost    = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
       return {
         setId,
         setName:         s.setName,
-        spend:           s.spend,
-        displaySpend:    dSpend,
+        spend:           cost,
         impressions:     s.impressions,
         clicks:          s.clicks,
         conversions:     s.conversions,
         conversionValue: s.conversionValue,
         adCount:         s.adIds.size,
-        roas:            dSpend > 0 && s.conversionValue > 0 ? s.conversionValue / dSpend : 0,
-        cpl:             s.conversions > 0 ? dSpend / s.conversions : 0,
+        cpl:             s.conversions > 0 ? cost / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
+        convRate:        s.clicks > 0 ? s.conversions / s.clicks : 0,
         href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
       }
     })
     .sort((a, b) => b.spend - a.spend)
 
-  // Campaign-level totals
+  // Campaign-level totals (spend in adGroups is already cost after markup)
   const totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
   const totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
   const totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
   const totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
   const totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
 
-  // KPI derived values
-  const displaySpend      = adFuelCut > 0 ? applyAdFuel(totSpend, adFuelCut) : totSpend
+  // KPI derived values (totSpend is already after markup)
+  const displaySpend      = totSpend
   const roas              = displaySpend > 0 && totConversionValue > 0 ? totConversionValue / displaySpend : 0
   const cpl               = totConversions > 0 ? displaySpend / totConversions : 0
   const ctr               = totImpressions > 0 ? totClicks / totImpressions : 0
@@ -366,7 +371,7 @@ export default async function CampaignDetailPage({
         {/* ── Campaign KPI summary ────────────────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <SparkMetricCard
-            label={adFuelCut > 0 ? 'Ad Fuel Spend' : 'Spend'}
+            label="Cost"
             value={fmt$(displaySpend)}
             delta={showCompare ? calcDelta(displaySpend, priorDisplaySpend) : undefined}
             invertDelta
@@ -465,8 +470,8 @@ export default async function CampaignDetailPage({
           </div>
           <AdGroupTable
             rows={adGroups}
-            isEcom={isEcom}
             conversionLabel={conversionLabel}
+            daysInPeriod={daysInPeriod}
             isPMax={isGoogleAds && isPMax}
           />
         </div>
