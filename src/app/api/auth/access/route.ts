@@ -26,8 +26,8 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(`${appUrl}/dashboard`)
   response.cookies.set('client_token', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 60 * 60 * 24 * 365, // 1 year — permanent access
     path: '/',
   })
