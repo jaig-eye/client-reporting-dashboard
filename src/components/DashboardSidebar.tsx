@@ -112,26 +112,43 @@ export default function DashboardSidebar({
     const url = new URL(item.href, 'http://x')
     const itemPath   = url.pathname
     const itemSource = url.searchParams.get('source') ?? ''
-    // Strip basePath prefix for comparison
-    const currentPath = basePath ? pathname.replace(basePath, '') || '/' : pathname
 
-    if (itemPath === '/dashboard' && !item.children) {
-      return currentPath === '/dashboard' && (activeSource === '' || activeSource === 'all')
+    if (basePath) {
+      // Preview mode: currentPath is the segment after basePath, item paths strip /dashboard
+      const currentPath = pathname.replace(basePath, '') || '/'
+      const comparePath = itemPath.replace(/^\/dashboard/, '') || '/'
+      if (comparePath === '/' && !item.children) {
+        return currentPath === '/' && (activeSource === '' || activeSource === 'all')
+      }
+      if (itemSource) {
+        return currentPath === comparePath && activeSource === itemSource
+      }
+      return currentPath.startsWith(comparePath) && comparePath !== '/'
+    } else {
+      // Regular dashboard mode
+      if (itemPath === '/dashboard' && !item.children) {
+        return pathname === '/dashboard' && (activeSource === '' || activeSource === 'all')
+      }
+      if (itemSource) {
+        return pathname === itemPath && activeSource === itemSource
+      }
+      return pathname.startsWith(itemPath) && itemPath !== '/dashboard'
     }
-    if (itemSource) {
-      return currentPath === itemPath && activeSource === itemSource
-    }
-    return currentPath.startsWith(itemPath) && itemPath !== '/dashboard'
   }
 
   function navigate(item: NavItem) {
     if (item.disabled || !item.href) return
-    // Preserve date range params when navigating
     const url = new URL(item.href, 'http://x')
     if (from) url.searchParams.set('from', from)
     if (to)   url.searchParams.set('to',   to)
     if (compare && compare !== 'none') url.searchParams.set('compare', compare)
-    router.push(basePath + url.pathname + (url.search ? url.search : ''))
+    if (basePath) {
+      // Strip /dashboard prefix — preview root = basePath, sub-pages = basePath + /sub/path
+      const subPath = url.pathname.replace(/^\/dashboard/, '')
+      router.push(basePath + subPath + (url.search || ''))
+    } else {
+      router.push(url.pathname + (url.search || ''))
+    }
   }
 
   function hasConnector(type?: ConnectorType): boolean {

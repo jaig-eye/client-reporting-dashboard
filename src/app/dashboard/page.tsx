@@ -17,7 +17,6 @@ import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
-import ChannelSourceCard from '@/components/ChannelSourceCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +25,7 @@ function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; compare?: string }>
+  searchParams: Promise<{ from?: string; to?: string; compare?: string; source?: string }>
 }) {
   const cookieStore = await cookies()
   const db          = createAdminClient()
@@ -71,15 +70,17 @@ export default async function DashboardPage({
   const availableSources = connections.map(c => c.connector.type)
   const hiddenMetrics    = new Set(client.hidden_metrics ?? [])
 
-  const hasGoogle = availableSources.includes('google_ads')
-  const hasMeta   = availableSources.includes('meta_ads')
-  const hasGa4    = availableSources.includes('google_analytics')
-  const hasGsc    = availableSources.includes('google_search_console')
-  const hasGbp    = availableSources.includes('google_business_profile')
+  // source param: undefined/"all" = all paid sources, "google_ads"/"meta_ads" = single source
+  const source = params.source as string | undefined
+  const isFiltered = source === 'google_ads' || source === 'meta_ads'
+
+  const hasGoogle = isFiltered ? source === 'google_ads' : availableSources.includes('google_ads')
+  const hasMeta   = isFiltered ? source === 'meta_ads'   : availableSources.includes('meta_ads')
   const hasGhl    = availableSources.includes('ghl')
 
-  // Most recently synced connection
-  const activeConnection = connections.reduce<typeof connections[0] | undefined>(
+  // Most recently synced connection (filtered by source if specified)
+  const relevantConnections = isFiltered ? connections.filter(c => c.connector.type === source) : connections
+  const activeConnection = relevantConnections.reduce<typeof connections[0] | undefined>(
     (best, c) => (!best || (c.last_synced_at ?? '') > (best.last_synced_at ?? '')) ? c : best,
     undefined
   )
@@ -93,7 +94,7 @@ export default async function DashboardPage({
   }
 
   // ─── Data fetching ────────────────────────────────────────────────────────
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, ga4SumRes, gscSumRes, gbpSumRes] = await Promise.all([
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -127,24 +128,6 @@ export default async function DashboardPage({
       ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
           .eq('client_id', client.id).eq('source', 'meta_ads')
       : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
-
-    // GA4 channel card summary
-    hasGa4
-      ? db.from('ga4_metrics').select('sessions,bounce_rate,conversions')
-          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    // GSC channel card summary
-    hasGsc
-      ? db.from('gsc_metrics').select('clicks,impressions,position')
-          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    // GBP channel card summary
-    hasGbp
-      ? db.from('gbp_metrics').select('views_search,views_maps,call_clicks')
-          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
   const assignmentsData = [
@@ -325,39 +308,6 @@ export default async function DashboardPage({
   const cpmSpark       = ds.map(d => ({ v: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0 }))
   const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
-  // ─── Channel card aggregates ──────────────────────────────────────────────
-  const ga4Rows = (ga4SumRes.data ?? []) as { sessions: number; bounce_rate: number; conversions: number }[]
-  const ga4Totals = ga4Rows.reduce(
-    (acc, r) => ({
-      sessions: acc.sessions + (r.sessions ?? 0),
-      bounce_rate_sum: acc.bounce_rate_sum + (r.bounce_rate ?? 0) * (r.sessions ?? 0),
-    }),
-    { sessions: 0, bounce_rate_sum: 0 }
-  )
-  const ga4BounceRate = ga4Totals.sessions > 0 ? ga4Totals.bounce_rate_sum / ga4Totals.sessions : 0
-
-  const gscRows = (gscSumRes.data ?? []) as { clicks: number; impressions: number; position: number }[]
-  const gscTotals = gscRows.reduce(
-    (acc, r) => ({
-      clicks: acc.clicks + (r.clicks ?? 0),
-      impressions: acc.impressions + (r.impressions ?? 0),
-      position_sum: acc.position_sum + (r.position ?? 0) * (r.impressions ?? 0),
-    }),
-    { clicks: 0, impressions: 0, position_sum: 0 }
-  )
-  const gscAvgPos = gscTotals.impressions > 0 ? gscTotals.position_sum / gscTotals.impressions : 0
-
-  const gbpRows = (gbpSumRes.data ?? []) as { views_search: number; views_maps: number; call_clicks: number }[]
-  const gbpTotals = gbpRows.reduce(
-    (acc, r) => ({
-      views: acc.views + (r.views_search ?? 0) + (r.views_maps ?? 0),
-      calls: acc.calls + (r.call_clicks ?? 0),
-    }),
-    { views: 0, calls: 0 }
-  )
-
-  const dateQs = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}`
-
   // ─── Empty state — no connections ────────────────────────────────────────
   if (connections.length === 0) {
     return (
@@ -379,7 +329,9 @@ export default async function DashboardPage({
         {/* ── Inline page header ───────────────────────────────── */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
-            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Summary</h1>
+            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+              {source === 'google_ads' ? 'Google Ads' : source === 'meta_ads' ? 'Meta Ads' : 'Summary'}
+            </h1>
             {syncedAt && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
             )}
@@ -509,61 +461,6 @@ export default async function DashboardPage({
                   <SparkMetricCard label="Frequency" value={(current.frequency ?? 0).toFixed(2)}
                     delta={showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined}
                     sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 }))} sparkColor="#f97316" delay={12} />
-                )}
-              </div>
-            )}
-
-            {/* ── Channel source cards ─────────────────────────────── */}
-            {(hasGoogle || hasMeta || (hasGa4 && ga4Totals.sessions > 0) || (hasGsc && gscTotals.clicks > 0) || (hasGbp && gbpTotals.views > 0)) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {(hasGoogle || hasMeta) && (
-                  <ChannelSourceCard
-                    title="Paid Ads"
-                    color="#3b82f6"
-                    icon="◎"
-                    href={hasGoogle ? `/dashboard?source=google_ads&${dateQs}` : `/dashboard?source=meta_ads&${dateQs}`}
-                    metrics={[
-                      { label: 'Spend', value: fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend) },
-                      { label: isEcomDash ? 'Revenue' : 'Leads', value: isEcomDash ? fmt$(current.conversionValue) : fmtNum(current.conversions) },
-                      { label: isEcomDash ? 'ROAS' : 'CPL', value: isEcomDash ? fmtRoas(current.roas) : (current.cpl > 0 ? fmtCurrency(current.cpl) : '—') },
-                    ]}
-                  />
-                )}
-                {hasGa4 && ga4Totals.sessions > 0 && (
-                  <ChannelSourceCard
-                    title="Analytics"
-                    color="#10b981"
-                    icon="◷"
-                    href={`/dashboard/analytics?${dateQs}`}
-                    metrics={[
-                      { label: 'Sessions', value: fmtNum(ga4Totals.sessions) },
-                      { label: 'Bounce Rate', value: fmtPct(ga4BounceRate) },
-                    ]}
-                  />
-                )}
-                {hasGsc && gscTotals.clicks > 0 && (
-                  <ChannelSourceCard
-                    title="Search Console"
-                    color="#f59e0b"
-                    icon="◉"
-                    href={`/dashboard/seo/search-console?${dateQs}`}
-                    metrics={[
-                      { label: 'Clicks', value: fmtNum(gscTotals.clicks) },
-                      { label: 'Avg. Position', value: gscAvgPos > 0 ? gscAvgPos.toFixed(1) : '—' },
-                    ]}
-                  />
-                )}
-                {hasGbp && gbpTotals.views > 0 && (
-                  <ChannelSourceCard
-                    title="Business Profile"
-                    color="#8b5cf6"
-                    icon="◈"
-                    href={`/dashboard/seo/gbp?${dateQs}`}
-                    metrics={[
-                      { label: 'Views', value: fmtNum(gbpTotals.views) },
-                      { label: 'Calls', value: fmtNum(gbpTotals.calls) },
-                    ]}
-                  />
                 )}
               </div>
             )}
