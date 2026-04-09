@@ -163,11 +163,11 @@ export async function GET(req: Request) {
       if (Array.isArray(m.actions)) {
         const isEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
         const primary = isEcom
-          ? (client.purchase_action ?? settings.default_purchase_action ?? 'purchase')
-          : (client.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped')
+          ? (client!.purchase_action ?? settings.default_purchase_action ?? 'purchase')
+          : (client!.lead_action ?? settings.default_lead_action ?? 'onsite_conversion.lead_grouped')
         const fallback = isEcom
-          ? (client.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
-          : (client.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead')
+          ? (client!.purchase_action_fallback ?? settings.default_purchase_action_fallback ?? null)
+          : (client!.lead_action_fallback ?? settings.default_lead_action_fallback ?? 'lead')
         const resolved = resolveMetaConversions(
           m.actions as MetaAction[], (m.action_values as MetaAction[] | null) ?? [], primary, fallback
         )
