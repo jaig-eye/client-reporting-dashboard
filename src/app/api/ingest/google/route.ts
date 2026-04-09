@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
         conversions:              Number(r.conversions) || 0,
         conversions_value:        Number(r.conversion_value) || 0,
         view_through_conversions: 0,
+        daily_budget_micros:      0,
       }))
       inserted = await upsertGoogleAdsMetrics(db, connection.id, connection.client_id, googleRows)
     }
