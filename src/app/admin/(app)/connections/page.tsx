@@ -35,9 +35,10 @@ export default async function ConnectionsPage() {
           const connector  = byType.get(type)
           const implemented = isConnectorImplemented(type)
           const status     = connector?.status ?? 'disconnected'
+          const isClientLevel = type === 'ghl' || type === 'wordpress'
 
           return (
-            <div key={type} className="card p-5">
+            <div key={type} className="card p-5" style={isClientLevel ? { opacity: 0.6 } : undefined}>
               <div className="flex items-start justify-between gap-4">
                 {/* Icon + description */}
                 <div className="flex items-start gap-4">
@@ -52,15 +53,20 @@ export default async function ConnectionsPage() {
                       <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                         {def.label}
                       </h2>
-                      {connector && <ConnectorStatusBadge status={status} />}
-                      {!implemented && (
+                      {connector && !isClientLevel && <ConnectorStatusBadge status={status} />}
+                      {!implemented && !isClientLevel && (
                         <span className="badge badge-gray">Coming soon</span>
                       )}
                     </div>
                     <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                       {def.description}
                     </p>
-                    {connector && (
+                    {isClientLevel && (
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                        Configure in Client Settings → Direct Connections
+                      </p>
+                    )}
+                    {connector && !isClientLevel && (
                       <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
                         {connector.label || 'No label set'}
                         {connector.last_checked_at && ` · Last checked ${new Date(connector.last_checked_at).toLocaleDateString()}`}
@@ -71,7 +77,11 @@ export default async function ConnectionsPage() {
 
                 {/* Action */}
                 <div className="flex-shrink-0">
-                  {!implemented ? (
+                  {isClientLevel ? (
+                    <span className="text-xs font-medium" style={{ color: 'var(--text-faint)' }}>
+                      Client-level only
+                    </span>
+                  ) : !implemented ? (
                     <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
                       Not yet available
                     </span>

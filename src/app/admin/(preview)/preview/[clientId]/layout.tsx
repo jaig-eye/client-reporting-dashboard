@@ -88,9 +88,7 @@ export default async function PreviewClientLayout({
             agencyName={settings.agency_name}
             clientLogoUrl={client.logo_url}
             clientName={client.name}
-            from=""
-            to=""
-            compare="none"
+            basePath={previewBase}
           />
         </Suspense>
 

@@ -1,43 +1,32 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Client Dashboard — /dashboard
 //
-// Source tabs: google_ads | meta_ads | all (merges all connected sources)
-// Content tabs: overview | benchmarks
-// Keywords appear only at the Ad Set level — NOT on this page.
-//
-// Data fix: metrics queried by client_id (not connection_id) so all connections
-// of the same type are included in totals.
+// Cockpit view: all channels at a glance, optimised for client calls.
+// Sidebar handles source navigation. This page always shows "all" paid sources.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
-import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings, pctOfBenchmark } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
-import { ConnectorLogo } from '@/components/ConnectorLogo'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
-import EfficiencyScore from '@/components/EfficiencyScore'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import ChannelSourceCard from '@/components/ChannelSourceCard'
 
 export const dynamic = 'force-dynamic'
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 
-const SOURCE_LABELS: Record<string, string> = {
-  google_ads: 'Google Ads',
-  meta_ads:   'Meta Ads',
-}
-
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; source?: string; compare?: string; tab?: string }>
+  searchParams: Promise<{ from?: string; to?: string; compare?: string }>
 }) {
   const cookieStore = await cookies()
   const db          = createAdminClient()
@@ -53,7 +42,6 @@ export default async function DashboardPage({
   const toDate   = params.to   ? new Date(params.to)   : new Date()
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
-  const activeTab = (params.tab ?? 'overview') as 'overview' | 'benchmarks'
 
   const periodMs = toDate.getTime() - fromDate.getTime()
   let priorTo:   Date
@@ -83,44 +71,29 @@ export default async function DashboardPage({
   const availableSources = connections.map(c => c.connector.type)
   const hiddenMetrics    = new Set(client.hidden_metrics ?? [])
 
-  const requestedSource = params.source as string | undefined
-  const isAllSources    = requestedSource === 'all'
-  const showOverview    = !requestedSource || (!isAllSources && !availableSources.includes(requestedSource as never))
+  const hasGoogle = availableSources.includes('google_ads')
+  const hasMeta   = availableSources.includes('meta_ads')
+  const hasGa4    = availableSources.includes('google_analytics')
+  const hasGsc    = availableSources.includes('google_search_console')
+  const hasGbp    = availableSources.includes('google_business_profile')
+  const hasGhl    = availableSources.includes('ghl')
 
-  // ─── Auto-redirect to first available source ────────────────────────────
-  if (showOverview) {
-    if (connections.length === 0) {
-      return (
-        <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-          <DashHeader settings={settings} client={client} syncedAt={null} fromDate={fromDate} toDate={toDate} compare={compare} />
-          <main className="max-w-7xl mx-auto px-6 py-6">
-            <div className="card p-12 text-center mt-4">
-              <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Your dashboard is being set up</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your account manager will connect your ad accounts shortly.</p>
-            </div>
-          </main>
-        </div>
-      )
-    }
-    const defaultSource = availableSources.includes('google_ads') ? 'google_ads'
-      : availableSources.includes('meta_ads') ? 'meta_ads' : availableSources[0]
-    redirect(`/dashboard?source=${defaultSource}&from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}`)
-  }
-
-  // ─── Data fetching ──────────────────────────────────────────────────────
-  const activeSource  = requestedSource!
-  const hasGoogle     = isAllSources ? availableSources.includes('google_ads') : activeSource === 'google_ads'
-  const hasMeta       = isAllSources ? availableSources.includes('meta_ads')   : activeSource === 'meta_ads'
-
-  // Most recently synced connection across active sources (for "Updated X" display)
-  const activeConnections = isAllSources ? connections : connections.filter(c => c.connector.type === activeSource)
-  const activeConnection  = activeConnections.reduce<typeof activeConnections[0] | undefined>(
+  // Most recently synced connection
+  const activeConnection = connections.reduce<typeof connections[0] | undefined>(
     (best, c) => (!best || (c.last_synced_at ?? '') > (best.last_synced_at ?? '')) ? c : best,
     undefined
   )
 
-  // Key: query by client_id so ALL connections of this source type are included.
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes] = await Promise.all([
+  // Connection id lookup per source — used for campaign drill-down links
+  const connectionsBySource: Record<string, string> = {}
+  for (const conn of connections) {
+    if (!connectionsBySource[conn.connector.type]) {
+      connectionsBySource[conn.connector.type] = conn.id
+    }
+  }
+
+  // ─── Data fetching ────────────────────────────────────────────────────────
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, ga4SumRes, gscSumRes, gbpSumRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -154,6 +127,24 @@ export default async function DashboardPage({
       ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
           .eq('client_id', client.id).eq('source', 'meta_ads')
       : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
+
+    // GA4 channel card summary
+    hasGa4
+      ? db.from('ga4_metrics').select('sessions,bounce_rate,conversions')
+          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+
+    // GSC channel card summary
+    hasGsc
+      ? db.from('gsc_metrics').select('clicks,impressions,position')
+          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+
+    // GBP channel card summary
+    hasGbp
+      ? db.from('gbp_metrics').select('views_search,views_maps,call_clicks')
+          .eq('client_id', client.id).gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
   const assignmentsData = [
@@ -167,8 +158,7 @@ export default async function DashboardPage({
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
   const isEcomDash = ecomCount > leadCount
 
-  // ─── CRM (GHL) data ──────────────────────────────────────────────────────
-  const hasGhl = availableSources.includes('ghl')
+  // ─── CRM (GHL) data ───────────────────────────────────────────────────────
   let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0 }
   if (hasGhl) {
     const { data: ghlRows } = await db.from('ghl_metrics')
@@ -200,7 +190,6 @@ export default async function DashboardPage({
       let conversions      = Number(m.conversions) || 0
       let conversion_value = Number(m.conversion_value ?? m.conversions_value ?? 0)
 
-      // Meta rows carry an actions array — apply per-campaign action remapping with fallback
       if (Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
         const primary = campaignIsEcom
@@ -263,23 +252,8 @@ export default async function DashboardPage({
     benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
   }
   const convRate = current.clicks > 0 ? current.conversions / current.clicks : 0
-  const ctrPct  = pctOfBenchmark(current.ctr,  effectiveBenchmarks.benchmark_ctr,  false)
-  const cpcPct  = pctOfBenchmark(current.cpc,  effectiveBenchmarks.benchmark_cpc,  true)
-  const crPct   = pctOfBenchmark(convRate,     effectiveBenchmarks.benchmark_conv_rate, false)
-  const cpmPct  = pctOfBenchmark(current.cpm,  effectiveBenchmarks.benchmark_cpm,  true)
-  const roasPct = pctOfBenchmark(current.roas, effectiveBenchmarks.benchmark_roas, false)
-  const effScore = isEcomDash
-    ? Math.min(100, Math.round(roasPct * 0.35 + crPct * 0.25 + ctrPct * 0.20 + cpcPct * 0.20))
-    : Math.min(100, Math.round(crPct   * 0.35 + ctrPct * 0.30 + cpcPct * 0.25 + cpmPct * 0.10))
-  const benchComponents = [
-    ...(isEcomDash ? [{ label: 'ROAS', pct: roasPct, actual: fmtRoas(current.roas), benchmark: fmtRoas(effectiveBenchmarks.benchmark_roas) }] : []),
-    { label: 'CTR',        pct: ctrPct, actual: fmtPct(current.ctr),      benchmark: fmtPct(effectiveBenchmarks.benchmark_ctr) },
-    { label: 'Conv. Rate', pct: crPct,  actual: fmtPct(convRate),          benchmark: fmtPct(effectiveBenchmarks.benchmark_conv_rate) },
-    { label: 'Avg. CPC',  pct: cpcPct, actual: fmtCurrency(current.cpc),  benchmark: fmtCurrency(effectiveBenchmarks.benchmark_cpc) },
-    { label: 'CPM',        pct: cpmPct, actual: fmtCurrency(current.cpm), benchmark: fmtCurrency(effectiveBenchmarks.benchmark_cpm) },
-  ]
 
-  // ─── Campaign map (per-source tracking for All mode drill-down) ───────────
+  // ─── Campaign map ─────────────────────────────────────────────────────────
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
@@ -304,9 +278,6 @@ export default async function DashboardPage({
       })
     }
   }
-
-  // Calculate days in period for daily budget column
-  const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
 
   const campaigns = Array.from(campMap.entries())
     .map(([id, c]) => {
@@ -333,7 +304,7 @@ export default async function DashboardPage({
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : null
 
-  // ─── Daily series for sparklines ──────────────────────────────────────────
+  // ─── Daily sparklines ──────────────────────────────────────────────────────
   const dailyMap = new Map<string, { spend: number; clicks: number; impressions: number; conversions: number; conversion_value: number }>()
   for (const r of currentMetrics) {
     const ex = dailyMap.get(r.date)
@@ -354,99 +325,94 @@ export default async function DashboardPage({
   const cpmSpark       = ds.map(d => ({ v: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0 }))
   const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
-  const dateQuery = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}`
-  const tabSuffix = activeTab !== 'overview' ? `&tab=${activeTab}` : ''
+  // ─── Channel card aggregates ──────────────────────────────────────────────
+  const ga4Rows = (ga4SumRes.data ?? []) as { sessions: number; bounce_rate: number; conversions: number }[]
+  const ga4Totals = ga4Rows.reduce(
+    (acc, r) => ({
+      sessions: acc.sessions + (r.sessions ?? 0),
+      bounce_rate_sum: acc.bounce_rate_sum + (r.bounce_rate ?? 0) * (r.sessions ?? 0),
+    }),
+    { sessions: 0, bounce_rate_sum: 0 }
+  )
+  const ga4BounceRate = ga4Totals.sessions > 0 ? ga4Totals.bounce_rate_sum / ga4Totals.sessions : 0
+
+  const gscRows = (gscSumRes.data ?? []) as { clicks: number; impressions: number; position: number }[]
+  const gscTotals = gscRows.reduce(
+    (acc, r) => ({
+      clicks: acc.clicks + (r.clicks ?? 0),
+      impressions: acc.impressions + (r.impressions ?? 0),
+      position_sum: acc.position_sum + (r.position ?? 0) * (r.impressions ?? 0),
+    }),
+    { clicks: 0, impressions: 0, position_sum: 0 }
+  )
+  const gscAvgPos = gscTotals.impressions > 0 ? gscTotals.position_sum / gscTotals.impressions : 0
+
+  const gbpRows = (gbpSumRes.data ?? []) as { views_search: number; views_maps: number; call_clicks: number }[]
+  const gbpTotals = gbpRows.reduce(
+    (acc, r) => ({
+      views: acc.views + (r.views_search ?? 0) + (r.views_maps ?? 0),
+      calls: acc.calls + (r.call_clicks ?? 0),
+    }),
+    { views: 0, calls: 0 }
+  )
+
+  const dateQs = `from=${fmtDate(fromDate)}&to=${fmtDate(toDate)}${compare !== 'none' ? `&compare=${compare}` : ''}`
+
+  // ─── Empty state — no connections ────────────────────────────────────────
+  if (connections.length === 0) {
+    return (
+      <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+        <main className="max-w-7xl mx-auto px-6 py-6">
+          <div className="card p-12 text-center mt-4">
+            <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Your dashboard is being set up</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your account manager will connect your ad accounts shortly.</p>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <DashHeader settings={settings} client={client} syncedAt={syncedAt} fromDate={fromDate} toDate={toDate} compare={compare} />
-
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
-        {/* ── Source pills (individual + All) ──────────────────── */}
-        {connections.length > 1 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* All pill — merges all sources */}
-            <Link
-              href={`/dashboard?source=all&${dateQuery}${tabSuffix}`}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.375rem',
-                padding: '0.375rem 1rem', borderRadius: '9999px', fontSize: '0.8125rem',
-                fontWeight: 600, textDecoration: 'none', transition: 'all 0.15s',
-                background: isAllSources ? 'var(--text-primary)' : 'var(--bg-subtle)',
-                color:      isAllSources ? '#fff'                 : 'var(--text-muted)',
-                border:     isAllSources ? '1px solid var(--text-primary)' : '1px solid var(--border)',
-              }}
-            >
-              All
-            </Link>
-            {connections.map(conn => {
-              const isActive = !isAllSources && conn.connector.type === activeSource
-              return (
-                <Link
-                  key={conn.id}
-                  href={`/dashboard?source=${conn.connector.type}&${dateQuery}${tabSuffix}`}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '0.375rem',
-                    padding: '0.375rem 1rem', borderRadius: '9999px', fontSize: '0.8125rem',
-                    fontWeight: 600, textDecoration: 'none', transition: 'all 0.15s',
-                    background: isActive ? 'var(--blue)'           : 'var(--bg-subtle)',
-                    color:      isActive ? '#fff'                   : 'var(--text-muted)',
-                    border:     isActive ? '1px solid var(--blue)'  : '1px solid var(--border)',
-                  }}
-                >
-                  <ConnectorLogo type={conn.connector.type} size={16} />
-                  {SOURCE_LABELS[conn.connector.type] ?? conn.connector.type}
-                </Link>
-              )
-            })}
+        {/* ── Inline page header ───────────────────────────────── */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Summary</h1>
+            {syncedAt && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
+            )}
           </div>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <ExportButtons
+                clientId={client.id}
+                from={fromDate.toISOString().split('T')[0]}
+                to={toDate.toISOString().split('T')[0]}
+                compare={compare}
+              />
+            <Suspense fallback={null}>
+              <DateRangePicker
+                from={fromDate.toISOString().split('T')[0]}
+                to={toDate.toISOString().split('T')[0]}
+                compare={compare}
+              />
+            </Suspense>
+          </div>
+        </div>
 
-        {/* ── Content tabs (Overview / Performance) — only when benchmarks enabled ── */}
-        {client.show_benchmarks && (
-          <div className="flex items-center gap-2">
-            {(['overview', 'benchmarks'] as const).map(tab => {
-              const isActive = activeTab === tab
-              return (
-                <Link
-                  key={tab}
-                  href={`/dashboard?source=${activeSource}&${dateQuery}${tab !== 'overview' ? `&tab=${tab}` : ''}`}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center',
-                    padding: '0.3rem 0.875rem', borderRadius: '9999px', fontSize: '0.8125rem',
-                    fontWeight: 600, textDecoration: 'none', transition: 'all 0.15s',
-                    background: isActive ? 'var(--blue)'           : 'transparent',
-                    color:      isActive ? '#fff'                   : 'var(--text-muted)',
-                    border:     isActive ? '1px solid var(--blue)'  : '1px solid var(--border)',
-                  }}
-                >
-                  {tab === 'overview' ? 'Overview' : 'Performance'}
-                </Link>
-              )
-            })}
-          </div>
-        )}
-
-        {/* ── Empty states ──────────────────────────────────────── */}
-        {!isAllSources && !activeConnection && (
-          <div className="card p-12 text-center mt-4">
-            <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>No connection found</p>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>This platform is not connected to your account.</p>
-          </div>
-        )}
-        {(isAllSources || activeConnection) && currentMetrics.length === 0 && (
+        {/* ── Empty paid data state ─────────────────────────────── */}
+        {currentMetrics.length === 0 && (
           <div className="card p-10 text-center">
             <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>No data for this date range</p>
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Try selecting a different date range above.</p>
           </div>
         )}
 
-        {/* ── Overview tab ─────────────────────────────────────── */}
-        {currentMetrics.length > 0 && activeTab === 'overview' && (
+        {currentMetrics.length > 0 && (
           <>
-            {/* Metric cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* ── Hero KPI cards ───────────────────────────────────── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {!hiddenMetrics.has('spend') && (
                 <SparkMetricCard
                   label="Total Cost"
@@ -480,60 +446,129 @@ export default async function DashboardPage({
                   benchmark={{ actual: current.ctr, target: effectiveBenchmarks.benchmark_ctr, actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), color: '#3b82f6' }}
                   delay={3} />
               )}
-              {!hiddenMetrics.has('conv_rate') && (
-                <SparkMetricCard label="Conv. Rate" value={fmtPct(convRate)}
-                  delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
-                  sparkData={crSpark} sparkColor="#10b981"
-                  benchmark={{ actual: convRate, target: effectiveBenchmarks.benchmark_conv_rate, actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), color: '#10b981' }}
-                  delay={4} />
-              )}
-              {!hiddenMetrics.has('cpm') && (
-                <SparkMetricCard label="CPM" value={fmtCurrency(current.cpm)}
-                  delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
-                  invertDelta sparkData={cpmSpark} sparkColor="#f59e0b"
-                  benchmark={{ actual: current.cpm, target: effectiveBenchmarks.benchmark_cpm, actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), color: '#f59e0b' }}
-                  delay={5} />
-              )}
-
-              {/* ── Additional toggleable metric cards ── */}
-              {!hiddenMetrics.has('conversions') && (
-                <SparkMetricCard label="Conversions" value={fmtNum(current.conversions)}
-                  delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
-                  sparkData={convSpark} sparkColor={settings.chart_color_conversions ?? '#10b981'} delay={6} />
-              )}
-              {!hiddenMetrics.has('conversion_value') && isEcomDash && (
-                <SparkMetricCard label="Conv. Value" value={fmt$(current.conversionValue)}
-                  delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
-                  sparkData={convValueSpark} sparkColor="#8b5cf6" delay={7} />
-              )}
-              {!hiddenMetrics.has('roas') && isEcomDash && (
-                <SparkMetricCard label="ROAS" value={fmtRoas(current.roas)}
-                  delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
-                  sparkData={roasSpark} sparkColor="#8b5cf6" delay={8} />
-              )}
-              {!hiddenMetrics.has('impressions') && (
-                <SparkMetricCard label="Impressions" value={fmtNum(current.impressions)}
-                  delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
-                  sparkData={ds.map(d => ({ v: d.impressions }))} sparkColor="#6366f1" delay={9} />
-              )}
-              {!hiddenMetrics.has('cpc') && (
-                <SparkMetricCard label="Avg. CPC" value={current.cpc > 0 ? fmtCurrency(current.cpc) : '—'}
-                  delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
-                  invertDelta sparkData={ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 }))} sparkColor="#f59e0b" delay={10} />
-              )}
-              {!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0 && (
-                <SparkMetricCard label="Reach" value={fmtNum(current.reach ?? 0)}
-                  delta={showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined}
-                  sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 }))} sparkColor="#06b6d4" delay={11} />
-              )}
-              {!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0 && (
-                <SparkMetricCard label="Frequency" value={(current.frequency ?? 0).toFixed(2)}
-                  delta={showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined}
-                  sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 }))} sparkColor="#f97316" delay={12} />
-              )}
             </div>
 
-            {/* Daily Performance chart */}
+            {/* ── Additional metric cards ───────────────────────────── */}
+            {(
+              !hiddenMetrics.has('conv_rate') ||
+              !hiddenMetrics.has('cpm') ||
+              !hiddenMetrics.has('conversions') ||
+              !hiddenMetrics.has('impressions') ||
+              !hiddenMetrics.has('cpc') ||
+              (!hiddenMetrics.has('conversion_value') && isEcomDash) ||
+              (!hiddenMetrics.has('roas') && isEcomDash) ||
+              (!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0) ||
+              (!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0)
+            ) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {!hiddenMetrics.has('conv_rate') && (
+                  <SparkMetricCard label="Conv. Rate" value={fmtPct(convRate)}
+                    delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
+                    sparkData={crSpark} sparkColor="#10b981"
+                    benchmark={{ actual: convRate, target: effectiveBenchmarks.benchmark_conv_rate, actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), color: '#10b981' }}
+                    delay={4} />
+                )}
+                {!hiddenMetrics.has('cpm') && (
+                  <SparkMetricCard label="CPM" value={fmtCurrency(current.cpm)}
+                    delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
+                    invertDelta sparkData={cpmSpark} sparkColor="#f59e0b"
+                    benchmark={{ actual: current.cpm, target: effectiveBenchmarks.benchmark_cpm, actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), color: '#f59e0b' }}
+                    delay={5} />
+                )}
+                {!hiddenMetrics.has('conversions') && (
+                  <SparkMetricCard label="Conversions" value={fmtNum(current.conversions)}
+                    delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
+                    sparkData={convSpark} sparkColor={settings.chart_color_conversions ?? '#10b981'} delay={6} />
+                )}
+                {!hiddenMetrics.has('conversion_value') && isEcomDash && (
+                  <SparkMetricCard label="Conv. Value" value={fmt$(current.conversionValue)}
+                    delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
+                    sparkData={convValueSpark} sparkColor="#8b5cf6" delay={7} />
+                )}
+                {!hiddenMetrics.has('roas') && isEcomDash && (
+                  <SparkMetricCard label="ROAS" value={fmtRoas(current.roas)}
+                    delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
+                    sparkData={roasSpark} sparkColor="#8b5cf6" delay={8} />
+                )}
+                {!hiddenMetrics.has('impressions') && (
+                  <SparkMetricCard label="Impressions" value={fmtNum(current.impressions)}
+                    delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
+                    sparkData={ds.map(d => ({ v: d.impressions }))} sparkColor="#6366f1" delay={9} />
+                )}
+                {!hiddenMetrics.has('cpc') && (
+                  <SparkMetricCard label="Avg. CPC" value={current.cpc > 0 ? fmtCurrency(current.cpc) : '—'}
+                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
+                    invertDelta sparkData={ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 }))} sparkColor="#f59e0b" delay={10} />
+                )}
+                {!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0 && (
+                  <SparkMetricCard label="Reach" value={fmtNum(current.reach ?? 0)}
+                    delta={showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined}
+                    sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 }))} sparkColor="#06b6d4" delay={11} />
+                )}
+                {!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0 && (
+                  <SparkMetricCard label="Frequency" value={(current.frequency ?? 0).toFixed(2)}
+                    delta={showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined}
+                    sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 }))} sparkColor="#f97316" delay={12} />
+                )}
+              </div>
+            )}
+
+            {/* ── Channel source cards ─────────────────────────────── */}
+            {(hasGoogle || hasMeta || (hasGa4 && ga4Totals.sessions > 0) || (hasGsc && gscTotals.clicks > 0) || (hasGbp && gbpTotals.views > 0)) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {(hasGoogle || hasMeta) && (
+                  <ChannelSourceCard
+                    title="Paid Ads"
+                    color="#3b82f6"
+                    icon="◎"
+                    href={hasGoogle ? `/dashboard?source=google_ads&${dateQs}` : `/dashboard?source=meta_ads&${dateQs}`}
+                    metrics={[
+                      { label: 'Spend', value: fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend) },
+                      { label: isEcomDash ? 'Revenue' : 'Leads', value: isEcomDash ? fmt$(current.conversionValue) : fmtNum(current.conversions) },
+                      { label: isEcomDash ? 'ROAS' : 'CPL', value: isEcomDash ? fmtRoas(current.roas) : (current.cpl > 0 ? fmtCurrency(current.cpl) : '—') },
+                    ]}
+                  />
+                )}
+                {hasGa4 && ga4Totals.sessions > 0 && (
+                  <ChannelSourceCard
+                    title="Analytics"
+                    color="#10b981"
+                    icon="◷"
+                    href={`/dashboard/analytics?${dateQs}`}
+                    metrics={[
+                      { label: 'Sessions', value: fmtNum(ga4Totals.sessions) },
+                      { label: 'Bounce Rate', value: fmtPct(ga4BounceRate) },
+                    ]}
+                  />
+                )}
+                {hasGsc && gscTotals.clicks > 0 && (
+                  <ChannelSourceCard
+                    title="Search Console"
+                    color="#f59e0b"
+                    icon="◉"
+                    href={`/dashboard/seo/search-console?${dateQs}`}
+                    metrics={[
+                      { label: 'Clicks', value: fmtNum(gscTotals.clicks) },
+                      { label: 'Avg. Position', value: gscAvgPos > 0 ? gscAvgPos.toFixed(1) : '—' },
+                    ]}
+                  />
+                )}
+                {hasGbp && gbpTotals.views > 0 && (
+                  <ChannelSourceCard
+                    title="Business Profile"
+                    color="#8b5cf6"
+                    icon="◈"
+                    href={`/dashboard/seo/gbp?${dateQs}`}
+                    metrics={[
+                      { label: 'Views', value: fmtNum(gbpTotals.views) },
+                      { label: 'Calls', value: fmtNum(gbpTotals.calls) },
+                    ]}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* ── Daily Performance chart ───────────────────────────── */}
             {!hiddenMetrics.has('daily_chart') && (
               <div className="card p-6">
                 <div className="mb-4">
@@ -555,7 +590,7 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* Campaign breakdown */}
+            {/* ── Campaign breakdown ───────────────────────────────── */}
             {!hiddenMetrics.has('campaigns') && (
               <div className="card p-6">
                 <div className="flex items-center justify-between mb-4">
@@ -566,7 +601,7 @@ export default async function DashboardPage({
                 </div>
                 <CampaignTable
                   campaigns={campaigns}
-                  connectionId={isAllSources ? undefined : activeConnection?.id}
+                  connectionsBySource={connectionsBySource}
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
                   compare={compare !== 'none' ? compare : undefined}
@@ -574,7 +609,7 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* CRM Activity (GoHighLevel) */}
+            {/* ── CRM Activity (GoHighLevel) ───────────────────────── */}
             {hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
               <div className="card p-6">
                 <div className="mb-4">
@@ -609,53 +644,7 @@ export default async function DashboardPage({
           </>
         )}
 
-        {/* ── Performance / Benchmarks tab ──────────────────────── */}
-        {currentMetrics.length > 0 && activeTab === 'benchmarks' && client.show_benchmarks && (
-          <EfficiencyScore score={effScore} components={benchComponents} />
-        )}
-
       </main>
     </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared header
-// ─────────────────────────────────────────────────────────────────────────────
-
-function DashHeader({
-  settings, client, syncedAt, fromDate, toDate, compare,
-}: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  settings: any
-  client: Client
-  syncedAt: string | null
-  fromDate: Date
-  toDate: Date
-  compare?: string
-}) {
-  return (
-    <header className="sticky top-0 z-10 border-b" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          {settings.agency_logo_url && (
-            <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain flex-shrink-0" />
-          )}
-          <span className="hidden sm:block text-sm" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
-          <span style={{ color: 'var(--border)' }}>|</span>
-          <div className="flex items-center gap-2 min-w-0">
-            {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain flex-shrink-0" />}
-            <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
-          </div>
-          {syncedAt && <span className="text-xs hidden md:inline flex-shrink-0" style={{ color: 'var(--text-faint)' }}>Updated {syncedAt}</span>}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <ExportButtons clientId={client.id} />
-          <Suspense fallback={null}>
-            <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
-          </Suspense>
-        </div>
-      </div>
-    </header>
   )
 }

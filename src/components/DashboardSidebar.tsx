@@ -25,9 +25,7 @@ interface SidebarProps {
   agencyName?: string
   clientLogoUrl?: string | null
   clientName?: string
-  from: string
-  to: string
-  compare: string
+  basePath?: string  // prefix for all nav links (e.g. /admin/preview/[clientId])
 }
 
 // ─── Nav item definitions ────────────────────────────────────────────────────
@@ -87,14 +85,16 @@ export default function DashboardSidebar({
   agencyName,
   clientLogoUrl,
   clientName,
-  from,
-  to,
-  compare,
+  basePath = '',
 }: SidebarProps) {
   const pathname     = usePathname()
   const searchParams = useSearchParams()
   const router       = useRouter()
   const activeSource = searchParams.get('source') ?? ''
+  // Read date params directly from URL so they're always current
+  const from    = searchParams.get('from')    ?? ''
+  const to      = searchParams.get('to')      ?? ''
+  const compare = searchParams.get('compare') ?? ''
 
   // Sections default open
   const [open, setOpen] = useState<Record<string, boolean>>({
@@ -112,15 +112,16 @@ export default function DashboardSidebar({
     const url = new URL(item.href, 'http://x')
     const itemPath   = url.pathname
     const itemSource = url.searchParams.get('source') ?? ''
+    // Strip basePath prefix for comparison
+    const currentPath = basePath ? pathname.replace(basePath, '') || '/' : pathname
 
     if (itemPath === '/dashboard' && !item.children) {
-      // Summary: active when on /dashboard with no source param or 'all' source
-      return pathname === '/dashboard' && (activeSource === '' || activeSource === 'all')
+      return currentPath === '/dashboard' && (activeSource === '' || activeSource === 'all')
     }
     if (itemSource) {
-      return pathname === itemPath && activeSource === itemSource
+      return currentPath === itemPath && activeSource === itemSource
     }
-    return pathname.startsWith(itemPath) && itemPath !== '/dashboard'
+    return currentPath.startsWith(itemPath) && itemPath !== '/dashboard'
   }
 
   function navigate(item: NavItem) {
@@ -130,7 +131,7 @@ export default function DashboardSidebar({
     if (from) url.searchParams.set('from', from)
     if (to)   url.searchParams.set('to',   to)
     if (compare && compare !== 'none') url.searchParams.set('compare', compare)
-    router.push(url.pathname + (url.search ? url.search : ''))
+    router.push(basePath + url.pathname + (url.search ? url.search : ''))
   }
 
   function hasConnector(type?: ConnectorType): boolean {

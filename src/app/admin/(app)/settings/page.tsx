@@ -281,6 +281,36 @@ export default function AgencySettingsPage() {
           </div>
         </div>
 
+        {/* Sync Schedule */}
+        <div className="card p-6">
+          <h2 className="section-title mb-1">Sync Schedule</h2>
+          <p className="section-desc mb-4">
+            Automated daily sync keeps all client dashboards up to date.
+          </p>
+          <label className="flex items-center gap-3 cursor-pointer mb-3">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.cron_enabled}
+              onClick={() => toggleCron(!form.cron_enabled)}
+              className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
+              style={{ background: form.cron_enabled ? 'var(--blue)' : 'var(--bg-muted)' }}
+            >
+              <span
+                className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
+                style={{ transform: form.cron_enabled ? 'translateX(1rem)' : 'translateX(0)' }}
+              />
+            </button>
+            <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              {form.cron_enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </label>
+          <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>
+            <p>Schedule: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>0 6 * * *</span> — daily at 6:00 AM UTC</p>
+            <p>Re-syncs the last 3 days for all active connections (captures late conversions).</p>
+          </div>
+        </div>
+
         {/* Sticky save bar */}
         <div style={{
           position: 'sticky', bottom: 0,
@@ -296,36 +326,6 @@ export default function AgencySettingsPage() {
           {error  && <span className="text-sm" style={{ color: 'var(--red)' }}>{error}</span>}
         </div>
       </form>
-
-      {/* Sync Schedule */}
-      <div className="card p-6 mt-5">
-        <h2 className="section-title mb-1">Sync Schedule</h2>
-        <p className="section-desc mb-4">
-          Automated daily sync keeps all client dashboards up to date.
-        </p>
-        <label className="flex items-center gap-3 cursor-pointer mb-3">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={form.cron_enabled}
-            onClick={() => toggleCron(!form.cron_enabled)}
-            className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-            style={{ background: form.cron_enabled ? 'var(--blue)' : 'var(--bg-muted)' }}
-          >
-            <span
-              className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-              style={{ transform: form.cron_enabled ? 'translateX(1rem)' : 'translateX(0)' }}
-            />
-          </button>
-          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {form.cron_enabled ? 'Enabled' : 'Disabled'}
-          </span>
-        </label>
-        <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>
-          <p>Schedule: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>0 6 * * *</span> — daily at 6:00 AM UTC</p>
-          <p>Re-syncs the last 3 days for all active connections (captures late conversions).</p>
-        </div>
-      </div>
     </div>
   )
 }

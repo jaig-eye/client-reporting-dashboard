@@ -60,9 +60,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
               agencyName={settings?.agency_name}
               clientLogoUrl={client.logo_url}
               clientName={client.name}
-              from=""
-              to=""
-              compare="none"
             />
           </Suspense>
         )}

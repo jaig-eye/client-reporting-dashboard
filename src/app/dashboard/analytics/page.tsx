@@ -250,21 +250,18 @@ export default async function GA4Page({
 
 function PageHeader({ client, fromDate, toDate, compare }: { client: Client; fromDate: Date; toDate: Date; compare: string }) {
   return (
-    <header className="sticky top-0 z-10 border-b" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#e37400' }} />
-          <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Analytics — GA4</span>
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{client.name}</span>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <ExportButtons clientId={client.id} />
-          <Suspense fallback={null}>
-            <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
-          </Suspense>
-        </div>
+    <div className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#e37400', flexShrink: 0 }} />
+        <h1 className="font-semibold text-base" style={{ color: 'var(--text-primary)', margin: 0 }}>Analytics — GA4</h1>
       </div>
-    </header>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <ExportButtons clientId={client.id} from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
+        <Suspense fallback={null}>
+          <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
+        </Suspense>
+      </div>
+    </div>
   )
 }
 

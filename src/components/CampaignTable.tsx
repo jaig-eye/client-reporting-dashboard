@@ -24,6 +24,7 @@ type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'c
 export default function CampaignTable({
   campaigns,
   connectionId,
+  connectionsBySource,
   dateFrom,
   dateTo,
   compare,
@@ -31,6 +32,7 @@ export default function CampaignTable({
 }: {
   campaigns: Campaign[]
   connectionId?: string
+  connectionsBySource?: Record<string, string>
   dateFrom?: string
   dateTo?: string
   compare?: string
@@ -71,10 +73,11 @@ export default function CampaignTable({
   }
 
   function drillLink(c: Campaign) {
-    if (!connectionId) return null
+    const connId = connectionsBySource?.[c.source] ?? connectionId
+    if (!connId) return null
     const qs = new URLSearchParams({
       source: c.source,
-      connectionId,
+      connectionId: connId,
       ...(dateFrom ? { from: dateFrom } : {}),
       ...(dateTo   ? { to:   dateTo   } : {}),
       ...(compare  ? { compare }        : {}),
