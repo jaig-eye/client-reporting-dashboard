@@ -25,6 +25,7 @@ export interface GoogleAdsRawRow {
   campaign_type: string
   date: string              // YYYY-MM-DD
   cost_micros: number
+  daily_budget_micros: number  // campaign.campaign_budget.amount_micros
   impressions: number
   clicks: number
   conversions: number
@@ -38,6 +39,7 @@ export interface MetaAdsRawRow {
   campaign_name: string
   objective: string
   campaign_status?: string  // ACTIVE | PAUSED | ARCHIVED | DELETED
+  daily_budget?: number     // from Campaigns API (account currency)
   date: string              // YYYY-MM-DD
   spend: number
   impressions: number

@@ -314,6 +314,7 @@ export async function upsertGoogleAdsMetrics(
       ctr:  impressions > 0 ? clicks / impressions : 0,
       cpc:  clicks > 0 ? spend / clicks : 0,
       cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
+      daily_budget: r.daily_budget_micros > 0 ? r.daily_budget_micros / 1_000_000 : null,
     }
   })
 
@@ -386,6 +387,7 @@ export async function upsertMetaAdsMetrics(
       ctr:               impressions > 0 ? clicks / impressions : 0,
       cpc:               clicks > 0 ? spend / clicks : 0,
       cpm:               impressions > 0 ? (spend / impressions) * 1000 : 0,
+      daily_budget:      r.daily_budget != null ? r.daily_budget : null,
       // Accumulated action types for the conversion selector UI.
       // Merged with existing discovered_actions on upsert.
       discovered_actions: discoveredActions,

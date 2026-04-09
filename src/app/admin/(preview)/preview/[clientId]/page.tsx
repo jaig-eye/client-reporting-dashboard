@@ -150,6 +150,7 @@ export default async function AdminPreviewPage({
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     roas: number; ctr: number; cpc: number; cpm: number
+    daily_budget?: number | null
   }
 
   function normalise(rows: Record<string, unknown>[], rowSource: string): NormRow[] {
@@ -181,6 +182,7 @@ export default async function AdminPreviewPage({
         clicks:          Number(m.clicks)        || 0,
         conversions, conversion_value,
         roas: Number(m.roas) || 0, ctr: Number(m.ctr) || 0, cpc: Number(m.cpc) || 0, cpm: Number(m.cpm) || 0,
+        daily_budget: m.daily_budget != null ? Number(m.daily_budget) : null,
       }
     })
   }
@@ -240,7 +242,7 @@ export default async function AdminPreviewPage({
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
-    status?: string | null
+    status?: string | null; daily_budget?: number | null
   }>()
   for (const row of currentMetrics) {
     const assignment = assignmentMap.get(row.campaign_id)
@@ -250,11 +252,15 @@ export default async function AdminPreviewPage({
     if (ex) {
       ex.spend += row.spend; ex.impressions += row.impressions; ex.clicks += row.clicks
       ex.conversions += row.conversions; ex.conversionValue += row.conversion_value
+      if (row.daily_budget != null && (ex.daily_budget == null || row.daily_budget > ex.daily_budget)) {
+        ex.daily_budget = row.daily_budget
+      }
     } else {
       campMap.set(row.campaign_id, {
         name: row.campaign_name, spend: row.spend, impressions: row.impressions,
         clicks: row.clicks, conversions: row.conversions, conversionValue: row.conversion_value,
         display_mode: mode, _source: row._source, status: row.campaign_status,
+        daily_budget: row.daily_budget ?? null,
       })
     }
   }
@@ -276,6 +282,7 @@ export default async function AdminPreviewPage({
         convRate:        c.clicks > 0 ? c.conversions / c.clicks : 0,
         cpl:             c.conversions > 0 ? cost / c.conversions : 0,
         display_mode:    c.display_mode,
+        daily_budget:    c.daily_budget ?? null,
       }
     })
     .sort((a, b) => b.spend - a.spend)

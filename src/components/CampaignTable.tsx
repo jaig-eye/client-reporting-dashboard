@@ -17,6 +17,7 @@ export interface Campaign {
   convRate: number        // conversions / clicks
   cpl: number
   display_mode?: string | null
+  daily_budget?: number | null
 }
 
 type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'convRate' | 'cpl'
@@ -108,6 +109,7 @@ export default function CampaignTable({
             <SortTh sk="conversions">Conv.</SortTh>
             <SortTh sk="convRate">Conv Rate</SortTh>
             <SortTh sk="cpl">CPL</SortTh>
+            <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>
             <th style={{ whiteSpace: 'nowrap' }}>Mode</th>
           </tr>
         </thead>
@@ -172,6 +174,9 @@ export default function CampaignTable({
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                   {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                 </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {c.daily_budget ? `$${c.daily_budget.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                </td>
                 <td>
                   <span
                     className="badge"
@@ -200,6 +205,7 @@ export default function CampaignTable({
             <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? totConv.toFixed(1) : '—'}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? `${(totCR * 100).toFixed(2)}%` : '—'}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? `$${totCpl.toFixed(2)}` : '—'}</td>
+            <td></td>
             <td></td>
           </tr>
         </tfoot>

@@ -119,20 +119,20 @@ export default function DashboardSidebar({
       // Preview mode: currentPath is the segment after basePath, item paths strip /dashboard
       const currentPath = pathname.replace(basePath, '') || '/'
       const comparePath = itemPath.replace(/^\/dashboard/, '') || '/'
-      if (comparePath === '/' && !item.children) {
-        return currentPath === '/' && (activeSource === '' || activeSource === 'all')
-      }
       if (itemSource) {
         return currentPath === comparePath && activeSource === itemSource
+      }
+      if (comparePath === '/' && !item.children) {
+        return currentPath === '/' && (activeSource === '' || activeSource === 'all')
       }
       return currentPath.startsWith(comparePath) && comparePath !== '/'
     } else {
       // Regular dashboard mode
-      if (itemPath === '/dashboard' && !item.children) {
-        return pathname === '/dashboard' && (activeSource === '' || activeSource === 'all')
-      }
       if (itemSource) {
         return pathname === itemPath && activeSource === itemSource
+      }
+      if (itemPath === '/dashboard' && !item.children) {
+        return pathname === '/dashboard' && (activeSource === '' || activeSource === 'all')
       }
       return pathname.startsWith(itemPath) && itemPath !== '/dashboard'
     }

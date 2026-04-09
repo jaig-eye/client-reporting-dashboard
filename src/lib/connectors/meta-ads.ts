@@ -455,6 +455,28 @@ export const metaAdsConnector: ConnectorAdapter = {
       nextUrl = (paging?.next as string) || null
     }
 
+    // Fetch campaign daily budgets from the Campaigns API (not available in Insights API)
+    const budgetMap = new Map<string, number>()
+    try {
+      const budgetData = await metaGet(`/${externalId}/campaigns`, accessToken, {
+        fields: 'id,daily_budget',
+        limit: '500',
+      })
+      for (const camp of (budgetData.data || []) as Record<string, unknown>[]) {
+        const cid    = String(camp.id || '')
+        const budget = Number(camp.daily_budget || 0) / 100  // cents → account currency
+        if (cid && budget > 0) budgetMap.set(cid, budget)
+      }
+    } catch {
+      // best-effort — daily_budget stays undefined if unavailable
+    }
+
+    // Enrich rows with budget data
+    for (const row of rows) {
+      const budget = budgetMap.get(row.campaign_id)
+      if (budget !== undefined) row.daily_budget = budget
+    }
+
     return {
       rows,
       discoveredActions: Array.from(discoveredActions),

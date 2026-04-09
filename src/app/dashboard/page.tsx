@@ -164,6 +164,7 @@ export default async function DashboardPage({
     campaign_id: string; campaign_name: string; date: string; _source: string
     campaign_status?: string | null
     spend: number; impressions: number; clicks: number
+    daily_budget?: number | null
     conversions: number; conversion_value: number
     roas: number; ctr: number; cpc: number; cpm: number
   }
@@ -206,6 +207,7 @@ export default async function DashboardPage({
         ctr:              Number(m.ctr)   || 0,
         cpc:              Number(m.cpc)   || 0,
         cpm:              Number(m.cpm)   || 0,
+        daily_budget:     m.daily_budget != null ? Number(m.daily_budget) : null,
       }
     })
   }
@@ -266,7 +268,7 @@ export default async function DashboardPage({
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
-    status?: string | null
+    status?: string | null; daily_budget?: number | null
   }>()
   for (const row of currentMetrics) {
     const assignment = assignmentMap.get(row.campaign_id)
@@ -279,11 +281,15 @@ export default async function DashboardPage({
       ex.clicks          += row.clicks
       ex.conversions     += row.conversions
       ex.conversionValue += row.conversion_value
+      if (row.daily_budget != null && (ex.daily_budget == null || row.daily_budget > ex.daily_budget)) {
+        ex.daily_budget = row.daily_budget
+      }
     } else {
       campMap.set(row.campaign_id, {
         name: row.campaign_name, spend: row.spend, impressions: row.impressions,
         clicks: row.clicks, conversions: row.conversions, conversionValue: row.conversion_value,
         display_mode: mode, _source: row._source, status: row.campaign_status,
+        daily_budget: row.daily_budget ?? null,
       })
     }
   }
@@ -305,6 +311,7 @@ export default async function DashboardPage({
         convRate:        c.clicks > 0 ? c.conversions / c.clicks : 0,
         cpl:             c.conversions > 0 ? cost / c.conversions : 0,
         display_mode:    c.display_mode,
+        daily_budget:    c.daily_budget ?? null,
       }
     })
     .sort((a, b) => b.spend - a.spend)
