@@ -735,7 +735,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         campaign.name,
         campaign.status,
         campaign.advertising_channel_type,
-        campaign.campaign_budget.amount_micros,
+        campaign_budget.amount_micros,
         segments.date,
         metrics.cost_micros,
         metrics.impressions,
@@ -751,11 +751,11 @@ export const googleAdsConnector: ConnectorAdapter = {
     )
 
     const rows: GoogleAdsRawRow[] = raw.map(row => {
-      const campaign  = row.campaign  as Record<string, unknown>
-      const metrics   = row.metrics   as Record<string, unknown>
-      const segments  = row.segments  as Record<string, unknown>
+      const campaign       = row.campaign       as Record<string, unknown>
+      const campaignBudget = row.campaignBudget as Record<string, unknown> | null | undefined
+      const metrics        = row.metrics        as Record<string, unknown>
+      const segments       = row.segments       as Record<string, unknown>
 
-      const campaignBudget = campaign?.campaignBudget as Record<string, unknown> | null | undefined
       return {
         campaign_id:              String(campaign?.id    || ''),
         campaign_name:            String(campaign?.name  || ''),
