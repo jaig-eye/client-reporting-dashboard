@@ -230,13 +230,20 @@ export default async function ClientDetailPage({
             const connection  = connByType.get(type)
             const connector   = connectors.find(c => c.type === type)
             const implemented = isConnectorImplemented(type)
+            const isDirectType = type === 'ghl' || type === 'wordpress'
 
             // Determine the card state
             const state =
               !implemented ? 'coming-soon'
-              : !connector ? 'connector-missing'
-              : connection ? 'connected'
-              : 'not-connected'
+              : isDirectType
+                ? (connection ? 'connected' : 'direct-connect')
+                : !connector ? 'connector-missing'
+                : connection ? 'connected'
+                : 'not-connected'
+
+            const existingDirectTypes = connections
+              .filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress')
+              .map(c => c.connector.type as 'ghl' | 'wordpress')
 
             return (
               <div key={type} className="card p-5">
@@ -319,6 +326,17 @@ export default async function ClientDetailPage({
                     )}
                   </div>
                 </div>
+
+                {/* Inline credential form for GHL / WordPress */}
+                {state === 'direct-connect' && isDirectType && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <ClientDirectConnections
+                      clientId={id}
+                      existingTypes={existingDirectTypes}
+                      singleType={type as 'ghl' | 'wordpress'}
+                    />
+                  </div>
+                )}
               </div>
             )
           })}
@@ -328,18 +346,6 @@ export default async function ClientDetailPage({
 
       {/* ── Full-width: Campaign Manager + Conversion Mapping + Raw Data ── */}
       <div className="mt-6 space-y-6">
-
-        {/* Direct connections for GHL / WordPress */}
-        <div className="card p-5">
-          <h2 className="section-title mb-1">Client Direct Connections</h2>
-          <p className="section-desc mb-4">
-            GoHighLevel and WordPress are configured per-client since each client has their own credentials.
-          </p>
-          <ClientDirectConnections
-            clientId={id}
-            existingTypes={connections.filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress').map(c => c.connector.type as 'ghl' | 'wordpress')}
-          />
-        </div>
 
         <div className="card p-5">
           <h2 className="section-title mb-1">Performance Benchmarks</h2>
@@ -434,6 +440,7 @@ function SourceBadge({ state }: { state: string }) {
     'connector-missing': { label: 'Not set up',  cls: 'badge-amber' },
     'not-connected':     { label: 'Available',   cls: 'badge-gray'  },
     'coming-soon':       { label: 'Coming soon', cls: 'badge-gray'  },
+    'direct-connect':    { label: 'Not set up',  cls: 'badge-amber' },
   }
   const d = m[state] ?? { label: state, cls: 'badge-gray' }
   return <span className={`badge ${d.cls}`}>{d.label}</span>
