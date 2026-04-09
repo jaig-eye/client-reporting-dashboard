@@ -387,7 +387,6 @@ export const metaAdsConnector: ConnectorAdapter = {
           'campaign_id',
           'campaign_name',
           'objective',
-          'campaign_status',
           'spend',
           'impressions',
           'clicks',
@@ -438,10 +437,9 @@ export const metaAdsConnector: ConnectorAdapter = {
         }))
 
         rows.push({
-          campaign_id:     String(day.campaign_id     || ''),
-          campaign_name:   String(day.campaign_name   || ''),
-          objective:       String(day.objective       || ''),
-          campaign_status: String(day.campaign_status || ''),
+          campaign_id:     String(day.campaign_id   || ''),
+          campaign_name:   String(day.campaign_name || ''),
+          objective:       String(day.objective     || ''),
           date:            String(day.date_start      || ''),
           spend:           parseFloat(String(day.spend       || '0')),
           impressions:     parseInt(  String(day.impressions || '0'), 10),
