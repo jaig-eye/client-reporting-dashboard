@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Copy, Check } from '@phosphor-icons/react'
 
 export default function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -25,10 +26,21 @@ export default function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className={`text-xs font-medium flex-shrink-0 transition-colors ${
-        copied ? 'text-emerald-400' : 'text-blue-400 hover:text-blue-300'
-      }`}
+      aria-label={copied ? 'Copied' : 'Copy to clipboard'}
+      className="focus-ring"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        fontSize: '0.75rem', fontWeight: 500, flexShrink: 0,
+        background: 'none', border: 'none', cursor: 'pointer',
+        color: copied ? 'var(--green)' : 'var(--blue)',
+        transition: 'color 0.15s',
+        padding: '2px 4px', borderRadius: 4,
+      }}
     >
+      {copied
+        ? <Check size={12} aria-hidden />
+        : <Copy size={12} aria-hidden />
+      }
       {copied ? 'Copied!' : 'Copy'}
     </button>
   )

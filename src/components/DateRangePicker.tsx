@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
+import { CalendarBlank, CaretDown } from '@phosphor-icons/react'
 
 function fmtD(d: Date) { return d.toISOString().split('T')[0] }
 
@@ -49,16 +50,16 @@ function getLastYearRange(): [string, string] {
 type PresetId = 'today' | 'yesterday' | 'last7' | 'last14' | 'last30' | 'last90' | 'mtd' | 'lastMonth' | 'ytd' | 'lastYear'
 
 const PRESETS: { id: PresetId; label: string }[] = [
-  { id: 'today',     label: 'Today'        },
-  { id: 'yesterday', label: 'Yesterday'    },
-  { id: 'last7',     label: 'Last 7 days'  },
-  { id: 'last14',    label: 'Last 14 days' },
-  { id: 'last30',    label: 'Last 30 days' },
-  { id: 'last90',    label: 'Last 90 days' },
+  { id: 'today',     label: 'Today'         },
+  { id: 'yesterday', label: 'Yesterday'     },
+  { id: 'last7',     label: 'Last 7 days'   },
+  { id: 'last14',    label: 'Last 14 days'  },
+  { id: 'last30',    label: 'Last 30 days'  },
+  { id: 'last90',    label: 'Last 90 days'  },
   { id: 'mtd',       label: 'Month to Date' },
-  { id: 'lastMonth', label: 'Last Month'   },
-  { id: 'ytd',       label: 'Year to Date' },
-  { id: 'lastYear',  label: 'Last Year'    },
+  { id: 'lastMonth', label: 'Last Month'    },
+  { id: 'ytd',       label: 'Year to Date'  },
+  { id: 'lastYear',  label: 'Last Year'     },
 ]
 
 function presetRange(id: PresetId): [string, string] {
@@ -76,7 +77,6 @@ function presetRange(id: PresetId): [string, string] {
   }
 }
 
-/** Try to detect which preset the current from/to matches (best-effort). */
 function detectPreset(from: string, to: string): PresetId | null {
   for (const p of PRESETS) {
     const [f, t] = presetRange(p.id)
@@ -86,9 +86,9 @@ function detectPreset(from: string, to: string): PresetId | null {
 }
 
 const COMPARE_OPTIONS = [
-  { value: 'prior_period', label: 'Previous period'          },
-  { value: 'last_year',    label: 'Same period last year'    },
-  { value: 'none',         label: 'No comparison'            },
+  { value: 'prior_period', label: 'Previous period'       },
+  { value: 'last_year',    label: 'Same period last year' },
+  { value: 'none',         label: 'No comparison'         },
 ]
 
 export default function DateRangePicker({
@@ -141,20 +141,22 @@ export default function DateRangePicker({
     <div style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(!open)}
-        className="btn btn-secondary flex items-center gap-2"
-        style={{ padding: '0.375rem 0.75rem' }}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label="Select date range"
+        className="btn btn-secondary btn-sm focus-ring"
+        style={{ gap: 6 }}
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          style={{ color: 'var(--text-muted)' }}>
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-        <span className="text-sm">{presetLabel ?? `${from} – ${to}`}</span>
+        <CalendarBlank size={14} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.8125rem' }}>{presetLabel ?? `${from} – ${to}`}</span>
         {cmp && cmp !== 'none' && (
-          <span className="text-xs px-1.5 py-0.5 rounded" style={{
-            background: 'var(--blue)', color: '#fff', fontSize: '0.7rem', fontWeight: 600,
+          <span style={{
+            background: 'var(--blue)', color: '#fff',
+            fontSize: '0.6875rem', fontWeight: 600,
+            padding: '0.1rem 0.35rem', borderRadius: 3,
           }}>vs</span>
         )}
+        <CaretDown size={10} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
       </button>
 
       {open && (
@@ -163,12 +165,18 @@ export default function DateRangePicker({
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 49 }}
             onClick={() => setOpen(false)}
+            aria-hidden
           />
           <div
+            role="dialog"
+            aria-label="Date range picker"
             style={{
               position: 'absolute', right: 0, top: 42, width: 296, zIndex: 50,
-              background: 'var(--bg-surface)', border: '1px solid var(--border)',
-              borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', padding: '12px 0',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border)',
+              borderRadius: '0.625rem',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+              padding: '12px 0',
             }}
           >
             {/* Presets */}
@@ -179,11 +187,14 @@ export default function DateRangePicker({
                   <button
                     key={p.id}
                     onClick={() => applyPreset(p.id)}
-                    className="w-full text-left text-sm px-3 py-2 rounded-lg transition-colors"
+                    className="w-full text-left text-sm px-3 py-2 rounded-lg focus-ring"
                     style={{
-                      color:      isActive ? 'var(--blue)'          : 'var(--text-secondary)',
-                      fontWeight: isActive ? 600                     : 400,
-                      background: isActive ? 'var(--bg-subtle)'     : 'transparent',
+                      color:      isActive ? 'var(--blue)'      : 'var(--text-secondary)',
+                      fontWeight: isActive ? 600                  : 400,
+                      background: isActive ? 'var(--bg-subtle)'  : 'transparent',
+                      transition: 'background 0.1s',
+                      border: 'none',
+                      cursor: 'pointer',
                     }}
                     onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-subtle)' }}
                     onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
@@ -196,44 +207,45 @@ export default function DateRangePicker({
 
             {/* Custom range */}
             <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '12px 16px 8px' }}>
-              <p className="text-xs mb-2" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Custom range</p>
+              <p className="section-label mb-2">Custom range</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                 <div>
-                  <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>From</label>
+                  <label htmlFor="date-from" className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>From</label>
                   <input
+                    id="date-from"
                     type="date"
                     value={localFrom}
                     onChange={e => setLocalFrom(e.target.value)}
                     className="input"
                     style={{ padding: '0.3rem 0.4rem', fontSize: '0.8rem', width: '100%' }}
+                    autoComplete="off"
                   />
                 </div>
                 <div>
-                  <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>To</label>
+                  <label htmlFor="date-to" className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>To</label>
                   <input
+                    id="date-to"
                     type="date"
                     value={localTo}
                     onChange={e => setLocalTo(e.target.value)}
                     className="input"
                     style={{ padding: '0.3rem 0.4rem', fontSize: '0.8rem', width: '100%' }}
+                    autoComplete="off"
                   />
                 </div>
               </div>
-              <button onClick={applyCustom} className="btn btn-primary w-full justify-center">
+              <button onClick={applyCustom} className="btn btn-primary w-full justify-center focus-ring">
                 Apply
               </button>
             </div>
 
             {/* Compare */}
             <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '12px 16px 4px' }}>
-              <p className="text-xs mb-2" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Compare to</p>
+              <p className="section-label mb-2">Compare to</p>
               {COMPARE_OPTIONS.map(opt => (
                 <label
                   key={opt.value}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '6px 0', cursor: 'pointer',
-                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', cursor: 'pointer' }}
                 >
                   <input
                     type="radio"

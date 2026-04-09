@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { CaretDown, CaretUp } from '@phosphor-icons/react'
 
 export interface KeywordRow {
   keyword_text:      string
@@ -85,7 +86,7 @@ export default function KeywordTable({
         style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: right ? 'right' : undefined }}
       >
         {children}
-        {sortKey === sk && <span className="ml-1" style={{ opacity: 0.4 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+        {sortKey === sk && <span className="ml-1" style={{ opacity: 0.4, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
       </th>
     )
   }

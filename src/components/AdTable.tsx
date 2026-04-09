@@ -6,6 +6,7 @@
 import React, { useState } from 'react'
 import { fmt$, fmtNum, fmtPct, fmtCurrency } from '@/lib/metrics'
 import LightboxImage from './LightboxImage'
+import { CaretDown, CaretUp } from '@phosphor-icons/react'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ad Group / Ad Set table
@@ -54,7 +55,7 @@ export function AdGroupTable({
         style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
       >
         {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
       </th>
     )
   }
@@ -207,7 +208,7 @@ export function AdRowTable({
         style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
       >
         {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
       </th>
     )
   }

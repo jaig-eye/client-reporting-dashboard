@@ -20,11 +20,20 @@ export default function TabContainer({
 
   return (
     <div>
-      <div className="flex items-center gap-1 mb-4" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div
+        role="tablist"
+        className="flex items-center gap-1 mb-4"
+        style={{ borderBottom: '1px solid var(--border)' }}
+      >
         {tabs.map((tab, i) => (
           <button
             key={i}
+            role="tab"
+            aria-selected={i === active}
+            aria-controls={`tab-panel-${i}`}
+            id={`tab-${i}`}
             onClick={() => setActive(i)}
+            className="focus-ring"
             style={{
               padding: '0.5rem 1rem',
               fontSize: '0.8125rem',
@@ -35,7 +44,7 @@ export default function TabContainer({
               border: 'none',
               borderBottomStyle: 'solid',
               cursor: 'pointer',
-              transition: 'all 0.15s',
+              transition: 'color 0.15s, border-color 0.15s',
               marginBottom: '-1px',
             }}
           >
@@ -44,10 +53,10 @@ export default function TabContainer({
               <span
                 style={{
                   marginLeft: 6,
-                  fontSize: '0.7rem',
+                  fontSize: '0.6875rem',
                   padding: '1px 6px',
-                  borderRadius: 99,
-                  background: i === active ? '#eff6ff' : 'var(--bg-subtle)',
+                  borderRadius: 4,
+                  background: i === active ? 'var(--blue-subtle)' : 'var(--bg-subtle)',
                   color: i === active ? 'var(--blue)' : 'var(--text-faint)',
                 }}
               >
@@ -58,7 +67,13 @@ export default function TabContainer({
         ))}
       </div>
       {panels.map((panel, i) => (
-        <div key={i} style={{ display: i === active ? 'block' : 'none' }}>
+        <div
+          key={i}
+          id={`tab-panel-${i}`}
+          role="tabpanel"
+          aria-labelledby={`tab-${i}`}
+          style={{ display: i === active ? 'block' : 'none' }}
+        >
           {panel}
         </div>
       ))}

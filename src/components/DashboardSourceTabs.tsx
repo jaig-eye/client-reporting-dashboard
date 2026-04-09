@@ -37,11 +37,14 @@ export default function DashboardSourceTabs({ sources, activeSource }: Props) {
           <button
             key={source}
             onClick={() => switchSource(source)}
-            className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all"
+            aria-pressed={active}
+            className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium focus-ring"
             style={{
               background:  active ? 'var(--bg-surface)' : 'transparent',
               color:       active ? 'var(--text-primary)' : 'var(--text-muted)',
               boxShadow:   active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
+              border: 'none', cursor: 'pointer',
             }}
           >
             {/* Colored dot as source indicator */}

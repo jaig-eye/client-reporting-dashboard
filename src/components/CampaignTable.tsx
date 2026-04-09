@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import Link from 'next/link'
+import { CaretDown, CaretUp } from '@phosphor-icons/react'
 
 export interface Campaign {
   campaign_id: string
@@ -68,7 +69,7 @@ export default function CampaignTable({
     return (
       <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: left ? 'left' : 'right' }}>
         {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
+        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
       </th>
     )
   }

@@ -1,22 +1,16 @@
 'use client'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DashboardSidebar
-//
-// Persistent left-sidebar navigation for the client dashboard and admin preview.
-// Replaces the flat PlatformTabs header with a structured hierarchy that mirrors
-// how reporting conversations flow: Summary → Paid Ads → Analytics → SEO.
-//
-// Props:
-//   activeConnectorTypes — which connector types this client has active connections for
-//   agencyLogoUrl        — optional agency logo shown at the top of the sidebar
-//   agencyName           — agency display name
-//   clientLogoUrl        — optional client logo
-//   clientName           — client display name
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { usePathname, useSearchParams, useRouter } from 'next/navigation'
 import { useState } from 'react'
+import {
+  SquaresFour,
+  ChartBar,
+  ChartLineUp,
+  MagnifyingGlass,
+  CaretDown,
+  Gauge,
+  Circle,
+} from '@phosphor-icons/react'
 import type { ConnectorType } from '@/lib/types'
 
 interface SidebarProps {
@@ -25,20 +19,18 @@ interface SidebarProps {
   agencyName?: string
   clientLogoUrl?: string | null
   clientName?: string
-  basePath?: string        // prefix for all nav links (e.g. /admin/preview/[clientId])
-  isAdminPreview?: boolean // when true, show all nav items even if connector not active
+  basePath?: string
+  isAdminPreview?: boolean
 }
-
-// ─── Nav item definitions ────────────────────────────────────────────────────
 
 interface NavItem {
   key: string
   label: string
   href?: string
-  icon?: string
+  icon?: React.ReactNode
   children?: NavItem[]
   requiredConnector?: ConnectorType
-  badge?: string   // e.g. "Coming Soon"
+  badge?: string
   disabled?: boolean
 }
 
@@ -46,22 +38,22 @@ const NAV: NavItem[] = [
   {
     key: 'summary',
     label: 'Summary',
-    icon: '◈',
+    icon: <SquaresFour size={15} aria-hidden />,
     href: '/dashboard',
   },
   {
     key: 'paid_ads',
     label: 'Paid Ads',
-    icon: '◎',
+    icon: <ChartBar size={13} aria-hidden />,
     children: [
-      { key: 'google_ads',  label: 'Google Ads', requiredConnector: 'google_ads',  href: '/dashboard?source=google_ads' },
-      { key: 'meta_ads',    label: 'Meta Ads',   requiredConnector: 'meta_ads',    href: '/dashboard?source=meta_ads' },
+      { key: 'google_ads', label: 'Google Ads', requiredConnector: 'google_ads',  href: '/dashboard?source=google_ads' },
+      { key: 'meta_ads',   label: 'Meta Ads',   requiredConnector: 'meta_ads',    href: '/dashboard?source=meta_ads'   },
     ],
   },
   {
     key: 'analytics',
     label: 'Analytics',
-    icon: '◷',
+    icon: <ChartLineUp size={13} aria-hidden />,
     children: [
       { key: 'ga4', label: 'GA4', requiredConnector: 'google_analytics', href: '/dashboard/analytics' },
     ],
@@ -69,16 +61,14 @@ const NAV: NavItem[] = [
   {
     key: 'seo',
     label: 'SEO',
-    icon: '◉',
+    icon: <MagnifyingGlass size={13} aria-hidden />,
     children: [
-      { key: 'gsc', label: 'Search Console',          requiredConnector: 'google_search_console',   href: '/dashboard/seo/search-console' },
-      { key: 'gbp', label: 'Google Business Profile', requiredConnector: 'google_business_profile',  href: '/dashboard/seo/gbp' },
-      { key: 'ahrefs', label: 'Authority (Ahrefs)',   disabled: true, badge: 'Soon', href: '/dashboard/seo/authority' },
+      { key: 'gsc',    label: 'Search Console',          requiredConnector: 'google_search_console',  href: '/dashboard/seo/search-console' },
+      { key: 'gbp',    label: 'Business Profile',        requiredConnector: 'google_business_profile', href: '/dashboard/seo/gbp'            },
+      { key: 'ahrefs', label: 'Authority (Ahrefs)',      disabled: true, badge: 'Soon',               href: '/dashboard/seo/authority'      },
     ],
   },
 ]
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardSidebar({
   activeConnectorTypes,
@@ -93,12 +83,10 @@ export default function DashboardSidebar({
   const searchParams = useSearchParams()
   const router       = useRouter()
   const activeSource = searchParams.get('source') ?? ''
-  // Read date params directly from URL so they're always current
   const from    = searchParams.get('from')    ?? ''
   const to      = searchParams.get('to')      ?? ''
   const compare = searchParams.get('compare') ?? ''
 
-  // Sections default open
   const [open, setOpen] = useState<Record<string, boolean>>({
     paid_ads:  true,
     analytics: true,
@@ -116,7 +104,6 @@ export default function DashboardSidebar({
     const itemSource = url.searchParams.get('source') ?? ''
 
     if (basePath) {
-      // Preview mode: currentPath is the segment after basePath, item paths strip /dashboard
       const currentPath = pathname.replace(basePath, '') || '/'
       const comparePath = itemPath.replace(/^\/dashboard/, '') || '/'
       if (itemSource) {
@@ -127,7 +114,6 @@ export default function DashboardSidebar({
       }
       return currentPath.startsWith(comparePath) && comparePath !== '/'
     } else {
-      // Regular dashboard mode
       if (itemSource) {
         return pathname === itemPath && activeSource === itemSource
       }
@@ -145,7 +131,6 @@ export default function DashboardSidebar({
     if (to)   url.searchParams.set('to',   to)
     if (compare && compare !== 'none') url.searchParams.set('compare', compare)
     if (basePath) {
-      // Strip /dashboard prefix — preview root = basePath, sub-pages = basePath + /sub/path
       const subPath = url.pathname.replace(/^\/dashboard/, '')
       router.push(basePath + subPath + (url.search || ''))
     } else {
@@ -161,10 +146,10 @@ export default function DashboardSidebar({
   return (
     <aside
       style={{
-        width: 220,
+        width: 'var(--sidebar-width)',
         flexShrink: 0,
         minHeight: '100vh',
-        background: 'var(--bg-surface)',
+        background: 'var(--sidebar-bg)',
         borderRight: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
@@ -174,23 +159,18 @@ export default function DashboardSidebar({
       }}
     >
       {/* Brand header */}
-      <div
-        style={{
-          padding: '16px 16px 12px',
-          borderBottom: '1px solid var(--border)',
-        }}
-      >
-        {/* Agency branding */}
+      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)' }}>
+        {/* Agency */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName ?? ''} style={{ height: 20, maxWidth: 100, objectFit: 'contain' }} />
+            <img src={agencyLogoUrl} alt={agencyName ?? ''} aria-hidden={!agencyName} style={{ height: 20, maxWidth: 100, objectFit: 'contain' }} />
           ) : (
-            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-faint)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {agencyName ?? 'Agency'}
             </span>
           )}
         </div>
-        {/* Client identity */}
+        {/* Client */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {clientLogoUrl && (
             <img src={clientLogoUrl} alt={clientName ?? ''} style={{ height: 18, maxWidth: 60, objectFit: 'contain', borderRadius: 3 }} />
@@ -202,114 +182,119 @@ export default function DashboardSidebar({
       </div>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: '8px 0' }}>
+      <nav style={{ flex: 1, padding: '8px 8px' }}>
         {NAV.map(section => {
           if (section.children) {
-            // For client view, hide children whose connector isn't active
             const visibleChildren = isAdminPreview
               ? section.children
               : section.children.filter(child => !child.requiredConnector || hasConnector(child.requiredConnector))
-            // Hide entire section if no visible children
             if (visibleChildren.length === 0) return null
 
             const sectionOpen = open[section.key] !== false
             return (
               <div key={section.key}>
-                {/* Section header — clickable to collapse */}
                 <button
                   onClick={() => toggle(section.key)}
+                  className="focus-ring"
                   style={{
                     width: '100%',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: '6px 16px',
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    letterSpacing: '0.07em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-faint)',
+                    padding: '5px 8px',
+                    marginTop: 10,
                     background: 'transparent',
                     border: 'none',
                     cursor: 'pointer',
-                    marginTop: 8,
+                    borderRadius: '0.375rem',
                   }}
+                  aria-expanded={sectionOpen}
                 >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>{section.icon}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }} className="section-label">
+                    <span style={{ opacity: 0.7, display: 'flex', alignItems: 'center' }}>{section.icon}</span>
                     {section.label}
                   </span>
-                  <span style={{ fontSize: '0.6rem', opacity: 0.6, transform: sectionOpen ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.15s' }}>▾</span>
+                  <span
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      color: 'var(--text-faint)',
+                      transform: sectionOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+                      transition: 'transform 0.15s',
+                    }}
+                  >
+                    <CaretDown size={10} aria-hidden />
+                  </span>
                 </button>
 
                 {sectionOpen && (
-                  <div>
+                  <div style={{ marginBottom: 4 }}>
                     {visibleChildren.map(child => {
-                      const connected  = hasConnector(child.requiredConnector)
-                      const active     = isActive(child)
+                      const connected   = hasConnector(child.requiredConnector)
+                      const active      = isActive(child)
                       const showConnect = isAdminPreview && child.requiredConnector && !connected && !child.disabled
 
                       return (
-                        <div key={child.key}>
-                          <button
-                            onClick={() => connected && !child.disabled ? navigate(child) : undefined}
-                            disabled={child.disabled}
+                        <button
+                          key={child.key}
+                          onClick={() => connected && !child.disabled ? navigate(child) : undefined}
+                          disabled={child.disabled}
+                          className="focus-ring"
+                          style={{
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 7,
+                            padding: '6px 8px 6px 20px',
+                            fontSize: '0.8125rem',
+                            fontWeight: active ? 600 : 400,
+                            color: child.disabled
+                              ? 'var(--text-faint)'
+                              : active
+                              ? 'var(--text-primary)'
+                              : connected ? 'var(--text-secondary)' : 'var(--text-faint)',
+                            background: active ? 'rgba(37,99,235,0.04)' : 'transparent',
+                            borderTop: 'none',
+                            borderRight: 'none',
+                            borderBottom: 'none',
+                            borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
+                            borderRadius: '0 0.375rem 0.375rem 0',
+                            cursor: child.disabled || !connected ? 'default' : 'pointer',
+                            textAlign: 'left',
+                            transition: 'background 0.1s, color 0.1s',
+                          }}
+                        >
+                          {/* Status dot */}
+                          <Circle
+                            size={5}
+                            weight="fill"
+                            aria-hidden
                             style={{
-                              width: '100%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              padding: '7px 16px 7px 28px',
-                              fontSize: '0.8125rem',
-                              fontWeight: active ? 600 : 400,
+                              flexShrink: 0,
                               color: child.disabled
-                                ? 'var(--text-faint)'
-                                : active
-                                ? 'var(--text-primary)'
-                                : connected ? 'var(--text-secondary, var(--text-muted))' : 'var(--text-faint)',
-                              background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
-                              borderTop: 'none',
-                              borderRight: 'none',
-                              borderBottom: 'none',
-                              borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
-                              borderRadius: 0,
-                              cursor: child.disabled || !connected ? 'default' : 'pointer',
-                              textAlign: 'left',
-                              transition: 'background 0.1s',
-                            }}
-                          >
-                            {/* Status dot */}
-                            <span style={{
-                              width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
-                              background: child.disabled
                                 ? 'var(--text-faint)'
                                 : connected
                                 ? (active ? 'var(--blue)' : 'var(--green)')
                                 : 'var(--border)',
-                            }} />
+                            }}
+                          />
 
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {child.label}
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {child.label}
+                          </span>
+
+                          {child.badge && (
+                            <span className="badge badge-gray" style={{ fontSize: '0.6rem' }}>
+                              {child.badge}
                             </span>
+                          )}
 
-                            {child.badge && (
-                              <span style={{
-                                fontSize: '0.6rem', fontWeight: 600,
-                                padding: '1px 5px', borderRadius: 20,
-                                background: 'var(--bg-base)', color: 'var(--text-faint)',
-                                border: '1px solid var(--border)',
-                              }}>
-                                {child.badge}
-                              </span>
-                            )}
-
-                            {showConnect && (
-                              <span style={{ fontSize: '0.6rem', color: 'var(--blue)', fontWeight: 600 }}>
-                                + Connect
-                              </span>
-                            )}
-                          </button>
-                        </div>
+                          {showConnect && (
+                            <span style={{ fontSize: '0.6rem', color: 'var(--blue)', fontWeight: 600 }}>
+                              + Connect
+                            </span>
+                          )}
+                        </button>
                       )
                     })}
                   </div>
@@ -324,36 +309,40 @@ export default function DashboardSidebar({
             <button
               key={section.key}
               onClick={() => navigate(section)}
+              className="focus-ring"
               style={{
                 width: '100%',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                padding: '8px 16px',
+                padding: '7px 8px',
                 fontSize: '0.8125rem',
                 fontWeight: active ? 700 : 500,
                 color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
+                background: active ? 'rgba(37,99,235,0.04)' : 'transparent',
                 borderTop: 'none',
                 borderRight: 'none',
                 borderBottom: 'none',
                 borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
-                borderRadius: 0,
+                borderRadius: '0 0.375rem 0.375rem 0',
                 cursor: 'pointer',
                 textAlign: 'left',
-                transition: 'background 0.1s',
+                transition: 'background 0.1s, color 0.1s',
                 marginBottom: 2,
               }}
             >
-              <span style={{ fontSize: '0.7rem', opacity: 0.8 }}>{section.icon}</span>
+              <span style={{ display: 'flex', alignItems: 'center', color: active ? 'var(--blue)' : 'var(--text-faint)' }}>
+                {section.icon}
+              </span>
               {section.label}
             </button>
           )
         })}
       </nav>
 
-      {/* Footer — subtle version indicator */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+      {/* Footer */}
+      <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 5 }}>
+        <Gauge size={11} aria-hidden style={{ color: 'var(--text-faint)' }} />
         <p style={{ fontSize: '0.65rem', color: 'var(--text-faint)', margin: 0 }}>
           LaunchLocal Reporting
         </p>

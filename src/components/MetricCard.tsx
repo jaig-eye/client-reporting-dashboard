@@ -1,6 +1,7 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
+import { TrendUp, TrendDown } from '@phosphor-icons/react'
 
 interface MetricCardProps {
   label: string
@@ -12,36 +13,38 @@ interface MetricCardProps {
 }
 
 export default function MetricCard({ label, value, delta, sub, invertDelta, delay = 0 }: MetricCardProps) {
+  const prefersReduced = useReducedMotion()
+
   const isGood = delta !== undefined
     ? (invertDelta ? delta <= 0 : delta >= 0)
     : null
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={prefersReduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: delay * 0.06, ease: 'easeOut' }}
-      className="card p-4"
+      transition={prefersReduced ? {} : { duration: 0.25, delay: delay * 0.05, ease: [0.16, 1, 0.3, 1] }}
+      className="card"
+      style={{ padding: '1.25rem' }}
     >
-      <p className="text-xs font-medium uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>
-        {label}
-      </p>
-      <p className="text-2xl font-bold leading-none mb-1" style={{ color: 'var(--text-primary)' }}>
-        {value}
-      </p>
+      <p className="metric-label mb-2">{label}</p>
+      <p className="metric-value mb-1">{value}</p>
       {sub && (
         <p className="text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>{sub}</p>
       )}
       {delta !== undefined && delta !== 0 && (
         <div
-          className="flex items-center gap-0.5 text-xs font-medium"
-          style={{ color: isGood ? 'var(--green)' : 'var(--red)' }}
+          className="flex items-center gap-1"
+          style={{
+            fontSize: '0.75rem',
+            fontWeight: 500,
+            color: isGood ? 'var(--green)' : 'var(--red)',
+          }}
         >
-          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
-              d={delta > 0 ? 'M5 10l7-7m0 0l7 7m-7-7v18' : 'M19 14l-7 7m0 0l-7-7m7 7V3'}
-            />
-          </svg>
+          {delta > 0
+            ? <TrendUp size={13} aria-hidden />
+            : <TrendDown size={13} aria-hidden />
+          }
           {Math.abs(delta).toFixed(1)}% vs prior
         </div>
       )}

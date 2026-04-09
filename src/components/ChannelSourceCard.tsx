@@ -1,38 +1,43 @@
 import Link from 'next/link'
+import { ArrowUp, ArrowDown } from '@phosphor-icons/react'
 
 interface ChannelSourceCardProps {
   title: string
   color: string
-  icon: string
+  icon: React.ReactNode
   metrics: { label: string; value: string; delta?: number }[]
   href: string
 }
 
 export default function ChannelSourceCard({ title, color, icon, metrics, href }: ChannelSourceCardProps) {
   return (
-    <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>
+    <Link
+      href={href}
+      aria-label={`View ${title} report`}
+      style={{ textDecoration: 'none', display: 'block', height: '100%' }}
+    >
       <div
+        className="card card-hover"
         style={{
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border)',
           borderLeft: `3px solid ${color}`,
-          borderRadius: 8,
+          borderRadius: '0.625rem',
           padding: '14px 16px',
           cursor: 'pointer',
           height: '100%',
+          transition: 'border-color 0.15s, box-shadow 0.15s',
         }}
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-          <span style={{ fontSize: '0.85rem', color }}>{icon}</span>
-          <span style={{
-            fontSize: '0.7rem', fontWeight: 700,
-            color: 'var(--text-primary)',
-            letterSpacing: '0.06em', textTransform: 'uppercase',
-          }}>
+          <span style={{ color, display: 'flex', alignItems: 'center', flexShrink: 0 }} aria-hidden>
+            {icon}
+          </span>
+          <span className="section-label" style={{ color: 'var(--text-primary)' }}>
             {title}
           </span>
-          <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-faint)', opacity: 0.7 }}>→</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', color: 'var(--text-faint)' }} aria-hidden>
+            <ArrowUp size={10} style={{ transform: 'rotate(45deg)' }} />
+          </span>
         </div>
 
         {/* Metrics */}
@@ -40,14 +45,24 @@ export default function ChannelSourceCard({ title, color, icon, metrics, href }:
           {metrics.map((m, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{m.label}</span>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>{m.value}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{
+                  fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {m.value}
+                </span>
                 {m.delta !== undefined && (
                   <span style={{
-                    fontSize: '0.65rem', fontWeight: 600,
+                    display: 'inline-flex', alignItems: 'center', gap: 1,
+                    fontSize: '0.6875rem', fontWeight: 600,
                     color: m.delta > 0 ? 'var(--green)' : m.delta < 0 ? 'var(--red)' : 'var(--text-faint)',
                   }}>
-                    {m.delta > 0 ? '▲' : '▼'}{Math.abs(m.delta).toFixed(1)}%
+                    {m.delta > 0
+                      ? <ArrowUp size={8} aria-hidden />
+                      : <ArrowDown size={8} aria-hidden />
+                    }
+                    {Math.abs(m.delta).toFixed(1)}%
                   </span>
                 )}
               </div>

@@ -120,7 +120,7 @@ export default function ClientMetricVisibility({
                     textAlign:  'left',
                     cursor:     saving ? 'not-allowed' : 'pointer',
                     opacity:    saving ? 0.6 : 1,
-                    transition: 'all 0.15s',
+                    transition: 'background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s',
                   }}
                 >
                   {/* Toggle pill */}

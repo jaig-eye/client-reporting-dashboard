@@ -1,6 +1,7 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
+import { TrendUp, TrendDown } from '@phosphor-icons/react'
 import Sparkline from './Sparkline'
 
 interface BenchmarkBar {
@@ -34,42 +35,42 @@ export default function SparkMetricCard({
   benchmark,
   delay = 0,
 }: Props) {
+  const prefersReduced = useReducedMotion()
+
   const isGood = delta !== undefined
     ? (invertDelta ? delta <= 0 : delta >= 0)
     : null
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={prefersReduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: delay * 0.06, ease: 'easeOut' }}
-      className="card p-5 flex flex-col gap-2"
+      transition={prefersReduced ? {} : { duration: 0.25, delay: delay * 0.05, ease: [0.16, 1, 0.3, 1] }}
+      className="card flex flex-col gap-2"
+      style={{ padding: '1.25rem' }}
     >
       {/* Label + delta badge */}
       <div className="flex items-start justify-between gap-2">
-        <p
-          className="text-xs font-semibold uppercase tracking-wide"
-          style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}
-        >
-          {label}
-        </p>
+        <p className="metric-label">{label}</p>
         {delta !== undefined && delta !== 0 && (
           <span
-            className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+            className="badge flex-shrink-0 flex items-center gap-0.5"
             style={{
               background: isGood ? 'var(--green-subtle)' : 'var(--red-subtle)',
-              color:      isGood ? 'var(--green)'       : 'var(--red)',
+              color:      isGood ? 'var(--green)'        : 'var(--red)',
             }}
           >
-            {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
+            {delta > 0
+              ? <TrendUp size={9} aria-hidden />
+              : <TrendDown size={9} aria-hidden />
+            }
+            {Math.abs(delta).toFixed(1)}%
           </span>
         )}
       </div>
 
       {/* Primary value */}
-      <p className="text-[1.625rem] font-bold leading-tight" style={{ color: 'var(--text-primary)' }}>
-        {value}
-      </p>
+      <p className="metric-value leading-tight">{value}</p>
       {sub && (
         <p className="text-xs -mt-1" style={{ color: 'var(--text-muted)' }}>{sub}</p>
       )}
@@ -85,21 +86,22 @@ export default function SparkMetricCard({
       {benchmark && (
         <div className="space-y-1.5 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-subtle)' }}>
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-subtle)' }}>
               <div
-                className="h-full rounded-full transition-all duration-500"
+                className="h-full rounded-full"
                 style={{
                   width: `${Math.min(100, (benchmark.actual / (benchmark.target || 1)) * 100)}%`,
                   backgroundColor: benchmark.color,
+                  transition: 'width 0.5s ease',
                 }}
               />
             </div>
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)', flexShrink: 0, minWidth: 52, textAlign: 'right' }}>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)', flexShrink: 0, minWidth: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
               {benchmark.actualLabel}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-2 rounded-full" style={{ background: 'var(--border)' }} />
+            <div className="flex-1 h-1.5 rounded-full" style={{ background: 'var(--border)' }} />
             <span className="text-xs" style={{ color: 'var(--text-faint)', flexShrink: 0, minWidth: 52, textAlign: 'right' }}>
               {benchmark.targetLabel} target
             </span>

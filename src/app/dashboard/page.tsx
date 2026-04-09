@@ -17,6 +17,7 @@ import CampaignTable from '@/components/CampaignTable'
 import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 
 export const dynamic = 'force-dynamic'
 
@@ -608,6 +609,35 @@ export default async function DashboardPage({
               </div>
             )}
           </>
+        )}
+
+        {/* ── Connection summary cards ─────────────────────────── */}
+        {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
+          <GA4SummaryCard
+            clientId={client.id}
+            connectionId={connectionsBySource['google_analytics']}
+            dateFrom={fmtDate(fromDate)}
+            dateTo={fmtDate(toDate)}
+          />
+        )}
+        {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
+          <GSCSummaryCard
+            clientId={client.id}
+            connectionId={connectionsBySource['google_search_console']}
+            dateFrom={fmtDate(fromDate)}
+            dateTo={fmtDate(toDate)}
+          />
+        )}
+        {availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile'] && (
+          <GBPSummaryCard
+            clientId={client.id}
+            connectionId={connectionsBySource['google_business_profile']}
+            dateFrom={fmtDate(fromDate)}
+            dateTo={fmtDate(toDate)}
+          />
+        )}
+        {(availableSources as string[]).includes('ahrefs') && (
+          <AhrefsSummaryCard />
         )}
 
       </main>
