@@ -89,6 +89,7 @@ export default async function PreviewClientLayout({
             clientLogoUrl={client.logo_url}
             clientName={client.name}
             basePath={previewBase}
+            isAdminPreview
           />
         </Suspense>
 

@@ -5,7 +5,7 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAgencySettings } from '@/lib/agency-settings'
+import { getAgencySettings, pctOfBenchmark, scoreColor } from '@/lib/agency-settings'
 import {
   summarizeMetrics, getDailyTrend, calcDelta,
   fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions,
@@ -210,6 +210,32 @@ export default async function AdminPreviewPage({
     benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
   }
 
+  // ─── Benchmark panel ─────────────────────────────────────────────────────
+  const showBenchmarkPanel = client.show_benchmarks === true
+  const benchmarkRows: { key: string; label: string; actualLabel: string; targetLabel: string; pct: number; color: string }[] = []
+  let efficiencyScore = 0
+
+  if (showBenchmarkPanel) {
+    if (!hiddenMetrics.has('ctr') && (effectiveBenchmarks.benchmark_ctr ?? 0) > 0) {
+      benchmarkRows.push({ key: 'ctr', label: 'CTR', actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), pct: pctOfBenchmark(current.ctr, effectiveBenchmarks.benchmark_ctr, false), color: '#3b82f6' })
+    }
+    if (!hiddenMetrics.has('conv_rate') && (effectiveBenchmarks.benchmark_conv_rate ?? 0) > 0) {
+      benchmarkRows.push({ key: 'conv_rate', label: 'Conv. Rate', actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), pct: pctOfBenchmark(convRate, effectiveBenchmarks.benchmark_conv_rate, false), color: '#10b981' })
+    }
+    if (!hiddenMetrics.has('cpc') && (effectiveBenchmarks.benchmark_cpc ?? 0) > 0 && current.cpc > 0) {
+      benchmarkRows.push({ key: 'cpc', label: 'Avg. CPC', actualLabel: fmtCurrency(current.cpc), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpc), pct: pctOfBenchmark(current.cpc, effectiveBenchmarks.benchmark_cpc, true), color: '#f59e0b' })
+    }
+    if (!hiddenMetrics.has('cpm') && (effectiveBenchmarks.benchmark_cpm ?? 0) > 0 && current.cpm > 0) {
+      benchmarkRows.push({ key: 'cpm', label: 'CPM', actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), pct: pctOfBenchmark(current.cpm, effectiveBenchmarks.benchmark_cpm, true), color: '#f59e0b' })
+    }
+    if (isEcomDash && !hiddenMetrics.has('roas') && (effectiveBenchmarks.benchmark_roas ?? 0) > 0) {
+      benchmarkRows.push({ key: 'roas', label: 'ROAS', actualLabel: fmtRoas(current.roas), targetLabel: `${effectiveBenchmarks.benchmark_roas.toFixed(1)}x`, pct: pctOfBenchmark(current.roas, effectiveBenchmarks.benchmark_roas, false), color: '#8b5cf6' })
+    }
+    if (benchmarkRows.length > 0) {
+      efficiencyScore = Math.min(100, Math.round(benchmarkRows.reduce((s, r) => s + r.pct, 0) / benchmarkRows.length))
+    }
+  }
+
   // ─── Campaign map ─────────────────────────────────────────────────────────
   const campMap = new Map<string, {
     name: string; spend: number; impressions: number; clicks: number
@@ -358,9 +384,7 @@ export default async function AdminPreviewPage({
               {!hiddenMetrics.has('ctr') && (
                 <SparkMetricCard label="CTR" value={fmtPct(current.ctr)}
                   delta={showCompare ? calcDelta(current.ctr, prior.ctr) : undefined}
-                  sparkData={ctrSpark} sparkColor="#3b82f6"
-                  benchmark={{ actual: current.ctr, target: effectiveBenchmarks.benchmark_ctr, actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), color: '#3b82f6' }}
-                  delay={3} />
+                  sparkData={ctrSpark} sparkColor="#3b82f6" delay={3} />
               )}
             </div>
 
@@ -378,16 +402,12 @@ export default async function AdminPreviewPage({
                 {!hiddenMetrics.has('conv_rate') && (
                   <SparkMetricCard label="Conv. Rate" value={fmtPct(convRate)}
                     delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
-                    sparkData={crSpark} sparkColor="#10b981"
-                    benchmark={{ actual: convRate, target: effectiveBenchmarks.benchmark_conv_rate, actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), color: '#10b981' }}
-                    delay={4} />
+                    sparkData={crSpark} sparkColor="#10b981" delay={4} />
                 )}
                 {!hiddenMetrics.has('cpm') && (
                   <SparkMetricCard label="CPM" value={fmtCurrency(current.cpm)}
                     delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
-                    invertDelta sparkData={cpmSpark} sparkColor="#f59e0b"
-                    benchmark={{ actual: current.cpm, target: effectiveBenchmarks.benchmark_cpm, actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), color: '#f59e0b' }}
-                    delay={5} />
+                    invertDelta sparkData={cpmSpark} sparkColor="#f59e0b" delay={5} />
                 )}
                 {!hiddenMetrics.has('conversions') && (
                   <SparkMetricCard label="Conversions" value={fmtNum(current.conversions)}
@@ -446,6 +466,48 @@ export default async function AdminPreviewPage({
                   colorConversions={settings.chart_color_conversions}
                   colorPriorConversions={settings.chart_color_prior_conversions}
                 />
+              </div>
+            )}
+
+            {/* ── Performance Benchmarks ──────────────────────────── */}
+            {showBenchmarkPanel && benchmarkRows.length > 0 && (
+              <div className="card p-6">
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 28 }}>
+                  {/* Circle meter */}
+                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <svg width="96" height="96" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>
+                      <circle cx="50" cy="50" r="38" fill="none" stroke="var(--bg-subtle)" strokeWidth="8" />
+                      <circle
+                        cx="50" cy="50" r="38" fill="none"
+                        stroke={scoreColor(efficiencyScore)}
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeDasharray={`${(efficiencyScore / 100) * 238.76} 238.76`}
+                        transform="rotate(-90 50 50)"
+                        style={{ transition: 'stroke-dasharray 0.6s ease' }}
+                      />
+                      <text x="50" y="47" textAnchor="middle" style={{ fontSize: '20px', fontWeight: 700 }} fill="var(--text-primary)">{efficiencyScore}</text>
+                      <text x="50" y="61" textAnchor="middle" style={{ fontSize: '8px', letterSpacing: '0.08em' }} fill="var(--text-faint)">SCORE</text>
+                    </svg>
+                  </div>
+                  {/* Metric rows */}
+                  <div style={{ flex: 1 }}>
+                    <h2 className="section-title">Performance vs Benchmarks</h2>
+                    <p className="section-desc" style={{ marginBottom: 16 }}>Tracking against your targets this period</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {benchmarkRows.map(row => (
+                        <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)', width: 96, flexShrink: 0 }}>{row.label}</span>
+                          <div style={{ flex: 1, height: 6, borderRadius: 9999, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', borderRadius: 9999, width: `${Math.min(100, row.pct)}%`, background: row.color, transition: 'width 0.5s ease' }} />
+                          </div>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', flexShrink: 0, minWidth: 52, textAlign: 'right' }}>{row.actualLabel}</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', flexShrink: 0, minWidth: 72, textAlign: 'right' }}>/ {row.targetLabel}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 

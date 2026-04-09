@@ -25,7 +25,8 @@ interface SidebarProps {
   agencyName?: string
   clientLogoUrl?: string | null
   clientName?: string
-  basePath?: string  // prefix for all nav links (e.g. /admin/preview/[clientId])
+  basePath?: string        // prefix for all nav links (e.g. /admin/preview/[clientId])
+  isAdminPreview?: boolean // when true, show all nav items even if connector not active
 }
 
 // ─── Nav item definitions ────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ export default function DashboardSidebar({
   clientLogoUrl,
   clientName,
   basePath = '',
+  isAdminPreview = false,
 }: SidebarProps) {
   const pathname     = usePathname()
   const searchParams = useSearchParams()
@@ -203,6 +205,13 @@ export default function DashboardSidebar({
       <nav style={{ flex: 1, padding: '8px 0' }}>
         {NAV.map(section => {
           if (section.children) {
+            // For client view, hide children whose connector isn't active
+            const visibleChildren = isAdminPreview
+              ? section.children
+              : section.children.filter(child => !child.requiredConnector || hasConnector(child.requiredConnector))
+            // Hide entire section if no visible children
+            if (visibleChildren.length === 0) return null
+
             const sectionOpen = open[section.key] !== false
             return (
               <div key={section.key}>
@@ -235,10 +244,10 @@ export default function DashboardSidebar({
 
                 {sectionOpen && (
                   <div>
-                    {section.children.map(child => {
+                    {visibleChildren.map(child => {
                       const connected  = hasConnector(child.requiredConnector)
                       const active     = isActive(child)
-                      const showConnect = child.requiredConnector && !connected && !child.disabled
+                      const showConnect = isAdminPreview && child.requiredConnector && !connected && !child.disabled
 
                       return (
                         <div key={child.key}>
@@ -259,8 +268,10 @@ export default function DashboardSidebar({
                                 ? 'var(--text-primary)'
                                 : connected ? 'var(--text-secondary, var(--text-muted))' : 'var(--text-faint)',
                               background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
+                              borderTop: 'none',
+                              borderRight: 'none',
+                              borderBottom: 'none',
                               borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
-                              border: 'none',
                               borderRadius: 0,
                               cursor: child.disabled || !connected ? 'default' : 'pointer',
                               textAlign: 'left',
@@ -323,8 +334,10 @@ export default function DashboardSidebar({
                 fontWeight: active ? 700 : 500,
                 color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                 background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
+                borderTop: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
                 borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
-                border: 'none',
                 borderRadius: 0,
                 cursor: 'pointer',
                 textAlign: 'left',
