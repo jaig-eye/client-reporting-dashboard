@@ -20,6 +20,16 @@ import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
+
+interface AhrefsRow {
+  date:              string
+  domain_rating:     number | null
+  ahrefs_rank:       number | null
+  backlinks:         number | null
+  referring_domains: number | null
+  organic_keywords:  number | null
+  organic_traffic:   number | null
+}
 import type { GoogleAdsAdRawRow } from './connectors/google-ads'
 import type { MetaAdRawRow } from './connectors/meta-ads'
 
@@ -55,7 +65,8 @@ export async function syncClient(
   days = INCREMENTAL_DAYS,
   connectionId?: string,
   dateFrom?: string,
-  dateTo?: string
+  dateTo?: string,
+  triggeredBy?: 'cron' | 'admin' | 'system'
 ): Promise<number> {
   const db = createAdminClient()
 
@@ -87,7 +98,7 @@ export async function syncClient(
       continue
     }
 
-    const jobId = await startSyncJob(db, connection.id, clientId, jobType, resolvedFrom, resolvedTo)
+    const jobId = await startSyncJob(db, connection.id, clientId, jobType, resolvedFrom, resolvedTo, triggeredBy)
 
     try {
       // Refresh auth tokens if the adapter supports it (e.g. Google OAuth)
@@ -245,6 +256,13 @@ export async function syncClient(
           connection.id,
           clientId,
           result.rows as unknown as import('./connectors/google-business-profile').GBPRawRow[]
+        )
+      } else if (connection.connector.type === 'ahrefs') {
+        recordCount = await upsertAhrefsMetrics(
+          db,
+          connection.id,
+          clientId,
+          result.rows as unknown as AhrefsRow[]
         )
       }
       // WordPress connector: no metrics to sync (write-only connector)
@@ -733,7 +751,8 @@ async function startSyncJob(
   clientId: string,
   jobType: SyncJobType,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  triggeredBy?: 'cron' | 'admin' | 'system'
 ): Promise<string> {
   const { data } = await db
     .from('sync_jobs')
@@ -744,6 +763,7 @@ async function startSyncJob(
       status:        'running',
       date_from:     dateFrom,
       date_to:       dateTo,
+      triggered_by:  triggeredBy ?? null,
     })
     .select('id')
     .single()
@@ -884,6 +904,36 @@ export async function upsertGBPMetrics(
       .from('gbp_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,location_id,date',
+        ignoreDuplicates: false,
+      })
+  }
+  return mapped.length
+}
+
+export async function upsertAhrefsMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: AhrefsRow[]
+): Promise<number> {
+  if (!rows.length) return 0
+  const mapped = rows.map(r => ({
+    connection_id:     connectionId,
+    client_id:         clientId,
+    date:              r.date,
+    domain_rating:     r.domain_rating     ?? null,
+    ahrefs_rank:       r.ahrefs_rank       ?? null,
+    backlinks:         r.backlinks         ?? null,
+    referring_domains: r.referring_domains ?? null,
+    organic_keywords:  r.organic_keywords  ?? null,
+    organic_traffic:   r.organic_traffic   ?? null,
+    synced_at:         new Date().toISOString(),
+  }))
+  for (let i = 0; i < mapped.length; i += 200) {
+    await db
+      .from('ahrefs_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date',
         ignoreDuplicates: false,
       })
   }

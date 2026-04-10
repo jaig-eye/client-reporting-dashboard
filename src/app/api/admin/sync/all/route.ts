@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
   for (const client of clients) {
     try {
-      const records = await syncClient(client.id, 'backfill', days)
+      const records = await syncClient(client.id, 'backfill', days, undefined, undefined, undefined, 'admin')
       results.push({ client_id: client.id, client_name: client.name, records })
       total += records
     } catch (err) {

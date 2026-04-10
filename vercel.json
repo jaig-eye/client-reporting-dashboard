@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/sync",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/admin/content/schedule",
+      "schedule": "0 6 * * 1"
     }
   ]
 }

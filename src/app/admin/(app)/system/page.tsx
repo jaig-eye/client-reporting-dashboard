@@ -4,6 +4,7 @@
 // Sync logs (global + per-client), global backfill, app diagnostics.
 
 import { useEffect, useState, useCallback } from 'react'
+import { CaretLeft, CaretRight } from '@phosphor-icons/react'
 
 interface SyncJob {
   id: string
@@ -17,6 +18,7 @@ interface SyncJob {
   date_to: string | null
   started_at: string
   completed_at: string | null
+  triggered_by: string | null
   client_name?: string
   connector_type?: string
 }
@@ -34,28 +36,44 @@ const STATUS_BADGE: Record<string, string> = {
   running: 'badge-amber',
 }
 
-export default function SystemPage() {
-  const [jobs,       setJobs]       = useState<SyncJob[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [filter,     setFilter]     = useState<'all' | 'global' | 'client'>('all')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'error' | 'running'>('all')
-  const [syncing,    setSyncing]    = useState(false)
-  const [syncDays,   setSyncDays]   = useState(90)
-  const [syncResults, setSyncResults] = useState<GlobalSyncResult[] | null>(null)
-  const [syncError,  setSyncError]  = useState('')
+const PER_PAGE = 50
 
-  const fetchJobs = useCallback(async () => {
+export default function SystemPage() {
+  const [jobs,          setJobs]          = useState<SyncJob[]>([])
+  const [total,         setTotal]         = useState(0)
+  const [page,          setPage]          = useState(1)
+  const [loading,       setLoading]       = useState(true)
+  const [filter,        setFilter]        = useState<'all' | 'global' | 'client'>('all')
+  const [statusFilter,  setStatusFilter]  = useState<'all' | 'success' | 'error' | 'running'>('all')
+  const [syncing,       setSyncing]       = useState(false)
+  const [syncDays,      setSyncDays]      = useState(90)
+  const [syncResults,   setSyncResults]   = useState<GlobalSyncResult[] | null>(null)
+  const [syncError,     setSyncError]     = useState('')
+  const [clearingStuck, setClearingStuck] = useState(false)
+
+  const fetchJobs = useCallback(async (p: number) => {
     setLoading(true)
     try {
-      const res  = await fetch('/api/admin/system/logs')
+      const res  = await fetch(`/api/admin/system/logs?page=${p}&per_page=${PER_PAGE}`)
       const data = await res.json()
       setJobs(data.jobs ?? [])
+      setTotal(data.total ?? 0)
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { fetchJobs() }, [fetchJobs])
+  useEffect(() => { fetchJobs(page) }, [fetchJobs, page])
+
+  function changeFilter(f: typeof filter) {
+    setFilter(f)
+    setPage(1)
+  }
+
+  function changeStatusFilter(s: typeof statusFilter) {
+    setStatusFilter(s)
+    setPage(1)
+  }
 
   async function runGlobalSync() {
     setSyncing(true)
@@ -70,11 +88,22 @@ export default function SystemPage() {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
       setSyncResults(data.results ?? [])
-      await fetchJobs()
+      setPage(1)
+      await fetchJobs(1)
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : String(e))
     } finally {
       setSyncing(false)
+    }
+  }
+
+  async function clearStuck() {
+    setClearingStuck(true)
+    try {
+      await fetch('/api/admin/system/logs', { method: 'POST' })
+      await fetchJobs(page)
+    } finally {
+      setClearingStuck(false)
     }
   }
 
@@ -87,6 +116,7 @@ export default function SystemPage() {
 
   const errorCount   = jobs.filter(j => j.status === 'error').length
   const runningCount = jobs.filter(j => j.status === 'running').length
+  const totalPages   = Math.ceil(total / PER_PAGE)
 
   return (
     <div>
@@ -119,7 +149,11 @@ export default function SystemPage() {
           >
             {syncing ? 'Syncing all clients…' : 'Sync All Clients'}
           </button>
-          {!syncing && <button onClick={fetchJobs} className="btn btn-secondary">Refresh Logs</button>}
+          {!syncing && (
+            <button onClick={() => fetchJobs(page)} className="btn btn-secondary">
+              Refresh Logs
+            </button>
+          )}
         </div>
 
         {syncError && (
@@ -149,8 +183,20 @@ export default function SystemPage() {
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <h2 className="section-title">Sync Logs</h2>
-            {runningCount > 0 && <span className="badge badge-amber">{runningCount} running</span>}
-            {errorCount   > 0 && <span className="badge badge-red">{errorCount} errors</span>}
+            {runningCount > 0 && (
+              <>
+                <span className="badge badge-amber">{runningCount} running</span>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+                  disabled={clearingStuck}
+                  onClick={clearStuck}
+                >
+                  {clearingStuck ? 'Clearing…' : 'Clear Stuck'}
+                </button>
+              </>
+            )}
+            {errorCount > 0 && <span className="badge badge-red">{errorCount} errors</span>}
           </div>
 
           {/* Filters */}
@@ -160,7 +206,7 @@ export default function SystemPage() {
               {(['all', 'global', 'client'] as const).map(f => (
                 <button
                   key={f}
-                  onClick={() => setFilter(f)}
+                  onClick={() => changeFilter(f)}
                   className="text-xs px-3 py-1.5 font-medium transition-colors"
                   style={{
                     background: filter === f ? 'var(--blue)' : 'var(--bg-base)',
@@ -177,7 +223,7 @@ export default function SystemPage() {
               {(['all', 'success', 'error', 'running'] as const).map((s, i, arr) => (
                 <button
                   key={s}
-                  onClick={() => setStatusFilter(s)}
+                  onClick={() => changeStatusFilter(s)}
                   className="text-xs px-3 py-1.5 font-medium transition-colors"
                   style={{
                     background: statusFilter === s ? 'var(--blue)' : 'var(--bg-base)',
@@ -197,71 +243,115 @@ export default function SystemPage() {
         ) : filtered.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No sync jobs match the current filter.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Started</th>
-                  <th>Client</th>
-                  <th>Platform</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Records</th>
-                  <th>Duration</th>
-                  <th>Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(job => {
-                  const started  = new Date(job.started_at)
-                  const finished = job.completed_at ? new Date(job.completed_at) : null
-                  const durMs    = finished ? finished.getTime() - started.getTime() : null
-                  const durStr   = durMs != null
-                    ? durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(1)}s`
-                    : job.status === 'running' ? 'running…' : '—'
+          <>
+            <div className="overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Started</th>
+                    <th>Client</th>
+                    <th>Platform</th>
+                    <th>Triggered By</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Records</th>
+                    <th style={{ textAlign: 'right' }}>Duration</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(job => {
+                    const started  = new Date(job.started_at)
+                    const finished = job.completed_at ? new Date(job.completed_at) : null
+                    const durMs    = finished ? finished.getTime() - started.getTime() : null
+                    const durStr   = durMs != null
+                      ? durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(1)}s`
+                      : job.status === 'running' ? 'running…' : '—'
 
-                  return (
-                    <tr key={job.id}>
-                      <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {started.toLocaleString('en-US', {
-                          month: 'short', day: 'numeric',
-                          hour: 'numeric', minute: '2-digit',
-                        })}
-                      </td>
-                      <td style={{ color: 'var(--text-secondary)' }}>
-                        {job.client_name ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                      </td>
-                      <td>
-                        {job.connector_type
-                          ? <span className="badge badge-gray">{job.connector_type.replace('_', ' ')}</span>
-                          : <span style={{ color: 'var(--text-faint)' }}>—</span>
-                        }
-                      </td>
-                      <td>
-                        <span className="badge badge-gray">{job.job_type}</span>
-                      </td>
-                      <td>
-                        <span className={`badge ${STATUS_BADGE[job.status] ?? 'badge-gray'}`}>
-                          {job.status}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-muted)' }}>
-                        {job.records_synced != null ? job.records_synced.toLocaleString() : '—'}
-                      </td>
-                      <td style={{ color: 'var(--text-muted)' }}>{durStr}</td>
-                      <td
-                        className="text-xs max-w-[220px] truncate"
-                        style={{ color: 'var(--red)' }}
-                        title={job.error_message ?? undefined}
-                      >
-                        {job.error_message ?? ''}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                    return (
+                      <tr key={job.id}>
+                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {started.toLocaleString('en-US', {
+                            month: 'short', day: 'numeric',
+                            hour: 'numeric', minute: '2-digit',
+                          })}
+                        </td>
+                        <td style={{ color: 'var(--text-secondary)' }}>
+                          {job.client_name ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                        </td>
+                        <td>
+                          {job.connector_type
+                            ? <span className="badge badge-gray" style={{ fontSize: '0.6875rem' }}>
+                                {job.connector_type.replace(/_/g, ' ')}
+                              </span>
+                            : <span style={{ color: 'var(--text-faint)' }}>—</span>
+                          }
+                        </td>
+                        <td>
+                          {job.triggered_by
+                            ? <span className="badge badge-gray" style={{ fontSize: '0.6875rem' }}>
+                                {job.triggered_by}
+                              </span>
+                            : <span style={{ color: 'var(--text-faint)' }}>—</span>
+                          }
+                        </td>
+                        <td>
+                          <span className="badge badge-gray" style={{ fontSize: '0.6875rem' }}>
+                            {job.job_type}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${STATUS_BADGE[job.status] ?? 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
+                            {job.status}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                          {job.records_synced != null ? job.records_synced.toLocaleString() : '—'}
+                        </td>
+                        <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                          {durStr}
+                        </td>
+                        <td
+                          className="text-xs max-w-[220px] truncate"
+                          style={{ color: 'var(--red)' }}
+                          title={job.error_message ?? undefined}
+                        >
+                          {job.error_message ?? ''}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {total > PER_PAGE && (
+              <div className="flex items-center justify-between mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                <span className="text-xs" style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                  {((page - 1) * PER_PAGE) + 1}–{Math.min(page * PER_PAGE, total)} of {total.toLocaleString()}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem', padding: '0.25rem 0.625rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                    disabled={page === 1}
+                    onClick={() => setPage(p => p - 1)}
+                  >
+                    <CaretLeft size={14} aria-hidden /> Prev
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem', padding: '0.25rem 0.625rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                    disabled={page >= totalPages}
+                    onClick={() => setPage(p => p + 1)}
+                  >
+                    Next <CaretRight size={14} aria-hidden />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

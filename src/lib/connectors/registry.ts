@@ -22,6 +22,7 @@ import { googleSearchConsoleConnector } from './google-search-console'
 import { googleBusinessProfileConnector } from './google-business-profile'
 import { ghlConnector } from './ghl'
 import { wordpressConnector } from './wordpress'
+import { ahrefsConnector } from './ahrefs'
 import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo, GhlLogo, WpLogo } from '@/components/ConnectorLogo'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,14 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     color: '#21759B',
     authFlow: 'credentials',
   },
+  ahrefs: {
+    type: 'ahrefs',
+    label: 'Ahrefs',
+    description: 'Connect Ahrefs to track Domain Rating, backlinks, and organic traffic.',
+    icon: 'A',
+    color: '#f59e0b',
+    authFlow: 'token',
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +118,7 @@ const CONNECTOR_ADAPTERS: Partial<Record<ConnectorType, ConnectorAdapter>> = {
   google_business_profile: googleBusinessProfileConnector,
   ghl:                     ghlConnector,
   wordpress:               wordpressConnector,
+  ahrefs:                  ahrefsConnector,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +134,7 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'google_business_profile',
   'ghl',
   'wordpress',
+  'ahrefs',
 ]
 
 /** Returns the UI definition for a connector type. */

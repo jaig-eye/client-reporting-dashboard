@@ -26,6 +26,7 @@ export type ConnectorType =
   | 'google_business_profile'
   | 'ghl'
   | 'wordpress'
+  | 'ahrefs'
 
 /** Display metadata for each connector type — used in the UI. */
 export interface ConnectorTypeDef {

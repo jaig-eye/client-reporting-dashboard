@@ -1,18 +1,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Authority (Ahrefs) Page — /dashboard/seo/authority
-// Placeholder — Ahrefs has no public API. Shows coming soon state.
+// Shows Domain Rating, backlinks, referring domains, and organic traffic
+// sourced from the ahrefs_metrics table (synced via Ahrefs API v3).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { cookies } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { cookies }           from 'next/headers'
+import { redirect }          from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
-import type { Client } from '@/lib/types'
+import type { Client }       from '@/lib/types'
+import SparkMetricCard       from '@/components/SparkMetricCard'
+import DateRangePicker       from '@/components/DateRangePicker'
+import { LinkSimple }        from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
-export default async function AuthorityPage() {
+export default async function AuthorityPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string }>
+}) {
   const cookieStore = await cookies()
   const db          = createAdminClient()
+  const params      = await searchParams
 
   const token = cookieStore.get('client_token')?.value
   if (!token) redirect('/access')
@@ -21,63 +30,120 @@ export default async function AuthorityPage() {
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  const today    = new Date()
+  const toDate   = params.to   ? new Date(params.to)   : today
+  const fromDate = params.from ? new Date(params.from) : new Date(today.getFullYear(), today.getMonth(), 1)
+  const dateFrom = fromDate.toISOString().split('T')[0]
+  const dateTo   = toDate.toISOString().split('T')[0]
+
+  // Check if client has an Ahrefs connection
+  const { data: connData } = await db
+    .from('client_connections')
+    .select('id')
+    .eq('client_id', client.id)
+    .eq('status', 'active')
+    .eq('connector:connectors(type)', 'ahrefs')
+    .limit(1)
+
+  const hasAhrefs = (connData?.length ?? 0) > 0
+
+  // Fetch the most recent Ahrefs snapshot within the date range
+  const { data: metricsRows } = await db
+    .from('ahrefs_metrics')
+    .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic')
+    .eq('client_id', client.id)
+    .gte('date', dateFrom)
+    .lte('date', dateTo)
+    .order('date', { ascending: false })
+    .limit(10)
+
+  const latest = metricsRows?.[0]
+
+  // Build sparkline trend from available snapshots (newest first → reverse for chart)
+  const trend = (metricsRows ?? []).slice(0, 8).reverse()
+  const drTrend  = trend.map(r => r.domain_rating  ?? 0)
+  const blTrend  = trend.map(r => r.backlinks       ?? 0)
+  const rdTrend  = trend.map(r => r.referring_domains ?? 0)
+  const otTrend  = trend.map(r => r.organic_traffic ?? 0)
+
+  // ── render ──────────────────────────────────────────────────────────────────
+
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <header className="sticky top-0 z-10 border-b" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-2">
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f26722' }} />
-          <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>SEO — Authority</span>
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{client.name}</span>
-          <span style={{
-            marginLeft: 4,
-            display: 'inline-flex', alignItems: 'center',
-            padding: '1px 7px', borderRadius: 9999,
-            background: '#fef3c7', color: '#92400e',
-            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-          }}>
-            Coming Soon
-          </span>
+    <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
+      {/* Page header */}
+      <div className="page-header">
+        <div className="flex items-center gap-2">
+          <LinkSimple size={18} weight="duotone" style={{ color: '#f59e0b' }} aria-hidden />
+          <h1 className="page-title">Authority</h1>
+          {!hasAhrefs && (
+            <span className="badge badge-amber" style={{ fontSize: '0.6875rem' }}>Not connected</span>
+          )}
         </div>
-      </header>
+        <DateRangePicker from={dateFrom} to={dateTo} />
+      </div>
 
-      <main className="max-w-7xl mx-auto px-6 py-16 flex flex-col items-center text-center">
-        <div style={{
-          width: 72, height: 72, borderRadius: '50%',
-          background: 'var(--bg-subtle)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '2rem', marginBottom: '1.5rem',
-        }}>
-          🔗
+      {!hasAhrefs ? (
+        /* No connection state */
+        <div className="card p-12 text-center" style={{ maxWidth: 480, margin: '2rem auto' }}>
+          <LinkSimple size={40} style={{ color: '#f59e0b', margin: '0 auto 1rem' }} />
+          <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+            Ahrefs not connected
+          </p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            Ask your account manager to connect Ahrefs to start tracking Domain Rating,
+            backlinks, and organic traffic.
+          </p>
         </div>
+      ) : (
+        <>
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <SparkMetricCard
+              label="Domain Rating"
+              value={latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—'}
+              sparkData={drTrend}
+            />
+            <SparkMetricCard
+              label="Backlinks"
+              value={latest?.backlinks != null ? latest.backlinks.toLocaleString() : '—'}
+              sparkData={blTrend}
+            />
+            <SparkMetricCard
+              label="Referring Domains"
+              value={latest?.referring_domains != null ? latest.referring_domains.toLocaleString() : '—'}
+              sparkData={rdTrend}
+            />
+            <SparkMetricCard
+              label="Organic Traffic"
+              value={latest?.organic_traffic != null ? latest.organic_traffic.toLocaleString() : '—'}
+              sparkData={otTrend}
+            />
+          </div>
 
-        <h1 className="text-xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
-          Authority Metrics — Coming Soon
-        </h1>
-
-        <p className="text-sm max-w-md mb-8" style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Connect your Ahrefs account to track Domain Rating, referring domains, total backlinks,
-          and organic keyword rankings — all in one place.
-        </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-xl mb-10">
-          {[
-            { icon: '🏆', label: 'Domain Rating', desc: 'Track DR over time' },
-            { icon: '🔗', label: 'Backlinks',     desc: 'Monitor new & lost links' },
-            { icon: '🔑', label: 'Keywords',      desc: 'Organic keyword rankings' },
-          ].map(item => (
-            <div key={item.label} className="card p-5 text-left" style={{ opacity: 0.6 }}>
-              <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>{item.icon}</div>
-              <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{item.label}</p>
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{item.desc}</p>
+          {/* Snapshot info */}
+          {latest ? (
+            <div className="card p-4" style={{ marginBottom: '1.5rem' }}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                  Latest snapshot: <span style={{ color: 'var(--text-primary)' }}>{latest.date}</span>
+                  {latest.ahrefs_rank && (
+                    <> — Ahrefs Rank: <span style={{ color: 'var(--text-primary)' }}>#{latest.ahrefs_rank.toLocaleString()}</span></>
+                  )}
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                  Organic keywords: {latest.organic_keywords?.toLocaleString() ?? '—'}
+                </p>
+              </div>
             </div>
-          ))}
-        </div>
-
-        <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-          Reach out to your account manager to get notified when this integration is available.
-        </p>
-      </main>
+          ) : (
+            <div className="card p-8 text-center mb-6">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                No data for this period — sync pending or no snapshots yet.
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

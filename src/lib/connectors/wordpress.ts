@@ -142,6 +142,21 @@ export async function getCategories(
   }))
 }
 
+export async function getAuthors(
+  siteUrl: string,
+  auth: { username: string; app_password: string }
+): Promise<{ id: number; name: string }[]> {
+  try {
+    const result = (await wpGet(siteUrl, '/users', auth, { per_page: '50', who: 'authors' })) as Record<string, unknown>[]
+    return result.map(u => ({
+      id:   Number(u.id),
+      name: String(u.name || ''),
+    }))
+  } catch {
+    return []
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter (minimal — WP is primarily a write connector)
 // ─────────────────────────────────────────────────────────────────────────────

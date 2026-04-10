@@ -729,7 +729,11 @@ export default async function DashboardPage({
           />
         )}
         {(availableSources as string[]).includes('ahrefs') && (
-          <AhrefsSummaryCard />
+          <AhrefsSummaryCard
+            clientId={client.id}
+            dateFrom={fmtDate(fromDate)}
+            dateTo={fmtDate(toDate)}
+          />
         )}
 
       </main>

@@ -54,6 +54,12 @@ export default function AgencySettingsPage() {
   const [error,     setError]     = useState('')
   const [uploading, setUploading] = useState(false)
 
+  // Content automation global settings
+  const [postStructure,    setPostStructure]    = useState('')
+  const [contentSaving,    setContentSaving]    = useState(false)
+  const [contentSaved,     setContentSaved]     = useState(false)
+  const [contentError,     setContentError]     = useState('')
+
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -74,11 +80,34 @@ export default function AgencySettingsPage() {
   }
 
   useEffect(() => {
-    fetch('/api/admin/settings')
-      .then(r => r.json())
-      .then(d => { setForm({ ...DEFAULT, ...d }); setLoading(false) })
-      .catch(() => setLoading(false))
+    Promise.all([
+      fetch('/api/admin/settings').then(r => r.json()),
+      fetch('/api/admin/content/global-settings').then(r => r.json()),
+    ]).then(([settings, contentSettings]) => {
+      setForm({ ...DEFAULT, ...settings })
+      setPostStructure(contentSettings.post_structure ?? '')
+      setLoading(false)
+    }).catch(() => setLoading(false))
   }, [])
+
+  async function handleContentSave() {
+    setContentSaving(true)
+    setContentError('')
+    try {
+      const res = await fetch('/api/admin/content/global-settings', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ post_structure: postStructure }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setContentSaved(true)
+    } catch (err) {
+      setContentError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setContentSaving(false)
+    }
+  }
 
   function field<K extends keyof Settings>(key: K, value: Settings[K]) {
     setSaved(false)
@@ -278,6 +307,36 @@ export default function AgencySettingsPage() {
                 />
               </FormField>
             </div>
+          </div>
+        </div>
+
+        {/* Content Automation */}
+        <div className="card p-6">
+          <h2 className="section-title mb-1">Content Automation</h2>
+          <p className="section-desc mb-4">
+            Global defaults for AI-generated posts. Per-client settings can override these in client settings.
+          </p>
+          <FormField label="Default Post Structure Template" hint="Optional outline or instructions applied to all AI-generated posts">
+            <textarea
+              className="input"
+              rows={6}
+              value={postStructure}
+              onChange={e => { setPostStructure(e.target.value); setContentSaved(false) }}
+              placeholder={`e.g.\n- Start with a hook paragraph\n- H2: What is [topic]?\n- H2: Key benefits (3–5 bullet points)\n- H2: How to get started\n- H2: FAQ (3 questions)\n- End with a clear call-to-action`}
+              style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+            />
+          </FormField>
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={contentSaving}
+              onClick={handleContentSave}
+            >
+              {contentSaving ? 'Saving…' : 'Save Content Settings'}
+            </button>
+            {contentSaved  && <span className="text-sm" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+            {contentError  && <span className="text-sm" style={{ color: 'var(--red)' }}>{contentError}</span>}
           </div>
         </div>
 

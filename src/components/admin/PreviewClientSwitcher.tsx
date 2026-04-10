@@ -43,10 +43,11 @@ export default function PreviewClientSwitcher({
     c.name.toLowerCase().includes(query.toLowerCase())
   )
 
-  function select(id: string) {
+  async function select(id: string) {
     setOpen(false)
+    // Set the client_token cookie for the new client before navigating
+    await fetch(`/api/admin/preview/${id}`, { method: 'POST' })
     router.push(`/admin/preview/${id}`)
-    router.refresh()
   }
 
   return (

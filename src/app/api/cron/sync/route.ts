@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const results = []
   for (const client of clients || []) {
     try {
-      const count = await syncClient(client.id, 'incremental')
+      const count = await syncClient(client.id, 'incremental', undefined, undefined, undefined, undefined, 'cron')
       results.push({ client: client.name, status: 'success', records: count })
     } catch (e) {
       results.push({ client: client.name, status: 'error', error: String(e) })

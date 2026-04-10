@@ -31,7 +31,10 @@ export async function POST(req: NextRequest) {
       clientId,
       resolvedJobType,
       days ?? 3,
-      connectionId
+      connectionId,
+      undefined,
+      undefined,
+      'admin'
     )
     return NextResponse.json({ ok: true, records })
   } catch (err) {
