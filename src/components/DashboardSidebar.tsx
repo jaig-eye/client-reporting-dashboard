@@ -136,6 +136,10 @@ export default function DashboardSidebar({
     } else {
       router.push(url.pathname + (url.search || ''))
     }
+    // Invalidate router cache so re-visiting the same source URL always
+    // fetches fresh server data. Called synchronously here (not in useEffect)
+    // to avoid the double-render race that affected the old NavigationRefresher.
+    router.refresh()
   }
 
   function hasConnector(type?: ConnectorType): boolean {

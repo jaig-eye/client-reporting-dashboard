@@ -455,26 +455,34 @@ export const metaAdsConnector: ConnectorAdapter = {
       nextUrl = (paging?.next as string) || null
     }
 
-    // Fetch campaign daily budgets from the Campaigns API (not available in Insights API)
+    // Fetch campaign daily budgets and effective_status from the Campaigns API
+    // (neither field is available in the Insights API)
     const budgetMap = new Map<string, number>()
+    const statusMap = new Map<string, string>()
     try {
-      const budgetData = await metaGet(`/${externalId}/campaigns`, accessToken, {
-        fields: 'id,daily_budget',
+      const campData = await metaGet(`/${externalId}/campaigns`, accessToken, {
+        fields: 'id,daily_budget,effective_status',
         limit: '500',
       })
-      for (const camp of (budgetData.data || []) as Record<string, unknown>[]) {
+      for (const camp of (campData.data || []) as Record<string, unknown>[]) {
         const cid    = String(camp.id || '')
         const budget = Number(camp.daily_budget || 0) / 100  // cents → account currency
-        if (cid && budget > 0) budgetMap.set(cid, budget)
+        const status = String(camp.effective_status || '')
+        if (cid) {
+          if (budget > 0) budgetMap.set(cid, budget)
+          if (status)     statusMap.set(cid, status)
+        }
       }
     } catch {
-      // best-effort — daily_budget stays undefined if unavailable
+      // best-effort — budget/status stays undefined if unavailable
     }
 
-    // Enrich rows with budget data
+    // Enrich rows with budget and status data
     for (const row of rows) {
       const budget = budgetMap.get(row.campaign_id)
-      if (budget !== undefined) row.daily_budget = budget
+      const status = statusMap.get(row.campaign_id)
+      if (budget !== undefined) row.daily_budget    = budget
+      if (status !== undefined) row.campaign_status = status
     }
 
     return {

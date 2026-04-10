@@ -41,8 +41,8 @@ const DEFAULT: Settings = {
   chart_color_prior_spend:        '#94a3b8',
   chart_color_conversions:        '#059669',
   chart_color_prior_conversions:  '#34d399',
-  ai_provider:                    'openai',
-  ai_model:                       'gpt-4o',
+  ai_provider:                    'anthropic',
+  ai_model:                       'claude-sonnet-4-6',
   ai_api_key:                     '',
 }
 

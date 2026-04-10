@@ -350,16 +350,14 @@ export default async function AdminPreviewPage({
           </div>
         </div>
 
-        {/* ── Empty data state ─────────────────────────────────── */}
+        {/* ── No-data notice (subtle, does not replace KPI grid) ── */}
         {currentMetrics.length === 0 && (
-          <div className="card p-10 text-center">
-            <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>No data for this date range</p>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Try selecting a different date range above.</p>
-          </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginBottom: 4 }}>
+            No data for this period — showing zeroed stats
+          </p>
         )}
 
-        {currentMetrics.length > 0 && (
-          <>
+        <>
             {/* ── Hero KPI cards ───────────────────────────────────── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {!hiddenMetrics.has('spend') && (
@@ -570,8 +568,7 @@ export default async function AdminPreviewPage({
                 </div>
               </div>
             )}
-          </>
-        )}
+        </>
 
       </main>
     </div>

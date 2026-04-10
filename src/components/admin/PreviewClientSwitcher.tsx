@@ -46,6 +46,7 @@ export default function PreviewClientSwitcher({
   function select(id: string) {
     setOpen(false)
     router.push(`/admin/preview/${id}`)
+    router.refresh()
   }
 
   return (

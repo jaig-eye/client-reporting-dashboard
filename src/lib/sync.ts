@@ -315,6 +315,10 @@ export async function upsertGoogleAdsMetrics(
       cpc:  clicks > 0 ? spend / clicks : 0,
       cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
       daily_budget: r.daily_budget_micros > 0 ? r.daily_budget_micros / 1_000_000 : null,
+      // Impression share (Search campaigns only; null for all others)
+      search_impression_share:         r.search_impression_share         ?? null,
+      search_abs_top_impression_share: r.search_abs_top_impression_share ?? null,
+      search_top_impression_share:     r.search_top_impression_share     ?? null,
     }
   })
 

@@ -10,6 +10,8 @@ import type { Client } from '@/lib/types'
 import { AdGroupTable } from '@/components/AdTable'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
+import SparkMetricCard from '@/components/SparkMetricCard'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -158,6 +160,12 @@ export default async function AdminPreviewCampaignPage({
     return { keyword_text: k.text, match_type: k.matchType, keyword_status: null, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
   }).sort((a, b) => b.impressions - a.impressions)
 
+  const convertingKws    = campaignKeywordRows.filter(k => k.conversions > 0).sort((a, b) => b.conversions - a.conversions)
+  const totalKwCount     = campaignKeywordRows.length
+  const convertingKwCnt  = convertingKws.length
+  const convertingKwPct  = totalKwCount > 0 ? (convertingKwCnt / totalKwCount) * 100 : 0
+  const topConvertingKws = convertingKws.slice(0, 8)
+
   const daysInPeriod = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / 86400000) + 1)
 
   const adGroups = Array.from(setMap.entries()).map(([setId, s]) => {
@@ -180,6 +188,19 @@ export default async function AdminPreviewCampaignPage({
   const totClicks      = adGroups.reduce((t, s) => t + s.clicks, 0)
   const totConversions = adGroups.reduce((t, s) => t + s.conversions, 0)
   const totCv          = adGroups.reduce((t, s) => t + s.conversionValue, 0)
+
+  // KPI derived metrics
+  const priorDSpend = adFuelCut > 0 ? applyAdFuel(priorTotals.spend, adFuelCut) : priorTotals.spend
+  const roas        = totSpend > 0 && totCv > 0 ? totCv / totSpend : 0
+  const priorRoas   = priorDSpend > 0 && priorTotals.conversionValue > 0 ? priorTotals.conversionValue / priorDSpend : 0
+  const cpl         = totConversions > 0 ? totSpend / totConversions : 0
+  const priorCpl    = priorTotals.conversions > 0 ? priorDSpend / priorTotals.conversions : 0
+  const ctr         = totImpressions > 0 ? totClicks / totImpressions : 0
+  const priorCtr    = priorTotals.impressions > 0 ? priorTotals.clicks / priorTotals.impressions : 0
+  const cpc         = totClicks > 0 ? totSpend / totClicks : 0
+  const priorCpc    = priorTotals.clicks > 0 ? priorDSpend / priorTotals.clicks : 0
+  const cpm         = totImpressions > 0 ? (totSpend / totImpressions) * 1000 : 0
+  const priorCpm    = priorTotals.impressions > 0 ? (priorDSpend / priorTotals.impressions) * 1000 : 0
 
   const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
   if (compare) dateQsObj.compare = compare
@@ -229,7 +250,49 @@ export default async function AdminPreviewCampaignPage({
           </div>
         </div>
 
-        <CampaignSummary spend={totSpend} impressions={totImpressions} clicks={totClicks} conversions={totConversions} conversionValue={totCv} adFuelCut={adFuelCut} isEcom={isEcom} conversionLabel={conversionLabel} prior={showCompare ? priorTotals : undefined} />
+        {/* ── Hero KPI cards ──────────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <SparkMetricCard label="Total Cost" value={fmt$(totSpend)}
+            delta={showCompare ? calcDelta(totSpend, priorDSpend) : undefined}
+            invertDelta sparkData={[]} sparkColor={settings.chart_color_spend ?? '#93c5fd'} delay={0} />
+          {isEcom ? (
+            <SparkMetricCard label="Revenue" value={totCv > 0 ? fmt$(totCv) : '$0'}
+              delta={showCompare ? calcDelta(totCv, priorTotals.conversionValue) : undefined}
+              sparkData={[]} sparkColor="#10b981" delay={1} />
+          ) : (
+            <SparkMetricCard label={conversionLabel} value={fmtNum(totConversions)}
+              delta={showCompare ? calcDelta(totConversions, priorTotals.conversions) : undefined}
+              sparkData={[]} sparkColor="#10b981" delay={1} />
+          )}
+          {isEcom ? (
+            <SparkMetricCard label="ROAS" value={roas > 0 ? fmtRoas(roas) : '—'}
+              delta={showCompare ? calcDelta(roas, priorRoas) : undefined}
+              sparkData={[]} sparkColor="#8b5cf6" delay={2} />
+          ) : (
+            <SparkMetricCard label="Cost Per Lead" value={cpl > 0 ? fmtCurrency(cpl) : '—'}
+              delta={showCompare ? calcDelta(cpl, priorCpl) : undefined}
+              invertDelta sparkData={[]} sparkColor="#f59e0b" delay={2} />
+          )}
+          <SparkMetricCard label="CTR" value={fmtPct(ctr)}
+            delta={showCompare ? calcDelta(ctr, priorCtr) : undefined}
+            sparkData={[]} sparkColor="#3b82f6" delay={3} />
+        </div>
+
+        {/* ── Additional metrics ───────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <SparkMetricCard label="Impressions" value={fmtNum(totImpressions)}
+            delta={showCompare ? calcDelta(totImpressions, priorTotals.impressions) : undefined}
+            sparkData={[]} sparkColor="#6366f1" delay={4} />
+          <SparkMetricCard label="Clicks" value={fmtNum(totClicks)}
+            delta={showCompare ? calcDelta(totClicks, priorTotals.clicks) : undefined}
+            sparkData={[]} sparkColor="#06b6d4" delay={5} />
+          <SparkMetricCard label="Avg. CPC" value={cpc > 0 ? fmtCurrency(cpc) : '—'}
+            delta={showCompare ? calcDelta(cpc, priorCpc) : undefined}
+            invertDelta sparkData={[]} sparkColor="#f59e0b" delay={6} />
+          <SparkMetricCard label="CPM" value={cpm > 0 ? fmtCurrency(cpm) : '—'}
+            delta={showCompare ? calcDelta(cpm, priorCpm) : undefined}
+            invertDelta sparkData={[]} sparkColor="#f97316" delay={7} />
+        </div>
 
         <div className="card p-6">
           <h2 className="section-title mb-4">{displayGroupLabel}s</h2>
@@ -237,10 +300,54 @@ export default async function AdminPreviewCampaignPage({
         </div>
 
         {campaignKeywordRows.length > 0 && (
-          <div className="card p-6">
-            <h2 className="section-title mb-1">Keywords</h2>
-            <p className="section-desc mb-4">{campaignKeywordRows.length} keyword{campaignKeywordRows.length !== 1 ? 's' : ''} across all ad groups</p>
-            <KeywordTable rows={campaignKeywordRows} conversionLabel={conversionLabel} adFuelLabel="Cost" />
+          <div className="card p-6 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <MagnifyingGlass size={16} aria-hidden style={{ color: 'var(--blue)' }} />
+                  <h2 className="section-title">Keyword Intelligence</h2>
+                </div>
+                <p className="section-desc">Top converting keywords across all ad groups in this campaign</p>
+              </div>
+              {totalKwCount > 0 && (
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="text-right">
+                    <p className="text-2xl font-bold" style={{ color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
+                      {convertingKwCnt}<span className="text-sm font-normal" style={{ color: 'var(--text-faint)' }}>/{totalKwCount}</span>
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-faint)' }}>converting ({convertingKwPct.toFixed(0)}%)</p>
+                  </div>
+                  <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
+                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--bg-subtle)" strokeWidth="4" />
+                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--green)" strokeWidth="4"
+                      strokeLinecap="round"
+                      strokeDasharray={`${(convertingKwPct / 100) * 100.53} 100.53`}
+                      transform="rotate(-90 20 20)"
+                    />
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            {topConvertingKws.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {topConvertingKws.map((kw, i) => (
+                  <SparkMetricCard
+                    key={`${kw.keyword_text}-${i}`}
+                    label={kw.keyword_text.length > 24 ? kw.keyword_text.slice(0, 22) + '…' : kw.keyword_text}
+                    value={fmtNum(kw.conversions)}
+                    sparkData={[]}
+                    sparkColor="var(--green)"
+                    delay={i}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+              <h3 className="section-label mb-3">All Keywords ({campaignKeywordRows.length})</h3>
+              <KeywordTable rows={campaignKeywordRows} conversionLabel={conversionLabel} adFuelLabel="Cost" />
+            </div>
           </div>
         )}
       </main>
@@ -248,64 +355,3 @@ export default async function AdminPreviewCampaignPage({
   )
 }
 
-type PriorT = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
-
-function CampaignSummary({ spend, impressions, clicks, conversions, conversionValue, adFuelCut, isEcom, conversionLabel, prior }: {
-  spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number
-  adFuelCut: number; isEcom: boolean; conversionLabel: string; prior?: PriorT
-}) {
-  const dSpend     = adFuelCut > 0 ? applyAdFuel(spend, adFuelCut) : spend
-  const priorDSpend = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
-  const roas   = dSpend > 0 && conversionValue > 0 ? conversionValue / dSpend : 0
-  const cpl    = conversions > 0 ? dSpend / conversions : 0
-  const ctr    = impressions > 0 ? clicks / impressions : 0
-  const cpc    = clicks > 0 ? dSpend / clicks : 0
-  const cpm    = impressions > 0 ? (spend / impressions) * 1000 : 0
-  const priorRoas = prior && priorDSpend > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDSpend : 0
-  const priorCpl  = prior && prior.conversions > 0 ? priorDSpend / prior.conversions : 0
-  const priorCtr  = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
-  const priorCpc  = prior && prior.clicks > 0 ? priorDSpend / prior.clicks : 0
-  const priorCpm  = prior && prior.impressions > 0 ? (prior.spend / prior.impressions) * 1000 : 0
-
-  function D({ cur, pri, inv }: { cur: number; pri: number; inv?: boolean }) {
-    const d = calcDelta(cur, pri)
-    if (d === undefined || d === 0) return null
-    const good = inv ? d <= 0 : d >= 0
-    return <span style={{ fontSize: '0.65rem', fontWeight: 600, color: good ? 'var(--green)' : 'var(--red)' }}> {d > 0 ? '↑' : '↓'}{Math.abs(d).toFixed(1)}%</span>
-  }
-
-  const items = isEcom
-    ? [
-        { label: 'Cost', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
-        { label: 'ROAS',         value: roas > 0 ? fmtRoas(roas) : '—',                                       delta: <D cur={roas}           pri={priorRoas}                    /> },
-        { label: 'Revenue',      value: conversionValue > 0 ? fmt$(conversionValue) : '—',                     delta: <D cur={conversionValue} pri={prior?.conversionValue ?? 0} /> },
-        { label: conversionLabel, value: conversions > 0 ? fmtNum(conversions) : '—',                          delta: <D cur={conversions}    pri={prior?.conversions ?? 0}      /> },
-        { label: 'Impressions',  value: fmtNum(impressions),                                                    delta: <D cur={impressions}    pri={prior?.impressions ?? 0}      /> },
-        { label: 'Clicks',       value: fmtNum(clicks),                                                         delta: <D cur={clicks}         pri={prior?.clicks ?? 0}           /> },
-        { label: 'CTR',          value: fmtPct(ctr),                                                            delta: <D cur={ctr}            pri={priorCtr}                     /> },
-        { label: 'Avg. CPC',     value: cpc > 0 ? fmtCurrency(cpc) : '—',                                     delta: <D cur={cpc}            pri={priorCpc}                 inv /> },
-      ]
-    : [
-        { label: 'Cost', value: fmt$(dSpend),                              delta: <D cur={dSpend}        pri={priorDSpend}              inv /> },
-        { label: conversionLabel, value: conversions > 0 ? fmtNum(conversions) : '—',                          delta: <D cur={conversions}    pri={prior?.conversions ?? 0}      /> },
-        { label: 'CPL',          value: cpl > 0 ? fmtCurrency(cpl) : '—',                                     delta: <D cur={cpl}            pri={priorCpl}                 inv /> },
-        { label: 'Impressions',  value: fmtNum(impressions),                                                    delta: <D cur={impressions}    pri={prior?.impressions ?? 0}      /> },
-        { label: 'Clicks',       value: fmtNum(clicks),                                                         delta: <D cur={clicks}         pri={prior?.clicks ?? 0}           /> },
-        { label: 'CTR',          value: fmtPct(ctr),                                                            delta: <D cur={ctr}            pri={priorCtr}                     /> },
-        { label: 'Avg. CPC',     value: cpc > 0 ? fmtCurrency(cpc) : '—',                                     delta: <D cur={cpc}            pri={priorCpc}                 inv /> },
-        { label: 'CPM',          value: cpm > 0 ? fmtCurrency(cpm) : '—',                                     delta: <D cur={cpm}            pri={priorCpm}                 inv /> },
-      ]
-
-  return (
-    <div className="card p-6">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1.5rem' }}>
-        {items.map(item => (
-          <div key={item.label}>
-            <p className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>{item.label}</p>
-            <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{item.value}{item.delta}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}

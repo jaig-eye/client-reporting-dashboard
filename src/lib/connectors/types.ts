@@ -31,6 +31,10 @@ export interface GoogleAdsRawRow {
   conversions: number
   conversions_value: number
   view_through_conversions: number
+  // Impression share — only available for Search campaigns; null for others
+  search_impression_share?:         number | null
+  search_abs_top_impression_share?: number | null
+  search_top_impression_share?:     number | null
 }
 
 /** Raw Meta Ads campaign metric row as returned by the connector. */

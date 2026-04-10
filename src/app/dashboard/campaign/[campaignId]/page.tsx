@@ -17,7 +17,9 @@ import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,6 +133,7 @@ export default async function CampaignDetailPage({
 
   const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
   let isPMax = false
+  let avgImprShare: number | null = null
 
   // Daily series for sparklines
   type DayAgg = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
@@ -154,7 +157,9 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name,campaign_type').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+        .select('campaign_name,campaign_type,search_impression_share')
+        .eq('client_id', client.id).eq('campaign_id', campaignId)
+        .gte('date', dateFrom).lte('date', dateTo),
       showCompare
         ? db.from('google_ads_ad_metrics')
             .select('spend,impressions,clicks,conversions,conversions_value')
@@ -164,10 +169,14 @@ export default async function CampaignDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
     ])
-    const typedCampRow = campRow as { campaign_name: string; campaign_type: string | null } | null
-    if (typedCampRow) campaignName = typedCampRow.campaign_name
-    isPMax = typedCampRow?.campaign_type === 'PERFORMANCE_MAX'
+    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null }[] | null) ?? []
+    const firstCamp = campRows[0] ?? null
+    if (firstCamp) campaignName = firstCamp.campaign_name
+    isPMax = firstCamp?.campaign_type === 'PERFORMANCE_MAX'
       || campaignName.toLowerCase().startsWith('pmax')
+    // Average impression share across the period (null if none available)
+    const isRows = campRows.filter(r => r.search_impression_share !== null)
+    avgImprShare = isRows.length > 0 ? isRows.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / isRows.length : null
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0, cv = Number(r.conversions_value)||0
@@ -232,6 +241,40 @@ export default async function CampaignDetailPage({
       priorTotals.conversionValue += cv
     }
   }
+
+  // ── Fetch campaign-level keywords (Google Search only) ────────────────────
+  type KwRow = { keyword_id: string; keyword_text: string; match_type: string | null; keyword_status: string | null; spend: number; impressions: number; clicks: number; conversions: number }
+  const kwMap = new Map<string, { text: string; matchType: string | null; status: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
+  if (isGoogleAds && !isPMax) {
+    const { data: kwData } = await db
+      .from('google_ads_keywords')
+      .select('keyword_id,keyword_text,match_type,keyword_status,spend,impressions,clicks,conversions')
+      .eq('client_id', client.id)
+      .eq('campaign_id', campaignId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+    for (const kw of (kwData ?? []) as KwRow[]) {
+      const key = kw.keyword_id
+      const ex  = kwMap.get(key)
+      if (ex) {
+        ex.spend += Number(kw.spend)||0; ex.impressions += Number(kw.impressions)||0
+        ex.clicks += Number(kw.clicks)||0; ex.conversions += Number(kw.conversions)||0
+      } else {
+        kwMap.set(key, { text: kw.keyword_text, matchType: kw.match_type ?? null, status: kw.keyword_status ?? null, spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0, clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0 })
+      }
+    }
+  }
+
+  const keywordRows: KeywordRow[] = Array.from(kwMap.values()).map(k => {
+    const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+    return { keyword_text: k.text, match_type: k.matchType, keyword_status: k.status, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
+  }).sort((a, b) => b.impressions - a.impressions)
+
+  const convertingKeywords = keywordRows.filter(k => k.conversions > 0).sort((a, b) => b.conversions - a.conversions)
+  const totalKeywords      = keywordRows.length
+  const convertingCount    = convertingKeywords.length
+  const convertingPct      = totalKeywords > 0 ? (convertingCount / totalKeywords) * 100 : 0
+  const topConvertingKws   = convertingKeywords.slice(0, 8)
 
   // After data fetch: isPMax is now resolved
   const displayGroupLabel = (isGoogleAds && isPMax) ? 'Asset Group' : groupLabel
@@ -458,6 +501,15 @@ export default async function CampaignDetailPage({
             sparkColor="var(--text-muted)"
             delay={5}
           />
+          {isGoogleAds && !isPMax && avgImprShare !== null && (
+            <SparkMetricCard
+              label="Impr. Share"
+              value={`${(avgImprShare * 100).toFixed(1)}%`}
+              sparkData={[]}
+              sparkColor="#6366f1"
+              delay={6}
+            />
+          )}
         </div>
 
         {/* ── Ad Group / Ad Set table ───────────────────────────── */}
@@ -474,6 +526,59 @@ export default async function CampaignDetailPage({
             isPMax={isGoogleAds && isPMax}
           />
         </div>
+
+        {/* ── Keyword Intelligence (Google Search only) ────────── */}
+        {isGoogleAds && !isPMax && keywordRows.length > 0 && (
+          <div className="card p-6 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <MagnifyingGlass size={16} aria-hidden style={{ color: 'var(--blue)' }} />
+                  <h2 className="section-title">Keyword Intelligence</h2>
+                </div>
+                <p className="section-desc">Top converting keywords across all ad groups in this campaign</p>
+              </div>
+              {totalKeywords > 0 && (
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="text-right">
+                    <p className="text-2xl font-bold" style={{ color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
+                      {convertingCount}<span className="text-sm font-normal" style={{ color: 'var(--text-faint)' }}>/{totalKeywords}</span>
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-faint)' }}>converting ({convertingPct.toFixed(0)}%)</p>
+                  </div>
+                  <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
+                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--bg-subtle)" strokeWidth="4" />
+                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--green)" strokeWidth="4"
+                      strokeLinecap="round"
+                      strokeDasharray={`${(convertingPct / 100) * 100.53} 100.53`}
+                      transform="rotate(-90 20 20)"
+                    />
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            {topConvertingKws.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {topConvertingKws.map((kw, i) => (
+                  <SparkMetricCard
+                    key={`${kw.keyword_text}-${i}`}
+                    label={kw.keyword_text.length > 24 ? kw.keyword_text.slice(0, 22) + '…' : kw.keyword_text}
+                    value={fmtNum(kw.conversions)}
+                    sparkData={[]}
+                    sparkColor="var(--green)"
+                    delay={i}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+              <h3 className="section-label mb-3">All Keywords ({keywordRows.length})</h3>
+              <KeywordTable rows={keywordRows} conversionLabel={conversionLabel} adFuelLabel="Cost" />
+            </div>
+          </div>
+        )}
 
       </main>
     </div>

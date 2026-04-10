@@ -742,7 +742,10 @@ export const googleAdsConnector: ConnectorAdapter = {
         metrics.clicks,
         metrics.conversions,
         metrics.conversions_value,
-        metrics.view_through_conversions
+        metrics.view_through_conversions,
+        metrics.search_impression_share,
+        metrics.search_absolute_top_impression_share,
+        metrics.search_top_impression_share
       FROM campaign
       WHERE campaign.status != 'REMOVED'
         AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
@@ -755,6 +758,14 @@ export const googleAdsConnector: ConnectorAdapter = {
       const campaignBudget = row.campaignBudget as Record<string, unknown> | null | undefined
       const metrics        = row.metrics        as Record<string, unknown>
       const segments       = row.segments       as Record<string, unknown>
+
+      // Impression share is only meaningful for Search campaigns and comes back
+      // as a decimal (0–1). The API returns a special sentinel value > 1 when
+      // the metric is unavailable (e.g. for Display/Video/PMax). Store null.
+      const rawImprShare    = metrics?.searchImpressionShare != null ? Number(metrics.searchImpressionShare) : null
+      const rawAbsTop       = metrics?.searchAbsoluteTopImpressionShare != null ? Number(metrics.searchAbsoluteTopImpressionShare) : null
+      const rawTopImpr      = metrics?.searchTopImpressionShare != null ? Number(metrics.searchTopImpressionShare) : null
+      const safeIS  = (v: number | null) => (v !== null && v <= 1) ? v : null
 
       return {
         campaign_id:              String(campaign?.id    || ''),
@@ -769,6 +780,9 @@ export const googleAdsConnector: ConnectorAdapter = {
         conversions:              Number(metrics?.conversions             || 0),
         conversions_value:        Number(metrics?.conversionsValue        || 0),
         view_through_conversions: Number(metrics?.viewThroughConversions  || 0),
+        search_impression_share:         safeIS(rawImprShare),
+        search_abs_top_impression_share: safeIS(rawAbsTop),
+        search_top_impression_share:     safeIS(rawTopImpr),
       }
     })
 

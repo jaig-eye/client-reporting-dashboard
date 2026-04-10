@@ -15,16 +15,44 @@ interface Props {
   aiConfigured: boolean
 }
 
+const TONES = [
+  { value: 'professional',      label: 'Professional' },
+  { value: 'conversational',    label: 'Conversational' },
+  { value: 'authoritative',     label: 'Authoritative' },
+  { value: 'casual_friendly',   label: 'Casual & Friendly' },
+  { value: 'technical',         label: 'Technical' },
+]
+
+const LENGTHS = [
+  { value: 'short',  label: 'Short (~600 words)' },
+  { value: 'medium', label: 'Medium (~1,200 words)' },
+  { value: 'long',   label: 'Long (~2,000 words)' },
+]
+
 export default function ContentEditor({ sites, aiConfigured }: Props) {
   const [selectedSite, setSelectedSite] = useState(sites[0]?.connectionId ?? '')
-  const [title,    setTitle]    = useState('')
-  const [content,  setContent]  = useState('')
-  const [status,   setStatus]   = useState<'draft' | 'publish'>('draft')
-  const [saving,   setSaving]   = useState(false)
-  const [result,   setResult]   = useState<{ link: string; status: string } | null>(null)
-  const [error,    setError]    = useState('')
-  const [aiPrompt, setAiPrompt] = useState('')
-  const [aiLoading, setAiLoading] = useState(false)
+  const [title,        setTitle]        = useState('')
+  const [content,      setContent]      = useState('')
+  const [metaDesc,     setMetaDesc]     = useState('')
+  const [slug,         setSlug]         = useState('')
+  const [status,       setStatus]       = useState<'draft' | 'publish'>('draft')
+  const [saving,       setSaving]       = useState(false)
+  const [result,       setResult]       = useState<{ link: string; status: string } | null>(null)
+  const [error,        setError]        = useState('')
+
+  // AI fields
+  const [aiTopic,       setAiTopic]       = useState('')
+  const [aiKeywords,    setAiKeywords]    = useState('')
+  const [aiTone,        setAiTone]        = useState('professional')
+  const [aiLength,      setAiLength]      = useState('medium')
+  const [aiGeo,         setAiGeo]         = useState('')
+  const [aiAudience,    setAiAudience]    = useState('')
+  const [aiAngle,       setAiAngle]       = useState('')
+  const [aiExtra,       setAiExtra]       = useState('')
+  const [aiLoading,     setAiLoading]     = useState(false)
+  const [aiOpen,        setAiOpen]        = useState(true)
+
+  const site = sites.find(s => s.connectionId === selectedSite)
 
   async function handlePublish() {
     if (!selectedSite || !title.trim() || !content.trim()) return
@@ -57,30 +85,46 @@ export default function ContentEditor({ sites, aiConfigured }: Props) {
   }
 
   async function handleAiGenerate() {
-    if (!aiPrompt.trim()) return
+    if (!aiTopic.trim()) return
     setAiLoading(true)
     setError('')
+
+    // Build a structured prompt from the field values
+    const lines: string[] = []
+    lines.push(`Write a blog post about: ${aiTopic.trim()}`)
+    if (site?.clientName) lines.push(`Client / business: ${site.clientName}`)
+    if (aiKeywords.trim())  lines.push(`Focus keywords: ${aiKeywords.trim()}`)
+    lines.push(`Tone: ${TONES.find(t => t.value === aiTone)?.label ?? aiTone}`)
+    lines.push(`Target length: ${LENGTHS.find(l => l.value === aiLength)?.label ?? aiLength}`)
+    if (aiGeo.trim())       lines.push(`Geographic focus: ${aiGeo.trim()}`)
+    if (aiAudience.trim())  lines.push(`Target audience: ${aiAudience.trim()}`)
+    if (aiAngle.trim())     lines.push(`Unique angle or hook: ${aiAngle.trim()}`)
+    if (aiExtra.trim())     lines.push(`Additional instructions: ${aiExtra.trim()}`)
+
+    const prompt = lines.join('\n')
+
     try {
       const res = await fetch('/api/admin/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: aiPrompt.trim() }),
+        body: JSON.stringify({ prompt }),
       })
       if (!res.ok) {
         const d = await res.json()
         throw new Error(d.error || 'AI generation failed')
       }
       const data = await res.json()
-      if (data.title) setTitle(data.title)
-      if (data.content) setContent(data.content)
+      if (data.title)           setTitle(data.title)
+      if (data.content)         setContent(data.content)
+      if (data.metaDescription) setMetaDesc(data.metaDescription)
+      if (data.slug)            setSlug(data.slug)
+      setAiOpen(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'AI generation failed')
     } finally {
       setAiLoading(false)
     }
   }
-
-  const site = sites.find(s => s.connectionId === selectedSite)
 
   return (
     <div className="space-y-4">
@@ -110,27 +154,145 @@ export default function ContentEditor({ sites, aiConfigured }: Props) {
       {/* AI writing assistant */}
       {aiConfigured && (
         <div className="card p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-            AI Writing Assistant
-          </h2>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1"
-              type="text"
-              placeholder="Describe the blog post you want to write…"
-              value={aiPrompt}
-              onChange={e => setAiPrompt(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAiGenerate()}
-            />
-            <button
-              type="button"
-              onClick={handleAiGenerate}
-              disabled={aiLoading || !aiPrompt.trim()}
-              className="btn btn-primary flex-shrink-0"
+          <button
+            type="button"
+            onClick={() => setAiOpen(o => !o)}
+            className="flex items-center justify-between w-full"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+          >
+            <h2
+              className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}
             >
-              {aiLoading ? 'Writing…' : 'Generate'}
-            </button>
-          </div>
+              AI Writing Assistant
+            </h2>
+            <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+              {aiOpen ? '▲ Hide' : '▼ Show'}
+            </span>
+          </button>
+
+          {aiOpen && (
+            <div className="mt-4 space-y-3">
+              {/* Topic (required) */}
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Topic <span style={{ color: 'var(--red)' }}>*</span>
+                </label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="e.g. Why your business needs a new website in 2025"
+                  value={aiTopic}
+                  onChange={e => setAiTopic(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAiGenerate()}
+                />
+              </div>
+
+              {/* Focus Keywords */}
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Focus Keywords
+                </label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="web design Toronto, affordable website redesign"
+                  value={aiKeywords}
+                  onChange={e => setAiKeywords(e.target.value)}
+                />
+              </div>
+
+              {/* Tone + Length — two columns */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                    Writing Tone
+                  </label>
+                  <select className="input" value={aiTone} onChange={e => setAiTone(e.target.value)}>
+                    {TONES.map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                    Target Length
+                  </label>
+                  <select className="input" value={aiLength} onChange={e => setAiLength(e.target.value)}>
+                    {LENGTHS.map(l => (
+                      <option key={l.value} value={l.value}>{l.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Geo + Audience — two columns */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                    Geographic Focus
+                  </label>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="Toronto, ON"
+                    value={aiGeo}
+                    onChange={e => setAiGeo(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                    Target Audience
+                  </label>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="small business owners"
+                    value={aiAudience}
+                    onChange={e => setAiAudience(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Unique angle */}
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Unique Angle or Hook
+                </label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="Focus on ROI, use a case study with a 40% traffic increase"
+                  value={aiAngle}
+                  onChange={e => setAiAngle(e.target.value)}
+                />
+              </div>
+
+              {/* Additional instructions */}
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Additional Instructions
+                </label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  placeholder="Any extra context, formatting preferences, or requirements…"
+                  value={aiExtra}
+                  onChange={e => setAiExtra(e.target.value)}
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAiGenerate}
+                disabled={aiLoading || !aiTopic.trim()}
+                className="btn btn-primary w-full"
+              >
+                {aiLoading ? 'Writing…' : 'Generate Content'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -162,6 +324,40 @@ export default function ContentEditor({ sites, aiConfigured }: Props) {
             style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
           />
         </div>
+
+        {/* Meta description + slug (populated by AI, editable) */}
+        {(metaDesc || slug) && (
+          <div className="grid grid-cols-1 gap-3" style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+            {metaDesc && (
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Meta Description
+                </label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={metaDesc}
+                  onChange={e => setMetaDesc(e.target.value)}
+                  style={{ resize: 'vertical', fontSize: '0.8125rem' }}
+                />
+              </div>
+            )}
+            {slug && (
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                  Slug
+                </label>
+                <input
+                  className="input"
+                  type="text"
+                  value={slug}
+                  onChange={e => setSlug(e.target.value)}
+                  style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">

@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
 
   const connector = conn.connector as { auth: Record<string, unknown>; config: Record<string, unknown> }
   const siteUrl     = String(connector.config.site_url || conn.external_id || '')
-  const username    = String(connector.auth.username || '')
-  const appPassword = String(connector.auth.app_password || '')
+  const username    = String(connector.config.username    || connector.auth.username    || '')
+  const appPassword = String(connector.config.app_password || connector.auth.app_password || '')
 
   if (!siteUrl || !username || !appPassword) {
     return NextResponse.json({ error: 'WordPress credentials incomplete' }, { status: 400 })
