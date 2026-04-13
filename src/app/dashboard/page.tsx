@@ -237,18 +237,14 @@ export default async function DashboardPage({
     benchmark_cpc:       client.benchmark_cpc       ?? settings.benchmark_cpc,
     benchmark_conv_rate: client.benchmark_conv_rate ?? settings.benchmark_conv_rate,
     benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
-    benchmark_cpl:       (client as Record<string, unknown>).benchmark_cpl != null
-      ? Number((client as Record<string, unknown>).benchmark_cpl)
-      : (settings as Record<string, unknown>).benchmark_cpl != null
-        ? Number((settings as Record<string, unknown>).benchmark_cpl)
-        : 50,
+    benchmark_cpl:       client.benchmark_cpl ?? settings.benchmark_cpl ?? 50,
   }
   const convRate = current.clicks > 0 ? current.conversions / current.clicks : 0
 
   // ─── Benchmark panel ─────────────────────────────────────────────────────
   // enabled_benchmarks: null = not yet configured (fall back to legacy isEcomDash logic)
   //                     string[] = only show listed keys
-  const enabledBenchmarks = (client as Record<string, unknown>).enabled_benchmarks as string[] | null ?? null
+  const enabledBenchmarks = client.enabled_benchmarks ?? null
   const isBenchmarkEnabled = (key: string) =>
     enabledBenchmarks ? enabledBenchmarks.includes(key) : true
 
