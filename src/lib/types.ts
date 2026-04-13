@@ -141,6 +141,7 @@ export interface Client {
   benchmark_cpc?:       number | null
   benchmark_conv_rate?: number | null
   benchmark_cpm?:       number | null
+  benchmark_cpl?:       number | null
   /** When true, shows the Performance Benchmarks section on the client dashboard. */
   show_benchmarks?: boolean
   /**
@@ -148,6 +149,12 @@ export interface Client {
    * Valid IDs: spend, leads, cpl, roas, ctr, conv_rate, cpm, daily_chart, campaigns
    */
   hidden_metrics?: string[] | null
+  /**
+   * Which benchmark rows are shown in the benchmark panel and admin health cards.
+   * NULL = not explicitly configured (ROAS only shown for ecom clients by legacy logic).
+   * When set, only listed keys are shown. Valid keys: roas, ctr, cpc, conv_rate, cpm, cpl
+   */
+  enabled_benchmarks?: string[] | null
   created_at: string
   updated_at: string
 }
@@ -166,6 +173,7 @@ export interface AgencySettings {
   benchmark_cpc: number
   benchmark_conv_rate: number
   benchmark_cpm: number
+  benchmark_cpl: number
   default_date_range_days: number
   /** Agency-wide default conversion value applied when no client/campaign override exists. */
   default_conversion_value: number

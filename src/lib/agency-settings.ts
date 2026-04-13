@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   benchmark_cpc: 3.0,
   benchmark_conv_rate: 0.03,
   benchmark_cpm: 15.0,
+  benchmark_cpl: 50.0,
   default_date_range_days: 30,
   default_conversion_value: 0,
   ad_fuel_cut: 0.20,

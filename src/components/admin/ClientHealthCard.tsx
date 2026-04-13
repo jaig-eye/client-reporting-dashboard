@@ -13,21 +13,21 @@ interface ConnectorBadge {
 }
 
 export interface ClientHealthCardProps {
-  id:              string
-  name:            string
-  logoUrl:         string | null
-  connectors:      ConnectorBadge[]
-  efficiencyScore: number | null
-  totalSpend:      number
-  hasEcomData:     boolean
-  roas:            number | null
-  ctr:             number
-  conversions:     number
-  cpl:             number | null
-  insights:        string[]
-  lastSyncedAt:    string | null
-  syncErrors7d:    number
-  delay?:          number
+  id:                string
+  name:              string
+  logoUrl:           string | null
+  connectors:        ConnectorBadge[]
+  efficiencyScore:   number | null
+  totalSpend:        number
+  enabledBenchmarks: string[] | null
+  roas:              number | null
+  ctr:               number
+  conversions:       number
+  cpl:               number | null
+  insights:          string[]
+  lastSyncedAt:      string | null
+  syncErrors7d:      number
+  delay?:            number
 }
 
 function fmtSpend(n: number): string {
@@ -75,10 +75,11 @@ function KpiCell({ label, value, valueColor }: { label: string; value: string; v
 
 export default function ClientHealthCard({
   id, name, logoUrl, connectors,
-  efficiencyScore, totalSpend, hasEcomData, roas, ctr, conversions, cpl,
+  efficiencyScore, totalSpend, enabledBenchmarks, roas, ctr, conversions, cpl,
   insights, lastSyncedAt, syncErrors7d,
   delay = 0,
 }: ClientHealthCardProps) {
+  const showRoas = enabledBenchmarks ? enabledBenchmarks.includes('roas') : roas !== null
   const prefersReduced = useReducedMotion()
 
   const hoursAgo = lastSyncedAt
@@ -147,7 +148,7 @@ export default function ClientHealthCard({
           minWidth: 0,
         }}>
           <KpiCell label="Spend"       value={totalSpend > 0 ? fmtSpend(totalSpend) : '—'} />
-          {hasEcomData
+          {showRoas
             ? <KpiCell label="ROAS" value={roas !== null ? `${roas.toFixed(1)}x` : '—'} valueColor={roasColor} />
             : <KpiCell label="CTR"  value={ctr > 0 ? `${(ctr * 100).toFixed(2)}%` : '—'} />
           }

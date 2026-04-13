@@ -290,11 +290,15 @@ export default function ContentSettingsPanel({
                   }}
                   onClick={() => openClient(c.id)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span className="text-sm" style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{c.name}</span>
+                    {allSites.some(s => s.clientId === c.id)
+                      ? <span className="badge badge-green" style={{ fontSize: '0.6875rem' }}>WP connected</span>
+                      : <span className="badge badge-gray"  style={{ fontSize: '0.6875rem' }}>No WordPress</span>
+                    }
                     {!statusNull && (
                       <span className={`badge ${isEnabled ? 'badge-green' : 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
-                        {isEnabled ? 'Auto-generate on' : 'Auto-generate off'}
+                        {isEnabled ? 'Auto on' : 'Auto off'}
                       </span>
                     )}
                   </div>

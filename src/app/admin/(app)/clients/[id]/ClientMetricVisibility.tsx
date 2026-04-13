@@ -10,7 +10,8 @@ const METRIC_GROUPS: { heading: string; metrics: MetricDef[] }[] = [
     metrics: [
       { id: 'spend',       label: 'Spend',              desc: 'Total ad spend card (Ad Fuel Spend if applicable)' },
       { id: 'leads',       label: 'Leads / Revenue',    desc: 'Lead count (lead gen) or Revenue (ecommerce)' },
-      { id: 'cpl',         label: 'CPL / ROAS',         desc: 'Cost Per Lead (lead gen) or ROAS (ecommerce)' },
+      { id: 'cpl',         label: 'CPL',                desc: 'Cost Per Lead metric card (lead gen clients)' },
+      { id: 'roas',        label: 'ROAS',               desc: 'Return on Ad Spend card (ecommerce clients)' },
       { id: 'ctr',         label: 'CTR',                desc: 'Click-through rate metric card' },
       { id: 'conv_rate',   label: 'Conversion Rate',    desc: 'Conversion rate metric card' },
       { id: 'cpm',         label: 'CPM',                desc: 'Cost per thousand impressions card' },
@@ -23,7 +24,6 @@ const METRIC_GROUPS: { heading: string; metrics: MetricDef[] }[] = [
     metrics: [
       { id: 'conversions',       label: 'Conversions',         desc: 'Total conversion count card' },
       { id: 'conversion_value',  label: 'Conversion Value',    desc: 'Total conversion revenue (ecommerce clients)' },
-      { id: 'roas',              label: 'ROAS',                desc: 'Return on ad spend as standalone card' },
       { id: 'impressions',       label: 'Impressions',         desc: 'Total impressions card' },
       { id: 'cpc',               label: 'Avg. CPC',            desc: 'Average cost per click card' },
       { id: 'reach',             label: 'Reach',               desc: 'Unique reach — Meta Ads only' },

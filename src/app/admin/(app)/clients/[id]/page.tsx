@@ -50,7 +50,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(10),
-    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl').single(),
     // Collect all discovered Meta action types for this client
     db.from('meta_ads_metrics')
       .select('discovered_actions')
@@ -74,6 +74,7 @@ export default async function ClientDetailPage({
     benchmark_cpc?: number
     benchmark_conv_rate?: number
     benchmark_cpm?: number
+    benchmark_cpl?: number
   } | null
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
   const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
@@ -84,6 +85,7 @@ export default async function ClientDetailPage({
     benchmark_cpc:       agencySettings?.benchmark_cpc       ?? DEFAULT_SETTINGS.benchmark_cpc,
     benchmark_conv_rate: agencySettings?.benchmark_conv_rate ?? DEFAULT_SETTINGS.benchmark_conv_rate,
     benchmark_cpm:       agencySettings?.benchmark_cpm       ?? DEFAULT_SETTINGS.benchmark_cpm,
+    benchmark_cpl:       agencySettings?.benchmark_cpl       ?? DEFAULT_SETTINGS.benchmark_cpl ?? 50,
   }
 
   // Collect all unique discovered Meta action types for this client
@@ -362,6 +364,8 @@ export default async function ClientDetailPage({
               benchmark_cpc:       client.benchmark_cpc,
               benchmark_conv_rate: client.benchmark_conv_rate,
               benchmark_cpm:       client.benchmark_cpm,
+              benchmark_cpl:       client.benchmark_cpl,
+              enabled_benchmarks:  client.enabled_benchmarks,
             }}
           />
         </div>

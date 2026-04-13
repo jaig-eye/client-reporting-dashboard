@@ -54,7 +54,7 @@ export default async function AdminOverviewPage({
     settingsRes,
   ] = await Promise.all([
     db.from('clients')
-      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate')
+      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks')
       .order('name'),
 
     db.from('client_connections')
@@ -91,6 +91,7 @@ export default async function AdminOverviewPage({
     id: string; name: string; logo_url?: string
     benchmark_roas?: number | null; benchmark_ctr?: number | null
     benchmark_cpc?: number | null; benchmark_conv_rate?: number | null
+    enabled_benchmarks?: string[] | null
   }
 
   const clients     = (clientsRes.data     ?? []) as ClientRow[]
@@ -145,8 +146,10 @@ export default async function AdminOverviewPage({
     const conversions  = Math.round(gData?.conv ?? 0)
     const clicks       = gData?.clicks ?? 0
     const impressions  = gData?.impressions ?? 0
-    const hasEcomData  = (gData?.value ?? 0) > 0
-    const roas         = hasEcomData && gData && gData.spend > 0 ? gData.value / gData.spend : null
+    const enabledBenchmarks = client.enabled_benchmarks ?? null
+    // Show ROAS when explicitly enabled in benchmarks, or fall back to heuristic (has conversion value)
+    const showRoas     = enabledBenchmarks ? enabledBenchmarks.includes('roas') : (gData?.value ?? 0) > 0
+    const roas         = showRoas && gData && gData.spend > 0 ? gData.value / gData.spend : null
     // Compute from aggregated totals — more accurate than averaging per-row values
     const ctr          = impressions > 0 ? clicks / impressions : 0
     const cpc          = clicks > 0 ? (gData?.spend ?? 0) / clicks : 0
@@ -173,7 +176,7 @@ export default async function AdminOverviewPage({
     } else if (spend === 0) {
       insights.push('No spend recorded')
     } else {
-      if (hasEcomData && roas !== null && roas > 0 && roas < benchmarks.benchmark_roas) {
+      if (showRoas && roas !== null && roas > 0 && roas < benchmarks.benchmark_roas) {
         insights.push(`ROAS ${roas.toFixed(1)}x below ${benchmarks.benchmark_roas}x target`)
       }
       if (convRate > 0 && convRate < benchmarks.benchmark_conv_rate / 2) {
@@ -206,7 +209,7 @@ export default async function AdminOverviewPage({
       })),
       efficiencyScore,
       totalSpend:  spend,
-      hasEcomData,
+      enabledBenchmarks,
       roas,
       ctr,
       conversions,

@@ -237,29 +237,48 @@ export default async function DashboardPage({
     benchmark_cpc:       client.benchmark_cpc       ?? settings.benchmark_cpc,
     benchmark_conv_rate: client.benchmark_conv_rate ?? settings.benchmark_conv_rate,
     benchmark_cpm:       client.benchmark_cpm       ?? settings.benchmark_cpm,
+    benchmark_cpl:       (client as Record<string, unknown>).benchmark_cpl != null
+      ? Number((client as Record<string, unknown>).benchmark_cpl)
+      : (settings as Record<string, unknown>).benchmark_cpl != null
+        ? Number((settings as Record<string, unknown>).benchmark_cpl)
+        : 50,
   }
   const convRate = current.clicks > 0 ? current.conversions / current.clicks : 0
 
   // ─── Benchmark panel ─────────────────────────────────────────────────────
+  // enabled_benchmarks: null = not yet configured (fall back to legacy isEcomDash logic)
+  //                     string[] = only show listed keys
+  const enabledBenchmarks = (client as Record<string, unknown>).enabled_benchmarks as string[] | null ?? null
+  const isBenchmarkEnabled = (key: string) =>
+    enabledBenchmarks ? enabledBenchmarks.includes(key) : true
+
   const showBenchmarkPanel = client.show_benchmarks === true
   const benchmarkRows: { key: string; label: string; actualLabel: string; targetLabel: string; pct: number; color: string }[] = []
   let efficiencyScore = 0
 
   if (showBenchmarkPanel) {
-    if (!hiddenMetrics.has('ctr') && (effectiveBenchmarks.benchmark_ctr ?? 0) > 0) {
+    if (isBenchmarkEnabled('ctr') && (effectiveBenchmarks.benchmark_ctr ?? 0) > 0) {
       benchmarkRows.push({ key: 'ctr', label: 'CTR', actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), pct: pctOfBenchmark(current.ctr, effectiveBenchmarks.benchmark_ctr, false), color: '#3b82f6' })
     }
-    if (!hiddenMetrics.has('conv_rate') && (effectiveBenchmarks.benchmark_conv_rate ?? 0) > 0) {
+    if (isBenchmarkEnabled('conv_rate') && (effectiveBenchmarks.benchmark_conv_rate ?? 0) > 0) {
       benchmarkRows.push({ key: 'conv_rate', label: 'Conv. Rate', actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), pct: pctOfBenchmark(convRate, effectiveBenchmarks.benchmark_conv_rate, false), color: '#10b981' })
     }
-    if (!hiddenMetrics.has('cpc') && (effectiveBenchmarks.benchmark_cpc ?? 0) > 0 && current.cpc > 0) {
+    if (isBenchmarkEnabled('cpc') && (effectiveBenchmarks.benchmark_cpc ?? 0) > 0 && current.cpc > 0) {
       benchmarkRows.push({ key: 'cpc', label: 'Avg. CPC', actualLabel: fmtCurrency(current.cpc), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpc), pct: pctOfBenchmark(current.cpc, effectiveBenchmarks.benchmark_cpc, true), color: '#f59e0b' })
     }
-    if (!hiddenMetrics.has('cpm') && (effectiveBenchmarks.benchmark_cpm ?? 0) > 0 && current.cpm > 0) {
+    if (isBenchmarkEnabled('cpm') && (effectiveBenchmarks.benchmark_cpm ?? 0) > 0 && current.cpm > 0) {
       benchmarkRows.push({ key: 'cpm', label: 'CPM', actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), pct: pctOfBenchmark(current.cpm, effectiveBenchmarks.benchmark_cpm, true), color: '#f59e0b' })
     }
-    if (isEcomDash && !hiddenMetrics.has('roas') && (effectiveBenchmarks.benchmark_roas ?? 0) > 0) {
+    // ROAS: show when explicitly enabled, or fall back to isEcomDash when not yet configured
+    const showRoas = enabledBenchmarks ? enabledBenchmarks.includes('roas') : isEcomDash
+    if (showRoas && (effectiveBenchmarks.benchmark_roas ?? 0) > 0) {
       benchmarkRows.push({ key: 'roas', label: 'ROAS', actualLabel: fmtRoas(current.roas), targetLabel: `${effectiveBenchmarks.benchmark_roas.toFixed(1)}x`, pct: pctOfBenchmark(current.roas, effectiveBenchmarks.benchmark_roas, false), color: '#8b5cf6' })
+    }
+    // CPL: show when explicitly enabled, or fall back to !isEcomDash when not yet configured
+    const cpl = current.conversions > 0 ? current.spend / current.conversions : 0
+    const showCpl = enabledBenchmarks ? enabledBenchmarks.includes('cpl') : !isEcomDash
+    if (showCpl && (effectiveBenchmarks.benchmark_cpl ?? 0) > 0 && cpl > 0) {
+      benchmarkRows.push({ key: 'cpl', label: 'CPL', actualLabel: fmtCurrency(cpl), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpl), pct: pctOfBenchmark(cpl, effectiveBenchmarks.benchmark_cpl, true), color: '#ec4899' })
     }
     if (benchmarkRows.length > 0) {
       efficiencyScore = Math.min(100, Math.round(benchmarkRows.reduce((s, r) => s + r.pct, 0) / benchmarkRows.length))

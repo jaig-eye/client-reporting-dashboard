@@ -18,8 +18,8 @@ export async function PATCH(
   const allowed = [
     'name', 'email', 'slug', 'logo_url', 'default_conversion_value', 'ad_fuel_cut',
     'lead_action', 'purchase_action',
-    'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm',
-    'show_benchmarks', 'hidden_metrics',
+    'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm', 'benchmark_cpl',
+    'show_benchmarks', 'hidden_metrics', 'enabled_benchmarks',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
