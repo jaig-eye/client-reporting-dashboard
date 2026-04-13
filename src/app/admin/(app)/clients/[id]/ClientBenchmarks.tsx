@@ -89,7 +89,7 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
 
   return (
     <div className="space-y-4">
-      {/* Show/hide toggle */}
+      {/* Show/hide toggle — controls client dashboard visibility only */}
       <label className="flex items-center gap-3 cursor-pointer">
         <button
           type="button"
@@ -109,82 +109,78 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
         </span>
       </label>
 
-      {enabled && (
-        <>
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Leave blank to use the global default. Overrides apply only to this client&apos;s dashboard.
-          </p>
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        Leave blank to use the global default. These values are used in the admin health cards regardless of visibility.
+      </p>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                Target ROAS <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {globalDefaults.benchmark_roas}</span>
-              </label>
-              <input type="number" step="0.1" min="0" className="input"
-                value={roas}
-                onChange={e => { setRoas(e.target.value); setSaved(false) }}
-                placeholder={String(globalDefaults.benchmark_roas)}
-              />
-            </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+            Target ROAS <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {globalDefaults.benchmark_roas}</span>
+          </label>
+          <input type="number" step="0.1" min="0" className="input"
+            value={roas}
+            onChange={e => { setRoas(e.target.value); setSaved(false) }}
+            placeholder={String(globalDefaults.benchmark_roas)}
+          />
+        </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                Target CPC ($) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: ${globalDefaults.benchmark_cpc}</span>
-              </label>
-              <input type="number" step="0.01" min="0" className="input"
-                value={cpc}
-                onChange={e => { setCpc(e.target.value); setSaved(false) }}
-                placeholder={String(globalDefaults.benchmark_cpc)}
-              />
-            </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+            Target CPC ($) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: ${globalDefaults.benchmark_cpc}</span>
+          </label>
+          <input type="number" step="0.01" min="0" className="input"
+            value={cpc}
+            onChange={e => { setCpc(e.target.value); setSaved(false) }}
+            placeholder={String(globalDefaults.benchmark_cpc)}
+          />
+        </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                Target CTR (%) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {parseFloat((globalDefaults.benchmark_ctr * 100).toFixed(2))}%</span>
-              </label>
-              <input type="number" step="0.1" min="0" max="100" className="input"
-                value={ctr}
-                onChange={e => { setCtr(e.target.value); setSaved(false) }}
-                placeholder={String(parseFloat((globalDefaults.benchmark_ctr * 100).toFixed(2)))}
-              />
-            </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+            Target CTR (%) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {parseFloat((globalDefaults.benchmark_ctr * 100).toFixed(2))}%</span>
+          </label>
+          <input type="number" step="0.1" min="0" max="100" className="input"
+            value={ctr}
+            onChange={e => { setCtr(e.target.value); setSaved(false) }}
+            placeholder={String(parseFloat((globalDefaults.benchmark_ctr * 100).toFixed(2)))}
+          />
+        </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                Target Conv. Rate (%) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {parseFloat((globalDefaults.benchmark_conv_rate * 100).toFixed(2))}%</span>
-              </label>
-              <input type="number" step="0.1" min="0" max="100" className="input"
-                value={convRate}
-                onChange={e => { setConvRate(e.target.value); setSaved(false) }}
-                placeholder={String(parseFloat((globalDefaults.benchmark_conv_rate * 100).toFixed(2)))}
-              />
-            </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+            Target Conv. Rate (%) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: {parseFloat((globalDefaults.benchmark_conv_rate * 100).toFixed(2))}%</span>
+          </label>
+          <input type="number" step="0.1" min="0" max="100" className="input"
+            value={convRate}
+            onChange={e => { setConvRate(e.target.value); setSaved(false) }}
+            placeholder={String(parseFloat((globalDefaults.benchmark_conv_rate * 100).toFixed(2)))}
+          />
+        </div>
 
-            <div>
-              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                Target CPM ($) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: ${globalDefaults.benchmark_cpm}</span>
-              </label>
-              <input type="number" step="0.01" min="0" className="input"
-                value={cpm}
-                onChange={e => { setCpm(e.target.value); setSaved(false) }}
-                placeholder={String(globalDefaults.benchmark_cpm)}
-              />
-            </div>
-          </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+            Target CPM ($) <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— global: ${globalDefaults.benchmark_cpm}</span>
+          </label>
+          <input type="number" step="0.01" min="0" className="input"
+            value={cpm}
+            onChange={e => { setCpm(e.target.value); setSaved(false) }}
+            placeholder={String(globalDefaults.benchmark_cpm)}
+          />
+        </div>
+      </div>
 
-          {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
+      {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
 
-          <div className="flex items-center gap-3">
-            <button onClick={handleSave} disabled={saving} className="btn btn-primary">
-              {saving ? 'Saving…' : 'Save Benchmarks'}
-            </button>
-            <button onClick={handleReset} disabled={saving} className="btn btn-secondary">
-              Reset to Global
-            </button>
-            {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
-          </div>
-        </>
-      )}
+      <div className="flex items-center gap-3">
+        <button onClick={handleSave} disabled={saving} className="btn btn-primary">
+          {saving ? 'Saving…' : 'Save Benchmarks'}
+        </button>
+        <button onClick={handleReset} disabled={saving} className="btn btn-secondary">
+          Reset to Global
+        </button>
+        {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+      </div>
     </div>
   )
 }
