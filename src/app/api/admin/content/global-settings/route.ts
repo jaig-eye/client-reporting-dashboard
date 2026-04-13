@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data } = await db
     .from('content_settings')
-    .select('post_structure, auto_generate, posts_per_run')
+    .select('post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week')
     .is('client_id', null)
     .maybeSingle()
 
@@ -33,15 +33,31 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await request.json()
-  const { post_structure } = body as { post_structure?: string }
+  const {
+    post_structure,
+    posts_per_run,
+    schedule_frequency,
+    schedule_day_of_week,
+  } = body as {
+    post_structure?: string
+    posts_per_run?: number
+    schedule_frequency?: string
+    schedule_day_of_week?: number
+  }
 
   const db = createAdminClient()
 
-  // Upsert global row (client_id IS NULL)
   const { error } = await db
     .from('content_settings')
     .upsert(
-      { client_id: null, post_structure: post_structure ?? null, updated_at: new Date().toISOString() },
+      {
+        client_id:            null,
+        post_structure:       post_structure ?? null,
+        posts_per_run:        posts_per_run ?? 1,
+        schedule_frequency:   schedule_frequency ?? 'weekly',
+        schedule_day_of_week: schedule_day_of_week ?? 1,
+        updated_at:           new Date().toISOString(),
+      },
       { onConflict: 'client_id', ignoreDuplicates: false }
     )
 

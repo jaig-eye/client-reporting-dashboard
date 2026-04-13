@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/admin/content/schedule",
-      "schedule": "0 6 * * 1"
+      "schedule": "0 6 * * *"
     }
   ]
 }

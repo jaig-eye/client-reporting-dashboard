@@ -1,12 +1,13 @@
 // Content Tool — /admin/content
-// Two-tab interface: Queue (pending/approved/published posts) + New Post (manual editor)
+// Three-tab interface: Queue + New Post + Settings
 
-import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed }     from '@/lib/auth'
-import { cookies }           from 'next/headers'
-import { redirect }          from 'next/navigation'
-import ContentEditor         from './ContentEditor'
-import ContentQueue          from '@/components/admin/ContentQueue'
+import { createAdminClient }   from '@/lib/supabase/server'
+import { isAdminAuthed }       from '@/lib/auth'
+import { cookies }             from 'next/headers'
+import { redirect }            from 'next/navigation'
+import ContentEditor           from './ContentEditor'
+import ContentQueue            from '@/components/admin/ContentQueue'
+import ContentSettingsPanel    from './ContentSettingsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,12 +37,15 @@ export default async function ContentPage({
     connector: { id: string; type: string; label: string; auth: Record<string, unknown>; config: Record<string, unknown> }
   }
   const connections = (wpConnections ?? []) as unknown as WpConn[]
-  const clientIds   = Array.from(new Set(connections.map(c => c.client_id)))
+  const wpClientIds = Array.from(new Set(connections.map(c => c.client_id)))
 
-  const [clientsRes, settingsRes, postsRes] = await Promise.all([
-    clientIds.length > 0
-      ? db.from('clients').select('id, name').in('id', clientIds)
+  const [clientsRes, allClientsRes, settingsRes, postsRes] = await Promise.all([
+    // Clients with WP connections (for Queue/New Post tabs)
+    wpClientIds.length > 0
+      ? db.from('clients').select('id, name').in('id', wpClientIds)
       : Promise.resolve({ data: [] }),
+    // All clients (for Settings tab)
+    db.from('clients').select('id, name').order('name'),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
     db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url')
@@ -49,7 +53,8 @@ export default async function ContentPage({
       .limit(200),
   ])
 
-  const clientMap   = new Map(((clientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
+  const clientMap    = new Map(((clientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
+  const allClients   = (allClientsRes.data ?? []) as { id: string; name: string }[]
   const aiConfigured = !!(settingsRes.data?.ai_api_key)
 
   const sites = connections.map(c => ({
@@ -75,6 +80,8 @@ export default async function ContentPage({
     publishedUrl:  p.published_url ? String(p.published_url) : null,
   }))
 
+  const pendingCount = posts.filter(p => p.status === 'pending').length
+
   return (
     <div>
       <div className="page-header">
@@ -89,8 +96,9 @@ export default async function ContentPage({
       {/* Tab nav */}
       <div className="flex gap-1 mb-6" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
         {[
-          { id: 'queue',    label: `Queue (${posts.filter(p => p.status === 'pending').length})` },
+          { id: 'queue',    label: `Queue (${pendingCount})` },
           { id: 'new-post', label: 'New Post' },
+          { id: 'settings', label: 'Settings' },
         ].map(tab => (
           <a
             key={tab.id}
@@ -124,6 +132,10 @@ export default async function ContentPage({
         ) : (
           <ContentEditor sites={sites} aiConfigured={aiConfigured} />
         )
+      )}
+
+      {activeTab === 'settings' && (
+        <ContentSettingsPanel clients={allClients} allSites={sites} />
       )}
     </div>
   )

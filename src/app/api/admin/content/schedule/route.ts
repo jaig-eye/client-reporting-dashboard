@@ -6,9 +6,9 @@ import { isAdminAuthed }     from '@/lib/auth'
 /**
  * POST /api/admin/content/schedule
  *
- * Triggered by Vercel Cron (or manually by an admin).
- * Loops through all clients with auto_generate = true and generates
- * new blog posts for each, saving them as 'pending' in content_posts.
+ * Triggered by Vercel Cron (daily at 6am UTC) or manually by an admin.
+ * Loops through all clients with auto_generate = true, checks if they are
+ * due for generation today based on their schedule, and generates posts.
  *
  * Auth: admin session cookie OR Vercel cron secret header (CRON_SECRET env var).
  */
@@ -41,14 +41,14 @@ export async function POST(request: NextRequest) {
   // Load global content settings (client_id IS NULL)
   const { data: globalSettings } = await db
     .from('content_settings')
-    .select('post_structure')
+    .select('post_structure, schedule_frequency, schedule_day_of_week')
     .is('client_id', null)
     .maybeSingle()
 
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, connection_id')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -60,14 +60,36 @@ export async function POST(request: NextRequest) {
   const model    = agencySettings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
   const apiKey   = agencySettings.ai_api_key
   const agency   = agencySettings.agency_name || 'the agency'
-  const globalStructure = (globalSettings as { post_structure?: string } | null)?.post_structure ?? ''
+  const gs       = globalSettings as { post_structure?: string; schedule_frequency?: string; schedule_day_of_week?: number } | null
+  const globalStructure  = gs?.post_structure ?? ''
+  const globalFrequency  = gs?.schedule_frequency ?? 'weekly'
+  const globalDayOfWeek  = gs?.schedule_day_of_week ?? 1
 
   let totalGenerated = 0
   const errors: string[] = []
 
   for (const cs of clientSettingsRows) {
     if (!cs.client_id) continue
-    const postsPerRun = (cs.posts_per_run as number) || 1
+
+    // Determine last generated date for this client
+    const { data: lastPost } = await db
+      .from('content_posts')
+      .select('generated_at')
+      .eq('client_id', cs.client_id)
+      .order('generated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const lastGeneratedAt = (lastPost as { generated_at: string } | null)?.generated_at ?? null
+
+    // Resolve schedule: client override falls back to global default
+    const frequency  = (cs.schedule_frequency as string  | null) ?? globalFrequency
+    const dayOfWeek  = (cs.schedule_day_of_week as number | null) ?? globalDayOfWeek
+
+    // Skip if not due today (always run when manually triggered by admin)
+    if (isCronAuth && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
+
+    const postsPerRun   = (cs.posts_per_run  as number | null) ?? 1
+    const targetLength  = (cs.target_length  as number | null) ?? 1500
 
     // Load existing post topics to avoid repeats
     const { data: existingPosts } = await db
@@ -97,14 +119,14 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < postsPerRun; i++) {
       try {
-        const userPrompt = `Write a new SEO blog post for this business. Choose a unique topic that hasn't been covered yet, based on their services and target audience. Make it genuinely useful and search-optimized.`
+        const userPrompt = `Write a new SEO blog post for this business. Choose a unique topic that hasn't been covered yet, based on their services and target audience. Make it genuinely useful and search-optimized. Target approximately ${targetLength} words.`
 
         let rawText = ''
         if (provider === 'anthropic') {
           const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+            body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
           })
           const data = await res.json()
           const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
@@ -123,19 +145,19 @@ export async function POST(request: NextRequest) {
         if (!parsed.title && !parsed.content) continue
 
         await db.from('content_posts').insert({
-          client_id:       cs.client_id,
-          connection_id:   cs.connection_id || null,
-          status:          'pending',
-          title:           parsed.title,
-          content:         parsed.content,
+          client_id:        cs.client_id,
+          connection_id:    cs.connection_id || null,
+          status:           'pending',
+          title:            parsed.title,
+          content:          parsed.content,
           meta_description: parsed.metaDescription,
-          slug:            parsed.slug,
-          word_count:      wordCount(parsed.content),
-          heading_count:   headingCount(parsed.content),
-          internal_links:  internalLinks(parsed.content),
-          generated_by:    'scheduled',
-          ai_model:        model,
-          prompt_used:     userPrompt,
+          slug:             parsed.slug,
+          word_count:       wordCount(parsed.content),
+          heading_count:    headingCount(parsed.content),
+          internal_links:   internalLinks(parsed.content),
+          generated_by:     'scheduled',
+          ai_model:         model,
+          prompt_used:      userPrompt,
         })
 
         totalGenerated++
@@ -149,6 +171,28 @@ export async function POST(request: NextRequest) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Determines if a client is due for content generation today.
+ * daily:    always
+ * weekly:   today's weekday matches dayOfWeek
+ * biweekly: today's weekday matches AND last generation was 13+ days ago
+ * monthly:  last generation was 28+ days ago
+ */
+function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: string | null): boolean {
+  const today = new Date().getDay()  // 0=Sun … 6=Sat
+  const daysSinceLast = lastGeneratedAt
+    ? (Date.now() - new Date(lastGeneratedAt).getTime()) / 86_400_000
+    : Infinity
+
+  switch (frequency) {
+    case 'daily':    return true
+    case 'weekly':   return today === dayOfWeek
+    case 'biweekly': return today === dayOfWeek && daysSinceLast >= 13
+    case 'monthly':  return daysSinceLast >= 28
+    default:         return today === dayOfWeek
+  }
+}
 
 function buildSystemPrompt(agency: string, clientContext: string, avoidTopics: string): string {
   return `You are a professional SEO content writer for ${agency}.

@@ -23,7 +23,6 @@ import ClientCampaignManager from './ClientCampaignManager'
 import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
 import ClientDirectConnections from './ClientDirectConnections'
-import ClientContentSettings from './ClientContentSettings'
 
 export const dynamic = 'force-dynamic'
 
@@ -97,15 +96,6 @@ export default async function ClientDetailPage({
   // Index connections by connector type for quick lookup
   const connByType = new Map(connections.map(c => [c.connector.type, c]))
   const dashUrl    = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-
-  // WordPress sites for this client (for content settings)
-  const wpSites = connections
-    .filter(c => c.connector.type === 'wordpress')
-    .map(c => ({
-      connectionId: c.id,
-      siteName:     c.external_name || c.external_id || 'WordPress site',
-      siteUrl:      c.external_id || '',
-    }))
 
   return (
     <div>
@@ -198,7 +188,7 @@ export default async function ClientDetailPage({
             </div>
             <div className="mt-3">
               <Link
-                href={`/admin/preview/${id}`}
+                href={`/api/admin/preview/${id}`}
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
               >
@@ -410,15 +400,6 @@ export default async function ClientDetailPage({
             agencyPurchaseAction={agencyPurch}
             discoveredActions={discoveredActions}
           />
-        </div>
-
-        <div className="card p-5">
-          <h2 className="section-title mb-1">Content Automation</h2>
-          <p className="section-desc mb-4">
-            Business context and settings used by the AI content generator for this client.
-            Auto-generate sends new posts to the queue every Monday for review.
-          </p>
-          <ClientContentSettings clientId={id} sites={wpSites} />
         </div>
 
         <div className="card p-5">

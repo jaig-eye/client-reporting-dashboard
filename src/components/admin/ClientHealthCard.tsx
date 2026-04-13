@@ -19,7 +19,9 @@ export interface ClientHealthCardProps {
   connectors:      ConnectorBadge[]
   efficiencyScore: number | null
   totalSpend:      number
+  hasEcomData:     boolean
   roas:            number | null
+  ctr:             number
   conversions:     number
   cpl:             number | null
   insights:        string[]
@@ -73,7 +75,7 @@ function KpiCell({ label, value, valueColor }: { label: string; value: string; v
 
 export default function ClientHealthCard({
   id, name, logoUrl, connectors,
-  efficiencyScore, totalSpend, roas, conversions, cpl,
+  efficiencyScore, totalSpend, hasEcomData, roas, ctr, conversions, cpl,
   insights, lastSyncedAt, syncErrors7d,
   delay = 0,
 }: ClientHealthCardProps) {
@@ -145,7 +147,10 @@ export default function ClientHealthCard({
           minWidth: 0,
         }}>
           <KpiCell label="Spend"       value={totalSpend > 0 ? fmtSpend(totalSpend) : '—'} />
-          <KpiCell label="ROAS"        value={roas !== null ? `${roas.toFixed(1)}x` : '—'} valueColor={roasColor} />
+          {hasEcomData
+            ? <KpiCell label="ROAS" value={roas !== null ? `${roas.toFixed(1)}x` : '—'} valueColor={roasColor} />
+            : <KpiCell label="CTR"  value={ctr > 0 ? `${(ctr * 100).toFixed(2)}%` : '—'} />
+          }
           <KpiCell label="Conversions" value={conversions > 0 ? conversions.toLocaleString() : '—'} />
           <KpiCell label="CPL"         value={cpl !== null ? fmtCpl(cpl) : '—'} />
         </div>
@@ -175,40 +180,40 @@ export default function ClientHealthCard({
 
       {/* ── Footer: sync status + action buttons ── */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        display: 'flex', alignItems: 'center',
         paddingTop: '0.75rem', gap: 8,
         borderTop: '1px solid var(--border)',
         marginTop: 'auto',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <span style={{
             width: 6, height: 6, borderRadius: '50%',
             background: dotColor, flexShrink: 0, display: 'inline-block',
           }} />
-          <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {lastSyncedAt ? timeSince(lastSyncedAt) : 'Never synced'}
           </span>
           {syncErrors7d > 0 && (
-            <span className="badge badge-red" style={{ fontSize: '0.6875rem', flexShrink: 0 }}>
-              {syncErrors7d} error{syncErrors7d > 1 ? 's' : ''} (7d)
+            <span className="badge badge-red" style={{ fontSize: '0.6875rem', flexShrink: 0, whiteSpace: 'nowrap' }}>
+              {syncErrors7d} err{syncErrors7d > 1 ? 's' : ''}
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           <Link
-            href={`/admin/preview/${id}`}
+            href={`/api/admin/preview/${id}`}
             className="btn btn-secondary"
-            style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4 }}
+            style={{ fontSize: '0.6875rem', padding: '0.175rem 0.5rem', display: 'flex', alignItems: 'center', gap: 3 }}
           >
-            <ArrowSquareOut size={12} aria-hidden />
+            <ArrowSquareOut size={11} aria-hidden />
             Preview
           </Link>
           <Link
             href={`/admin/clients/${id}`}
             className="btn btn-secondary"
-            style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4 }}
+            style={{ fontSize: '0.6875rem', padding: '0.175rem 0.5rem', display: 'flex', alignItems: 'center', gap: 3 }}
           >
-            <GearSix size={12} aria-hidden />
+            <GearSix size={11} aria-hidden />
             Settings
           </Link>
         </div>

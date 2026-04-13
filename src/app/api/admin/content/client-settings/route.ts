@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data } = await db
     .from('content_settings')
-    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, post_structure, auto_generate, posts_per_run, connection_id, default_author_id')
+    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id')
     .eq('client_id', clientId)
     .maybeSingle()
 
@@ -48,6 +48,9 @@ export async function PUT(request: NextRequest) {
     post_structure,
     auto_generate,
     posts_per_run,
+    schedule_frequency,
+    schedule_day_of_week,
+    target_length,
     connection_id,
     default_author_id,
   } = body as Record<string, unknown>
@@ -61,18 +64,21 @@ export async function PUT(request: NextRequest) {
     .upsert(
       {
         client_id,
-        business_background: business_background ?? null,
-        services:            services ?? null,
-        target_audience:     target_audience ?? null,
-        geographic_focus:    geographic_focus ?? null,
-        brand_voice:         brand_voice ?? null,
-        sitemap_url:         sitemap_url ?? null,
-        post_structure:      post_structure ?? null,
-        auto_generate:       auto_generate ?? false,
-        posts_per_run:       posts_per_run ?? 1,
-        connection_id:       connection_id ?? null,
-        default_author_id:   default_author_id ?? null,
-        updated_at:          new Date().toISOString(),
+        business_background:  business_background ?? null,
+        services:             services ?? null,
+        target_audience:      target_audience ?? null,
+        geographic_focus:     geographic_focus ?? null,
+        brand_voice:          brand_voice ?? null,
+        sitemap_url:          sitemap_url ?? null,
+        post_structure:       post_structure ?? null,
+        auto_generate:        auto_generate ?? false,
+        posts_per_run:        posts_per_run ?? 1,
+        schedule_frequency:   schedule_frequency ?? null,
+        schedule_day_of_week: schedule_day_of_week ?? null,
+        target_length:        target_length ?? null,
+        connection_id:        connection_id ?? null,
+        default_author_id:    default_author_id ?? null,
+        updated_at:           new Date().toISOString(),
       },
       { onConflict: 'client_id', ignoreDuplicates: false }
     )

@@ -145,7 +145,8 @@ export default async function AdminOverviewPage({
     const conversions  = Math.round(gData?.conv ?? 0)
     const clicks       = gData?.clicks ?? 0
     const impressions  = gData?.impressions ?? 0
-    const roas         = gData && gData.spend > 0 ? gData.value / gData.spend : null
+    const hasEcomData  = (gData?.value ?? 0) > 0
+    const roas         = hasEcomData && gData && gData.spend > 0 ? gData.value / gData.spend : null
     // Compute from aggregated totals — more accurate than averaging per-row values
     const ctr          = impressions > 0 ? clicks / impressions : 0
     const cpc          = clicks > 0 ? (gData?.spend ?? 0) / clicks : 0
@@ -172,7 +173,7 @@ export default async function AdminOverviewPage({
     } else if (spend === 0) {
       insights.push('No spend recorded')
     } else {
-      if (roas !== null && roas > 0 && roas < benchmarks.benchmark_roas) {
+      if (hasEcomData && roas !== null && roas > 0 && roas < benchmarks.benchmark_roas) {
         insights.push(`ROAS ${roas.toFixed(1)}x below ${benchmarks.benchmark_roas}x target`)
       }
       if (convRate > 0 && convRate < benchmarks.benchmark_conv_rate / 2) {
@@ -205,7 +206,9 @@ export default async function AdminOverviewPage({
       })),
       efficiencyScore,
       totalSpend:  spend,
+      hasEcomData,
       roas,
+      ctr,
       conversions,
       cpl,
       insights:    insights.slice(0, 2),
