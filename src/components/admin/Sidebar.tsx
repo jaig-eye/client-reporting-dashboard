@@ -86,9 +86,9 @@ export default function Sidebar({
     >
       {/* Agency branding */}
       <div style={{ padding: '1.25rem 1rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-center gap-2.5 mb-0.5">
+        <div className="mb-0.5">
           {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName} className="h-7 max-w-[120px] object-contain" />
+            <img src={agencyLogoUrl} alt={agencyName} style={{ height: 28, maxWidth: '100%', width: '100%', objectFit: 'contain', objectPosition: 'left' }} />
           ) : (
             <div
               className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
@@ -97,11 +97,8 @@ export default function Sidebar({
               {agencyName.slice(0, 1).toUpperCase()}
             </div>
           )}
-          <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-            {agencyName}
-          </span>
         </div>
-        <p className="text-xs ml-9" style={{ color: 'var(--text-faint)' }}>
+        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2 }}>
           v{appVersion}
         </p>
       </div>

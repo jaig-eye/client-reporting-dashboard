@@ -40,7 +40,7 @@ export default async function ContentPage({
   const connections = (wpConnections ?? []) as unknown as WpConn[]
   const wpClientIds = Array.from(new Set(connections.map(c => c.client_id)))
 
-  const [clientsRes, allClientsRes, settingsRes, postsRes] = await Promise.all([
+  const [clientsRes, allClientsRes, settingsRes, postsRes, scheduledTopicsRes] = await Promise.all([
     // Clients with WP connections (for Queue/New Post tabs)
     wpClientIds.length > 0
       ? db.from('clients').select('id, name').in('id', wpClientIds)
@@ -52,11 +52,27 @@ export default async function ContentPage({
       .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url')
       .order('generated_at', { ascending: false })
       .limit(200),
+    // Scheduled topics — topics whose post has been auto-generated and are awaiting publish
+    db.from('content_topics')
+      .select('id, client_id, topic, target_keyword, target_publish_date, status')
+      .eq('status', 'scheduled')
+      .order('target_publish_date', { ascending: true })
+      .limit(50),
   ])
 
+  const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const clientMap    = new Map(((clientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const allClients   = (allClientsRes.data ?? []) as { id: string; name: string }[]
   const aiConfigured = !!(settingsRes.data?.ai_api_key)
+
+  const scheduledTopics = (scheduledTopicsRes.data ?? []).map(t => ({
+    id:               String(t.id),
+    clientId:         String(t.client_id),
+    clientName:       allClientsMap.get(String(t.client_id)) ?? 'Unknown',
+    topic:            String(t.topic),
+    targetKeyword:    t.target_keyword ? String(t.target_keyword) : null,
+    targetPublishDate: t.target_publish_date ? String(t.target_publish_date) : null,
+  }))
 
   const sites = connections.map(c => ({
     connectionId: c.id,
@@ -124,7 +140,57 @@ export default async function ContentPage({
       </div>
 
       {activeTab === 'queue' && (
-        <ContentQueue posts={posts} sites={sites} />
+        <>
+          <ContentQueue posts={posts} sites={sites} />
+
+          {/* Scheduled topics — auto-generated, awaiting publish date */}
+          {scheduledTopics.length > 0 && (
+            <div className="mt-6">
+              <h2 className="section-title mb-3">Scheduled</h2>
+              <p className="section-desc mb-4">Topics that have been auto-generated and are scheduled for publishing.</p>
+              <div className="card overflow-hidden">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Client</th>
+                      <th>Topic</th>
+                      <th>Keyword</th>
+                      <th>Publish Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scheduledTopics.map(t => (
+                      <tr key={t.id}>
+                        <td>
+                          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {t.clientName}
+                          </span>
+                        </td>
+                        <td style={{ maxWidth: 280 }}>
+                          <span className="text-sm" style={{ color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.topic}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            {t.targetKeyword ?? '—'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="badge badge-blue" style={{ fontSize: '0.6875rem' }}>
+                            {t.targetPublishDate
+                              ? new Date(t.targetPublishDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                              : '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {activeTab === 'topics' && (

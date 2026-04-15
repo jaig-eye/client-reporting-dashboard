@@ -28,7 +28,7 @@ export const dynamic = 'force-dynamic'
 const TABS = [
   { id: 'general',      label: 'General'      },
   { id: 'sources',      label: 'Data Sources' },
-  { id: 'performance',  label: 'Performance'  },
+  { id: 'performance',  label: 'Metrics'      },
   { id: 'content',      label: 'Content'      },
   { id: 'advanced',     label: 'Advanced'     },
 ]
@@ -137,10 +137,11 @@ export default async function ClientDetailPage({
       </div>
 
       {/* Tab nav */}
-      <div style={{
+      <style>{`.tab-nav-bar::-webkit-scrollbar { display: none; }`}</style>
+      <div className="tab-nav-bar" style={{
         display: 'flex', gap: 2, marginBottom: '1.5rem',
         borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto',
+        overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none',
       }}>
         {TABS.map(tab => (
           <Link

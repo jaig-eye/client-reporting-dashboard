@@ -13,7 +13,7 @@ interface Topic {
   topic:               string
   rationale:           string | null
   target_keyword:      string | null
-  status:              'pending' | 'approved' | 'rejected' | 'generating' | 'generated'
+  status:              'pending' | 'approved' | 'rejected' | 'generating' | 'generated' | 'scheduled'
   target_publish_date: string | null
   generate_by_date:    string | null
   post_id:             string | null
@@ -32,6 +32,7 @@ const STATUS_COLORS: Record<string, string> = {
   rejected:   'badge-red',
   generating: 'badge-blue',
   generated:  'badge-green',
+  scheduled:  'badge-blue',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -40,6 +41,7 @@ const STATUS_LABELS: Record<string, string> = {
   rejected:   'Rejected',
   generating: 'Generating…',
   generated:  'Ready',
+  scheduled:  'Scheduled',
 }
 
 function formatDate(iso: string | null) {

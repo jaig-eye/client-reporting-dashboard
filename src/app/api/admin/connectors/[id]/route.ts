@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { ahrefsConnector } from '@/lib/connectors/ahrefs'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -44,11 +45,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .from('connectors')
     .update(update)
     .eq('id', id)
-    .select('id, type, label, status, config, last_checked_at')
+    .select('id, type, label, status, config, auth, last_checked_at')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // For Ahrefs: re-test connection whenever auth is patched
+  if (data?.type === 'ahrefs' && body.auth_patch) {
+    try {
+      const ok = await ahrefsConnector.testConnection!(data.auth as Record<string, unknown>, {})
+      const testStatus = ok ? 'active' : 'error'
+      const testConfig = ok
+        ? { ...(data.config as object ?? {}) }
+        : { ...(data.config as object ?? {}), error: 'API key invalid or request failed' }
+      await db.from('connectors').update({ status: testStatus, config: testConfig, last_checked_at: new Date().toISOString() }).eq('id', id)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { auth: _auth, ...safeData } = data
+      return NextResponse.json({ ...safeData, status: testStatus, config: testConfig })
+    } catch (e) {
+      await db.from('connectors').update({ status: 'error' }).eq('id', id)
+    }
+  }
+
+  // Never return raw auth field
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { auth: _auth, ...safeData } = data as typeof data & { auth?: unknown }
+  return NextResponse.json(safeData)
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

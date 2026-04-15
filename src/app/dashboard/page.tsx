@@ -18,6 +18,7 @@ import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
 
 export const dynamic = 'force-dynamic'
 
@@ -602,7 +603,7 @@ export default async function DashboardPage({
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: '1.1rem' }}>🔵</span>
+                            <ConnectorLogo type="google_ads" size={22} aria-hidden />
                             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Google Ads</span>
                           </div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
@@ -629,7 +630,7 @@ export default async function DashboardPage({
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: '1.1rem' }}>🟦</span>
+                            <ConnectorLogo type="meta_ads" size={22} aria-hidden />
                             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Meta Ads</span>
                           </div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>

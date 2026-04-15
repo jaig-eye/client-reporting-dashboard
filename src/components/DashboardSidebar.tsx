@@ -164,10 +164,10 @@ export default function DashboardSidebar({
     >
       {/* Brand header */}
       <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)' }}>
-        {/* Agency */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        {/* Agency logo — full width; no raw name text when logo present */}
+        <div style={{ marginBottom: 8 }}>
           {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName ?? ''} aria-hidden={!agencyName} style={{ height: 20, maxWidth: 100, objectFit: 'contain' }} />
+            <img src={agencyLogoUrl} alt={agencyName ?? ''} style={{ height: 28, maxWidth: '100%', width: '100%', objectFit: 'contain', objectPosition: 'left' }} />
           ) : (
             <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {agencyName ?? 'Agency'}

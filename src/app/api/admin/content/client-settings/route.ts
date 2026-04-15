@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data } = await db
     .from('content_settings')
-    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, phone_number, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id')
+    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, phone_number, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, monthly_publish_day, topics_per_run, weeks_ahead')
     .eq('client_id', clientId)
     .maybeSingle()
 
@@ -54,6 +54,9 @@ export async function PUT(request: NextRequest) {
     target_length,
     connection_id,
     default_author_id,
+    monthly_publish_day,
+    topics_per_run,
+    weeks_ahead,
   } = body as Record<string, unknown>
 
   if (!client_id) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
@@ -80,6 +83,9 @@ export async function PUT(request: NextRequest) {
         target_length:        target_length ?? null,
         connection_id:        connection_id ?? null,
         default_author_id:    default_author_id ?? null,
+        monthly_publish_day:  monthly_publish_day ?? null,
+        topics_per_run:       topics_per_run ?? 5,
+        weeks_ahead:          weeks_ahead ?? 4,
         updated_at:           new Date().toISOString(),
       },
       { onConflict: 'client_id', ignoreDuplicates: false }

@@ -5,6 +5,15 @@
 
 import { useEffect, useState } from 'react'
 
+const OVERVIEW_COLUMN_DEFS = [
+  { id: 'spend',       label: 'Spend'      },
+  { id: 'roas_cpl',    label: 'ROAS / CPL' },
+  { id: 'conversions', label: 'Conversions'},
+  { id: 'ctr',         label: 'CTR'        },
+  { id: 'sync_status', label: 'Sync'       },
+]
+const DEFAULT_OVERVIEW_COLUMNS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
+
 interface Settings {
   agency_name:                    string
   agency_logo_url:                string
@@ -16,6 +25,9 @@ interface Settings {
   default_date_range_days:        number
   ad_fuel_cut:                    number
   cron_enabled:                   boolean
+  sync_frequency:                 string
+  sync_hour_utc:                  number
+  sync_day_of_week:               number | null
   chart_color_spend:              string
   chart_color_prior_spend:        string
   chart_color_conversions:        string
@@ -27,6 +39,8 @@ interface Settings {
   notify_topics_created:          boolean
   notify_post_generated:          boolean
   notify_approval_needed:         boolean
+  notify_schedule_generated:      boolean
+  overview_columns:               string[]
 }
 
 const DEFAULT: Settings = {
@@ -40,6 +54,9 @@ const DEFAULT: Settings = {
   default_date_range_days:        30,
   ad_fuel_cut:                    0.20,
   cron_enabled:                   true,
+  sync_frequency:                 'daily',
+  sync_hour_utc:                  6,
+  sync_day_of_week:               null,
   chart_color_spend:              '#93c5fd',
   chart_color_prior_spend:        '#94a3b8',
   chart_color_conversions:        '#059669',
@@ -51,6 +68,8 @@ const DEFAULT: Settings = {
   notify_topics_created:          true,
   notify_post_generated:          true,
   notify_approval_needed:         true,
+  notify_schedule_generated:      true,
+  overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
 }
 
 const TABS = [
@@ -60,6 +79,7 @@ const TABS = [
   { id: 'ai',            label: 'AI'           },
   { id: 'sync',          label: 'Sync'         },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'overview',      label: 'Overview'     },
 ]
 
 export default function AgencySettingsPage() {
@@ -340,10 +360,13 @@ export default function AgencySettingsPage() {
 
         {/* ─── Sync ──────────────────────────────────────────────── */}
         {activeTab === 'sync' && (
-          <div className="card p-6">
-            <h2 className="section-title mb-1">Sync Schedule</h2>
-            <p className="section-desc mb-4">Automated daily sync keeps all client dashboards up to date.</p>
-            <label className="flex items-center gap-3 cursor-pointer mb-3">
+          <div className="card p-6 space-y-5">
+            <div>
+              <h2 className="section-title mb-1">Sync Schedule</h2>
+              <p className="section-desc">Automated sync keeps all client dashboards up to date. The cron runs hourly but only syncs when your schedule says to.</p>
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer">
               <button
                 type="button"
                 role="switch"
@@ -358,13 +381,54 @@ export default function AgencySettingsPage() {
                 />
               </button>
               <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {form.cron_enabled ? 'Enabled' : 'Disabled'}
+                {form.cron_enabled ? 'Sync enabled' : 'Sync disabled'}
               </span>
             </label>
-            <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>
-              <p>Schedule: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>0 6 * * *</span> — daily at 6:00 AM UTC</p>
-              <p>Re-syncs the last 3 days for all active connections (captures late conversions).</p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Frequency">
+                <select className="input" value={form.sync_frequency} onChange={e => field('sync_frequency', e.target.value)}>
+                  <option value="hourly">Hourly</option>
+                  <option value="every6h">Every 6 hours</option>
+                  <option value="every12h">Every 12 hours</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </FormField>
+
+              {form.sync_frequency !== 'hourly' && (
+                <FormField label="Hour (UTC)" hint="0–23">
+                  <input
+                    type="number" min={0} max={23} className="input"
+                    value={form.sync_hour_utc}
+                    onChange={e => field('sync_hour_utc', parseInt(e.target.value))}
+                  />
+                </FormField>
+              )}
+
+              {form.sync_frequency === 'weekly' && (
+                <FormField label="Day of Week">
+                  <select className="input" value={form.sync_day_of_week ?? 1} onChange={e => field('sync_day_of_week', parseInt(e.target.value))}>
+                    {['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => (
+                      <option key={i} value={i}>{d}</option>
+                    ))}
+                  </select>
+                </FormField>
+              )}
             </div>
+
+            {/* Human-readable preview */}
+            <p className="text-xs rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+              {form.sync_frequency === 'hourly'  && 'Syncs every hour'}
+              {form.sync_frequency === 'every6h' && `Syncs every 6 hours (at 0, 6, 12, 18 UTC)`}
+              {form.sync_frequency === 'every12h'&& `Syncs every 12 hours (at 0 and 12 UTC)`}
+              {form.sync_frequency === 'daily'   && `Syncs daily at ${form.sync_hour_utc}:00 UTC`}
+              {form.sync_frequency === 'weekly'  && `Syncs every ${ ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][form.sync_day_of_week ?? 1] } at ${form.sync_hour_utc}:00 UTC`}
+            </p>
+
+            <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+              Re-syncs the last 3 days for all active connections (captures late conversions).
+            </p>
           </div>
         )}
 
@@ -423,6 +487,45 @@ export default function AgencySettingsPage() {
                 checked={form.notify_approval_needed}
                 onChange={v => field('notify_approval_needed', v)}
               />
+              <Toggle
+                label="Topics auto-generated for scheduled client"
+                hint="Sent when topics are automatically generated 30 days before a client's scheduled publish date"
+                checked={form.notify_schedule_generated}
+                onChange={v => field('notify_schedule_generated', v)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ─── Overview ─────────────────────────────────────────── */}
+        {activeTab === 'overview' && (
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Client Overview Table Columns</h2>
+              <p className="section-desc">Choose which metric columns appear in the Clients table on the admin dashboard. Client, Sources, and Actions are always shown.</p>
+            </div>
+            <div className="space-y-2">
+              {OVERVIEW_COLUMN_DEFS.map(col => {
+                const cols = Array.isArray(form.overview_columns) ? form.overview_columns : DEFAULT_OVERVIEW_COLUMNS
+                const enabled = cols.includes(col.id)
+                return (
+                  <label key={col.id} className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={e => {
+                        const next = e.target.checked
+                          ? [...cols, col.id]
+                          : cols.filter(c => c !== col.id)
+                        field('overview_columns', next)
+                      }}
+                      className="rounded"
+                      style={{ width: 16, height: 16, accentColor: 'var(--blue)' }}
+                    />
+                    <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{col.label}</span>
+                  </label>
+                )
+              })}
             </div>
           </div>
         )}

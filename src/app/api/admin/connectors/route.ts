@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { ahrefsConnector } from '@/lib/connectors/ahrefs'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -35,5 +36,20 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // For Ahrefs: auto-test API key and update status immediately
+  if (type === 'ahrefs' && data) {
+    try {
+      const ok = await ahrefsConnector.testConnection!(auth ?? {}, {})
+      const newStatus = ok ? 'active' : 'error'
+      const newConfig = ok ? (config ?? {}) : { ...(config ?? {}), error: 'API key invalid or request failed' }
+      await db.from('connectors').update({ status: newStatus, config: newConfig }).eq('id', data.id)
+      return NextResponse.json({ ...data, status: newStatus, config: newConfig }, { status: 201 })
+    } catch (e) {
+      await db.from('connectors').update({ status: 'error', config: { ...(config ?? {}), error: e instanceof Error ? e.message : 'Test failed' } }).eq('id', data.id)
+      return NextResponse.json({ ...data, status: 'error' }, { status: 201 })
+    }
+  }
+
   return NextResponse.json(data, { status: 201 })
 }

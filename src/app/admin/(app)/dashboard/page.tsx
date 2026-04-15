@@ -5,7 +5,8 @@ import { Suspense }                  from 'react'
 import { createAdminClient }         from '@/lib/supabase/server'
 import Link                          from 'next/link'
 import type { ConnectorType }        from '@/lib/types'
-import { getConnectorDef }           from '@/lib/connectors/registry'
+import { ConnectorLogo }             from '@/components/ConnectorLogo'
+import { GearSix }                   from '@phosphor-icons/react/dist/ssr'
 import DateRangePicker               from '@/components/DateRangePicker'
 import AdminDateSync                 from './AdminDateSync'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
@@ -36,19 +37,21 @@ function fmtX(n: number)   { return `${n.toFixed(2)}x` }
 export default async function AdminOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string }>
+  searchParams: Promise<{ from?: string; to?: string; sort?: string; dir?: string }>
 }) {
   const today    = new Date()
   const params   = await searchParams
-  const dateFrom = params.from ?? getMtdFrom()
-  const dateTo   = params.to   ?? fmtDate(today)
+  const dateFrom = params.from  ?? getMtdFrom()
+  const dateTo   = params.to    ?? fmtDate(today)
+  const sortCol  = params.sort  ?? ''
+  const sortDir  = params.dir   === 'asc' ? 'asc' : 'desc'
 
   const db = createAdminClient()
 
   const [
     clientsRes,
     connectionsRes,
-    syncErrorsRes,
+    syncJobsRes,
     googleMetricsRes,
     metaMetricsRes,
     settingsRes,
@@ -58,13 +61,14 @@ export default async function AdminOverviewPage({
       .order('name'),
 
     db.from('client_connections')
-      .select('client_id, last_synced_at, connector:connectors(id, type, label, status)')
+      .select('client_id, connector:connectors(id, type, label, status)')
       .eq('status', 'active'),
 
+    // Fetch recent sync jobs (last 7 days) — we take the most recent per client
     db.from('sync_jobs')
-      .select('id, client_id, status')
-      .eq('status', 'error')
-      .gte('started_at', subtractDays(today, 7).toISOString()),
+      .select('id, client_id, status, completed_at')
+      .gte('started_at', subtractDays(today, 7).toISOString())
+      .order('completed_at', { ascending: false }),
 
     db.from('google_ads_metrics')
       .select('client_id, spend, clicks, impressions, conversions, conversions_value')
@@ -77,14 +81,20 @@ export default async function AdminOverviewPage({
       .lte('date', dateTo),
 
     db.from('agency_settings')
-      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate')
+      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, overview_columns')
       .single(),
   ])
 
   interface ConnRow {
     client_id: string
-    last_synced_at: string | null | undefined
     connector: { id: string; type: string; label: string; status: string }
+  }
+
+  interface SyncJobRow {
+    id: string
+    client_id: string
+    status: string
+    completed_at: string | null
   }
 
   type ClientRow = {
@@ -96,18 +106,33 @@ export default async function AdminOverviewPage({
 
   const clients     = (clientsRes.data     ?? []) as ClientRow[]
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
-  const syncErrors  = syncErrorsRes.data   ?? []
+  const syncJobs    = (syncJobsRes.data    ?? []) as SyncJobRow[]
   const googleRows  = googleMetricsRes.data ?? []
   const metaRows    = metaMetricsRes.data   ?? []
   const globalSettings = (settingsRes.data as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate'> | null) ?? {
     benchmark_roas: 3.0, benchmark_ctr: 0.03, benchmark_cpc: 3.0, benchmark_conv_rate: 0.03,
   }
+  const DEFAULT_COLS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
+  const overviewCols: string[] = Array.isArray((settingsRes.data as Record<string, unknown> | null)?.overview_columns)
+    ? (settingsRes.data as Record<string, unknown>).overview_columns as string[]
+    : DEFAULT_COLS
+  const showCol = (col: string) => overviewCols.includes(col)
 
   // Group connections by client_id
   const connsByClient = new Map<string, ConnRow[]>()
   for (const conn of connections) {
     if (!connsByClient.has(conn.client_id)) connsByClient.set(conn.client_id, [])
     connsByClient.get(conn.client_id)!.push(conn)
+  }
+
+  // Most recent sync job per client
+  const latestSyncByClient = new Map<string, SyncJobRow>()
+  for (const job of syncJobs) {
+    const cid = job.client_id
+    if (!latestSyncByClient.has(cid)) {
+      // syncJobs is ordered by completed_at DESC, so first entry per client = most recent
+      latestSyncByClient.set(cid, job)
+    }
   }
 
   // Aggregate Google Ads metrics per client
@@ -139,10 +164,11 @@ export default async function AdminOverviewPage({
   const googleSpendTotal  = Array.from(googleByClient.values()).reduce((s, m) => s + m.spend, 0)
   const metaSpendTotal    = Array.from(metaByClient.values()).reduce((s, m) => s + m.spend, 0)
   const totalSpend        = googleSpendTotal + metaSpendTotal
-  const clientsWithErrors = new Set(syncErrors.map(j => j.client_id as string)).size
+  const syncErrorCount    = syncJobs.filter(j => j.status === 'error').length
+  const clientsWithErrors = new Set(syncJobs.filter(j => j.status === 'error').map(j => j.client_id)).size
 
   // Build per-client row data
-  const clientRows = clients.map(client => {
+  let clientRows = clients.map(client => {
     const conns        = connsByClient.get(client.id) ?? []
     const gData        = googleByClient.get(client.id)
     const mData        = metaByClient.get(client.id)
@@ -167,23 +193,60 @@ export default async function AdminOverviewPage({
       ? calcEfficiencyScore({ roas: roas ?? 0, ctr, cpc: clicks > 0 ? spend / clicks : 0, convRate: clicks > 0 ? conversions / clicks : 0 }, benchmarks)
       : null
 
-    const lastSyncedAt = conns
-      .filter(c => c.last_synced_at)
-      .sort((a, b) => new Date(b.last_synced_at!).getTime() - new Date(a.last_synced_at!).getTime())[0]
-      ?.last_synced_at ?? null
+    // Use most recent sync job for status dot
+    const latestJob = latestSyncByClient.get(client.id) ?? null
+    const syncStatus: 'success' | 'error' | 'none' = latestJob
+      ? (latestJob.status === 'error' ? 'error' : 'success')
+      : 'none'
+    const completedAt = latestJob?.completed_at ? new Date(latestJob.completed_at) : null
+    const hoursStale  = completedAt ? (Date.now() - completedAt.getTime()) / 3_600_000 : Infinity
 
-    const hoursStale = lastSyncedAt
-      ? (Date.now() - new Date(lastSyncedAt).getTime()) / 3_600_000
-      : Infinity
-
-    const syncErrCount = syncErrors.filter(j => j.client_id === client.id).length
+    const syncErrCount = syncJobs.filter(j => j.client_id === client.id && j.status === 'error').length
 
     return {
       id: client.id, name: client.name, logoUrl: client.logo_url ?? null,
-      connectors: conns.map(c => ({ type: c.connector.type, label: getConnectorDef(c.connector.type as ConnectorType).label })),
-      spend, conversions, ctr, roas, cpl, showRoas, efficiencyScore, lastSyncedAt, hoursStale, syncErrCount,
+      connectors: conns.map(c => ({ type: c.connector.type as ConnectorType, label: c.connector.label })),
+      spend, conversions, ctr, roas, cpl, showRoas, efficiencyScore, hoursStale, syncStatus, syncErrCount,
     }
   })
+
+  // Sort
+  if (sortCol) {
+    clientRows = clientRows.sort((a, b) => {
+      let av: number, bv: number
+      if (sortCol === 'spend') {
+        av = a.spend; bv = b.spend
+      } else if (sortCol === 'roas_cpl') {
+        av = a.roas ?? a.cpl ?? -1; bv = b.roas ?? b.cpl ?? -1
+      } else if (sortCol === 'conversions') {
+        av = a.conversions; bv = b.conversions
+      } else if (sortCol === 'ctr') {
+        av = a.ctr; bv = b.ctr
+      } else if (sortCol === 'name') {
+        return sortDir === 'asc'
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name)
+      } else {
+        return 0
+      }
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+  }
+
+  function sortHref(col: string) {
+    const newDir = sortCol === col && sortDir === 'desc' ? 'asc' : 'desc'
+    const base = new URLSearchParams()
+    if (params.from) base.set('from', params.from)
+    if (params.to)   base.set('to',   params.to)
+    base.set('sort', col)
+    base.set('dir',  newDir)
+    return `/admin/dashboard?${base}`
+  }
+
+  function SortArrow({ col }: { col: string }) {
+    if (sortCol !== col) return <span style={{ opacity: 0.3, marginLeft: 3 }}>↕</span>
+    return <span style={{ marginLeft: 3 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
+  }
 
   return (
     <div>
@@ -202,12 +265,12 @@ export default async function AdminOverviewPage({
         </div>
       </div>
 
-      {/* Stat cards */}
+      {/* Stat cards — only Sync Errors is clickable */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Total Clients"        value={String(clients.length)}     href="/admin/connections" />
-        <StatCard label="Active Connectors"    value={String(connections.length)} href="/admin/connections" color="blue" />
-        <StatCard label="Sync Errors (7d)"     value={String(clientsWithErrors)}  href="/admin/system"      color={clientsWithErrors > 0 ? 'red' : 'default'} />
-        <StatCard label="Total Spend (period)" value={fmtSpend(totalSpend)}       href="#"                  color="blue" />
+        <StatCard label="Total Clients"        value={String(clients.length)} />
+        <StatCard label="Active Connectors"    value={String(connections.length)} color="blue" />
+        <StatCard label="Sync Errors (7d)"     value={String(clientsWithErrors)} href="/admin/system" color={clientsWithErrors > 0 ? 'red' : 'default'} />
+        <StatCard label="Total Spend (period)" value={fmtSpend(totalSpend)} color="blue" />
       </div>
 
       {/* Row hover via CSS — server component can't use onMouseEnter/Leave */}
@@ -228,110 +291,117 @@ export default async function AdminOverviewPage({
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  {['Client', 'Sources', 'Spend', 'ROAS / CPL', 'Conversions', 'CTR', 'Sync Status', ''].map(h => (
-                    <th key={h} style={{
-                      padding: '0.625rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem',
-                      color: 'var(--text-muted)', whiteSpace: 'nowrap', background: 'var(--bg-secondary)',
-                    }}>{h}</th>
-                  ))}
+                  <SortableTh col="name"        label="Client"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                  <th style={TH_STYLE}>Sources</th>
+                  {showCol('spend')       && <SortableTh col="spend"       label="Spend"       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('roas_cpl')    && <SortableTh col="roas_cpl"    label="ROAS / CPL"  sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('conversions') && <SortableTh col="conversions" label="Conv."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('ctr')         && <SortableTh col="ctr"         label="CTR"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('sync_status') && <th style={TH_STYLE}>Sync</th>}
+                  <th style={TH_STYLE}></th>
                 </tr>
               </thead>
               <tbody>
                 {clientRows.map((row, i) => {
-                  const syncDot = row.hoursStale < 24 ? 'var(--green)' : row.hoursStale < 72 ? 'var(--amber, #f59e0b)' : 'var(--red)'
-                  const syncLabel = row.lastSyncedAt
-                    ? new Date(row.lastSyncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                    : 'Never'
+                  // Sync dot: green if last job was success within 48h, amber if >48h, red if error/none
+                  let syncDot = 'var(--red)'
+                  if (row.syncStatus === 'success') {
+                    syncDot = row.hoursStale < 48 ? 'var(--green)' : 'var(--amber, #f59e0b)'
+                  }
 
                   return (
                     <tr key={row.id} className="client-row" style={{
                       borderBottom: i < clientRows.length - 1 ? '1px solid var(--border-subtle)' : undefined,
                       transition: 'background 0.15s',
                     }}>
-                      {/* Client name */}
+                      {/* Client name + logo */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                        <a
-                          href={`/api/admin/preview/${row.id}`}
-                          style={{ color: 'var(--text-primary)', fontWeight: 600, textDecoration: 'none' }}
-                        >
+                        <a href={`/api/admin/preview/${row.id}`}
+                          style={{ color: 'var(--text-primary)', fontWeight: 600, textDecoration: 'none' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             {row.logoUrl ? (
-                              <img src={row.logoUrl} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'contain' }} />
+                              <img src={row.logoUrl} alt="" style={{ width: 26, height: 26, borderRadius: 6, objectFit: 'contain', flexShrink: 0 }} />
                             ) : (
-                              <div style={{ width: 22, height: 22, borderRadius: 4, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                              <div style={{ width: 26, height: 26, borderRadius: 6, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
                                 {row.name.charAt(0).toUpperCase()}
                               </div>
                             )}
-                            {row.name}
+                            <span>{row.name}</span>
                           </div>
                         </a>
                       </td>
 
-                      {/* Data sources */}
+                      {/* Data sources — connector logo icons */}
                       <td style={{ padding: '0.75rem 1rem' }}>
                         {row.connectors.length === 0 ? (
-                          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>None</span>
+                          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
                         ) : (
-                          <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
                             {row.connectors.map((c, ci) => (
-                              <span key={ci} title={c.label} style={{
-                                display: 'inline-block', padding: '0.1rem 0.4rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 500,
-                                background: 'var(--bg-tertiary, var(--border-subtle))', color: 'var(--text-secondary)',
-                              }}>{c.label}</span>
+                              <span key={ci} title={c.label} style={{ display: 'flex', alignItems: 'center' }}>
+                                <ConnectorLogo type={c.type} size={16} aria-hidden />
+                              </span>
                             ))}
                           </div>
                         )}
                       </td>
 
                       {/* Spend */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
-                      </td>
+                      {showCol('spend') && (
+                        <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
+                        </td>
+                      )}
 
                       {/* ROAS / CPL */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
-                        {row.showRoas && row.roas !== null
-                          ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
-                          : row.cpl !== null
-                            ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
-                            : <Dash />
-                        }
-                      </td>
+                      {showCol('roas_cpl') && (
+                        <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.showRoas && row.roas !== null
+                            ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
+                            : row.cpl !== null
+                              ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
+                              : <Dash />
+                          }
+                        </td>
+                      )}
 
                       {/* Conversions */}
-                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
-                      </td>
+                      {showCol('conversions') && (
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
+                        </td>
+                      )}
 
                       {/* CTR */}
-                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
-                      </td>
+                      {showCol('ctr') && (
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
+                        </td>
+                      )}
 
-                      {/* Sync status */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: syncDot, display: 'inline-block', flexShrink: 0 }} />
-                          <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{syncLabel}</span>
-                          {row.syncErrCount > 0 && (
-                            <span style={{ background: 'var(--red-subtle)', color: 'var(--red)', borderRadius: 4, padding: '0 0.3rem', fontSize: '0.6875rem', fontWeight: 600 }}>
-                              {row.syncErrCount} err
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                      {/* Sync status — dot only, no date */}
+                      {showCol('sync_status') && (
+                        <td style={{ padding: '0.75rem 1rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span style={{ width: 9, height: 9, borderRadius: '50%', background: syncDot, display: 'inline-block', flexShrink: 0 }} />
+                            {row.syncErrCount > 0 && (
+                              <span style={{ background: 'var(--red-subtle)', color: 'var(--red)', borderRadius: 4, padding: '0 0.3rem', fontSize: '0.6875rem', fontWeight: 600 }}>
+                                {row.syncErrCount}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
-                      {/* Actions */}
+                      {/* Actions — gear icon */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <Link
-                            href={`/admin/clients/${row.id}`}
-                            className="btn btn-secondary"
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
-                          >
-                            Settings
-                          </Link>
-                        </div>
+                        <Link
+                          href={`/admin/clients/${row.id}`}
+                          title="Client Settings"
+                          style={{ display: 'inline-flex', alignItems: 'center', padding: '0.3rem', borderRadius: 6, color: 'var(--text-muted)', textDecoration: 'none', transition: 'background 0.1s, color 0.1s' }}
+                        >
+                          <GearSix size={16} aria-hidden />
+                        </Link>
                       </td>
                     </tr>
                   )
@@ -347,6 +417,30 @@ export default async function AdminOverviewPage({
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
+const TH_STYLE: React.CSSProperties = {
+  padding: '0.625rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.6875rem',
+  color: 'var(--text-faint)', whiteSpace: 'nowrap', background: 'var(--bg-secondary)',
+  textTransform: 'uppercase', letterSpacing: '0.05em',
+}
+
+function SortableTh({ col, label, sortHref, sortCol, sortDir }: {
+  col: string; label: string
+  sortHref: (col: string) => string
+  sortCol: string; sortDir: string
+}) {
+  const active = sortCol === col
+  return (
+    <th style={{ ...TH_STYLE, cursor: 'pointer' }}>
+      <a href={sortHref(col)} style={{ textDecoration: 'none', color: active ? 'var(--text-primary)' : 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+        {label}
+        <span style={{ opacity: active ? 1 : 0.35, fontSize: '0.7rem' }}>
+          {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+        </span>
+      </a>
+    </th>
+  )
+}
+
 function Dash() {
   return <span style={{ color: 'var(--text-faint)' }}>—</span>
 }
@@ -354,7 +448,7 @@ function Dash() {
 function StatCard({
   label, value, href, color = 'default',
 }: {
-  label: string; value: string; href: string; color?: 'blue' | 'green' | 'red' | 'default'
+  label: string; value: string; href?: string; color?: 'blue' | 'green' | 'red' | 'default'
 }) {
   const colors = { blue: 'var(--blue)', green: 'var(--green)', red: 'var(--red)', default: 'var(--text-primary)' }
   const inner = (
@@ -363,6 +457,6 @@ function StatCard({
       <p className="text-3xl font-bold" style={{ color: colors[color], fontVariantNumeric: 'tabular-nums' }}>{value}</p>
     </div>
   )
-  if (href === '#') return inner
-  return <Link href={href} className="card-hover block" style={{ textDecoration: 'none' }}>{inner}</Link>
+  if (!href) return inner
+  return <Link href={href} className="card-hover block" style={{ textDecoration: 'none', borderRadius: 12, overflow: 'hidden' }}>{inner}</Link>
 }

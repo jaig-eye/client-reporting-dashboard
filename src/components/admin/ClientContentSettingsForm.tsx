@@ -30,6 +30,9 @@ interface ClientSettings {
   target_length?:        number
   connection_id?:        string | null
   default_author_id?:    number | null
+  monthly_publish_day?:  number | null
+  topics_per_run?:       number
+  weeks_ahead?:          number
 }
 
 const DAY_NAMES  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -102,6 +105,9 @@ export default function ClientContentSettingsForm({
           target_length:        d.target_length          ?? 1500,
           connection_id:        d.connection_id          ?? null,
           default_author_id:    d.default_author_id      ?? null,
+          monthly_publish_day:  d.monthly_publish_day    ?? null,
+          topics_per_run:       d.topics_per_run         ?? 5,
+          weeks_ahead:          d.weeks_ahead            ?? 4,
         })
         setLoading(false)
       })
@@ -261,6 +267,59 @@ export default function ClientContentSettingsForm({
               <Label>Posts per Run</Label>
               <input className="input" type="number" min={1} max={5} value={form.posts_per_run ?? 1} onChange={e => set('posts_per_run', Number(e.target.value))} />
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Monthly Content Schedule ─────────────────────────────────────── */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="section-title">Monthly Content Schedule</h3>
+          <p className="section-desc">Set a monthly publish date to enable automated topic generation and post creation.</p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <Label hint="1–28, or blank for manual only">Publish Day of Month</Label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={28}
+              placeholder="e.g. 15"
+              value={form.monthly_publish_day ?? ''}
+              onChange={e => set('monthly_publish_day', e.target.value ? Math.min(28, Math.max(1, parseInt(e.target.value))) : null)}
+            />
+          </div>
+          <div>
+            <Label hint="topics per auto-generate run">Topics per Run</Label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={20}
+              value={form.topics_per_run ?? 5}
+              onChange={e => set('topics_per_run', Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <Label hint="how far ahead to schedule topics">Weeks Ahead</Label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={12}
+              value={form.weeks_ahead ?? 4}
+              onChange={e => set('weeks_ahead', Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        {form.monthly_publish_day && (
+          <div className="rounded-xl px-4 py-3 text-xs space-y-1"
+            style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
+            <p><strong>Auto-flow:</strong> 30 days before the {form.monthly_publish_day}{form.monthly_publish_day === 1 ? 'st' : form.monthly_publish_day === 2 ? 'nd' : form.monthly_publish_day === 3 ? 'rd' : 'th'}: topics generated and sent for approval.</p>
+            <p>7 days before: approved topics get a post generated automatically using fresh GSC data.</p>
           </div>
         )}
       </div>

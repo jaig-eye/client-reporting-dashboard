@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ShareNetwork } from '@phosphor-icons/react'
 
 interface Client {
   id: string
@@ -140,7 +141,7 @@ export default function AdminDashboardBar({
         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
         onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
       >
-        {copied ? '✓ Copied!' : '⎘ Share Link'}
+        {copied ? '✓ Copied!' : <><ShareNetwork size={13} weight="bold" style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Share</>}
       </button>
     </div>
   )

@@ -1,17 +1,23 @@
 // GET /api/auth/google/start
-// Kicks off the Google Ads OAuth flow.
-// Accepts developer_token and mcc_customer_id as query params, encodes them
-// in the OAuth state so the callback can persist them alongside the tokens.
+// Kicks off Google OAuth for any Google connector type.
+// Accepts connector_type (google_ads | google_analytics | google_search_console | google_business_profile)
+// plus optional developer_token and mcc_customer_id (Google Ads only).
+// All params are encoded into the OAuth state so the callback can restore them.
 
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const appUrl         = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const connectorType  = request.nextUrl.searchParams.get('connector_type') ?? 'google_ads'
   const developerToken = request.nextUrl.searchParams.get('developer_token') ?? ''
   const mccCustomerId  = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
 
   const state = Buffer.from(
-    JSON.stringify({ developer_token: developerToken, mcc_customer_id: mccCustomerId })
+    JSON.stringify({
+      connector_type:  connectorType,
+      developer_token: developerToken,
+      mcc_customer_id: mccCustomerId,
+    })
   ).toString('base64url')
 
   // Request all Google scopes in a single OAuth flow so one token set covers

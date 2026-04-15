@@ -114,10 +114,8 @@ function GoogleAdsForm() {
 
 function GoogleOAuthForm({ type, label, hint }: { type: ConnectorType; label: string; hint: string }) {
   function handleConnect() {
-    // Pass the connector type in the OAuth state so the callback can create
-    // the right connector record after authorization completes.
-    const state = btoa(JSON.stringify({ connector_type: type }))
-    window.location.href = `/api/auth/google/start?state_extra=${encodeURIComponent(state)}`
+    // Pass connector_type directly — the start route encodes it into the OAuth state
+    window.location.href = `/api/auth/google/start?connector_type=${encodeURIComponent(type)}`
   }
 
   return (

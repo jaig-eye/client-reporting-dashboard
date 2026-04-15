@@ -34,6 +34,11 @@ export default function NewConnectionForm({
     setStatus('saving')
     setErrorMsg('')
 
+    // Normalize domain for Ahrefs
+    const normalizedId = connectorType === 'ahrefs'
+      ? externalId.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+      : externalId.trim()
+
     try {
       const res = await fetch('/api/admin/connections', {
         method: 'POST',
@@ -41,8 +46,8 @@ export default function NewConnectionForm({
         body: JSON.stringify({
           client_id:     clientId,
           connector_id:  connectorId,
-          external_id:   externalId.trim(),
-          external_name: externalName.trim() || null,
+          external_id:   normalizedId,
+          external_name: connectorType === 'ahrefs' ? normalizedId : (externalName.trim() || null),
         }),
       })
       if (!res.ok) {
@@ -55,6 +60,41 @@ export default function NewConnectionForm({
       setStatus('error')
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
     }
+  }
+
+  // Ahrefs: just a domain input — no account discovery
+  if (connectorType === 'ahrefs') {
+    return (
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {status === 'error' && errorMsg && (
+          <div className="rounded-xl px-4 py-3 text-sm"
+            style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+            {errorMsg}
+          </div>
+        )}
+        <div>
+          <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+            Website Domain <span style={{ color: 'var(--red)' }}>*</span>
+          </label>
+          <input
+            className="input"
+            placeholder="example.com"
+            value={externalId}
+            onChange={e => setExternalId(e.target.value)}
+            required
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            Enter the root domain (e.g. example.com). Ahrefs metrics will sync automatically.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 pt-2">
+          <button type="submit" className="btn btn-primary" disabled={status === 'saving' || !externalId.trim()}>
+            {status === 'saving' ? 'Connecting…' : 'Connect Domain'}
+          </button>
+          <a href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    )
   }
 
   return (

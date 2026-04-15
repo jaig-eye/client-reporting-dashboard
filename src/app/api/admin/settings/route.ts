@@ -40,7 +40,9 @@ export async function PUT(request: NextRequest) {
     'chart_color_conversions', 'chart_color_prior_conversions',
     'notification_email',
     'notify_topics_created', 'notify_post_generated', 'notify_approval_needed',
+    'notify_schedule_generated',
     'overview_columns',
+    'sync_frequency', 'sync_hour_utc', 'sync_day_of_week',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

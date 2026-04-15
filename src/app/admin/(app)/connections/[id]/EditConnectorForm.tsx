@@ -11,7 +11,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
     const mcc    = config.mcc_customer_id ?? ''
     const auth   = (connector.auth   ?? {}) as Record<string, string>
     const devTok = auth.developer_token ?? ''
-    const params = new URLSearchParams()
+    const params = new URLSearchParams({ connector_type: 'google_ads' })
     if (devTok) params.set('developer_token', devTok)
     if (mcc)    params.set('mcc_customer_id', mcc)
     return (
@@ -23,8 +23,38 @@ function ReconnectSection({ connector }: { connector: Connector }) {
           Re-authorize if the connection has expired or you want to switch Google accounts.
         </p>
         <a href={`/api/auth/google/start?${params}`} className="btn btn-secondary">
-          🔵 Reconnect with Google
+          Reconnect with Google
         </a>
+      </div>
+    )
+  }
+
+  if (connector.type === 'google_analytics') {
+    return (
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
+        <a href="/api/auth/google/start?connector_type=google_analytics" className="btn btn-secondary">Reconnect Google Analytics</a>
+      </div>
+    )
+  }
+
+  if (connector.type === 'google_search_console') {
+    return (
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
+        <a href="/api/auth/google/start?connector_type=google_search_console" className="btn btn-secondary">Reconnect Search Console</a>
+      </div>
+    )
+  }
+
+  if (connector.type === 'google_business_profile') {
+    return (
+      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
+        <a href="/api/auth/google/start?connector_type=google_business_profile" className="btn btn-secondary">Reconnect Business Profile</a>
       </div>
     )
   }
@@ -39,13 +69,74 @@ function ReconnectSection({ connector }: { connector: Connector }) {
           Re-authorize if the 60-day token has expired or you want to switch accounts.
         </p>
         <a href="/api/auth/meta/start" className="btn btn-secondary">
-          🟦 Reconnect with Facebook
+          Reconnect with Facebook
         </a>
       </div>
     )
   }
 
   return null
+}
+
+// Ahrefs-specific test connection button + status badge
+function AhrefsStatusSection({ connector }: { connector: Connector }) {
+  const [testing,   setTesting]   = useState(false)
+  const [testResult, setTestResult] = useState<'ok' | 'fail' | null>(null)
+  const config  = (connector.config ?? {}) as Record<string, string>
+  const errMsg  = config.error ?? ''
+
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res  = await fetch(`/api/admin/connectors/${connector.id}/test`, { method: 'POST' })
+      const data = await res.json()
+      setTestResult(data.ok ? 'ok' : 'fail')
+    } catch {
+      setTestResult('fail')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const isActive = connector.status === 'active' || testResult === 'ok'
+  const isError  = connector.status === 'error'  || testResult === 'fail'
+
+  return (
+    <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-center gap-3 mb-3">
+        <h3 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          Connection Status
+        </h3>
+        {isActive && (
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: 'var(--green-subtle)', color: 'var(--green)', border: '1px solid #bbf7d0' }}>
+            Connected
+          </span>
+        )}
+        {isError && (
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}>
+            Error
+          </span>
+        )}
+        {!isActive && !isError && (
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: 'var(--yellow-subtle, #fefce8)', color: 'var(--text-muted)', border: '1px solid var(--yellow-border, #fde68a)' }}>
+            Pending
+          </span>
+        )}
+      </div>
+      {isError && errMsg && (
+        <p className="text-xs mb-3" style={{ color: 'var(--red)' }}>{errMsg}</p>
+      )}
+      <button type="button" onClick={handleTest} disabled={testing} className="btn btn-secondary">
+        {testing ? 'Testing…' : 'Test Connection'}
+      </button>
+      {testResult === 'ok'   && <span className="text-xs ml-3" style={{ color: 'var(--green)' }}>API key is valid.</span>}
+      {testResult === 'fail' && <span className="text-xs ml-3" style={{ color: 'var(--red)' }}>API key invalid or unreachable.</span>}
+    </div>
+  )
 }
 
 // Editable config fields per connector type
@@ -246,6 +337,9 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
           </button>
         </div>
       </form>
+
+      {/* Ahrefs: test connection + status badge */}
+      {connector.type === 'ahrefs' && <AhrefsStatusSection connector={connector} />}
 
       {/* Refresh discovered accounts — not applicable for domain-based connectors like Ahrefs */}
       {connector.type !== 'ahrefs' && <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
