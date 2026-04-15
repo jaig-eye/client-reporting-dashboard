@@ -210,6 +210,9 @@ export default async function AdminOverviewPage({
         <StatCard label="Total Spend (period)" value={fmtSpend(totalSpend)}       href="#"                  color="blue" />
       </div>
 
+      {/* Row hover via CSS — server component can't use onMouseEnter/Leave */}
+      <style>{`.client-row:hover { background: var(--bg-secondary) !important; }`}</style>
+
       {/* Client table */}
       {clients.length === 0 ? (
         <div className="card p-12 text-center">
@@ -241,13 +244,10 @@ export default async function AdminOverviewPage({
                     : 'Never'
 
                   return (
-                    <tr key={row.id} style={{
+                    <tr key={row.id} className="client-row" style={{
                       borderBottom: i < clientRows.length - 1 ? '1px solid var(--border-subtle)' : undefined,
                       transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '')}
-                    >
+                    }}>
                       {/* Client name */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
                         <a

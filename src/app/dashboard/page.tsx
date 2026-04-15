@@ -389,16 +389,14 @@ export default async function DashboardPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+      <style>{`.back-overview-link:hover { color: var(--text-primary) !important; }`}</style>
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* ── Inline page header ───────────────────────────────── */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
             {isFiltered && (
-              <a href="/dashboard" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 4 }}
-                onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text-primary)')}
-                onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text-muted)')}
-              >
+              <a href="/dashboard" className="back-overview-link" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                 ← Overview
               </a>
             )}
