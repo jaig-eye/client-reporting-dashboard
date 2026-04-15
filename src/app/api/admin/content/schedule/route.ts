@@ -14,8 +14,8 @@ import { isAdminAuthed }     from '@/lib/auth'
  */
 export async function POST(request: NextRequest) {
   // Accept either admin session cookie or Vercel cron secret
-  const cronSecret = process.env.CRON_SECRET
-  const authHeader = request.headers.get('authorization')
+  const cronSecret  = process.env.CRON_SECRET
+  const authHeader  = request.headers.get('authorization')
   const cookieStore = await cookies()
   const session     = cookieStore.get('admin_session')?.value
 
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -61,9 +61,9 @@ export async function POST(request: NextRequest) {
   const apiKey   = agencySettings.ai_api_key
   const agency   = agencySettings.agency_name || 'the agency'
   const gs       = globalSettings as { post_structure?: string; schedule_frequency?: string; schedule_day_of_week?: number } | null
-  const globalStructure  = gs?.post_structure ?? ''
-  const globalFrequency  = gs?.schedule_frequency ?? 'weekly'
-  const globalDayOfWeek  = gs?.schedule_day_of_week ?? 1
+  const globalStructure = gs?.post_structure ?? ''
+  const globalFrequency = gs?.schedule_frequency ?? 'weekly'
+  const globalDayOfWeek = gs?.schedule_day_of_week ?? 1
 
   let totalGenerated = 0
   const errors: string[] = []
@@ -82,14 +82,14 @@ export async function POST(request: NextRequest) {
     const lastGeneratedAt = (lastPost as { generated_at: string } | null)?.generated_at ?? null
 
     // Resolve schedule: client override falls back to global default
-    const frequency  = (cs.schedule_frequency as string  | null) ?? globalFrequency
-    const dayOfWeek  = (cs.schedule_day_of_week as number | null) ?? globalDayOfWeek
+    const frequency = (cs.schedule_frequency as string  | null) ?? globalFrequency
+    const dayOfWeek = (cs.schedule_day_of_week as number | null) ?? globalDayOfWeek
 
     // Skip if not due today (always run when manually triggered by admin)
     if (isCronAuth && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
 
-    const postsPerRun   = (cs.posts_per_run  as number | null) ?? 1
-    const targetLength  = (cs.target_length  as number | null) ?? 1500
+    const postsPerRun  = (cs.posts_per_run  as number | null) ?? 1
+    const targetLength = (cs.target_length  as number | null) ?? 1500
 
     // Load existing post topics to avoid repeats
     const { data: existingPosts } = await db
@@ -111,15 +111,26 @@ export async function POST(request: NextRequest) {
     if (cs.target_audience)      contextLines.push(`Target audience: ${cs.target_audience}`)
     if (cs.geographic_focus)     contextLines.push(`Geographic focus: ${cs.geographic_focus}`)
     if (cs.brand_voice)          contextLines.push(`Brand voice: ${cs.brand_voice}`)
+    const phoneNumber = cs.phone_number as string | null
+    if (phoneNumber)             contextLines.push(`Business phone: ${phoneNumber} (when referencing phone in content, format as ${phoneNumber} linked with tel: href, e.g. <a href="tel:${phoneNumber.replace(/\D/g, '')}">`)
     const structureNote = (cs.post_structure as string | null) ?? globalStructure
     if (structureNote)           contextLines.push(`\nPreferred post structure:\n${structureNote}`)
-    const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
-    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList)
+    // Fetch sitemap pages for internal linking context
+    const sitemapUrl = cs.sitemap_url as string | null
+    if (sitemapUrl) {
+      const pages = await fetchSitemapPages(sitemapUrl)
+      if (pages.length > 0) {
+        contextLines.push(`\nAvailable site pages for internal linking:\n${pages.join('\n')}`)
+      }
+    }
+
+    const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
+    const systemPrompt  = buildSystemPrompt(agency, clientContext, avoidList)
 
     for (let i = 0; i < postsPerRun; i++) {
       try {
-        const userPrompt = `Write a new SEO blog post for this business. Choose a unique topic that hasn't been covered yet, based on their services and target audience. Make it genuinely useful and search-optimized. Target approximately ${targetLength} words.`
+        const userPrompt = `Write a new SEO-optimized blog post for this business. Research what topics would rank well for this industry — focus on: services they offer, commonly searched questions their customers ask, local/seasonal relevance where applicable, or subjects similar businesses write about. Choose a unique, targeted topic not yet covered. Target approximately ${targetLength} words.`
 
         let rawText = ''
         if (provider === 'anthropic') {
@@ -149,9 +160,12 @@ export async function POST(request: NextRequest) {
           connection_id:    cs.connection_id || null,
           status:           'pending',
           title:            parsed.title,
+          seo_title:        parsed.seoTitle || parsed.title,
           content:          parsed.content,
           meta_description: parsed.metaDescription,
           slug:             parsed.slug,
+          target_keyword:   parsed.focusKeyword,
+          suggested_tags:   parsed.suggestedTags,
           word_count:       wordCount(parsed.content),
           heading_count:    headingCount(parsed.content),
           internal_links:   internalLinks(parsed.content),
@@ -170,7 +184,27 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ generated: totalGenerated, errors })
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// ─── Sitemap fetching ─────────────────────────────────────────────────────────
+
+async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+  try {
+    const res = await fetch(sitemapUrl, {
+      signal: AbortSignal.timeout(4000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+    })
+    if (!res.ok) return []
+    const xml = await res.text()
+    const matches = Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi))
+    return matches
+      .map(m => m[1].trim())
+      .filter(url => !url.endsWith('.xml'))
+      .slice(0, 40)
+  } catch {
+    return []
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
  * Determines if a client is due for content generation today.
@@ -199,28 +233,56 @@ function buildSystemPrompt(agency: string, clientContext: string, avoidTopics: s
 ${clientContext ? `\n${clientContext}` : ''}
 Write high-quality blog posts demonstrating E-E-A-T (Experience, Expertise, Authority, Trustworthiness).
 
+Topic strategy — write about subjects that genuinely rank well for this type of business:
+- Focus on topics that answer real questions the target audience searches for
+- Consider commonly searched questions, seasonal relevance, and local industry angles
+- Write about subjects directly tied to the business's services and value proposition
+- Avoid vague or generic titles; be specific and targeted
+
 SEO guidelines:
-- Use the focus keyword in the H1, first paragraph, and 2–3 subheadings
-- Include a compelling meta description (150–160 characters)
-- Suggest a clean URL slug
+- Choose a clear focus keyword and use it in the H1, first paragraph, and 2–3 subheadings
+- Target ~1% keyword density (roughly once per 100 words)
+- Include a compelling meta description (150–160 characters) with the focus keyword
+- SEO title max 60 chars (can go slightly over), includes focus keyword
+- Suggest a clean URL slug: lowercase, hyphens, no stop words, max 5–6 words
 - End with a clear call-to-action
+- Include at least 1 outbound link to a credible external resource when factually relevant
+- Add descriptive alt text to any <img> tags including the focus keyword
+- For external links use target="_blank" rel="noopener noreferrer"
 ${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}
-Return ONLY a JSON object:
-{ "title": "...", "content": "Full HTML body", "metaDescription": "...", "slug": "..." }`
+Return ONLY a JSON object with exactly these fields:
+{
+  "title": "Post H1 title — descriptive, includes focus keyword",
+  "seoTitle": "SEO/meta title — max 60 chars, includes focus keyword",
+  "content": "Full HTML post body (h2, h3, h4, p, ul, strong, a tags as needed)",
+  "metaDescription": "SEO meta description, 150–160 characters, includes focus keyword",
+  "slug": "url-friendly-slug-max-5-words",
+  "focusKeyword": "primary target keyword phrase",
+  "suggestedTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
+}
+Do not include markdown fences or any text outside the JSON object.`
 }
 
 function parseAIResponse(rawText: string) {
   const stripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   const match    = stripped.match(/\{[\s\S]*\}/)
-  if (!match) return { title: '', content: rawText, metaDescription: '', slug: '' }
+  if (!match) return { title: '', seoTitle: '', content: rawText, metaDescription: '', slug: '', focusKeyword: '', suggestedTags: [] as string[] }
   try {
     const p = JSON.parse(match[0])
-    return { title: String(p.title || ''), content: String(p.content || rawText), metaDescription: String(p.metaDescription || ''), slug: String(p.slug || '') }
+    return {
+      title:           String(p.title           || ''),
+      seoTitle:        String(p.seoTitle         || p.title || ''),
+      content:         String(p.content          || rawText),
+      metaDescription: String(p.metaDescription  || ''),
+      slug:            String(p.slug             || ''),
+      focusKeyword:    String(p.focusKeyword      || ''),
+      suggestedTags:   Array.isArray(p.suggestedTags) ? p.suggestedTags.map(String) : [] as string[],
+    }
   } catch {
-    return { title: '', content: rawText, metaDescription: '', slug: '' }
+    return { title: '', seoTitle: '', content: rawText, metaDescription: '', slug: '', focusKeyword: '', suggestedTags: [] as string[] }
   }
 }
 
 function wordCount(html: string) { return html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length }
-function headingCount(html: string) { return (html.match(/<h[23][^>]*>/gi) || []).length }
+function headingCount(html: string) { return (html.match(/<h[234][^>]*>/gi) || []).length }
 function internalLinks(html: string) { return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http')).length }

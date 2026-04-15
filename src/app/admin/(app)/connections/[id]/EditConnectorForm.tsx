@@ -79,6 +79,14 @@ const AUTH_FIELDS: Record<string, { key: string; label: string; placeholder: str
     },
   ],
   meta_ads: [],
+  ahrefs: [
+    {
+      key:         'api_key',
+      label:       'API Key',
+      placeholder: 'Leave blank to keep existing',
+      hint:        'Found in Ahrefs → Account Settings → API. Requires a Standard plan or above.',
+    },
+  ],
 }
 
 export default function EditConnectorForm({ connector }: { connector: Connector }) {
@@ -239,8 +247,8 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
         </div>
       </form>
 
-      {/* Refresh discovered accounts */}
-      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      {/* Refresh discovered accounts — not applicable for domain-based connectors like Ahrefs */}
+      {connector.type !== 'ahrefs' && <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
           Discovered Accounts
         </h3>
@@ -262,7 +270,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
         >
           {discovering ? 'Refreshing…' : 'Refresh Accounts'}
         </button>
-      </div>
+      </div>}
 
       <ReconnectSection connector={connector} />
 

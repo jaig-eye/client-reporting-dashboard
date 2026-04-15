@@ -88,6 +88,8 @@ export interface WpPostPayload {
   featured_media?: number
   excerpt?: string
   slug?: string
+  author?: number
+  meta?: Record<string, string>
 }
 
 export interface WpPublishedPost {
@@ -116,6 +118,8 @@ export async function publishPost(
     featured_media: post.featured_media,
     excerpt: post.excerpt,
     slug: post.slug,
+    author: post.author,
+    meta: post.meta,
   })) as Record<string, unknown>
 
   return {
@@ -155,6 +159,58 @@ export async function getAuthors(
   } catch {
     return []
   }
+}
+
+/**
+ * Get existing tags from the WordPress site.
+ */
+export async function getTags(
+  siteUrl: string,
+  auth: { username: string; app_password: string }
+): Promise<{ id: number; name: string; slug: string }[]> {
+  try {
+    const result = (await wpGet(siteUrl, '/tags', auth, { per_page: '100' })) as Record<string, unknown>[]
+    return result.map(t => ({
+      id:   Number(t.id),
+      name: String(t.name || ''),
+      slug: String(t.slug || ''),
+    }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Resolve tag names to WordPress tag IDs.
+ * Searches for existing tags by name; creates any that don't exist yet.
+ * Returns an array of tag IDs.
+ */
+export async function ensureTagIds(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  tagNames: string[]
+): Promise<number[]> {
+  if (tagNames.length === 0) return []
+
+  const existing = await getTags(siteUrl, auth)
+  const byName = new Map(existing.map(t => [t.name.toLowerCase(), t.id]))
+
+  const ids: number[] = []
+  for (const name of tagNames) {
+    const key = name.toLowerCase().trim()
+    if (!key) continue
+    if (byName.has(key)) {
+      ids.push(byName.get(key)!)
+    } else {
+      try {
+        const created = (await wpPost(siteUrl, '/tags', auth, { name })) as Record<string, unknown>
+        if (created.id) ids.push(Number(created.id))
+      } catch {
+        // skip tags that fail to create (e.g. duplicate slug conflict)
+      }
+    }
+  }
+  return ids
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

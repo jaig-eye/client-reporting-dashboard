@@ -6,14 +6,13 @@ import { useRouter } from 'next/navigation'
 interface Props {
   clientId: string
   name: string
-  email: string
   slug: string
 }
 
-export default function EditClientInfo({ clientId, name, email, slug }: Props) {
+export default function EditClientInfo({ clientId, name, slug }: Props) {
   const router = useRouter()
   const [editing, setEditing] = useState(false)
-  const [values,  setValues]  = useState({ name, email, slug })
+  const [values,  setValues]  = useState({ name, slug })
   const [status,  setStatus]  = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -47,7 +46,6 @@ export default function EditClientInfo({ clientId, name, email, slug }: Props) {
     return (
       <div className="space-y-2 text-sm">
         <Row label="Name"  value={values.name} />
-        <Row label="Email" value={values.email} />
         <Row label="Slug"  value={values.slug} mono />
         <button
           onClick={() => setEditing(true)}
@@ -65,7 +63,7 @@ export default function EditClientInfo({ clientId, name, email, slug }: Props) {
       {status === 'error' && errorMsg && (
         <p className="text-xs" style={{ color: 'var(--red)' }}>{errorMsg}</p>
       )}
-      {(['name', 'email', 'slug'] as const).map(k => (
+      {(['name', 'slug'] as const).map(k => (
         <div key={k}>
           <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
             {k.charAt(0).toUpperCase() + k.slice(1)}
@@ -83,7 +81,7 @@ export default function EditClientInfo({ clientId, name, email, slug }: Props) {
           style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}>
           {status === 'saving' ? 'Saving…' : 'Save'}
         </button>
-        <button type="button" className="btn btn-secondary" onClick={() => { setEditing(false); setValues({ name, email, slug }) }}
+        <button type="button" className="btn btn-secondary" onClick={() => { setEditing(false); setValues({ name, slug }) }}
           style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}>
           Cancel
         </button>

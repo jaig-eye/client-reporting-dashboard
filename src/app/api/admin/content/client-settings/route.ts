@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data } = await db
     .from('content_settings')
-    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id')
+    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, phone_number, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id')
     .eq('client_id', clientId)
     .maybeSingle()
 
@@ -45,6 +45,7 @@ export async function PUT(request: NextRequest) {
     geographic_focus,
     brand_voice,
     sitemap_url,
+    phone_number,
     post_structure,
     auto_generate,
     posts_per_run,
@@ -70,6 +71,7 @@ export async function PUT(request: NextRequest) {
         geographic_focus:     geographic_focus ?? null,
         brand_voice:          brand_voice ?? null,
         sitemap_url:          sitemap_url ?? null,
+        phone_number:         phone_number ?? null,
         post_structure:       post_structure ?? null,
         auto_generate:        auto_generate ?? false,
         posts_per_run:        posts_per_run ?? 1,

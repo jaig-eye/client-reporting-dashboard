@@ -9,7 +9,7 @@ import Link from 'next/link'
 
 export default function NewClientPage() {
   const router = useRouter()
-  const [form, setForm] = useState({ name: '', email: '', slug: '' })
+  const [form, setForm] = useState({ name: '', slug: '' })
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
 
@@ -58,21 +58,6 @@ export default function NewClientPage() {
               placeholder="Acme Corp"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: slugify(e.target.value) }))}
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Email
-              <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>— for your records</span>
-            </label>
-            <input
-              type="email"
-              required
-              className="input"
-              placeholder="contact@acmecorp.com"
-              value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             />
           </div>
 

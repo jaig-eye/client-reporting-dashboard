@@ -1,5 +1,5 @@
 // Content Tool — /admin/content
-// Three-tab interface: Queue + New Post + Settings
+// Four-tab interface: Queue + Topics + New Post + Settings
 
 import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
@@ -7,7 +7,8 @@ import { cookies }             from 'next/headers'
 import { redirect }            from 'next/navigation'
 import ContentEditor           from './ContentEditor'
 import ContentQueue            from '@/components/admin/ContentQueue'
-import ContentSettingsPanel    from './ContentSettingsPanel'
+import ContentTopics           from '@/components/admin/ContentTopics'
+import GlobalContentSettings   from './ContentSettingsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,7 @@ export default async function ContentPage({
     wpClientIds.length > 0
       ? db.from('clients').select('id, name').in('id', wpClientIds)
       : Promise.resolve({ data: [] }),
-    // All clients (for Settings tab)
+    // All clients (for Topics tab — any client can have topic ideas)
     db.from('clients').select('id, name').order('name'),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
     db.from('content_posts')
@@ -82,6 +83,13 @@ export default async function ContentPage({
 
   const pendingCount = posts.filter(p => p.status === 'pending').length
 
+  const tabs = [
+    { id: 'queue',    label: `Queue (${pendingCount})` },
+    { id: 'topics',   label: 'Topics'                  },
+    { id: 'new-post', label: 'New Post'                },
+    { id: 'settings', label: 'Settings'                },
+  ]
+
   return (
     <div>
       <div className="page-header">
@@ -95,11 +103,7 @@ export default async function ContentPage({
 
       {/* Tab nav */}
       <div className="flex gap-1 mb-6" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-        {[
-          { id: 'queue',    label: `Queue (${pendingCount})` },
-          { id: 'new-post', label: 'New Post' },
-          { id: 'settings', label: 'Settings' },
-        ].map(tab => (
+        {tabs.map(tab => (
           <a
             key={tab.id}
             href={`?tab=${tab.id}`}
@@ -123,6 +127,10 @@ export default async function ContentPage({
         <ContentQueue posts={posts} sites={sites} />
       )}
 
+      {activeTab === 'topics' && (
+        <ContentTopics clients={allClients} />
+      )}
+
       {activeTab === 'new-post' && (
         sites.length === 0 ? (
           <div className="card p-8 text-center">
@@ -135,7 +143,7 @@ export default async function ContentPage({
       )}
 
       {activeTab === 'settings' && (
-        <ContentSettingsPanel clients={allClients} allSites={sites} />
+        <GlobalContentSettings clients={allClients} allSites={sites} />
       )}
     </div>
   )

@@ -1,5 +1,5 @@
-// Admin Overview — /admin
-// Client health cards with efficiency scores, KPIs, insights, and sync status.
+// Admin Overview — /admin/dashboard
+// Merged clients + overview: sortable table of all clients with key metrics.
 
 import { Suspense }                  from 'react'
 import { createAdminClient }         from '@/lib/supabase/server'
@@ -8,8 +8,6 @@ import type { ConnectorType }        from '@/lib/types'
 import { getConnectorDef }           from '@/lib/connectors/registry'
 import DateRangePicker               from '@/components/DateRangePicker'
 import AdminDateSync                 from './AdminDateSync'
-import ClientHealthCard              from '@/components/admin/ClientHealthCard'
-import type { ClientHealthCardProps } from '@/components/admin/ClientHealthCard'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
 import type { AgencySettings }       from '@/lib/types'
 
@@ -30,6 +28,8 @@ function fmtSpend(n: number) {
   if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`
   return `$${n.toFixed(0)}`
 }
+function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%` }
+function fmtX(n: number)   { return `${n.toFixed(2)}x` }
 
 // ─── page ─────────────────────────────────────────────────────────────────────
 
@@ -72,7 +72,7 @@ export default async function AdminOverviewPage({
       .lte('date', dateTo),
 
     db.from('meta_ads_metrics')
-      .select('client_id, spend')
+      .select('client_id, spend, clicks, impressions, conversions')
       .gte('date', dateFrom)
       .lte('date', dateTo),
 
@@ -110,7 +110,7 @@ export default async function AdminOverviewPage({
     connsByClient.get(conn.client_id)!.push(conn)
   }
 
-  // Aggregate Google Ads metrics per client (sum across all campaigns/days)
+  // Aggregate Google Ads metrics per client
   const googleByClient = new Map<string, { spend: number; clicks: number; conv: number; value: number; impressions: number }>()
   for (const row of googleRows) {
     const cid = row.client_id as string
@@ -123,40 +123,39 @@ export default async function AdminOverviewPage({
     m.impressions += (row.impressions       as number) ?? 0
   }
 
-  // Aggregate Meta Ads spend per client
-  const metaByClient = new Map<string, number>()
+  // Aggregate Meta Ads metrics per client
+  const metaByClient = new Map<string, { spend: number; clicks: number; conv: number; impressions: number }>()
   for (const row of metaRows) {
     const cid = row.client_id as string
-    metaByClient.set(cid, (metaByClient.get(cid) ?? 0) + ((row.spend as number) ?? 0))
+    if (!metaByClient.has(cid)) metaByClient.set(cid, { spend: 0, clicks: 0, conv: 0, impressions: 0 })
+    const m = metaByClient.get(cid)!
+    m.spend       += (row.spend        as number) ?? 0
+    m.clicks      += (row.clicks       as number) ?? 0
+    m.conv        += (row.conversions  as number) ?? 0
+    m.impressions += (row.impressions  as number) ?? 0
   }
 
   // Summary totals
-  const googleSpendTotal     = Array.from(googleByClient.values()).reduce((s, m) => s + m.spend, 0)
-  const metaSpendTotal       = Array.from(metaByClient.values()).reduce((s, v) => s + v, 0)
-  const totalSpend           = googleSpendTotal + metaSpendTotal
-  const clientsWithErrors    = new Set(syncErrors.map(j => j.client_id as string)).size
+  const googleSpendTotal  = Array.from(googleByClient.values()).reduce((s, m) => s + m.spend, 0)
+  const metaSpendTotal    = Array.from(metaByClient.values()).reduce((s, m) => s + m.spend, 0)
+  const totalSpend        = googleSpendTotal + metaSpendTotal
+  const clientsWithErrors = new Set(syncErrors.map(j => j.client_id as string)).size
 
-  // ── Build per-client card data ──────────────────────────────────────────────
-
-  const clientCards: ClientHealthCardProps[] = clients.map((client, i) => {
+  // Build per-client row data
+  const clientRows = clients.map(client => {
     const conns        = connsByClient.get(client.id) ?? []
     const gData        = googleByClient.get(client.id)
-    const metaSpend    = metaByClient.get(client.id) ?? 0
-    const spend        = (gData?.spend ?? 0) + metaSpend
-    const conversions  = Math.round(gData?.conv ?? 0)
-    const clicks       = gData?.clicks ?? 0
-    const impressions  = gData?.impressions ?? 0
+    const mData        = metaByClient.get(client.id)
+    const spend        = (gData?.spend ?? 0) + (mData?.spend ?? 0)
+    const clicks       = (gData?.clicks ?? 0) + (mData?.clicks ?? 0)
+    const impressions  = (gData?.impressions ?? 0) + (mData?.impressions ?? 0)
+    const conversions  = Math.round((gData?.conv ?? 0) + (mData?.conv ?? 0))
     const enabledBenchmarks = client.enabled_benchmarks ?? null
-    // Show ROAS when explicitly enabled in benchmarks, or fall back to heuristic (has conversion value)
     const showRoas     = enabledBenchmarks ? enabledBenchmarks.includes('roas') : (gData?.value ?? 0) > 0
     const roas         = showRoas && gData && gData.spend > 0 ? gData.value / gData.spend : null
-    // Compute from aggregated totals — more accurate than averaging per-row values
     const ctr          = impressions > 0 ? clicks / impressions : 0
-    const cpc          = clicks > 0 ? (gData?.spend ?? 0) / clicks : 0
-    const convRate     = clicks > 0 ? conversions / clicks : 0
     const cpl          = conversions > 0 ? spend / conversions : null
 
-    // Resolve benchmarks: client-level overrides first, then agency defaults
     const benchmarks = {
       benchmark_roas:      client.benchmark_roas      ?? globalSettings.benchmark_roas,
       benchmark_ctr:       client.benchmark_ctr       ?? globalSettings.benchmark_ctr,
@@ -164,25 +163,9 @@ export default async function AdminOverviewPage({
       benchmark_conv_rate: client.benchmark_conv_rate ?? globalSettings.benchmark_conv_rate,
     }
 
-    // Only compute score when there's meaningful data (some spend + conversion signals)
     const efficiencyScore = spend > 0 && (roas !== null || ctr > 0)
-      ? calcEfficiencyScore({ roas: roas ?? 0, ctr, cpc, convRate }, benchmarks)
+      ? calcEfficiencyScore({ roas: roas ?? 0, ctr, cpc: clicks > 0 ? spend / clicks : 0, convRate: clicks > 0 ? conversions / clicks : 0 }, benchmarks)
       : null
-
-    // Insight chips (max 2)
-    const insights: string[] = []
-    if (conns.length === 0) {
-      insights.push('No data sources')
-    } else if (spend === 0) {
-      insights.push('No spend recorded')
-    } else {
-      if (showRoas && roas !== null && roas > 0 && roas < benchmarks.benchmark_roas) {
-        insights.push(`ROAS ${roas.toFixed(1)}x below ${benchmarks.benchmark_roas}x target`)
-      }
-      if (convRate > 0 && convRate < benchmarks.benchmark_conv_rate / 2) {
-        insights.push('Conv rate critically low')
-      }
-    }
 
     const lastSyncedAt = conns
       .filter(c => c.last_synced_at)
@@ -192,47 +175,25 @@ export default async function AdminOverviewPage({
     const hoursStale = lastSyncedAt
       ? (Date.now() - new Date(lastSyncedAt).getTime()) / 3_600_000
       : Infinity
-    if (hoursStale > 48 && conns.length > 0 && insights.length < 2) {
-      insights.push('Data may be stale')
-    }
 
-    const syncErrors7d = syncErrors.filter(j => j.client_id === client.id).length
+    const syncErrCount = syncErrors.filter(j => j.client_id === client.id).length
 
     return {
-      id:              client.id,
-      name:            client.name,
-      logoUrl:         client.logo_url ?? null,
-      connectors:      conns.map(c => ({
-        id:    c.connector.id,
-        type:  c.connector.type,
-        label: getConnectorDef(c.connector.type as ConnectorType).label,
-      })),
-      efficiencyScore,
-      totalSpend:  spend,
-      enabledBenchmarks,
-      roas,
-      ctr,
-      conversions,
-      cpl,
-      insights:    insights.slice(0, 2),
-      lastSyncedAt,
-      syncErrors7d,
-      delay: i,
+      id: client.id, name: client.name, logoUrl: client.logo_url ?? null,
+      connectors: conns.map(c => ({ type: c.connector.type, label: getConnectorDef(c.connector.type as ConnectorType).label })),
+      spend, conversions, ctr, roas, cpl, showRoas, efficiencyScore, lastSyncedAt, hoursStale, syncErrCount,
     }
   })
 
-  // ── render ──────────────────────────────────────────────────────────────────
-
   return (
     <div>
-      {/* Restore / persist date range via localStorage */}
       <Suspense fallback={null}>
         <AdminDateSync />
       </Suspense>
 
       {/* Page header */}
       <div className="page-header" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
-        <h1 className="page-title">Agency Overview</h1>
+        <h1 className="page-title">Clients</h1>
         <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
           <Suspense fallback={null}>
             <DateRangePicker from={dateFrom} to={dateTo} />
@@ -243,13 +204,13 @@ export default async function AdminOverviewPage({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Total Clients"        value={String(clients.length)}     href="/admin/clients"     />
+        <StatCard label="Total Clients"        value={String(clients.length)}     href="/admin/connections" />
         <StatCard label="Active Connectors"    value={String(connections.length)} href="/admin/connections" color="blue" />
         <StatCard label="Sync Errors (7d)"     value={String(clientsWithErrors)}  href="/admin/system"      color={clientsWithErrors > 0 ? 'red' : 'default'} />
         <StatCard label="Total Spend (period)" value={fmtSpend(totalSpend)}       href="#"                  color="blue" />
       </div>
 
-      {/* Client health cards */}
+      {/* Client table */}
       {clients.length === 0 ? (
         <div className="card p-12 text-center">
           <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>No clients yet</p>
@@ -259,10 +220,125 @@ export default async function AdminOverviewPage({
           <Link href="/admin/clients/new" className="btn btn-primary">+ Add Client</Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {clientCards.map(card => (
-            <ClientHealthCard key={card.id} {...card} />
-          ))}
+        <div className="card overflow-hidden" style={{ padding: 0 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  {['Client', 'Sources', 'Spend', 'ROAS / CPL', 'Conversions', 'CTR', 'Sync Status', ''].map(h => (
+                    <th key={h} style={{
+                      padding: '0.625rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem',
+                      color: 'var(--text-muted)', whiteSpace: 'nowrap', background: 'var(--bg-secondary)',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {clientRows.map((row, i) => {
+                  const syncDot = row.hoursStale < 24 ? 'var(--green)' : row.hoursStale < 72 ? 'var(--amber, #f59e0b)' : 'var(--red)'
+                  const syncLabel = row.lastSyncedAt
+                    ? new Date(row.lastSyncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    : 'Never'
+
+                  return (
+                    <tr key={row.id} style={{
+                      borderBottom: i < clientRows.length - 1 ? '1px solid var(--border-subtle)' : undefined,
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '')}
+                    >
+                      {/* Client name */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
+                        <a
+                          href={`/api/admin/preview/${row.id}`}
+                          style={{ color: 'var(--text-primary)', fontWeight: 600, textDecoration: 'none' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {row.logoUrl ? (
+                              <img src={row.logoUrl} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'contain' }} />
+                            ) : (
+                              <div style={{ width: 22, height: 22, borderRadius: 4, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                                {row.name.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            {row.name}
+                          </div>
+                        </a>
+                      </td>
+
+                      {/* Data sources */}
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        {row.connectors.length === 0 ? (
+                          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>None</span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                            {row.connectors.map((c, ci) => (
+                              <span key={ci} title={c.label} style={{
+                                display: 'inline-block', padding: '0.1rem 0.4rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 500,
+                                background: 'var(--bg-tertiary, var(--border-subtle))', color: 'var(--text-secondary)',
+                              }}>{c.label}</span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Spend */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
+                      </td>
+
+                      {/* ROAS / CPL */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                        {row.showRoas && row.roas !== null
+                          ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
+                          : row.cpl !== null
+                            ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
+                            : <Dash />
+                        }
+                      </td>
+
+                      {/* Conversions */}
+                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
+                      </td>
+
+                      {/* CTR */}
+                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
+                      </td>
+
+                      {/* Sync status */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: syncDot, display: 'inline-block', flexShrink: 0 }} />
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{syncLabel}</span>
+                          {row.syncErrCount > 0 && (
+                            <span style={{ background: 'var(--red-subtle)', color: 'var(--red)', borderRadius: 4, padding: '0 0.3rem', fontSize: '0.6875rem', fontWeight: 600 }}>
+                              {row.syncErrCount} err
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Actions */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <Link
+                            href={`/admin/clients/${row.id}`}
+                            className="btn btn-secondary"
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                          >
+                            Settings
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -270,6 +346,10 @@ export default async function AdminOverviewPage({
 }
 
 // ─── sub-components ───────────────────────────────────────────────────────────
+
+function Dash() {
+  return <span style={{ color: 'var(--text-faint)' }}>—</span>
+}
 
 function StatCard({
   label, value, href, color = 'default',

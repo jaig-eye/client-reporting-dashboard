@@ -38,6 +38,9 @@ export async function PUT(request: NextRequest) {
     'ai_provider', 'ai_model', 'ai_api_key',
     'chart_color_spend', 'chart_color_prior_spend',
     'chart_color_conversions', 'chart_color_prior_conversions',
+    'notification_email',
+    'notify_topics_created', 'notify_post_generated', 'notify_approval_needed',
+    'overview_columns',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

@@ -2,24 +2,29 @@
 // Dashboard Layout
 //
 // Wraps all /dashboard/** pages with the persistent sidebar navigation.
-// Reads the client session to determine which connector types are active
-// so the sidebar can show/hide sections accordingly.
+// Reads the client session to determine which connector types are active.
+// If an admin session is also present, renders AdminDashboardBar at the top.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
+import { isAdminAuthed } from '@/lib/auth'
 import type { Client, Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import DashboardSidebar from '@/components/DashboardSidebar'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
+import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies()
   const db          = createAdminClient()
 
-  const token  = cookieStore.get('client_token')?.value
+  const token        = cookieStore.get('client_token')?.value
+  const adminSession = cookieStore.get('admin_session')?.value
+  const isAdmin      = isAdminAuthed(adminSession)
+
   let client:  Client | null  = null
   let activeConnectorTypes: ConnectorType[] = []
   let settings: Awaited<ReturnType<typeof getAgencySettings>> | null = null
@@ -48,10 +53,39 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
+  // Load admin bar data when admin session is active
+  let adminClients: { id: string; name: string; dashboard_token: string }[] = []
+  if (isAdmin) {
+    const { data } = await db
+      .from('clients')
+      .select('id, name, dashboard_token')
+      .order('name')
+    adminClients = (data ?? []) as typeof adminClients
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+
   return (
     <>
       <DashboardNavigationRefresher />
-      <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)' }}>
+
+      {/* Admin overlay bar — only visible to admins */}
+      {isAdmin && client && (
+        <AdminDashboardBar
+          currentClientId={client.id}
+          currentClientName={client.name}
+          dashboardToken={(client as unknown as Record<string, string>).dashboard_token ?? token ?? ''}
+          clients={adminClients}
+          appUrl={appUrl}
+        />
+      )}
+
+      <div style={{
+        display: 'flex',
+        minHeight: '100vh',
+        background: 'var(--bg-base)',
+        paddingTop: isAdmin && client ? 40 : 0,
+      }}>
         {client && (
           <Suspense fallback={<div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }} />}>
             <DashboardSidebar

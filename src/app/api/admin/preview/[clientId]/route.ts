@@ -27,7 +27,7 @@ export async function GET(
     return NextResponse.redirect(new URL('/admin', req.url))
   }
 
-  const res = NextResponse.redirect(new URL(`/admin/preview/${clientId}`, req.url))
+  const res = NextResponse.redirect(new URL(`/dashboard`, req.url))
   res.cookies.set('client_token', client.dashboard_token, {
     httpOnly: true,
     path: '/',

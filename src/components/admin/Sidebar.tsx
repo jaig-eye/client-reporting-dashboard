@@ -4,7 +4,6 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
-  SquaresFour,
   Buildings,
   PlugsConnected,
   Pencil,
@@ -23,8 +22,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/admin/dashboard',   label: 'Overview',         icon: <SquaresFour size={16} aria-hidden />,   matchPrefix: false },
-  { href: '/admin/clients',     label: 'Clients',          icon: <Buildings size={16} aria-hidden />,     matchPrefix: true  },
+  { href: '/admin/dashboard',   label: 'Clients',          icon: <Buildings size={16} aria-hidden />,     matchPrefix: true  },
   { href: '/admin/connections', label: 'Data Connections', icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
   { href: '/admin/content',     label: 'Content',          icon: <Pencil size={16} aria-hidden />,        matchPrefix: true  },
   { href: '/admin/users',       label: 'Users',            icon: <UsersThree size={16} aria-hidden />,    matchPrefix: true  },

@@ -9,15 +9,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { name, email, slug } = await request.json()
-  if (!name || !email || !slug) {
-    return NextResponse.json({ error: 'name, email, and slug are required' }, { status: 400 })
+  const { name, slug } = await request.json()
+  if (!name || !slug) {
+    return NextResponse.json({ error: 'name and slug are required' }, { status: 400 })
   }
 
   const db = createAdminClient()
   const { data, error } = await db
     .from('clients')
-    .insert({ name, email, slug })
+    .insert({ name, slug })
     .select()
     .single()
 

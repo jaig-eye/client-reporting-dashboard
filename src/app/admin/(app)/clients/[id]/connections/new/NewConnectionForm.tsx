@@ -102,17 +102,6 @@ export default function NewConnectionForm({
               required
             />
           </div>
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Account Name <span style={{ color: 'var(--text-faint)' }}>(optional)</span>
-            </label>
-            <input
-              className="input"
-              placeholder="e.g. Client Brand Campaign Account"
-              value={externalName}
-              onChange={e => setExternalName(e.target.value)}
-            />
-          </div>
           {discoveredAccounts.length > 0 && (
             <button
               type="button"

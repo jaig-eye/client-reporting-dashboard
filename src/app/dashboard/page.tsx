@@ -18,7 +18,6 @@ import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
-import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -358,36 +357,21 @@ export default async function DashboardPage({
   const cpmSpark       = ds.map(d => ({ v: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0 }))
   const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
-  // ─── Keyword highlights (Google Ads only, across all campaigns) ───────────
-  type KwHighlightRow = { keyword_text: string; match_type: string | null; spend: number; impressions: number; clicks: number; conversions: number }
-  const kwHighlightMap = new Map<string, { matchType: string | null; spend: number; impressions: number; clicks: number; conversions: number }>()
-  if (hasGoogle && !isFiltered || (isFiltered && source === 'google_ads')) {
-    const { data: kwData } = await db
-      .from('google_ads_keywords')
-      .select('keyword_text,match_type,spend,impressions,clicks,conversions')
-      .eq('client_id', client.id)
-      .gte('date', fmtDate(fromDate))
-      .lte('date', fmtDate(toDate))
-    for (const kw of (kwData ?? []) as KwHighlightRow[]) {
-      const key = kw.keyword_text
-      const ex  = kwHighlightMap.get(key)
-      if (ex) {
-        ex.spend += Number(kw.spend)||0; ex.impressions += Number(kw.impressions)||0
-        ex.clicks += Number(kw.clicks)||0; ex.conversions += Number(kw.conversions)||0
-      } else {
-        kwHighlightMap.set(key, { matchType: kw.match_type ?? null, spend: Number(kw.spend)||0, impressions: Number(kw.impressions)||0, clicks: Number(kw.clicks)||0, conversions: Number(kw.conversions)||0 })
-      }
-    }
+  // ─── Per-source totals for platform cards (overview mode) ────────────────
+  let googleTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0 }
+  for (const row of (gRes.data ?? []) as Record<string, unknown>[]) {
+    googleTotal.spend       += Number(row.spend) || 0
+    googleTotal.conversions += Number(row.conversions) || 0
+    googleTotal.clicks      += Number(row.clicks) || 0
+    googleTotal.impressions += Number(row.impressions) || 0
+    googleTotal.convValue   += Number(row.conversions_value) || 0
   }
-
-  // Highlights: top 6 by conversions; Lowlights: worst 3 by CPL (must have ≥1 conversion)
-  const allKwData = Array.from(kwHighlightMap.entries()).map(([text, k]) => {
-    const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
-    return { text, matchType: k.matchType, conversions: k.conversions, clicks: k.clicks, impressions: k.impressions, spend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
-  })
-  const kwHighlights = allKwData.slice().sort((a, b) => b.conversions - a.conversions).slice(0, 6)
-  const kwLowlights  = allKwData.filter(k => k.conversions >= 1).sort((a, b) => b.cpl - a.cpl).slice(0, 3)
-  const showKwHighlights = kwHighlights.length > 0
+  let metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0 }
+  for (const row of (mRes.data ?? []) as Record<string, unknown>[]) {
+    metaTotal.spend       += Number(row.spend) || 0
+    metaTotal.impressions += Number(row.impressions) || 0
+    metaTotal.clicks      += Number(row.clicks) || 0
+  }
 
   // ─── Empty state — no connections ────────────────────────────────────────
   if (connections.length === 0) {
@@ -410,8 +394,16 @@ export default async function DashboardPage({
         {/* ── Inline page header ───────────────────────────────── */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
+            {isFiltered && (
+              <a href="/dashboard" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 4 }}
+                onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text-primary)')}
+                onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text-muted)')}
+              >
+                ← Overview
+              </a>
+            )}
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              {source === 'google_ads' ? 'Google Ads' : source === 'meta_ads' ? 'Meta Ads' : 'Summary'}
+              {isFiltered ? 'Paid Ads Summary' : 'Overview'}
             </h1>
             {syncedAt && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
@@ -602,8 +594,71 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* ── Campaign breakdown ───────────────────────────────── */}
-            {!hiddenMetrics.has('campaigns') && (
+            {/* ── Platform cards (overview mode) ───────────────────── */}
+            {!isFiltered && (hasGoogle || hasMeta) && (
+              <div>
+                <h2 className="section-title mb-3">Paid Advertising</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {hasGoogle && (
+                    <a href="?source=google_ads" style={{ textDecoration: 'none' }}>
+                      <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: '1.1rem' }}>🔵</span>
+                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Google Ads</span>
+                          </div>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Spend</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmt$(adFuelCut > 0 ? applyAdFuel(googleTotal.spend, adFuelCut) : googleTotal.spend)}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Conversions</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(googleTotal.conversions)}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>CTR</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{googleTotal.impressions > 0 ? fmtPct(googleTotal.clicks / googleTotal.impressions) : '—'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </a>
+                  )}
+                  {hasMeta && (
+                    <a href="?source=meta_ads" style={{ textDecoration: 'none' }}>
+                      <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: '1.1rem' }}>🟦</span>
+                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Meta Ads</span>
+                          </div>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Spend</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmt$(adFuelCut > 0 ? applyAdFuel(metaTotal.spend, adFuelCut) : metaTotal.spend)}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Impressions</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(metaTotal.impressions)}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>CTR</p>
+                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{metaTotal.impressions > 0 ? fmtPct(metaTotal.clicks / metaTotal.impressions) : '—'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Campaign breakdown (filtered mode only) ───────────── */}
+            {isFiltered && !hiddenMetrics.has('campaigns') && (
               <div className="card p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
@@ -654,69 +709,6 @@ export default async function DashboardPage({
               </div>
             )}
         </>
-
-        {/* ── Keyword Highlights (Google Ads only) ─────────────── */}
-        {showKwHighlights && (
-          <div className="card p-6">
-            <div className="flex items-center gap-2 mb-1">
-              <MagnifyingGlass size={16} aria-hidden style={{ color: 'var(--blue)' }} />
-              <h2 className="section-title">Keyword Highlights</h2>
-            </div>
-            <p className="section-desc mb-4">Top performing and underperforming keywords this period</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-              {/* Highlights */}
-              <div>
-                <p className="section-label mb-3" style={{ color: 'var(--green)' }}>Highlights</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {kwHighlights.map((kw, i) => (
-                    <div key={`h-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: '0.375rem', background: 'var(--bg-base)' }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', minWidth: 16, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                          {kw.text}
-                        </span>
-                        {kw.matchType && (
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', textTransform: 'capitalize' }}>{kw.matchType.toLowerCase()}</span>
-                        )}
-                      </div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(kw.conversions)}</span>
-                        <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'block' }}>{fmtPct(kw.ctr)} CTR</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Lowlights */}
-              <div>
-                <p className="section-label mb-3" style={{ color: 'var(--amber, #f59e0b)' }}>Needs Attention</p>
-                {kwLowlights.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {kwLowlights.map((kw, i) => (
-                      <div key={`l-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: '0.375rem', background: 'var(--bg-base)' }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                            {kw.text}
-                          </span>
-                          {kw.matchType && (
-                            <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', textTransform: 'capitalize' }}>{kw.matchType.toLowerCase()}</span>
-                          )}
-                        </div>
-                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtCurrency(kw.cpl)}</span>
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'block' }}>CPL · {fmtNum(kw.conversions)} conv</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', padding: '6px 8px' }}>All converting keywords are efficient</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ── Connection summary cards ─────────────────────────── */}
         {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
