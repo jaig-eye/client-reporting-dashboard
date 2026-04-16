@@ -22,7 +22,7 @@ export default function SpendChart({
   colorPriorConversions  = '#34d399',
   spendLabel             = 'Spend',
   conversionsLabel       = 'Conversions',
-  spendFormatter         = (v: number) => `$${v.toFixed(2)}`,
+  variant                = 'currency',
 }: {
   data:       DailyMetric[]
   priorData?: DailyMetric[]
@@ -32,8 +32,12 @@ export default function SpendChart({
   colorPriorConversions?: string
   spendLabel?:            string
   conversionsLabel?:      string
-  spendFormatter?:        (v: number) => string
+  /** 'currency' formats as $n.nn (default); 'count' formats as a plain integer */
+  variant?:               'currency' | 'count'
 }) {
+  const spendFormatter = variant === 'count'
+    ? (v: number) => v.toLocaleString()
+    : (v: number) => `$${v.toFixed(2)}`
   if (!data.length) {
     return (
       <div className="h-64 flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>

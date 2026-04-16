@@ -36,27 +36,30 @@ export default async function AuthorityPage({
   const dateFrom = fromDate.toISOString().split('T')[0]
   const dateTo   = toDate.toISOString().split('T')[0]
 
-  // Check if client has an Ahrefs connection (two-step to avoid unreliable joined-column filter)
-  const { data: connData } = await db
-    .from('client_connections')
-    .select('id, connector:connectors(type)')
-    .eq('client_id', client.id)
-    .eq('status', 'active')
+  // Fetch connection status and metrics in parallel
+  const [{ data: connData }, { data: metricsRows }] = await Promise.all([
+    db.from('client_connections')
+      .select('id, connector:connectors(type)')
+      .eq('client_id', client.id)
+      .eq('status', 'active'),
+    db.from('ahrefs_metrics')
+      .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic')
+      .eq('client_id', client.id)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .order('date', { ascending: false })
+      .limit(10),
+  ])
 
-  const hasAhrefs = (connData ?? []).some(
-    (c: { connector: { type: string }[] | null }) =>
-      Array.isArray(c.connector) && c.connector.some(cn => cn.type === 'ahrefs')
-  )
-
-  // Fetch the most recent Ahrefs snapshot within the date range
-  const { data: metricsRows } = await db
-    .from('ahrefs_metrics')
-    .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic')
-    .eq('client_id', client.id)
-    .gte('date', dateFrom)
-    .lte('date', dateTo)
-    .order('date', { ascending: false })
-    .limit(10)
+  // Use metrics presence as primary signal — avoids Supabase join shape ambiguity
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const connectorMatch = (connData ?? []).some((c: any) => {
+    const conn = c.connector
+    if (!conn) return false
+    if (Array.isArray(conn)) return conn.some((cn: any) => cn.type === 'ahrefs')
+    return conn.type === 'ahrefs'
+  })
+  const hasAhrefs = connectorMatch || (metricsRows?.length ?? 0) > 0
 
   const latest = metricsRows?.[0]
 

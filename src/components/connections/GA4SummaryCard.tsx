@@ -25,7 +25,7 @@ export default async function GA4SummaryCard({ clientId, dateFrom, dateTo }: Pro
 
   const { data: rows } = await db
     .from('ga4_metrics')
-    .select('sessions, new_users, bounce_rate, avg_session_duration, page_path, channel_group')
+    .select('sessions, new_users, bounce_rate, avg_session_duration, channel_group')
     .eq('client_id', clientId)
     .gte('date', dateFrom)
     .lte('date', dateTo)
@@ -36,28 +36,25 @@ export default async function GA4SummaryCard({ clientId, dateFrom, dateTo }: Pro
   // Aggregate totals
   const totSessions = data.reduce((s, r) => s + (r.sessions ?? 0), 0)
   const totNewUsers = data.reduce((s, r) => s + (r.new_users ?? 0), 0)
-  const avgBounce   = data.length > 0
-    ? data.reduce((s, r) => s + (r.bounce_rate ?? 0), 0) / data.length
-    : 0
-  const avgDur      = data.length > 0
-    ? data.reduce((s, r) => s + (r.avg_session_duration ?? 0), 0) / data.length
-    : 0
+  const bounceSum   = data.reduce((s, r) => s + (r.bounce_rate ?? 0) * (r.sessions ?? 0), 0)
+  const durSum      = data.reduce((s, r) => s + (r.avg_session_duration ?? 0) * (r.sessions ?? 0), 0)
+  const avgBounce   = totSessions > 0 ? bounceSum / totSessions : 0
+  const avgDur      = totSessions > 0 ? durSum    / totSessions : 0
 
-  // Top 5 pages by sessions
-  const pageMap = new Map<string, number>()
+  // Top 5 channels by sessions
+  const channelMap = new Map<string, number>()
   for (const r of data) {
-    if (r.page_path) {
-      pageMap.set(r.page_path, (pageMap.get(r.page_path) ?? 0) + (r.sessions ?? 0))
-    }
+    const ch = r.channel_group ?? 'Unassigned'
+    channelMap.set(ch, (channelMap.get(ch) ?? 0) + (r.sessions ?? 0))
   }
-  const topPages = Array.from(pageMap.entries())
+  const topChannels = Array.from(channelMap.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
 
   const metrics = [
     { label: 'Sessions',      value: fmtNum(totSessions) },
     { label: 'New Users',     value: fmtNum(totNewUsers) },
-    { label: 'Bounce Rate',   value: fmtPct(avgBounce)   },
+    { label: 'Engagement',    value: fmtPct(1 - avgBounce) },
     { label: 'Avg. Duration', value: fmtDur(avgDur)      },
   ]
 
@@ -91,18 +88,18 @@ export default async function GA4SummaryCard({ clientId, dateFrom, dateTo }: Pro
         ))}
       </div>
 
-      {/* Top pages */}
-      {topPages.length > 0 && (
+      {/* Top channels */}
+      {topChannels.length > 0 && (
         <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
-          <p className="section-label mb-2">Top Pages</p>
+          <p className="section-label mb-2">Sessions by Channel</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {topPages.map(([path, sessions]) => (
-              <div key={path} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            {topChannels.map(([channel, sessions]) => (
+              <div key={channel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                 <span style={{
                   fontSize: '0.8125rem', color: 'var(--text-secondary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
                 }}>
-                  {path}
+                  {channel}
                 </span>
                 <span style={{
                   fontSize: '0.8125rem', fontWeight: 600,

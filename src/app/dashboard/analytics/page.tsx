@@ -193,7 +193,7 @@ export default async function GA4Page({
                 colorConversions="#10b981"
                 spendLabel="Sessions"
                 conversionsLabel="Conversions"
-                spendFormatter={v => v.toLocaleString()}
+                variant="count"
               />
             </div>
 
