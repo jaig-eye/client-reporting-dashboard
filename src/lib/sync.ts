@@ -834,7 +834,7 @@ export async function upsertGA4Metrics(
     connection_id:        connectionId,
     client_id:            clientId,
     date:                 r.date,
-    channel_group:        r.channel_group || null,
+    channel_group:        r.channel_group || 'Direct',
     sessions:             r.sessions,
     users:                r.users,
     new_users:            r.new_users,
@@ -846,12 +846,13 @@ export async function upsertGA4Metrics(
   }))
 
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('ga4_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,date,channel_group',
         ignoreDuplicates: false,
       })
+    if (error) console.error(`[sync] ga4_metrics upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }
@@ -869,9 +870,9 @@ export async function upsertGSCMetrics(
     connection_id: connectionId,
     client_id:     clientId,
     date:          r.date,
-    query:         r.query   || null,
-    page:          r.page    || null,
-    country:       r.country || null,
+    query:         r.query   ?? '',
+    page:          r.page    ?? '',
+    country:       r.country ?? '',
     clicks:        r.clicks,
     impressions:   r.impressions,
     ctr:           r.ctr,
@@ -880,12 +881,13 @@ export async function upsertGSCMetrics(
   }))
 
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('gsc_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,date,query,page,country',
         ignoreDuplicates: false,
       })
+    if (error) console.error(`[sync] gsc_metrics upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }
@@ -916,12 +918,13 @@ export async function upsertGBPMetrics(
   }))
 
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('gbp_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,location_id,date',
         ignoreDuplicates: false,
       })
+    if (error) console.error(`[sync] gbp_metrics upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }
