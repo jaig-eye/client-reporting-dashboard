@@ -94,6 +94,10 @@ export async function GET(request: NextRequest) {
 
     // ── UNIFIED MODE — upsert all 4 Google connectors ──────────────────────────
     if (stateData.mode === 'unified' || (!stateData.connector_type && !stateData.mode)) {
+      // Phase 1: upsert all 4 connector rows — do this first, sequentially,
+      // before any API discovery calls that could hang.
+      const savedIds: Partial<Record<string, { id: string; auth: Record<string, unknown>; config: Record<string, unknown> }>> = {}
+
       for (const connType of GOOGLE_ALL_TYPES) {
         // Preserve existing auth + config for this type
         const { data: existing } = await db
@@ -137,15 +141,16 @@ export async function GET(request: NextRequest) {
 
         if (error || !saved) {
           console.error(`[google/callback] Unified upsert failed for ${connType}:`, error)
-          continue
+        } else {
+          savedIds[connType] = { id: saved.id, auth, config }
         }
+      }
 
-        // Non-fatal account discovery
-        try {
-          await discoverForConnector(connType, saved.id, auth, config, db)
-        } catch (e) {
-          console.warn(`[google/callback] Account discovery failed for ${connType} (non-fatal):`, e)
-        }
+      // Phase 2: fire discovery as fire-and-forget so hanging API calls
+      // (e.g. GA4/GSC/GBP APIs not yet enabled) can't block the redirect.
+      for (const [connType, saved] of Object.entries(savedIds)) {
+        discoverForConnector(connType as ConnectorType, saved.id, saved.auth, saved.config, db)
+          .catch(e => console.warn(`[google/callback] Discovery failed for ${connType} (non-fatal):`, e))
       }
 
       return NextResponse.redirect(`${appUrl}/admin/connections?connected=google`)

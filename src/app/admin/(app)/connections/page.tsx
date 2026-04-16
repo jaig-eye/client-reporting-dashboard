@@ -19,7 +19,12 @@ import type { ConnectorType } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ConnectionsPage() {
+export default async function ConnectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ connected?: string; error?: string }>
+}) {
+  const sp = await searchParams
   const db = createAdminClient()
   const { data: connectors } = await db.from('connectors').select('*').order('created_at')
   const existing = (connectors ?? []) as Connector[]
@@ -44,6 +49,28 @@ export default async function ConnectionsPage() {
           </p>
         </div>
       </div>
+
+      {/* OAuth result notices */}
+      {sp.connected === 'google' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle, #f0fdf4)', border: '1px solid var(--green-border, #bbf7d0)', color: 'var(--green)' }}>
+          Google account connected — all four data sources are now active.
+        </div>
+      )}
+      {sp.error === 'google_auth_failed' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          Google sign-in was cancelled or denied. Try again, or check that your Google account has access to the required data.
+        </div>
+      )}
+      {sp.error === 'google_failed' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          Google connection failed. Check Vercel function logs for details (<code>/api/auth/google/callback</code>).
+        </div>
+      )}
+      {sp.error === 'google_save_failed' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          Google tokens were received but could not be saved to the database. Check Vercel logs.
+        </div>
+      )}
 
       <div className="space-y-3">
 
