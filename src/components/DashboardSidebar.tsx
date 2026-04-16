@@ -167,7 +167,7 @@ export default function DashboardSidebar({
         {/* Agency logo — full width; no raw name text when logo present */}
         <div style={{ marginBottom: 8 }}>
           {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName ?? ''} style={{ height: 28, maxWidth: '100%', width: '100%', objectFit: 'contain', objectPosition: 'left' }} />
+            <img src={agencyLogoUrl} alt={agencyName ?? ''} style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 48, objectFit: 'contain', objectPosition: 'left' }} />
           ) : (
             <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {agencyName ?? 'Agency'}

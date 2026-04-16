@@ -472,17 +472,23 @@ export async function upsertGoogleAdsAdMetrics(
     }
   })
 
-  for (let i = 0; i < mapped.length; i += 200) {
+  // Deduplicate by (ad_id, date) — Google Ads API can return duplicate rows
+  // for the same ad in a single response, which causes ON CONFLICT errors
+  const deduped = Array.from(
+    new Map(mapped.map(r => [`${r.ad_id}:${r.date}`, r])).values()
+  )
+
+  for (let i = 0; i < deduped.length; i += 200) {
     const { error } = await db
       .from('google_ads_ad_metrics')
-      .upsert(mapped.slice(i, i + 200), {
+      .upsert(deduped.slice(i, i + 200), {
         onConflict: 'connection_id,ad_id,date',
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_ad_metrics upsert failed: ${error.message}`)
   }
 
-  return mapped.length
+  return deduped.length
 }
 
 /**
@@ -559,17 +565,22 @@ export async function upsertGoogleAdsKeywords(
     }
   })
 
-  for (let i = 0; i < mapped.length; i += 500) {
+  // Deduplicate by (keyword_id, date) — prevents ON CONFLICT errors from duplicate rows
+  const deduped = Array.from(
+    new Map(mapped.map(r => [`${r.keyword_id}:${r.date}`, r])).values()
+  )
+
+  for (let i = 0; i < deduped.length; i += 500) {
     const { error } = await db
       .from('google_ads_keywords')
-      .upsert(mapped.slice(i, i + 500), {
+      .upsert(deduped.slice(i, i + 500), {
         onConflict: 'connection_id,keyword_id,date',
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_keywords upsert failed: ${error.message}`)
   }
 
-  return mapped.length
+  return deduped.length
 }
 
 /**
@@ -600,17 +611,22 @@ export async function upsertGoogleAdsNegativeKeywords(
     synced_at:     new Date().toISOString(),
   }))
 
-  for (let i = 0; i < mapped.length; i += 500) {
+  // Deduplicate by (keyword_id, level) — prevents ON CONFLICT errors from duplicate rows
+  const deduped = Array.from(
+    new Map(mapped.map(r => [`${r.keyword_id}:${r.level}`, r])).values()
+  )
+
+  for (let i = 0; i < deduped.length; i += 500) {
     const { error } = await db
       .from('google_ads_negative_keywords')
-      .upsert(mapped.slice(i, i + 500), {
+      .upsert(deduped.slice(i, i + 500), {
         onConflict: 'connection_id,keyword_id,level',
         ignoreDuplicates: false,
       })
     if (error) throw new Error(`google_ads_negative_keywords upsert failed: ${error.message}`)
   }
 
-  return mapped.length
+  return deduped.length
 }
 
 /**

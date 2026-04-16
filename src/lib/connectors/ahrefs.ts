@@ -77,10 +77,12 @@ export const ahrefsConnector: ConnectorAdapter = {
         target: domain,
         date:   dateTo,
       })
-      domainRating = typeof drData.domain_rating === 'number' ? drData.domain_rating : null
-      ahrefsRank   = typeof drData.ahrefs_rank   === 'number' ? drData.ahrefs_rank   : null
-    } catch {
-      // best-effort
+      // Ahrefs v3 may return flat { domain_rating, ahrefs_rank } or nested { domain: { ... } }
+      const d = (drData.domain as Record<string, unknown> | null) ?? drData
+      domainRating = typeof d.domain_rating === 'number' ? d.domain_rating : null
+      ahrefsRank   = typeof d.ahrefs_rank   === 'number' ? d.ahrefs_rank   : null
+    } catch (e) {
+      console.error(`[ahrefs] Domain rating fetch failed for ${domain}:`, e)
     }
 
     // Overview metrics (backlinks, ref domains, organic keywords + traffic)
@@ -91,13 +93,19 @@ export const ahrefsConnector: ConnectorAdapter = {
         date_to:   dateTo,
         select:    'backlinks,refdomains,org_keywords,org_traffic',
       })
-      const m = (metricsData.metrics as Record<string, unknown>) ?? metricsData
+      const m = (metricsData.metrics as Record<string, unknown> | null) ?? metricsData
       backlinks       = typeof m.backlinks    === 'number' ? m.backlinks    : null
       referringDoms   = typeof m.refdomains   === 'number' ? m.refdomains   : null
       organicKeywords = typeof m.org_keywords === 'number' ? m.org_keywords : null
       organicTraffic  = typeof m.org_traffic  === 'number' ? m.org_traffic  : null
-    } catch {
-      // best-effort
+    } catch (e) {
+      console.error(`[ahrefs] Metrics fetch failed for ${domain}:`, e)
+    }
+
+    // If both API calls returned nothing useful, skip writing a blank row
+    if (domainRating === null && backlinks === null && organicTraffic === null) {
+      console.warn(`[ahrefs] All metrics null for ${domain} — skipping row write`)
+      return { rows: [] }
     }
 
     const row: AhrefsRawRow = {

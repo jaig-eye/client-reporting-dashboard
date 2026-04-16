@@ -88,7 +88,7 @@ export default function Sidebar({
       <div style={{ padding: '1.25rem 1rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
         <div className="mb-0.5">
           {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName} style={{ height: 28, maxWidth: '100%', width: '100%', objectFit: 'contain', objectPosition: 'left' }} />
+            <img src={agencyLogoUrl} alt={agencyName} style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 48, objectFit: 'contain', objectPosition: 'left' }} />
           ) : (
             <div
               className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
