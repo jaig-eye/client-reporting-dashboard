@@ -24,6 +24,7 @@ export default function ClientMetricVisibility({
   const [hidden,         setHidden]         = useState<Set<string>>(new Set(initialHidden))
   const [layoutType,     setLayoutType]     = useState<string>(initialLayoutType ?? 'auto')
   const [layoutOverride, setLayoutOverride] = useState<MetricLayouts | null>(initialLayoutOverride)
+  const [showCustom,     setShowCustom]     = useState<boolean>(!!initialLayoutOverride)
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
 
@@ -50,6 +51,7 @@ export default function ClientMetricVisibility({
 
   async function resetLayoutOverride() {
     setLayoutOverride(null)
+    setShowCustom(false)
     patch({ metric_layout_override: null })
   }
 
@@ -100,34 +102,65 @@ export default function ClientMetricVisibility({
 
       {/* ── Custom Layout Override ──────────────────────────────────── */}
       <div className="card p-5">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        {/* Header row — always visible */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <h3 className="section-title mb-0">Custom Layout Override</h3>
-            <p className="section-desc mt-0.5">Override the agency layout for this client. Leave blank to inherit the agency default.</p>
+            <p className="section-desc mt-0.5">
+              {layoutOverride
+                ? 'Client-specific layout active — overrides the agency default.'
+                : 'Using agency default layout.'}
+            </p>
           </div>
-          {layoutOverride && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {layoutOverride && !showCustom && (
+              <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--blue)', background: 'color-mix(in srgb, var(--blue) 12%, transparent)', borderRadius: 4, padding: '0.125rem 0.5rem' }}>
+                Custom
+              </span>
+            )}
+            {/* Toggle switch */}
             <button
               type="button"
-              onClick={resetLayoutOverride}
-              disabled={saving}
-              style={{
-                fontSize: '0.75rem', color: 'var(--text-muted)', border: '1px solid var(--border)',
-                background: 'var(--bg-surface)', borderRadius: 6, padding: '0.25rem 0.625rem',
-                cursor: saving ? 'not-allowed' : 'pointer', flexShrink: 0,
-              }}
+              onClick={() => setShowCustom(v => !v)}
+              title={showCustom ? 'Collapse editor' : 'Edit custom layout'}
+              style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: showCustom ? 'var(--blue)' : 'var(--text-faint)', lineHeight: 1 }}
             >
-              Reset to agency default
+              {/* Gear icon */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
             </button>
-          )}
+          </div>
         </div>
-        <MetricLayoutEditor
-          value={layoutOverride}
-          onChange={handleLayoutOverrideChange}
-        />
-        {!layoutOverride && (
-          <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
-            Currently using agency default. Editing above will create a client-specific override.
-          </p>
+
+        {/* Collapsible editor */}
+        {showCustom && (
+          <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+            <MetricLayoutEditor
+              value={layoutOverride}
+              onChange={handleLayoutOverrideChange}
+            />
+            {layoutOverride ? (
+              <button
+                type="button"
+                onClick={resetLayoutOverride}
+                disabled={saving}
+                style={{
+                  marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)',
+                  border: '1px solid var(--border)', background: 'var(--bg-surface)',
+                  borderRadius: 6, padding: '0.25rem 0.625rem',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Reset to agency default
+              </button>
+            ) : (
+              <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
+                Editing above will save a client-specific override automatically.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
