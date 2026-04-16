@@ -44,7 +44,8 @@ export default async function AuthorityPage({
     .eq('status', 'active')
 
   const hasAhrefs = (connData ?? []).some(
-    (c: { connector: { type: string } | null }) => c.connector?.type === 'ahrefs'
+    (c: { connector: { type: string }[] | null }) =>
+      Array.isArray(c.connector) ? c.connector.some(cn => cn.type === 'ahrefs') : c.connector?.type === 'ahrefs'
   )
 
   // Fetch the most recent Ahrefs snapshot within the date range
