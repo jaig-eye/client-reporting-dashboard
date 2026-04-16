@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let currentAuth = auth
   if (adapter.refreshAuth) {
     try {
-      const refreshed = await adapter.refreshAuth(currentAuth, config)
+      const refreshed = await adapter.refreshAuth(currentAuth)
       if (refreshed) {
         currentAuth = refreshed as Record<string, unknown>
         await db.from('connectors').update({ auth: currentAuth }).eq('id', id)
