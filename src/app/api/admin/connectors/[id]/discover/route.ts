@@ -44,8 +44,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!adapter) return NextResponse.json({ error: 'No adapter for this connector type' }, { status: 400 })
 
+  // Refresh access token if it is expired or expiring soon (access tokens last ~1h).
+  // The sync pipeline does this too; the discover route must do the same or the
+  // API calls inside discoverAccounts() will silently 401 and return [].
+  let currentAuth = auth
+  if (adapter.refreshAuth) {
+    try {
+      const refreshed = await adapter.refreshAuth(currentAuth, config)
+      if (refreshed) {
+        currentAuth = refreshed as Record<string, unknown>
+        await db.from('connectors').update({ auth: currentAuth }).eq('id', id)
+        console.log(`discover: token refreshed for ${connector.type}`)
+      }
+    } catch (e) {
+      console.warn(`discover: token refresh failed for ${connector.type} (continuing with stored token):`, e)
+    }
+  }
+
   try {
-    const accounts = await adapter.discoverAccounts(auth, config)
+    const accounts = await adapter.discoverAccounts(currentAuth, config)
 
     if (accounts.length > 0) {
       await db.from('connector_accounts').upsert(

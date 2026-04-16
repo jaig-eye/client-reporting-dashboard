@@ -239,7 +239,11 @@ export const googleBusinessProfileConnector: ConnectorAdapter = {
     const accountsRes = await fetch(`${ACCT_MGMT_BASE}/accounts`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
-    if (!accountsRes.ok) return []
+    if (!accountsRes.ok) {
+      const text = await accountsRes.text()
+      console.error(`[google-business-profile] accounts list error ${accountsRes.status}:`, text)
+      return []
+    }
 
     const accountsData = await accountsRes.json() as {
       accounts?: { name: string; accountName: string }[]
@@ -253,7 +257,11 @@ export const googleBusinessProfileConnector: ConnectorAdapter = {
         `${ACCT_MGMT_BASE}/${acct.name}/locations?pageSize=100`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       )
-      if (!locRes.ok) continue
+      if (!locRes.ok) {
+        const text = await locRes.text()
+        console.warn(`[google-business-profile] locations list error for ${acct.name} ${locRes.status}:`, text)
+        continue
+      }
 
       const locData = await locRes.json() as {
         locations?: { name: string; title: string; websiteUri?: string }[]

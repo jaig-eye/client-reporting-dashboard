@@ -174,7 +174,11 @@ export const googleSearchConsoleConnector: ConnectorAdapter = {
     const res = await fetch(`${GSC_BASE}/sites`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
-    if (!res.ok) return []
+    if (!res.ok) {
+      const text = await res.text()
+      console.error(`[google-search-console] sites list error ${res.status}:`, text)
+      return []
+    }
 
     const data = await res.json() as {
       siteEntry?: { siteUrl: string; permissionLevel: string }[]

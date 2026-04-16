@@ -186,7 +186,11 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${accessToken}` },
       })
-      if (!res.ok) break
+      if (!res.ok) {
+        const text = await res.text()
+        console.error(`[google-analytics] accountSummaries error ${res.status}:`, text)
+        break
+      }
 
       const data = await res.json() as {
         accountSummaries?: {
