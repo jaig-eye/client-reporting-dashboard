@@ -121,7 +121,7 @@ export default function CampaignTable({
 
   const COL: Record<ColumnKey, ColDef> = {
     campaign_name: {
-      header: () => <SortTh sk="campaign_name" left>Campaign</SortTh>,
+      header: () => <SortTh sk="campaign_name" left>Name</SortTh>,
       cell: (c) => {
         const link = drillLink(c)
         return (

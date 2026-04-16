@@ -19,8 +19,8 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import { resolveLayout, DEFAULT_METRIC_LAYOUTS } from '@/lib/metric-layouts'
-import type { MetricLayouts } from '@/lib/metric-layouts'
+import { resolveLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS } from '@/lib/metric-layouts'
+import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
 
@@ -155,7 +155,9 @@ export default async function DashboardPage({
 
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
-  const isEcomDash = ecomCount > leadCount
+  const isEcomDash = client.layout_type === 'ecom' ? true
+                   : client.layout_type === 'lead_gen' ? false
+                   : ecomCount > leadCount
 
   // Resolve active metric layout (agency default → client override → built-in)
   const activeLayout = resolveLayout(
@@ -434,23 +436,26 @@ export default async function DashboardPage({
     )
   }
 
-  // Grid column counts — cards reflow when metrics are hidden
-  const heroCount = [
-    !hiddenMetrics.has('spend'), !hiddenMetrics.has('leads'),
-    !hiddenMetrics.has('cpl'),   !hiddenMetrics.has('ctr'),
-  ].filter(Boolean).length || 1
-  const heroColsClass = heroCount <= 2 ? 'lg:grid-cols-2' : heroCount === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4'
-
-  const addlCount = [
-    !hiddenMetrics.has('conv_rate'), !hiddenMetrics.has('cpm'),
-    !hiddenMetrics.has('conversions'),
-    !hiddenMetrics.has('conversion_value') && isEcomDash,
-    !hiddenMetrics.has('roas') && isEcomDash,
-    !hiddenMetrics.has('impressions'), !hiddenMetrics.has('cpc'),
-    !hiddenMetrics.has('reach') && (current.reach ?? 0) > 0,
-    !hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0,
-  ].filter(Boolean).length || 1
-  const addlColsClass = addlCount <= 2 ? 'lg:grid-cols-2' : addlCount === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4'
+  // Metric value map — drives layout-based KPI and top metric rendering
+  type MetricCardDef = { value: string; sparkData?: {v:number}[]; delta?: number; invertDelta?: boolean; sparkColor?: string }
+  const metricValMap: Record<string, MetricCardDef> = {
+    spend:       { value: fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend), sparkData: spendSpark, delta: showCompare ? calcDelta(current.spend, prior.spend) : undefined, invertDelta: true, sparkColor: settings.chart_color_spend ?? '#93c5fd' },
+    leads:       isEcomDash
+                   ? { value: fmt$(current.conversionValue), sparkData: convValueSpark, delta: showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined, sparkColor: '#10b981' }
+                   : { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: '#10b981' },
+    conversions: { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
+    revenue:     { value: fmt$(current.conversionValue), sparkData: convValueSpark, delta: showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined, sparkColor: '#10b981' },
+    roas:        { value: fmtRoas(current.roas), sparkData: roasSpark, delta: showCompare ? calcDelta(current.roas, prior.roas) : undefined, sparkColor: '#8b5cf6' },
+    cpa:         { value: current.cpl > 0 ? fmtCurrency(current.cpl) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(current.cpl, prior.cpl) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    ctr:         { value: fmtPct(current.ctr), sparkData: ctrSpark, delta: showCompare ? calcDelta(current.ctr, prior.ctr) : undefined, sparkColor: '#3b82f6' },
+    conv_rate:   { value: fmtPct(convRate), sparkData: crSpark, delta: showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined, sparkColor: '#10b981' },
+    cpm:         { value: fmtCurrency(current.cpm), sparkData: cpmSpark, delta: showCompare ? calcDelta(current.cpm, prior.cpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpc:         { value: current.cpc > 0 ? fmtCurrency(current.cpc) : '—', sparkData: ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 })), delta: showCompare ? calcDelta(current.cpc, prior.cpc) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    impressions: { value: fmtNum(current.impressions), sparkData: ds.map(d => ({ v: d.impressions })), delta: showCompare ? calcDelta(current.impressions, prior.impressions) : undefined, sparkColor: '#6366f1' },
+    clicks:      { value: fmtNum(current.clicks), sparkData: ds.map(d => ({ v: d.clicks })), delta: showCompare ? calcDelta(current.clicks, prior.clicks) : undefined, sparkColor: '#6366f1' },
+    reach:       { value: fmtNum(current.reach ?? 0), sparkData: ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 })), delta: showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined, sparkColor: '#06b6d4' },
+    frequency:   { value: (current.frequency ?? 0).toFixed(2), sparkData: ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 })), delta: showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined, sparkColor: '#f97316' },
+  }
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -499,99 +504,45 @@ export default async function DashboardPage({
         )}
 
         <>
-            {/* ── Hero KPI cards ───────────────────────────────────── */}
-            <div className={`grid grid-cols-2 ${heroColsClass} gap-4`}>
-              {!hiddenMetrics.has('spend') && (
-                <SparkMetricCard
-                  label="Total Cost"
-                  value={fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend)}
-                  delta={showCompare ? calcDelta(current.spend, prior.spend) : undefined}
-                  invertDelta sparkData={spendSpark} sparkColor={settings.chart_color_spend ?? '#93c5fd'} delay={0}
-                />
-              )}
-              {!hiddenMetrics.has('leads') && (isEcomDash ? (
-                <SparkMetricCard label="Revenue" value={fmt$(current.conversionValue)}
-                  delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
-                  sparkData={convValueSpark} sparkColor="#10b981" delay={1} />
-              ) : (
-                <SparkMetricCard label="Leads" value={fmtNum(current.conversions)}
-                  delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
-                  sparkData={convSpark} sparkColor="#10b981" delay={1} />
-              ))}
-              {!hiddenMetrics.has('cpl') && (isEcomDash ? (
-                <SparkMetricCard label="ROAS" value={fmtRoas(current.roas)}
-                  delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
-                  sparkData={roasSpark} sparkColor="#8b5cf6" delay={2} />
-              ) : (
-                <SparkMetricCard label="Cost Per Lead" value={current.cpl > 0 ? fmtCurrency(current.cpl) : '—'}
-                  delta={showCompare ? calcDelta(current.cpl, prior.cpl) : undefined}
-                  invertDelta sparkData={cplSpark} sparkColor="#f59e0b" delay={2} />
-              ))}
-              {!hiddenMetrics.has('ctr') && (
-                <SparkMetricCard label="CTR" value={fmtPct(current.ctr)}
-                  delta={showCompare ? calcDelta(current.ctr, prior.ctr) : undefined}
-                  sparkData={ctrSpark} sparkColor="#3b82f6" delay={3} />
-              )}
+            {/* ── KPI cards (sparklines) — driven by activeLayout.kpi_cards ─── */}
+            <div className={`grid grid-cols-2 lg:grid-cols-${activeLayout.kpi_cards.length || 3} gap-4`}>
+              {activeLayout.kpi_cards.map((key, i) => {
+                const m = metricValMap[key]
+                if (!m) return null
+                return (
+                  <SparkMetricCard
+                    key={key}
+                    label={METRIC_LABELS[key as MetricKey] ?? key}
+                    value={m.value}
+                    sparkData={m.sparkData}
+                    delta={m.delta}
+                    invertDelta={m.invertDelta}
+                    sparkColor={m.sparkColor}
+                    delay={i}
+                  />
+                )
+              })}
             </div>
 
-            {/* ── Additional metric cards ───────────────────────────── */}
-            {(
-              !hiddenMetrics.has('conv_rate') ||
-              !hiddenMetrics.has('cpm') ||
-              !hiddenMetrics.has('conversions') ||
-              !hiddenMetrics.has('impressions') ||
-              !hiddenMetrics.has('cpc') ||
-              (!hiddenMetrics.has('conversion_value') && isEcomDash) ||
-              (!hiddenMetrics.has('roas') && isEcomDash) ||
-              (!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0) ||
-              (!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0)
-            ) && (
-              <div className={`grid grid-cols-2 ${addlColsClass} gap-4`}>
-                {!hiddenMetrics.has('conv_rate') && (
-                  <SparkMetricCard label="Conv. Rate" value={fmtPct(convRate)}
-                    delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
-                    sparkData={crSpark} sparkColor="#10b981" delay={4} />
-                )}
-                {!hiddenMetrics.has('cpm') && (
-                  <SparkMetricCard label="CPM" value={fmtCurrency(current.cpm)}
-                    delta={showCompare ? calcDelta(current.cpm, prior.cpm) : undefined}
-                    invertDelta sparkData={cpmSpark} sparkColor="#f59e0b" delay={5} />
-                )}
-                {!hiddenMetrics.has('conversions') && (
-                  <SparkMetricCard label="Conversions" value={fmtNum(current.conversions)}
-                    delta={showCompare ? calcDelta(current.conversions, prior.conversions) : undefined}
-                    sparkData={convSpark} sparkColor={settings.chart_color_conversions ?? '#10b981'} delay={6} />
-                )}
-                {!hiddenMetrics.has('conversion_value') && isEcomDash && (
-                  <SparkMetricCard label="Conv. Value" value={fmt$(current.conversionValue)}
-                    delta={showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined}
-                    sparkData={convValueSpark} sparkColor="#8b5cf6" delay={7} />
-                )}
-                {!hiddenMetrics.has('roas') && isEcomDash && (
-                  <SparkMetricCard label="ROAS" value={fmtRoas(current.roas)}
-                    delta={showCompare ? calcDelta(current.roas, prior.roas) : undefined}
-                    sparkData={roasSpark} sparkColor="#8b5cf6" delay={8} />
-                )}
-                {!hiddenMetrics.has('impressions') && (
-                  <SparkMetricCard label="Impressions" value={fmtNum(current.impressions)}
-                    delta={showCompare ? calcDelta(current.impressions, prior.impressions) : undefined}
-                    sparkData={ds.map(d => ({ v: d.impressions }))} sparkColor="#6366f1" delay={9} />
-                )}
-                {!hiddenMetrics.has('cpc') && (
-                  <SparkMetricCard label="Avg. CPC" value={current.cpc > 0 ? fmtCurrency(current.cpc) : '—'}
-                    delta={showCompare ? calcDelta(current.cpc, prior.cpc) : undefined}
-                    invertDelta sparkData={ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 }))} sparkColor="#f59e0b" delay={10} />
-                )}
-                {!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0 && (
-                  <SparkMetricCard label="Reach" value={fmtNum(current.reach ?? 0)}
-                    delta={showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined}
-                    sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 }))} sparkColor="#06b6d4" delay={11} />
-                )}
-                {!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0 && (
-                  <SparkMetricCard label="Frequency" value={(current.frequency ?? 0).toFixed(2)}
-                    delta={showCompare ? calcDelta(current.frequency ?? 0, prior.frequency ?? 0) : undefined}
-                    sparkData={ds.map(d => ({ v: (d as Record<string, unknown>).frequency as number ?? 0 }))} sparkColor="#f97316" delay={12} />
-                )}
+            {/* ── Top metrics (compact, no sparkline) — driven by activeLayout.top_metrics ─── */}
+            {activeLayout.top_metrics.length > 0 && (
+              <div className={`grid grid-cols-2 lg:grid-cols-${activeLayout.top_metrics.length} gap-4`}>
+                {activeLayout.top_metrics.map(key => {
+                  const m = metricValMap[key]
+                  if (!m) return null
+                  const isGood = m.delta !== undefined ? (m.invertDelta ? m.delta <= 0 : m.delta >= 0) : null
+                  return (
+                    <div key={key} className="card" style={{ padding: '1rem 1.25rem' }}>
+                      <p className="metric-label" style={{ marginBottom: '0.25rem' }}>{METRIC_LABELS[key as MetricKey] ?? key}</p>
+                      <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{m.value}</p>
+                      {m.delta !== undefined && m.delta !== 0 && (
+                        <p style={{ fontSize: '0.75rem', fontWeight: 600, marginTop: 2, color: isGood ? 'var(--green)' : 'var(--red)' }}>
+                          {m.delta > 0 ? '▲' : '▼'} {Math.abs(m.delta).toFixed(1)}%
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
 

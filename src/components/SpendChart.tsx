@@ -22,6 +22,7 @@ export default function SpendChart({
   colorPriorConversions  = '#34d399',
   spendLabel             = 'Spend',
   conversionsLabel       = 'Conversions',
+  spendFormatter         = (v: number) => `$${v.toFixed(2)}`,
 }: {
   data:       DailyMetric[]
   priorData?: DailyMetric[]
@@ -31,6 +32,7 @@ export default function SpendChart({
   colorPriorConversions?: string
   spendLabel?:            string
   conversionsLabel?:      string
+  spendFormatter?:        (v: number) => string
 }) {
   if (!data.length) {
     return (
@@ -75,7 +77,7 @@ export default function SpendChart({
           tick={{ fontSize: 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={v => `$${v}`}
+          tickFormatter={v => spendFormatter(v)}
         />
         <YAxis
           yAxisId="conversions"
@@ -86,7 +88,7 @@ export default function SpendChart({
         />
         <Tooltip
           formatter={(value: number, name: string) => {
-            if (name === spendLabel || name === 'Prior Spend') return [`$${value.toFixed(2)}`, name]
+            if (name === spendLabel || name === 'Prior Spend') return [spendFormatter(value), name]
             return [value, name]
           }}
           labelFormatter={(label, payload) => {

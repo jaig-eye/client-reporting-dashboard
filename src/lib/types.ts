@@ -160,6 +160,11 @@ export interface Client {
    * Shape: { lead_gen: MetricLayout, ecom: MetricLayout }
    */
   metric_layout_override?: Record<string, unknown> | null
+  /**
+   * Explicit layout type override for this client.
+   * 'lead_gen' | 'ecom' | null (null = auto-detect from campaign assignments)
+   */
+  layout_type?: string | null
   created_at: string
   updated_at: string
 }

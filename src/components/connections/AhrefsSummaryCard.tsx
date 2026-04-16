@@ -16,7 +16,7 @@ export default async function AhrefsSummaryCard({ clientId, dateFrom, dateTo }: 
 
   const { data: rows } = await db
     .from('ahrefs_metrics')
-    .select('date, domain_rating, backlinks, referring_domains, organic_traffic')
+    .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic')
     .eq('client_id', clientId)
     .gte('date', dateFrom)
     .lte('date', dateTo)
@@ -37,6 +37,8 @@ export default async function AhrefsSummaryCard({ clientId, dateFrom, dateTo }: 
     { label: 'Domain Rating',     value: latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—' },
     { label: 'Backlinks',         value: fmtNum(latest?.backlinks) },
     { label: 'Referring Domains', value: fmtNum(latest?.referring_domains) },
+    { label: 'Ahrefs Rank',       value: latest?.ahrefs_rank != null ? `#${latest.ahrefs_rank.toLocaleString()}` : '—' },
+    { label: 'Organic Keywords',  value: fmtNum(latest?.organic_keywords) },
     { label: 'Organic Traffic',   value: fmtNum(latest?.organic_traffic) },
   ]
 
@@ -48,7 +50,7 @@ export default async function AhrefsSummaryCard({ clientId, dateFrom, dateTo }: 
       href="/dashboard/seo/authority"
       hasData={hasData}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
         {metrics.map(m => (
           <div key={m.label}>
             <p className="metric-label mb-1">{m.label}</p>

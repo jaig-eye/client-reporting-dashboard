@@ -1,6 +1,7 @@
 // Client Detail — /admin/clients/[id]
 // Tabbed management page: General / Data Sources / Performance / Content / Advanced
 
+import { unstable_noStore as noStore } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
@@ -25,6 +26,7 @@ import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
 import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
+import type { MetricLayouts } from '@/lib/metric-layouts'
 import ClientDirectConnections from './ClientDirectConnections'
 import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
 import GscInsightsPanel from '@/components/admin/GscInsightsPanel'
@@ -47,6 +49,7 @@ export default async function ClientDetailPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ connected?: string; synced?: string; error?: string; tab?: string }>
 }) {
+  noStore()
   const { id } = await params
   const sp = await searchParams
   const activeTab = TABS.find(t => t.id === sp.tab)?.id ?? 'general'
@@ -421,9 +424,14 @@ export default async function ClientDetailPage({
           </div>
 
           <div className="card p-5">
-            <h2 className="section-title mb-1">Metric Visibility</h2>
-            <p className="section-desc mb-4">Control which metric cards and sections are visible on the client dashboard.</p>
-            <ClientMetricVisibility clientId={id} initialHidden={Array.isArray(client.hidden_metrics) ? client.hidden_metrics : []} />
+            <h2 className="section-title mb-1">Dashboard Layout</h2>
+            <p className="section-desc mb-4">Configure layout type, custom metric arrangement, and section visibility for this client.</p>
+            <ClientMetricVisibility
+              clientId={id}
+              initialHidden={Array.isArray(client.hidden_metrics) ? client.hidden_metrics : []}
+              initialLayoutType={client.layout_type ?? null}
+              initialLayoutOverride={(client.metric_layout_override as MetricLayouts | null) ?? null}
+            />
           </div>
 
           <div className="card p-5">

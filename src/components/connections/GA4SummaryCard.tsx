@@ -15,19 +15,18 @@ function fmtDur(n: number) {
 
 interface Props {
   clientId: string
-  connectionId: string
+  connectionId?: string  // kept for API compat but no longer used in query
   dateFrom: string
   dateTo: string
 }
 
-export default async function GA4SummaryCard({ clientId, connectionId, dateFrom, dateTo }: Props) {
+export default async function GA4SummaryCard({ clientId, dateFrom, dateTo }: Props) {
   const db = createAdminClient()
 
   const { data: rows } = await db
     .from('ga4_metrics')
     .select('sessions, new_users, bounce_rate, avg_session_duration, page_path, channel_group')
     .eq('client_id', clientId)
-    .eq('connection_id', connectionId)
     .gte('date', dateFrom)
     .lte('date', dateTo)
 

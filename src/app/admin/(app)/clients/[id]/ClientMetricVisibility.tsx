@@ -1,146 +1,175 @@
 'use client'
 
 import { useState } from 'react'
+import MetricLayoutEditor from '@/components/admin/MetricLayoutEditor'
+import type { MetricLayouts } from '@/lib/metric-layouts'
 
-interface MetricDef { id: string; label: string; desc: string }
-
-const METRIC_GROUPS: { heading: string; metrics: MetricDef[] }[] = [
-  {
-    heading: 'Paid Ads — Default visible',
-    metrics: [
-      { id: 'spend',       label: 'Spend',              desc: 'Total ad spend card (Ad Fuel Spend if applicable)' },
-      { id: 'leads',       label: 'Leads / Revenue',    desc: 'Lead count (lead gen) or Revenue (ecommerce)' },
-      { id: 'cpl',         label: 'CPL',                desc: 'Cost Per Lead metric card (lead gen clients)' },
-      { id: 'roas',        label: 'ROAS',               desc: 'Return on Ad Spend card (ecommerce clients)' },
-      { id: 'ctr',         label: 'CTR',                desc: 'Click-through rate metric card' },
-      { id: 'conv_rate',   label: 'Conversion Rate',    desc: 'Conversion rate metric card' },
-      { id: 'cpm',         label: 'CPM',                desc: 'Cost per thousand impressions card' },
-      { id: 'daily_chart', label: 'Daily Performance',  desc: 'Daily spend & conversions trend chart' },
-      { id: 'campaigns',   label: 'Campaign Breakdown', desc: 'Campaign performance table' },
-    ],
-  },
-  {
-    heading: 'Paid Ads — Additional',
-    metrics: [
-      { id: 'conversions',       label: 'Conversions',         desc: 'Total conversion count card' },
-      { id: 'conversion_value',  label: 'Conversion Value',    desc: 'Total conversion revenue (ecommerce clients)' },
-      { id: 'impressions',       label: 'Impressions',         desc: 'Total impressions card' },
-      { id: 'cpc',               label: 'Avg. CPC',            desc: 'Average cost per click card' },
-      { id: 'reach',             label: 'Reach',               desc: 'Unique reach — Meta Ads only' },
-      { id: 'frequency',         label: 'Frequency',           desc: 'Avg. impressions per user — Meta Ads only' },
-      { id: 'view_through_conv', label: 'View-through Conv.',  desc: 'View-through conversions — Google Ads only' },
-    ],
-  },
-  {
-    heading: 'Analytics (GA4)',
-    metrics: [
-      { id: 'ga4_sessions',    label: 'Sessions',          desc: 'Total GA4 sessions card' },
-      { id: 'ga4_users',       label: 'Users',             desc: 'Total GA4 users card' },
-      { id: 'ga4_bounce_rate', label: 'Bounce Rate',       desc: 'Average bounce rate from GA4' },
-    ],
-  },
-  {
-    heading: 'SEO — Search Console',
-    metrics: [
-      { id: 'gsc_clicks',       label: 'Organic Clicks',    desc: 'Total GSC clicks card' },
-      { id: 'gsc_impressions',  label: 'Impressions',       desc: 'Total GSC impressions card' },
-      { id: 'gsc_avg_position', label: 'Avg. Position',     desc: 'Average search ranking position' },
-    ],
-  },
-  {
-    heading: 'Google Business Profile',
-    metrics: [
-      { id: 'gbp_views',          label: 'Profile Views',     desc: 'Total GBP views (Search + Maps)' },
-      { id: 'gbp_calls',          label: 'Calls',             desc: 'Call clicks from GBP' },
-      { id: 'gbp_website_clicks', label: 'Website Clicks',    desc: 'Website clicks from GBP' },
-      { id: 'gbp_reviews_rating', label: 'Avg. Rating',       desc: 'Google review average star rating' },
-    ],
-  },
+// Visibility toggles that are not layout-driven
+const VISIBILITY_DEFS = [
+  { id: 'daily_chart', label: 'Daily Performance Chart', desc: 'Daily spend & conversions trend chart' },
+  { id: 'campaigns',   label: 'Campaign Breakdown',      desc: 'Campaign performance table' },
 ]
-
 
 export default function ClientMetricVisibility({
   clientId,
   initialHidden,
+  initialLayoutType,
+  initialLayoutOverride,
 }: {
-  clientId: string
-  initialHidden: string[]
+  clientId:             string
+  initialHidden:        string[]
+  initialLayoutType:    string | null
+  initialLayoutOverride: MetricLayouts | null
 }) {
-  const [hidden, setHidden] = useState<Set<string>>(new Set(initialHidden))
-  const [saving, setSaving] = useState(false)
-  const [saved,  setSaved]  = useState(false)
+  const [hidden,         setHidden]         = useState<Set<string>>(new Set(initialHidden))
+  const [layoutType,     setLayoutType]     = useState<string>(initialLayoutType ?? 'auto')
+  const [layoutOverride, setLayoutOverride] = useState<MetricLayouts | null>(initialLayoutOverride)
+  const [saving,         setSaving]         = useState(false)
+  const [saved,          setSaved]          = useState(false)
 
-  async function save(next: Set<string>) {
-    setSaving(true)
-    setSaved(false)
+  async function patch(body: Record<string, unknown>) {
+    setSaving(true); setSaved(false)
     await fetch(`/api/admin/clients/${clientId}`, {
-      method:  'PATCH',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ hidden_metrics: Array.from(next) }),
+      body: JSON.stringify(body),
     })
-    setSaving(false)
-    setSaved(true)
+    setSaving(false); setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
-  function toggle(id: string) {
+  function handleLayoutTypeChange(val: string) {
+    setLayoutType(val)
+    patch({ layout_type: val === 'auto' ? null : val })
+  }
+
+  function handleLayoutOverrideChange(v: MetricLayouts) {
+    setLayoutOverride(v)
+    patch({ metric_layout_override: v })
+  }
+
+  async function resetLayoutOverride() {
+    setLayoutOverride(null)
+    patch({ metric_layout_override: null })
+  }
+
+  function toggleVisibility(id: string) {
     const next = new Set(hidden)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     setHidden(next)
-    save(next)
+    patch({ hidden_metrics: Array.from(next) })
   }
 
   return (
-    <div className="space-y-5">
-      {METRIC_GROUPS.map(group => (
-        <div key={group.heading}>
-          <p
-            className="text-xs font-semibold mb-2"
-            style={{ color: 'var(--text-faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}
-          >
-            {group.heading}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {group.metrics.map(m => {
-              const isVisible = !hidden.has(m.id)
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => toggle(m.id)}
-                  disabled={saving}
-                  style={{
-                    display:    'flex',
-                    alignItems: 'center',
-                    gap:        '0.625rem',
-                    padding:    '0.625rem 0.875rem',
-                    borderRadius: '0.5rem',
-                    border:     '1px solid var(--border)',
-                    background: isVisible ? 'var(--bg-surface)' : 'var(--bg-subtle)',
-                    textAlign:  'left',
-                    cursor:     saving ? 'not-allowed' : 'pointer',
-                    opacity:    saving ? 0.6 : 1,
-                    transition: 'background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s',
-                  }}
-                >
-                  {/* Toggle pill */}
-                  <div style={{ width: 32, height: 18, borderRadius: 9999, background: isVisible ? 'var(--blue)' : 'var(--border)', position: 'relative', flexShrink: 0, transition: 'background 0.15s' }}>
-                    <div style={{ position: 'absolute', top: 2, left: isVisible ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)', marginBottom: 1 }}>{m.label}</p>
-                    <p className="text-xs" style={{ color: 'var(--text-faint)' }}>{m.desc}</p>
-                  </div>
-                  <span className="text-xs font-medium" style={{ color: isVisible ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
-                    {isVisible ? 'Visible' : 'Hidden'}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
+    <div className="space-y-6">
+
+      {/* ── Layout Type ─────────────────────────────────────────────── */}
+      <div className="card p-5">
+        <h3 className="section-title mb-1">Layout Type</h3>
+        <p className="section-desc mb-3">
+          Choose which preset layout drives this client's KPI cards, top metrics, and table columns.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {(['auto', 'lead_gen', 'ecom'] as const).map(val => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => handleLayoutTypeChange(val)}
+              disabled={saving}
+              style={{
+                padding: '0.375rem 0.875rem',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: '0.8125rem',
+                fontWeight: layoutType === val ? 600 : 400,
+                background: layoutType === val ? 'var(--blue)' : 'var(--bg-surface)',
+                color: layoutType === val ? '#fff' : 'var(--text-secondary)',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+            >
+              {val === 'auto' ? 'Auto-detect' : val === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
+            </button>
+          ))}
         </div>
-      ))}
-      {saved && <p className="text-xs mt-2" style={{ color: 'var(--green)' }}>Saved</p>}
+        <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
+          Auto-detect picks ecom or lead gen based on how campaigns are tagged.
+        </p>
+      </div>
+
+      {/* ── Custom Layout Override ──────────────────────────────────── */}
+      <div className="card p-5">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+          <div>
+            <h3 className="section-title mb-0">Custom Layout Override</h3>
+            <p className="section-desc mt-0.5">Override the agency layout for this client. Leave blank to inherit the agency default.</p>
+          </div>
+          {layoutOverride && (
+            <button
+              type="button"
+              onClick={resetLayoutOverride}
+              disabled={saving}
+              style={{
+                fontSize: '0.75rem', color: 'var(--text-muted)', border: '1px solid var(--border)',
+                background: 'var(--bg-surface)', borderRadius: 6, padding: '0.25rem 0.625rem',
+                cursor: saving ? 'not-allowed' : 'pointer', flexShrink: 0,
+              }}
+            >
+              Reset to agency default
+            </button>
+          )}
+        </div>
+        <MetricLayoutEditor
+          value={layoutOverride}
+          onChange={handleLayoutOverrideChange}
+        />
+        {!layoutOverride && (
+          <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
+            Currently using agency default. Editing above will create a client-specific override.
+          </p>
+        )}
+      </div>
+
+      {/* ── Visibility Overrides ────────────────────────────────────── */}
+      <div className="card p-5">
+        <h3 className="section-title mb-1">Visibility</h3>
+        <p className="section-desc mb-3">Show or hide specific dashboard sections for this client.</p>
+        <div className="space-y-2">
+          {VISIBILITY_DEFS.map(m => {
+            const isVisible = !hidden.has(m.id)
+            return (
+              <button
+                key={m.id}
+                onClick={() => toggleVisibility(m.id)}
+                disabled={saving}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.625rem',
+                  padding: '0.625rem 0.875rem', borderRadius: '0.5rem',
+                  border: '1px solid var(--border)',
+                  background: isVisible ? 'var(--bg-surface)' : 'var(--bg-subtle)',
+                  textAlign: 'left', cursor: saving ? 'not-allowed' : 'pointer',
+                  opacity: saving ? 0.6 : 1, width: '100%',
+                  transition: 'background 0.15s',
+                }}
+              >
+                <div style={{ width: 32, height: 18, borderRadius: 9999, background: isVisible ? 'var(--blue)' : 'var(--border)', position: 'relative', flexShrink: 0, transition: 'background 0.15s' }}>
+                  <div style={{ position: 'absolute', top: 2, left: isVisible ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)', marginBottom: 1 }}>{m.label}</p>
+                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>{m.desc}</p>
+                </div>
+                <span className="text-xs font-medium" style={{ color: isVisible ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
+                  {isVisible ? 'Visible' : 'Hidden'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {saved && <p className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</p>}
     </div>
   )
 }

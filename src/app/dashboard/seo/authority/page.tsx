@@ -36,16 +36,16 @@ export default async function AuthorityPage({
   const dateFrom = fromDate.toISOString().split('T')[0]
   const dateTo   = toDate.toISOString().split('T')[0]
 
-  // Check if client has an Ahrefs connection
+  // Check if client has an Ahrefs connection (two-step to avoid unreliable joined-column filter)
   const { data: connData } = await db
     .from('client_connections')
-    .select('id')
+    .select('id, connector:connectors(type)')
     .eq('client_id', client.id)
     .eq('status', 'active')
-    .eq('connector:connectors(type)', 'ahrefs')
-    .limit(1)
 
-  const hasAhrefs = (connData?.length ?? 0) > 0
+  const hasAhrefs = (connData ?? []).some(
+    (c: { connector: { type: string } | null }) => c.connector?.type === 'ahrefs'
+  )
 
   // Fetch the most recent Ahrefs snapshot within the date range
   const { data: metricsRows } = await db
@@ -61,10 +61,10 @@ export default async function AuthorityPage({
 
   // Build sparkline trend from available snapshots (newest first → reverse for chart)
   const trend = (metricsRows ?? []).slice(0, 8).reverse()
-  const drTrend  = trend.map(r => r.domain_rating  ?? 0)
-  const blTrend  = trend.map(r => r.backlinks       ?? 0)
-  const rdTrend  = trend.map(r => r.referring_domains ?? 0)
-  const otTrend  = trend.map(r => r.organic_traffic ?? 0)
+  const drTrend  = trend.map(r => ({ v: r.domain_rating    ?? 0 }))
+  const blTrend  = trend.map(r => ({ v: r.backlinks         ?? 0 }))
+  const rdTrend  = trend.map(r => ({ v: r.referring_domains ?? 0 }))
+  const otTrend  = trend.map(r => ({ v: r.organic_traffic   ?? 0 }))
 
   // ── render ──────────────────────────────────────────────────────────────────
 

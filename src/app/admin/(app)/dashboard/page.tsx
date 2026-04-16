@@ -1,6 +1,7 @@
 // Admin Overview — /admin/dashboard
 // Merged clients + overview: sortable table of all clients with key metrics.
 
+import { unstable_noStore as noStore } from 'next/cache'
 import { Suspense }                  from 'react'
 import { createAdminClient }         from '@/lib/supabase/server'
 import Link                          from 'next/link'
@@ -39,6 +40,7 @@ export default async function AdminOverviewPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; sort?: string; dir?: string }>
 }) {
+  noStore()
   const today    = new Date()
   const params   = await searchParams
   const dateFrom = params.from  ?? getMtdFrom()

@@ -101,7 +101,7 @@ export default async function SearchConsolePage({
       .order('date', { ascending: true }),
     showCompare && compFrom && compTo
       ? db.from('gsc_metrics')
-          .select('clicks, impressions, ctr, position')
+          .select('clicks, impressions, ctr, position, query')
           .eq('client_id', client.id)
           .gte('date', fmtDate(compFrom))
           .lte('date', fmtDate(compTo))
@@ -136,7 +136,7 @@ export default async function SearchConsolePage({
   const avgPosition = totals.impressions > 0 ? totals.position_sum / totals.impressions : 0
 
   // Comparison period aggregates
-  type CompRow = { clicks: number; impressions: number; ctr: number; position: number }
+  type CompRow = { clicks: number; impressions: number; ctr: number; position: number; query?: string | null }
   const compRows = (compRowsRaw ?? []) as CompRow[]
   const compTotals = compRows.reduce(
     (acc, r) => ({
@@ -149,6 +149,17 @@ export default async function SearchConsolePage({
   )
   const compAvgCtr      = compTotals.impressions > 0 ? compTotals.ctr_sum      / compTotals.impressions : 0
   const compAvgPosition = compTotals.impressions > 0 ? compTotals.position_sum / compTotals.impressions : 0
+
+  // Per-query comparison map for position delta
+  const compQueryMap = new Map<string, { pos_sum: number; imp_sum: number }>()
+  if (showCompare) {
+    for (const r of compRows) {
+      if (!r.query) continue
+      const ex = compQueryMap.get(r.query)
+      if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
+      else compQueryMap.set(r.query, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
+    }
+  }
 
   // Top Queries (aggregate by query, skip null/empty)
   const queryMap = new Map<string, { clicks: number; impressions: number; ctr_sum: number; position_sum: number }>()
@@ -169,13 +180,19 @@ export default async function SearchConsolePage({
     }
   }
   const topQueries = Array.from(queryMap.entries())
-    .map(([query, v]) => ({
-      query,
-      clicks: v.clicks,
-      impressions: v.impressions,
-      ctr: v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
-      position: v.impressions > 0 ? v.position_sum / v.impressions : 0,
-    }))
+    .map(([query, v]) => {
+      const position = v.impressions > 0 ? v.position_sum / v.impressions : 0
+      const compEntry = compQueryMap.get(query)
+      const compPosAvg = compEntry && compEntry.imp_sum > 0 ? compEntry.pos_sum / compEntry.imp_sum : null
+      return {
+        query,
+        clicks: v.clicks,
+        impressions: v.impressions,
+        ctr: v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
+        position,
+        positionDelta: showCompare && compPosAvg != null ? position - compPosAvg : null,
+      }
+    })
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 25)
 
@@ -276,6 +293,7 @@ export default async function SearchConsolePage({
                     <th style={{ textAlign: 'right' }}>Impressions</th>
                     <th style={{ textAlign: 'right' }}>CTR</th>
                     <th style={{ textAlign: 'right' }}>Avg. Position</th>
+                    {showCompare && <th style={{ textAlign: 'right' }}>Change</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -295,6 +313,17 @@ export default async function SearchConsolePage({
                           {fmtPos(q.position)}
                         </span>
                       </td>
+                      {showCompare && (
+                        <td style={{ textAlign: 'right' }}>
+                          {q.positionDelta != null && Math.abs(q.positionDelta) >= 0.05 ? (
+                            <span style={{ color: q.positionDelta < 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                              {q.positionDelta < 0 ? '▲' : '▼'} {Math.abs(q.positionDelta).toFixed(1)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-faint)' }}>—</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

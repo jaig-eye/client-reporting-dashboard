@@ -182,10 +182,11 @@ export default function AgencySettingsPage() {
       </div>
 
       {/* Tab nav */}
-      <div style={{
+      <style>{`.settings-tabs::-webkit-scrollbar { display: none; }`}</style>
+      <div className="settings-tabs" style={{
         display: 'flex', gap: 2, marginBottom: '1.5rem',
         borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto',
+        overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none',
       }}>
         {TABS.map(tab => (
           <button

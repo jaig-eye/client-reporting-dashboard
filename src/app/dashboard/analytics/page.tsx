@@ -11,6 +11,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
+import SparkMetricCard from '@/components/SparkMetricCard'
 import ExportButtons from '@/components/ExportButtons'
 
 export const dynamic = 'force-dynamic'
@@ -119,9 +120,16 @@ export default async function GA4Page({
     if (ex) { ex.sessions += r.sessions; ex.conversions += r.conversions }
     else dailyByDate.set(d, { sessions: r.sessions, conversions: r.conversions })
   }
-  const dailyTrend = Array.from(dailyByDate.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, v]) => ({ date, spend: v.sessions, conversions: v.conversions, clicks: 0, roas: 0 }))
+  const sortedDailyEntries = Array.from(dailyByDate.entries()).sort(([a], [b]) => a.localeCompare(b))
+  const dailyTrend = sortedDailyEntries.map(([date, v]) => ({ date, spend: v.sessions, conversions: v.conversions, clicks: 0, roas: 0 }))
+
+  // Sparkline data for KPI cards
+  const sessionsSpark = sortedDailyEntries.map(([, v]) => ({ v: v.sessions }))
+  const convSpark     = sortedDailyEntries.map(([, v]) => ({ v: v.conversions }))
+
+  // Computed secondary metrics
+  const engagementRate = 1 - avgBounceRate
+  const convRate       = totals.sessions > 0 ? totals.conversions / totals.sessions : 0
 
   // Channel breakdown
   const channelMap = new Map<string, { sessions: number; users: number; conversions: number; bounce_rate_sum: number }>()
@@ -139,14 +147,10 @@ export default async function GA4Page({
     .map(([name, v]) => ({ name, ...v, bounce_rate: v.sessions > 0 ? v.bounce_rate_sum / v.sessions : 0 }))
     .sort((a, b) => b.sessions - a.sessions)
 
-  const metricCards = [
-    { label: 'Sessions',         value: fmtNum(totals.sessions),   color: '#3b82f6' },
-    { label: 'Users',            value: fmtNum(totals.users),      color: '#10b981' },
-    { label: 'New Users',        value: fmtNum(totals.new_users),  color: '#6366f1' },
-    { label: 'Page Views',       value: fmtNum(totals.page_views), color: '#f59e0b' },
-    { label: 'Conversions',      value: fmtNum(totals.conversions),color: '#ec4899' },
-    { label: 'Bounce Rate',      value: fmtPct(avgBounceRate),     color: '#ef4444' },
-    { label: 'Avg. Session',     value: fmtSec(avgDuration),       color: '#8b5cf6' },
+  const secondaryCards = [
+    { label: 'Avg. Session',     value: fmtSec(avgDuration)           },
+    { label: 'Engagement Rate',  value: fmtPct(engagementRate)        },
+    { label: 'Conv. Rate',       value: fmtPct(convRate)              },
   ]
 
   return (
@@ -158,17 +162,21 @@ export default async function GA4Page({
           <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." />
         ) : (
           <>
-            {/* KPI cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {metricCards.map(card => (
-                <div key={card.label} className="card p-5">
-                  <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
-                    {card.label}
-                  </p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
-                  <div style={{ width: '100%', height: 3, borderRadius: 9999, background: 'var(--border)', marginTop: 8 }}>
-                    <div style={{ width: '60%', height: '100%', borderRadius: 9999, background: card.color }} />
-                  </div>
+            {/* KPI spark cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+              <SparkMetricCard label="Sessions"   value={fmtNum(totals.sessions)}   sparkData={sessionsSpark} sparkColor="#3b82f6" delay={0} />
+              <SparkMetricCard label="Users"      value={fmtNum(totals.users)}      sparkColor="#10b981" delay={1} />
+              <SparkMetricCard label="New Users"  value={fmtNum(totals.new_users)}  sparkColor="#6366f1" delay={2} />
+              <SparkMetricCard label="Page Views" value={fmtNum(totals.page_views)} sparkColor="#f59e0b" delay={3} />
+              <SparkMetricCard label="Conversions" value={fmtNum(totals.conversions)} sparkData={convSpark} sparkColor="#ec4899" delay={4} />
+            </div>
+
+            {/* Secondary compact cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              {secondaryCards.map(card => (
+                <div key={card.label} className="card" style={{ padding: '1rem 1.25rem' }}>
+                  <p className="metric-label" style={{ marginBottom: '0.25rem' }}>{card.label}</p>
+                  <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{card.value}</p>
                 </div>
               ))}
             </div>
@@ -185,6 +193,7 @@ export default async function GA4Page({
                 colorConversions="#10b981"
                 spendLabel="Sessions"
                 conversionsLabel="Conversions"
+                spendFormatter={v => v.toLocaleString()}
               />
             </div>
 
