@@ -100,9 +100,11 @@ export async function GET(request: NextRequest) {
 
       for (const connType of GOOGLE_ALL_TYPES) {
         // Preserve existing auth + config for this type
+        // Select id too so we can UPDATE by PK rather than upsert by type
+        // (ON CONFLICT (type) doesn't work with the partial unique index)
         const { data: existing } = await db
           .from('connectors')
-          .select('auth, config')
+          .select('id, auth, config')
           .eq('type', connType)
           .maybeSingle()
 
@@ -124,25 +126,35 @@ export async function GET(request: NextRequest) {
           if (stateData.mcc_customer_id) config.mcc_customer_id = stateData.mcc_customer_id
         }
 
-        const { data: saved, error } = await db
-          .from('connectors')
-          .upsert(
-            {
-              type:   connType,
-              label:  CONNECTOR_META[connType].label,
-              auth,
-              config,
-              status: 'active',
-            },
-            { onConflict: 'type' }
-          )
-          .select('id')
-          .single()
+        // Use UPDATE if the row exists, INSERT otherwise.
+        // Avoids relying on ON CONFLICT (type) which doesn't work against the
+        // partial unique index (connectors_singleton_type_unique).
+        let savedId: string | null = null
+        let saveError: unknown = null
 
-        if (error || !saved) {
-          console.error(`[google/callback] Unified upsert failed for ${connType}:`, error)
+        if (existing?.id) {
+          const { data, error } = await db
+            .from('connectors')
+            .update({ label: CONNECTOR_META[connType].label, auth, config, status: 'active' })
+            .eq('id', existing.id)
+            .select('id')
+            .single()
+          savedId  = data?.id ?? null
+          saveError = error
         } else {
-          savedConnectors.push({ connType, id: saved.id, auth, config })
+          const { data, error } = await db
+            .from('connectors')
+            .insert({ type: connType, label: CONNECTOR_META[connType].label, auth, config, status: 'active' })
+            .select('id')
+            .single()
+          savedId  = data?.id ?? null
+          saveError = error
+        }
+
+        if (saveError || !savedId) {
+          console.error(`[google/callback] Unified save failed for ${connType}:`, saveError)
+        } else {
+          savedConnectors.push({ connType, id: savedId, auth, config })
         }
       }
 
@@ -162,7 +174,7 @@ export async function GET(request: NextRequest) {
 
     const { data: existing } = await db
       .from('connectors')
-      .select('auth, config')
+      .select('id, auth, config')
       .eq('type', meta.type)
       .maybeSingle()
 
@@ -183,20 +195,32 @@ export async function GET(request: NextRequest) {
       if (stateData.mcc_customer_id) config.mcc_customer_id = stateData.mcc_customer_id
     }
 
-    const { data: connector, error } = await db
-      .from('connectors')
-      .upsert({
-        type:   meta.type,
-        label:  meta.label,
-        auth,
-        config,
-        status: 'active',
-      }, { onConflict: 'type' })
-      .select('id')
-      .single()
+    // Explicit UPDATE/INSERT to avoid relying on ON CONFLICT (type) against the
+    // partial unique index (connectors_singleton_type_unique).
+    let connector: { id: string } | null = null
+    let error: unknown = null
+
+    if (existing?.id) {
+      const { data, error: e } = await db
+        .from('connectors')
+        .update({ label: meta.label, auth, config, status: 'active' })
+        .eq('id', existing.id)
+        .select('id')
+        .single()
+      connector = data
+      error     = e
+    } else {
+      const { data, error: e } = await db
+        .from('connectors')
+        .insert({ type: meta.type, label: meta.label, auth, config, status: 'active' })
+        .select('id')
+        .single()
+      connector = data
+      error     = e
+    }
 
     if (error || !connector) {
-      console.error('Google connector upsert failed:', error)
+      console.error('Google connector save failed:', error)
       return NextResponse.redirect(`${appUrl}/admin/connections?error=google_save_failed`)
     }
 
