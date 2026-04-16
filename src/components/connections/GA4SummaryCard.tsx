@@ -71,7 +71,7 @@ export default async function GA4SummaryCard({ clientId, dateFrom, dateTo }: Pro
         display: 'grid',
         gridTemplateColumns: 'repeat(4, 1fr)',
         gap: '1rem',
-        marginBottom: topPages.length > 0 ? '1.25rem' : 0,
+        marginBottom: topChannels.length > 0 ? '1.25rem' : 0,
       }}>
         {metrics.map(m => (
           <div key={m.label}>
