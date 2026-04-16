@@ -3,25 +3,31 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { CaretDown, CaretUp } from '@phosphor-icons/react'
+import type { ColumnKey } from '@/lib/metric-layouts'
 
 export interface Campaign {
   campaign_id: string
   campaign_name: string
-  source: string          // kept for drill-down URL, not displayed
-  status?: string | null  // ENABLED, PAUSED, REMOVED, etc.
-  spend: number           // cost after markup ("Cost")
+  source: string
+  status?: string | null
+  spend: number
   impressions: number
   clicks: number
   conversions: number
   conversionValue: number
   ctr: number
-  convRate: number        // conversions / clicks
-  cpl: number
+  convRate: number
+  cpl: number        // CPA — kept as cpl for backwards compat
   display_mode?: string | null
   daily_budget?: number | null
 }
 
 type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'convRate' | 'cpl'
+
+const DEFAULT_COLUMNS: ColumnKey[] = [
+  'campaign_name', 'status', 'spend', 'impressions', 'clicks',
+  'ctr', 'conversions', 'conv_rate', 'cpa', 'daily_budget',
+]
 
 export default function CampaignTable({
   campaigns,
@@ -31,6 +37,7 @@ export default function CampaignTable({
   dateTo,
   compare,
   campaignBasePath = '/dashboard/campaign',
+  columns,
 }: {
   campaigns: Campaign[]
   connectionId?: string
@@ -39,9 +46,12 @@ export default function CampaignTable({
   dateTo?: string
   compare?: string
   campaignBasePath?: string
+  columns?: ColumnKey[]
 }) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const activeCols = columns ?? DEFAULT_COLUMNS
 
   function toggleSort(key: SortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
@@ -64,16 +74,6 @@ export default function CampaignTable({
     )
   }
 
-  function SortTh({ sk, children, left }: { sk: SortKey; children: React.ReactNode; left?: boolean }) {
-    const isActive = sortKey === sk
-    return (
-      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: left ? 'left' : 'right' }}>
-        {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
-      </th>
-    )
-  }
-
   function drillLink(c: Campaign) {
     const connId = connectionsBySource?.[c.source] ?? connectionId
     if (!connId) return null
@@ -87,127 +87,153 @@ export default function CampaignTable({
     return `${campaignBasePath}/${encodeURIComponent(c.campaign_id)}?${qs}`
   }
 
-  // Totals
-  const totSpend = campaigns.reduce((s, c) => s + c.spend, 0)
-  const totImpr  = campaigns.reduce((s, c) => s + c.impressions, 0)
-  const totClick = campaigns.reduce((s, c) => s + c.clicks, 0)
-  const totConv  = campaigns.reduce((s, c) => s + c.conversions, 0)
-  const totCtr   = totImpr > 0 ? totClick / totImpr : 0
-  const totCR    = totClick > 0 ? totConv / totClick : 0
-  const totCpl   = totConv > 0 ? totSpend / totConv : 0
+  // ── Totals ────────────────────────────────────────────────────────────────
+  const totSpend   = campaigns.reduce((s, c) => s + c.spend, 0)
+  const totImpr    = campaigns.reduce((s, c) => s + c.impressions, 0)
+  const totClick   = campaigns.reduce((s, c) => s + c.clicks, 0)
+  const totConv    = campaigns.reduce((s, c) => s + c.conversions, 0)
+  const totRevenue = campaigns.reduce((s, c) => s + c.conversionValue, 0)
+  const totCtr     = totImpr  > 0 ? totClick / totImpr  : 0
+  const totCR      = totClick > 0 ? totConv  / totClick : 0
+  const totCpa     = totConv  > 0 ? totSpend / totConv  : 0
+  const totRoas    = totSpend > 0 ? totRevenue / totSpend : 0
+
+  function fmt$(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
+  function fmtPct(n: number) { return n > 0 ? `${(n * 100).toFixed(2)}%` : '—' }
+  function fmtNum(n: number) { return n > 0 ? n.toLocaleString() : '—' }
+
+  // ── Column definitions ────────────────────────────────────────────────────
+  function SortTh({ sk, children, left }: { sk: SortKey; children: React.ReactNode; left?: boolean }) {
+    const isAct = sortKey === sk
+    return (
+      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: left ? 'left' : 'right' }}>
+        {children}
+        {isAct && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
+      </th>
+    )
+  }
+
+  type ColDef = {
+    header: () => React.ReactNode
+    cell: (c: Campaign) => React.ReactNode
+    foot: () => React.ReactNode
+  }
+
+  const COL: Record<ColumnKey, ColDef> = {
+    campaign_name: {
+      header: () => <SortTh sk="campaign_name" left>Campaign</SortTh>,
+      cell: (c) => {
+        const link = drillLink(c)
+        return (
+          <td className="font-medium" style={{ color: 'var(--text-secondary)', maxWidth: 260 }} title={c.campaign_name}>
+            {link ? (
+              <Link href={link} className="block truncate hover:underline" style={{ color: 'var(--blue)' }}>{c.campaign_name}</Link>
+            ) : (
+              <span className="block truncate">{c.campaign_name}</span>
+            )}
+          </td>
+        )
+      },
+      foot: () => <td className="text-xs" style={{ color: 'var(--text-muted)' }}>{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</td>,
+    },
+    status: {
+      header: () => <th style={{ whiteSpace: 'nowrap' }}>Status</th>,
+      cell: (c) => {
+        const statusUp = (c.status ?? '').toUpperCase()
+        const isActive = !c.status || statusUp === 'ENABLED' || statusUp === 'ACTIVE'
+        const isPaused = statusUp === 'PAUSED'
+        return (
+          <td>
+            {c.status ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af' }} />
+                {isActive ? 'Active' : isPaused ? 'Paused' : statusUp.charAt(0) + statusUp.slice(1).toLowerCase()}
+              </span>
+            ) : (
+              <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+            )}
+          </td>
+        )
+      },
+      foot: () => <td></td>,
+    },
+    spend: {
+      header: () => <SortTh sk="spend">Cost</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>${totSpend.toFixed(2)}</td>,
+    },
+    impressions: {
+      header: () => <SortTh sk="impressions">Impr.</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.impressions > 0 ? c.impressions.toLocaleString() : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr.toLocaleString()}</td>,
+    },
+    clicks: {
+      header: () => <SortTh sk="clicks">Clicks</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totClick.toLocaleString()}</td>,
+    },
+    ctr: {
+      header: () => <SortTh sk="ctr">CTR</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.ctr > 0 ? `${(c.ctr * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmtPct(totCtr)}</td>,
+    },
+    conversions: {
+      header: () => <SortTh sk="conversions">Conv.</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.conversions > 0 ? c.conversions.toFixed(1) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? totConv.toFixed(1) : '—'}</td>,
+    },
+    conv_rate: {
+      header: () => <SortTh sk="convRate">Conv Rate</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.convRate > 0 ? `${(c.convRate * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmtPct(totCR)}</td>,
+    },
+    cpa: {
+      header: () => <SortTh sk="cpl">CPA</SortTh>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totCpa)}</td>,
+    },
+    roas: {
+      header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>ROAS</th>,
+      cell: (c) => {
+        const roas = c.spend > 0 && c.conversionValue > 0 ? c.conversionValue / c.spend : 0
+        return <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{roas > 0 ? `${roas.toFixed(2)}x` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
+      },
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totRoas > 0 ? `${totRoas.toFixed(2)}x` : '—'}</td>,
+    },
+    revenue: {
+      header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Revenue</th>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.conversionValue > 0 ? `$${c.conversionValue.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totRevenue)}</td>,
+    },
+    daily_budget: {
+      header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.daily_budget ? `$${c.daily_budget.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td></td>,
+    },
+  }
+
+  const visibleCols = activeCols.filter(k => k in COL)
+
+  const minWidth = Math.max(400, visibleCols.length * 90)
 
   return (
     <div className="overflow-x-auto">
-      <table className="data-table" style={{ minWidth: 860 }}>
+      <table className="data-table" style={{ minWidth }}>
         <thead>
           <tr>
-            <SortTh sk="campaign_name" left>Campaign</SortTh>
-            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-            <SortTh sk="spend">Cost</SortTh>
-            <SortTh sk="impressions">Impr.</SortTh>
-            <SortTh sk="clicks">Clicks</SortTh>
-            <SortTh sk="ctr">CTR</SortTh>
-            <SortTh sk="conversions">Conv.</SortTh>
-            <SortTh sk="convRate">Conv Rate</SortTh>
-            <SortTh sk="cpl">CPL</SortTh>
-            <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>
-            <th style={{ whiteSpace: 'nowrap' }}>Mode</th>
+            {visibleCols.map(k => <React.Fragment key={k}>{COL[k].header()}</React.Fragment>)}
           </tr>
         </thead>
         <tbody>
-          {sorted.map((c, i) => {
-            const link      = drillLink(c)
-            const isEcom    = c.display_mode === 'ecommerce'
-            const statusUp  = (c.status ?? '').toUpperCase()
-            const isActive  = !c.status || statusUp === 'ENABLED' || statusUp === 'ACTIVE'
-            const isPaused  = statusUp === 'PAUSED'
-
-            return (
-              <tr key={i}>
-                <td
-                  className="font-medium"
-                  style={{ color: 'var(--text-secondary)', maxWidth: 260 }}
-                  title={c.campaign_name}
-                >
-                  {link ? (
-                    <Link
-                      href={link}
-                      className="block truncate hover:underline"
-                      style={{ color: 'var(--blue)' }}
-                    >
-                      {c.campaign_name}
-                    </Link>
-                  ) : (
-                    <span className="block truncate">{c.campaign_name}</span>
-                  )}
-                </td>
-                <td>
-                  {c.status ? (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      fontSize: '0.7rem', fontWeight: 600,
-                      color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
-                    }}>
-                      <span style={{
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
-                      }} />
-                      {isActive ? 'Active' : isPaused ? 'Paused' : statusUp.charAt(0) + statusUp.slice(1).toLowerCase()}
-                    </span>
-                  ) : (
-                    <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                  )}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.impressions > 0 ? c.impressions.toLocaleString() : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.clicks.toLocaleString()}</td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.ctr > 0 ? `${(c.ctr * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.conversions > 0 ? c.conversions.toFixed(1) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.convRate > 0 ? `${(c.convRate * 100).toFixed(2)}%` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {c.daily_budget ? `$${c.daily_budget.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                </td>
-                <td>
-                  <span
-                    className="badge"
-                    style={isEcom
-                      ? { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }
-                      : { background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }
-                    }
-                  >
-                    {isEcom ? 'Ecom' : 'Lead Gen'}
-                  </span>
-                </td>
-              </tr>
-            )
-          })}
+          {sorted.map((c, i) => (
+            <tr key={i}>
+              {visibleCols.map(k => <React.Fragment key={k}>{COL[k].cell(c)}</React.Fragment>)}
+            </tr>
+          ))}
         </tbody>
         <tfoot>
           <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
-            <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              {campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}
-            </td>
-            <td></td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>${totSpend.toFixed(2)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr.toLocaleString()}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totClick.toLocaleString()}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? `${(totCtr * 100).toFixed(2)}%` : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? totConv.toFixed(1) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? `${(totCR * 100).toFixed(2)}%` : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? `$${totCpl.toFixed(2)}` : '—'}</td>
-            <td></td>
-            <td></td>
+            {visibleCols.map(k => <React.Fragment key={k}>{COL[k].foot()}</React.Fragment>)}
           </tr>
         </tfoot>
       </table>

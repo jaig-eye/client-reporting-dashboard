@@ -155,6 +155,11 @@ export interface Client {
    * When set, only listed keys are shown. Valid keys: roas, ctr, cpc, conv_rate, cpm, cpl
    */
   enabled_benchmarks?: string[] | null
+  /**
+   * Per-client metric layout override. NULL = use agency_settings.metric_layouts.
+   * Shape: { lead_gen: MetricLayout, ecom: MetricLayout }
+   */
+  metric_layout_override?: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -203,6 +208,12 @@ export interface AgencySettings {
   ai_provider?: string
   ai_model?: string
   ai_api_key?: string
+  /**
+   * Agency-wide default metric layouts for Ecom and Lead Gen dashboards.
+   * NULL = use DEFAULT_METRIC_LAYOUTS from src/lib/metric-layouts.ts.
+   * Shape: { lead_gen: MetricLayout, ecom: MetricLayout }
+   */
+  metric_layouts?: Record<string, unknown> | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

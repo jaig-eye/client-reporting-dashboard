@@ -43,6 +43,7 @@ export async function PUT(request: NextRequest) {
     'notify_schedule_generated',
     'overview_columns',
     'sync_frequency', 'sync_hour_utc', 'sync_day_of_week',
+    'metric_layouts',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

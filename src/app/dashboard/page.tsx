@@ -19,6 +19,8 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
+import { resolveLayout, DEFAULT_METRIC_LAYOUTS } from '@/lib/metric-layouts'
+import type { MetricLayouts } from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
 
@@ -139,9 +141,28 @@ export default async function DashboardPage({
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
 
+  // Fetch all-time campaign names so paused/disabled campaigns with no activity
+  // in the current date range still appear in the table with zero values
+  type AllCampRow = { campaign_id: string; campaign_name: string; campaign_status: string | null }
+  const allCampaignNamesRes = isFiltered && (hasGoogle || hasMeta)
+    ? await db
+        .from(hasGoogle ? 'google_ads_metrics' : 'meta_ads_metrics')
+        .select('campaign_id, campaign_name, campaign_status')
+        .eq('client_id', client.id)
+        .order('date', { ascending: false })
+        .limit(500)
+    : { data: [] as AllCampRow[] }
+
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
   const isEcomDash = ecomCount > leadCount
+
+  // Resolve active metric layout (agency default → client override → built-in)
+  const activeLayout = resolveLayout(
+    (settings.metric_layouts as MetricLayouts | null | undefined),
+    (client.metric_layout_override as MetricLayouts | null | undefined),
+    isEcomDash
+  )
 
   // ─── CRM (GHL) data ───────────────────────────────────────────────────────
   let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0 }
@@ -311,7 +332,7 @@ export default async function DashboardPage({
     }
   }
 
-  const campaigns = Array.from(campMap.entries())
+  const activeCampaigns = Array.from(campMap.entries())
     .map(([id, c]) => {
       const cost = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
       return {
@@ -332,6 +353,31 @@ export default async function DashboardPage({
       }
     })
     .sort((a, b) => b.spend - a.spend)
+
+  // Merge in campaigns with no activity in the current period
+  const zeroCampaigns: typeof activeCampaigns = []
+  if (isFiltered && allCampaignNamesRes.data) {
+    const seenIds   = new Set(activeCampaigns.map(c => c.campaign_id))
+    const seenNames = new Map<string, { name: string; status: string | null }>()
+    for (const row of allCampaignNamesRes.data as AllCampRow[]) {
+      if (!seenIds.has(row.campaign_id) && !seenNames.has(row.campaign_id)) {
+        seenNames.set(row.campaign_id, { name: row.campaign_name, status: row.campaign_status ?? null })
+      }
+    }
+    for (const [id, info] of Array.from(seenNames)) {
+      const assignment = assignmentMap.get(id)
+      if (assignment?.hidden) continue
+      zeroCampaigns.push({
+        campaign_id: id, campaign_name: info.name,
+        source: (hasGoogle ? 'google_ads' : 'meta_ads') as never,
+        status: info.status, spend: 0, impressions: 0, clicks: 0,
+        conversions: 0, conversionValue: 0, ctr: 0, convRate: 0, cpl: 0,
+        display_mode: assignment?.display_mode ?? 'lead_gen', daily_budget: null,
+      })
+    }
+  }
+
+  const campaigns = [...activeCampaigns, ...zeroCampaigns]
 
   const syncedAt = lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -388,6 +434,24 @@ export default async function DashboardPage({
     )
   }
 
+  // Grid column counts — cards reflow when metrics are hidden
+  const heroCount = [
+    !hiddenMetrics.has('spend'), !hiddenMetrics.has('leads'),
+    !hiddenMetrics.has('cpl'),   !hiddenMetrics.has('ctr'),
+  ].filter(Boolean).length || 1
+  const heroColsClass = heroCount <= 2 ? 'lg:grid-cols-2' : heroCount === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4'
+
+  const addlCount = [
+    !hiddenMetrics.has('conv_rate'), !hiddenMetrics.has('cpm'),
+    !hiddenMetrics.has('conversions'),
+    !hiddenMetrics.has('conversion_value') && isEcomDash,
+    !hiddenMetrics.has('roas') && isEcomDash,
+    !hiddenMetrics.has('impressions'), !hiddenMetrics.has('cpc'),
+    !hiddenMetrics.has('reach') && (current.reach ?? 0) > 0,
+    !hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0,
+  ].filter(Boolean).length || 1
+  const addlColsClass = addlCount <= 2 ? 'lg:grid-cols-2' : addlCount === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4'
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <style>{`.back-overview-link:hover { color: var(--text-primary) !important; }`}</style>
@@ -402,7 +466,9 @@ export default async function DashboardPage({
               </a>
             )}
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              {isFiltered ? 'Paid Ads Summary' : 'Overview'}
+              {isFiltered
+                ? (source === 'google_ads' ? 'Google Ads Summary' : source === 'meta_ads' ? 'Meta Ads Summary' : 'Paid Ads Summary')
+                : 'Overview'}
             </h1>
             {syncedAt && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
@@ -434,7 +500,7 @@ export default async function DashboardPage({
 
         <>
             {/* ── Hero KPI cards ───────────────────────────────────── */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className={`grid grid-cols-2 ${heroColsClass} gap-4`}>
               {!hiddenMetrics.has('spend') && (
                 <SparkMetricCard
                   label="Total Cost"
@@ -480,7 +546,7 @@ export default async function DashboardPage({
               (!hiddenMetrics.has('reach') && (current.reach ?? 0) > 0) ||
               (!hiddenMetrics.has('frequency') && (current.frequency ?? 0) > 0)
             ) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className={`grid grid-cols-2 ${addlColsClass} gap-4`}>
                 {!hiddenMetrics.has('conv_rate') && (
                   <SparkMetricCard label="Conv. Rate" value={fmtPct(convRate)}
                     delta={showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined}
@@ -671,6 +737,7 @@ export default async function DashboardPage({
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
                   compare={compare !== 'none' ? compare : undefined}
+                  columns={activeLayout.table_columns}
                 />
               </div>
             )}
@@ -709,39 +776,43 @@ export default async function DashboardPage({
             )}
         </>
 
-        {/* ── Connection summary cards ─────────────────────────── */}
-        {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
-          <GA4SummaryCard
-            clientId={client.id}
-            connectionId={connectionsBySource['google_analytics']}
-            dateFrom={fmtDate(fromDate)}
-            dateTo={fmtDate(toDate)}
-          />
-        )}
-        {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
-          <GSCSummaryCard
-            clientId={client.id}
-            connectionId={connectionsBySource['google_search_console']}
-            dateFrom={fmtDate(fromDate)}
-            dateTo={fmtDate(toDate)}
-            compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
-            compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
-          />
-        )}
-        {availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile'] && (
-          <GBPSummaryCard
-            clientId={client.id}
-            connectionId={connectionsBySource['google_business_profile']}
-            dateFrom={fmtDate(fromDate)}
-            dateTo={fmtDate(toDate)}
-          />
-        )}
-        {(availableSources as string[]).includes('ahrefs') && (
-          <AhrefsSummaryCard
-            clientId={client.id}
-            dateFrom={fmtDate(fromDate)}
-            dateTo={fmtDate(toDate)}
-          />
+        {/* ── Connection summary cards (summary / overview only) ── */}
+        {!isFiltered && (
+          <>
+            {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
+              <GA4SummaryCard
+                clientId={client.id}
+                connectionId={connectionsBySource['google_analytics']}
+                dateFrom={fmtDate(fromDate)}
+                dateTo={fmtDate(toDate)}
+              />
+            )}
+            {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
+              <GSCSummaryCard
+                clientId={client.id}
+                connectionId={connectionsBySource['google_search_console']}
+                dateFrom={fmtDate(fromDate)}
+                dateTo={fmtDate(toDate)}
+                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
+              />
+            )}
+            {availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile'] && (
+              <GBPSummaryCard
+                clientId={client.id}
+                connectionId={connectionsBySource['google_business_profile']}
+                dateFrom={fmtDate(fromDate)}
+                dateTo={fmtDate(toDate)}
+              />
+            )}
+            {(availableSources as string[]).includes('ahrefs') && (
+              <AhrefsSummaryCard
+                clientId={client.id}
+                dateFrom={fmtDate(fromDate)}
+                dateTo={fmtDate(toDate)}
+              />
+            )}
+          </>
         )}
 
       </main>

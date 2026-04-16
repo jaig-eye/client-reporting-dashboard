@@ -46,8 +46,8 @@ const NAV: NavItem[] = [
     label: 'Paid Ads',
     icon: <ChartBar size={13} aria-hidden />,
     children: [
-      { key: 'google_ads', label: 'Google Ads', requiredConnector: 'google_ads',  href: '/dashboard?source=google_ads' },
-      { key: 'meta_ads',   label: 'Meta Ads',   requiredConnector: 'meta_ads',    href: '/dashboard?source=meta_ads'   },
+      { key: 'google_ads', label: 'Google Ads', requiredConnector: 'google_ads',  href: '/dashboard/google-ads' },
+      { key: 'meta_ads',   label: 'Meta Ads',   requiredConnector: 'meta_ads',    href: '/dashboard/meta-ads'   },
     ],
   },
   {
@@ -97,11 +97,21 @@ export default function DashboardSidebar({
     setOpen(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
+  // Maps dedicated source paths to their source key (for campaign pages which still use ?source=)
+  const SOURCE_FOR_PATH: Record<string, string> = {
+    '/dashboard/google-ads': 'google_ads',
+    '/dashboard/meta-ads':   'meta_ads',
+  }
+
   function isActive(item: NavItem): boolean {
     if (!item.href) return false
     const url = new URL(item.href, 'http://x')
     const itemPath   = url.pathname
     const itemSource = url.searchParams.get('source') ?? ''
+
+    // Highlight source-specific items when on campaign/adset pages that keep ?source= param
+    const mappedSource = SOURCE_FOR_PATH[itemPath]
+    if (mappedSource && activeSource === mappedSource) return true
 
     if (basePath) {
       const currentPath = pathname.replace(basePath, '') || '/'

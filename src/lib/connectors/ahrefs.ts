@@ -80,7 +80,7 @@ export const ahrefsConnector: ConnectorAdapter = {
       // Log raw response to diagnose format issues
       console.log(`[ahrefs] DR response for ${domain}:`, JSON.stringify(drData).slice(0, 400))
       // Ahrefs v3 may return flat { domain_rating, ahrefs_rank } or nested { domain: { ... } }
-      const d = (drData.domain as Record<string, unknown> | null) ?? drData
+      const d = (drData.domain_rating as Record<string, unknown> | null) ?? drData
       domainRating = typeof d.domain_rating === 'number' ? d.domain_rating : null
       ahrefsRank   = typeof d.ahrefs_rank   === 'number' ? d.ahrefs_rank   : null
     } catch (e) {
@@ -90,10 +90,9 @@ export const ahrefsConnector: ConnectorAdapter = {
     // Overview metrics (backlinks, ref domains, organic keywords + traffic)
     try {
       const metricsData = await ahrefsGet('/site-explorer/metrics', apiKey, {
-        target:    domain,
-        date_from: dateFrom,
-        date_to:   dateTo,
-        select:    'backlinks,refdomains,org_keywords,org_traffic',
+        target:  domain,
+        date:    dateTo,
+        select:  'backlinks,refdomains,org_keywords,org_traffic',
       })
       // Log raw response to diagnose format issues
       console.log(`[ahrefs] Metrics response for ${domain}:`, JSON.stringify(metricsData).slice(0, 400))

@@ -4,6 +4,8 @@
 // Tabbed: Branding / Benchmarks / Colors / AI / Sync / Notifications
 
 import { useEffect, useState } from 'react'
+import MetricLayoutEditor from '@/components/admin/MetricLayoutEditor'
+import type { MetricLayouts } from '@/lib/metric-layouts'
 
 const OVERVIEW_COLUMN_DEFS = [
   { id: 'spend',       label: 'Spend'      },
@@ -41,6 +43,7 @@ interface Settings {
   notify_approval_needed:         boolean
   notify_schedule_generated:      boolean
   overview_columns:               string[]
+  metric_layouts:                 MetricLayouts | null
 }
 
 const DEFAULT: Settings = {
@@ -70,6 +73,7 @@ const DEFAULT: Settings = {
   notify_approval_needed:         true,
   notify_schedule_generated:      true,
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
+  metric_layouts:                 null,
 }
 
 const TABS = [
@@ -80,6 +84,7 @@ const TABS = [
   { id: 'sync',          label: 'Sync'         },
   { id: 'notifications', label: 'Notifications' },
   { id: 'overview',      label: 'Overview'     },
+  { id: 'layouts',       label: 'Layouts'      },
 ]
 
 export default function AgencySettingsPage() {
@@ -527,6 +532,23 @@ export default function AgencySettingsPage() {
                 )
               })}
             </div>
+          </div>
+        )}
+
+        {/* ─── Layouts ───────────────────────────────────────────── */}
+        {activeTab === 'layouts' && (
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Dashboard Layouts</h2>
+              <p className="section-desc">
+                Configure which metrics appear as KPI cards, top metrics, and table columns for each campaign type.
+                These apply to all clients unless overridden in client settings.
+              </p>
+            </div>
+            <MetricLayoutEditor
+              value={form.metric_layouts}
+              onChange={v => field('metric_layouts', v)}
+            />
           </div>
         )}
 
