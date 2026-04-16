@@ -137,6 +137,22 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'ahrefs',
 ]
 
+/** The four Google connector types that share a single OAuth token. */
+export const GOOGLE_CONNECTOR_TYPES: ConnectorType[] = [
+  'google_ads',
+  'google_analytics',
+  'google_search_console',
+  'google_business_profile',
+]
+
+/** Connector types that are NOT part of the Google group — rendered as flat cards. */
+export const UNGROUPED_CONNECTOR_TYPES: ConnectorType[] = [
+  'meta_ads',
+  'ghl',
+  'wordpress',
+  'ahrefs',
+]
+
 /** Returns the UI definition for a connector type. */
 export function getConnectorDef(type: ConnectorType): ConnectorTypeDef {
   return CONNECTOR_DEFINITIONS[type]

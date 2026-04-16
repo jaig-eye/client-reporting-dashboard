@@ -5,7 +5,12 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
-import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
+import {
+  GOOGLE_CONNECTOR_TYPES,
+  UNGROUPED_CONNECTOR_TYPES,
+  getConnectorDef,
+  isConnectorImplemented,
+} from '@/lib/connectors/registry'
 import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
 import CopyButton from '@/components/CopyButton'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
@@ -210,7 +215,103 @@ export default async function ClientDetailPage({
       {/* ── DATA SOURCES ─────────────────────────────────────────── */}
       {activeTab === 'sources' && (
         <div className="space-y-4 max-w-2xl">
-          {ALL_CONNECTOR_TYPES.map(type => {
+
+          {/* ── Google group card ──────────────────────────────────── */}
+          <div className="card p-5">
+            {/* Header */}
+            <div className="flex items-center gap-3 pb-3 mb-1" style={{ borderBottom: '1px solid var(--border)' }}>
+              <div
+                className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-bold"
+                style={{ background: '#4285F4', fontSize: '1rem' }}
+              >
+                G
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Google</h3>
+                <p className="text-xs" style={{ color: 'var(--text-faint)' }}>Ads · Analytics · Search Console · Business Profile</p>
+              </div>
+            </div>
+
+            {/* Sub-rows — one per Google connector type */}
+            <div className="space-y-2 mt-3">
+              {GOOGLE_CONNECTOR_TYPES.map(type => {
+                const def        = getConnectorDef(type)
+                const connection = connByType.get(type)
+                const connector  = connectors.find(c => c.type === type)
+
+                const state =
+                  !connector ? 'connector-missing'
+                  : connection ? 'connected'
+                  : 'not-connected'
+
+                return (
+                  <div
+                    key={type}
+                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+                    style={{ background: 'var(--bg-subtle)' }}
+                  >
+                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                      <div
+                        className="h-6 w-6 rounded flex items-center justify-center flex-shrink-0"
+                        style={{ background: `${def.color}18`, border: `1px solid ${def.color}30` }}
+                      >
+                        {def.logo
+                          ? <def.logo size={14} />
+                          : <span style={{ color: def.color, fontWeight: 700, fontSize: '0.65rem' }}>{def.icon}</span>
+                        }
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            {def.label}
+                          </span>
+                          <SourceBadge state={state} compact />
+                        </div>
+                        {state === 'connected' && connection && (
+                          <p className="text-xs truncate" style={{ color: 'var(--text-faint)' }}>
+                            {connection.external_name ?? connection.external_id}
+                            {connection.last_synced_at && ` · synced ${new Date(connection.last_synced_at).toLocaleString('en-US', { month: 'short', day: 'numeric' })}`}
+                          </p>
+                        )}
+                        {state === 'connector-missing' && (
+                          <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                            <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency Google connection first →</Link>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {state === 'connected' && connection && (
+                        <>
+                          <ClientSyncButton clientId={id} connectionId={connection.id} />
+                          <Link
+                            href={`/admin/clients/${id}/connections/${connection.id}`}
+                            className="btn btn-secondary"
+                            style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                          >
+                            Settings
+                          </Link>
+                        </>
+                      )}
+                      {state === 'not-connected' && connector && (
+                        <Link
+                          href={`/admin/clients/${id}/connections/new?connector=${connector.id}`}
+                          className="btn btn-primary"
+                          style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                        >
+                          Assign Account
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* ── Ungrouped flat cards ───────────────────────────────── */}
+          {UNGROUPED_CONNECTOR_TYPES.map(type => {
             const def         = getConnectorDef(type)
             const connection  = connByType.get(type)
             const connector   = connectors.find(c => c.type === type)
@@ -429,7 +530,7 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function SourceBadge({ state }: { state: string }) {
+function SourceBadge({ state, compact = false }: { state: string; compact?: boolean }) {
   const m: Record<string, { label: string; cls: string }> = {
     connected:           { label: 'Connected',   cls: 'badge-green' },
     'connector-missing': { label: 'Not set up',  cls: 'badge-amber' },
@@ -438,7 +539,14 @@ function SourceBadge({ state }: { state: string }) {
     'direct-connect':    { label: 'Not set up',  cls: 'badge-amber' },
   }
   const d = m[state] ?? { label: state, cls: 'badge-gray' }
-  return <span className={`badge ${d.cls}`}>{d.label}</span>
+  return (
+    <span
+      className={`badge ${d.cls}`}
+      style={compact ? { fontSize: '0.6rem', padding: '1px 5px' } : undefined}
+    >
+      {d.label}
+    </span>
+  )
 }
 
 function Notice({ type, children }: { type: 'success' | 'error'; children: React.ReactNode }) {

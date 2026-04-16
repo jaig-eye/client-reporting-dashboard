@@ -1,12 +1,21 @@
 // Data Connections — /admin/connections
 // Agency-level management of all data source connectors.
-// Each connector type can be connected once at the agency level,
-// then assigned to specific clients in the Clients section.
+//
+// Google connectors (Ads, Analytics, Search Console, Business Profile) are
+// displayed as a single grouped card — one OAuth flow connects all four.
+// All other connectors (Meta, Ahrefs, GHL, WordPress) remain as flat cards.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import { ALL_CONNECTOR_TYPES, getConnectorDef, isConnectorImplemented } from '@/lib/connectors/registry'
+import {
+  GOOGLE_CONNECTOR_TYPES,
+  UNGROUPED_CONNECTOR_TYPES,
+  getConnectorDef,
+  isConnectorImplemented,
+} from '@/lib/connectors/registry'
+import { GoogleAdsLogo, GALogo, GSCLogo } from '@/components/ConnectorLogo'
 import type { Connector } from '@/lib/types'
+import type { ConnectorType } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,6 +26,13 @@ export default async function ConnectionsPage() {
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
+
+  // Google group status
+  const googleConns = GOOGLE_CONNECTOR_TYPES.map(t => byType.get(t)).filter(Boolean) as Connector[]
+  const googleStatus: 'none' | 'partial' | 'full' =
+    googleConns.length === 0                        ? 'none'
+    : googleConns.length === GOOGLE_CONNECTOR_TYPES.length ? 'full'
+    : 'partial'
 
   return (
     <div>
@@ -30,17 +46,116 @@ export default async function ConnectionsPage() {
       </div>
 
       <div className="space-y-3">
-        {ALL_CONNECTOR_TYPES.map(type => {
-          const def        = getConnectorDef(type)
-          const connector  = byType.get(type)
+
+        {/* ── Google Group Card ──────────────────────────────────────────────── */}
+        <div className="card p-5">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div
+                className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
+                style={{ background: '#4285F4' }}
+              >
+                G
+              </div>
+              <div>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Google
+                  </h2>
+                  <GoogleGroupBadge status={googleStatus} count={googleConns.length} total={GOOGLE_CONNECTOR_TYPES.length} />
+                </div>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  One Google sign-in powers Ads, Analytics, Search Console &amp; Business Profile.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex-shrink-0">
+              {googleStatus === 'none' ? (
+                <Link href="/admin/connections/new?type=google" className="btn btn-primary">
+                  Connect Google Account
+                </Link>
+              ) : (
+                <a href="/api/auth/google/start" className="btn btn-secondary">
+                  Reconnect Account
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Sub-rows — only shown when at least one Google connector exists */}
+          {googleStatus !== 'none' && (
+            <div
+              className="mt-4 pt-4 space-y-1"
+              style={{ borderTop: '1px solid var(--border)' }}
+            >
+              {GOOGLE_CONNECTOR_TYPES.map(type => {
+                const connector = byType.get(type)
+                const def = getConnectorDef(type)
+                const status = connector?.status ?? 'disconnected'
+                const missingDevToken =
+                  type === 'google_ads' && connector &&
+                  !((connector.auth as Record<string, unknown>)?.developer_token)
+
+                return (
+                  <div
+                    key={type}
+                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2"
+                    style={{ background: 'var(--bg-subtle)' }}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {/* Small logo */}
+                      <div
+                        className="h-6 w-6 rounded flex items-center justify-center flex-shrink-0"
+                        style={{ background: `${def.color}18`, border: `1px solid ${def.color}30` }}
+                      >
+                        <GoogleSubLogo type={type} size={14} />
+                      </div>
+                      <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {def.label}
+                      </span>
+                      {connector
+                        ? <ConnectorStatusBadge status={status} />
+                        : <span className="badge badge-gray">Not connected</span>
+                      }
+                      {missingDevToken && (
+                        <span
+                          className="text-xs"
+                          style={{ color: '#f59e0b' }}
+                          title="Developer token missing — Google Ads sync will fail. Configure to fix."
+                        >
+                          ⚠ No dev token
+                        </span>
+                      )}
+                    </div>
+                    {connector && (
+                      <Link
+                        href={`/admin/connections/${connector.id}`}
+                        className="btn btn-secondary flex-shrink-0"
+                        style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                      >
+                        Configure
+                      </Link>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Ungrouped flat cards ───────────────────────────────────────────── */}
+        {UNGROUPED_CONNECTOR_TYPES.map(type => {
+          const def         = getConnectorDef(type)
+          const connector   = byType.get(type)
           const implemented = isConnectorImplemented(type)
-          const status     = connector?.status ?? 'disconnected'
+          const status      = connector?.status ?? 'disconnected'
           const isClientLevel = type === 'ghl' || type === 'wordpress'
 
           return (
             <div key={type} className="card p-5" style={isClientLevel ? { opacity: 0.6 } : undefined}>
               <div className="flex items-start justify-between gap-4">
-                {/* Icon + description */}
                 <div className="flex items-start gap-4">
                   <div
                     className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
@@ -75,7 +190,6 @@ export default async function ConnectionsPage() {
                   </div>
                 </div>
 
-                {/* Action */}
                 <div className="flex-shrink-0">
                   {isClientLevel ? (
                     <span className="text-xs font-medium" style={{ color: 'var(--text-faint)' }}>
@@ -114,6 +228,8 @@ export default async function ConnectionsPage() {
   )
 }
 
+// ─── Helper components ────────────────────────────────────────────────────────
+
 function ConnectorStatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     active: 'badge-green', error: 'badge-red', disconnected: 'badge-gray', pending: 'badge-amber'
@@ -122,4 +238,18 @@ function ConnectorStatusBadge({ status }: { status: string }) {
     active: 'Active', error: 'Error', disconnected: 'Disconnected', pending: 'Pending'
   }
   return <span className={`badge ${map[status] ?? 'badge-gray'}`}>{labels[status] ?? status}</span>
+}
+
+function GoogleGroupBadge({ status, count, total }: { status: 'none' | 'partial' | 'full'; count: number; total: number }) {
+  if (status === 'none')    return <span className="badge badge-gray">Not connected</span>
+  if (status === 'full')    return <span className="badge badge-green">Active — {total}/{total}</span>
+  return <span className="badge badge-amber">Partial — {count}/{total}</span>
+}
+
+function GoogleSubLogo({ type, size }: { type: ConnectorType; size: number }) {
+  if (type === 'google_ads')              return <GoogleAdsLogo size={size} />
+  if (type === 'google_analytics')        return <GALogo size={size} />
+  if (type === 'google_search_console')   return <GSCLogo size={size} />
+  if (type === 'google_business_profile') return <GALogo size={size} />  // placeholder until GBP logo added
+  return null
 }

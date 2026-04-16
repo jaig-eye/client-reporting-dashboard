@@ -8,13 +8,20 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const appUrl         = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-  const connectorType  = request.nextUrl.searchParams.get('connector_type') ?? 'google_ads'
+  const connectorType  = request.nextUrl.searchParams.get('connector_type') ?? ''
   const developerToken = request.nextUrl.searchParams.get('developer_token') ?? ''
   const mccCustomerId  = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
 
+  // If connector_type is absent or 'google', use unified mode:
+  // the callback will upsert all 4 Google connector types at once.
+  // Old per-type links (?connector_type=google_analytics) remain fully backward compatible.
+  const isUnified = !connectorType || connectorType === 'google'
+
   const state = Buffer.from(
     JSON.stringify({
-      connector_type:  connectorType,
+      ...(isUnified
+        ? { mode: 'unified' }
+        : { connector_type: connectorType }),
       developer_token: developerToken,
       mcc_customer_id: mccCustomerId,
     })

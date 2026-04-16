@@ -1,7 +1,13 @@
 // GET /api/auth/google/callback
 // Handles Google OAuth callback for all Google connector types:
 //   google_ads | google_analytics | google_search_console | google_business_profile
-// The connector_type is recovered from the OAuth state param.
+//
+// Two modes:
+//   unified  — stateData.mode === 'unified' (no connector_type in state)
+//              Upserts all 4 Google connector types with the same token set.
+//              Triggered when connector_type param is absent or 'google' in /start.
+//   single   — stateData.connector_type is a specific type (backward compat)
+//              Upserts only that connector type.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { exchangeGoogleCode, googleAdsConnector } from '@/lib/connectors/google-ads'
@@ -18,6 +24,44 @@ const CONNECTOR_META: Record<string, { label: string; type: ConnectorType }> = {
   google_business_profile: { label: 'Google Business Profile',type: 'google_business_profile' },
 }
 
+const GOOGLE_ALL_TYPES = [
+  'google_ads',
+  'google_analytics',
+  'google_search_console',
+  'google_business_profile',
+] as const
+
+async function discoverForConnector(
+  type: ConnectorType,
+  connectorId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  db: ReturnType<typeof createAdminClient>
+) {
+  let accounts: { external_id: string; external_name: string | null }[] = []
+
+  if (type === 'google_ads') {
+    accounts = await googleAdsConnector.discoverAccounts(auth, config)
+  } else if (type === 'google_analytics') {
+    accounts = await googleAnalyticsConnector.discoverAccounts(auth, config)
+  } else if (type === 'google_search_console') {
+    accounts = await googleSearchConsoleConnector.discoverAccounts(auth, config)
+  } else if (type === 'google_business_profile') {
+    accounts = await googleBusinessProfileConnector.discoverAccounts(auth, config)
+  }
+
+  if (accounts.length > 0) {
+    await db.from('connector_accounts').upsert(
+      accounts.map(a => ({
+        connector_id:  connectorId,
+        external_id:   a.external_id,
+        external_name: a.external_name,
+      })),
+      { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
+    )
+  }
+}
+
 export async function GET(request: NextRequest) {
   const code   = request.nextUrl.searchParams.get('code')
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
@@ -32,8 +76,9 @@ export async function GET(request: NextRequest) {
 
     const db = createAdminClient()
 
-    // Decode state to recover connector_type + optional Google Ads params
+    // Decode state
     let stateData: {
+      mode?:            string
       connector_type?:  string
       developer_token?: string
       mcc_customer_id?: string
@@ -43,14 +88,73 @@ export async function GET(request: NextRequest) {
       try {
         stateData = JSON.parse(Buffer.from(stateParam, 'base64url').toString())
       } catch {
-        // ignore malformed state — fall back to google_ads
+        // ignore malformed state — fall through to unified mode
       }
     }
 
+    // ── UNIFIED MODE — upsert all 4 Google connectors ──────────────────────────
+    if (stateData.mode === 'unified' || (!stateData.connector_type && !stateData.mode)) {
+      for (const connType of GOOGLE_ALL_TYPES) {
+        // Preserve existing auth + config for this type
+        const { data: existing } = await db
+          .from('connectors')
+          .select('auth, config')
+          .eq('type', connType)
+          .maybeSingle()
+
+        const existingAuth   = (existing?.auth   ?? {}) as Record<string, unknown>
+        const existingConfig = (existing?.config  ?? {}) as Record<string, unknown>
+
+        const auth: Record<string, unknown> = {
+          ...existingAuth,
+          access_token:     tokens.access_token,
+          refresh_token:    tokens.refresh_token || existingAuth.refresh_token,
+          token_expires_at: expiresAt,
+        }
+
+        const config: Record<string, unknown> = { ...existingConfig }
+
+        // Google Ads extras from state
+        if (connType === 'google_ads') {
+          if (stateData.developer_token) auth.developer_token = stateData.developer_token
+          if (stateData.mcc_customer_id) config.mcc_customer_id = stateData.mcc_customer_id
+        }
+
+        const { data: saved, error } = await db
+          .from('connectors')
+          .upsert(
+            {
+              type:   connType,
+              label:  CONNECTOR_META[connType].label,
+              auth,
+              config,
+              status: 'active',
+            },
+            { onConflict: 'type' }
+          )
+          .select('id')
+          .single()
+
+        if (error || !saved) {
+          console.error(`[google/callback] Unified upsert failed for ${connType}:`, error)
+          continue
+        }
+
+        // Non-fatal account discovery
+        try {
+          await discoverForConnector(connType, saved.id, auth, config, db)
+        } catch (e) {
+          console.warn(`[google/callback] Account discovery failed for ${connType} (non-fatal):`, e)
+        }
+      }
+
+      return NextResponse.redirect(`${appUrl}/admin/connections?connected=google`)
+    }
+
+    // ── SINGLE MODE — backward compat for per-type links ───────────────────────
     const connectorType = stateData.connector_type ?? 'google_ads'
     const meta          = CONNECTOR_META[connectorType] ?? CONNECTOR_META.google_ads
 
-    // Preserve existing auth + config for this connector type (re-auth flow)
     const { data: existing } = await db
       .from('connectors')
       .select('auth, config')
@@ -69,13 +173,11 @@ export async function GET(request: NextRequest) {
 
     const config: Record<string, unknown> = { ...existingConfig }
 
-    // Google Ads extras
     if (meta.type === 'google_ads') {
       if (stateData.developer_token) auth.developer_token = stateData.developer_token
       if (stateData.mcc_customer_id) config.mcc_customer_id = stateData.mcc_customer_id
     }
 
-    // Upsert the connector (one row per type)
     const { data: connector, error } = await db
       .from('connectors')
       .upsert({
@@ -93,30 +195,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${appUrl}/admin/connections?error=google_save_failed`)
     }
 
-    // Discover accounts / properties for the assignment dropdown
     try {
-      let accounts: { external_id: string; external_name: string | null }[] = []
-
-      if (meta.type === 'google_ads') {
-        accounts = await googleAdsConnector.discoverAccounts(auth, config)
-      } else if (meta.type === 'google_analytics') {
-        accounts = await googleAnalyticsConnector.discoverAccounts(auth, config)
-      } else if (meta.type === 'google_search_console') {
-        accounts = await googleSearchConsoleConnector.discoverAccounts(auth, config)
-      } else if (meta.type === 'google_business_profile') {
-        accounts = await googleBusinessProfileConnector.discoverAccounts(auth, config)
-      }
-
-      if (accounts.length > 0) {
-        await db.from('connector_accounts').upsert(
-          accounts.map(a => ({
-            connector_id:  connector.id,
-            external_id:   a.external_id,
-            external_name: a.external_name,
-          })),
-          { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
-        )
-      }
+      await discoverForConnector(meta.type, connector.id, auth, config, db)
     } catch (e) {
       console.warn(`${meta.label} account discovery failed (non-fatal):`, e)
     }

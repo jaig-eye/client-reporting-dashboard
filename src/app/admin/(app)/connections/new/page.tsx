@@ -17,7 +17,43 @@ export default async function NewConnectorPage({
   searchParams: Promise<{ type?: string }>
 }) {
   const sp = await searchParams
-  const type = sp.type as ConnectorType | undefined
+  const type = sp.type as ConnectorType | 'google' | undefined
+
+  // ── Virtual Google group setup ──────────────────────────────────────────────
+  // 'google' is not a real ConnectorType — it's a UI grouping that triggers
+  // a unified OAuth flow creating all 4 Google connector rows at once.
+  if (type === 'google') {
+    return (
+      <div className="max-w-lg">
+        <div className="flex items-center gap-2 mb-6 text-sm">
+          <Link href="/admin/connections" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
+            Data Connections
+          </Link>
+          <span style={{ color: 'var(--border)' }}>/</span>
+          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Connect Google</span>
+        </div>
+        <div className="card p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div
+              className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
+              style={{ background: '#4285F4' }}
+            >
+              G
+            </div>
+            <div>
+              <h1 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Connect Google
+              </h1>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                One sign-in connects Ads, Analytics, Search Console &amp; Business Profile.
+              </p>
+            </div>
+          </div>
+          <NewConnectorForm type="google" />
+        </div>
+      </div>
+    )
+  }
 
   if (!type || !isConnectorImplemented(type)) notFound()
 

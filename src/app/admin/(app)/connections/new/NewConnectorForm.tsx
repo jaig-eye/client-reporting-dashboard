@@ -1,8 +1,8 @@
 'use client'
 
 // Agency-level connector setup form.
-// Handles Google OAuth (Ads, Analytics, Search Console, Business Profile)
-// and Meta OAuth — all require agency-level credentials shared across clients.
+// Handles Google OAuth (unified — all 4 services at once), Meta OAuth,
+// and direct-credential connectors (Ahrefs).
 //
 // GHL and WordPress are client-level direct connections — configure those
 // inside the individual client page (Admin → Clients → [Client] → Direct Integrations).
@@ -10,13 +10,14 @@
 import { useState } from 'react'
 import type { ConnectorType } from '@/lib/types'
 
-export default function NewConnectorForm({ type }: { type: ConnectorType }) {
-  if (type === 'google_ads')              return <GoogleAdsForm />
-  if (type === 'google_analytics')        return <GoogleOAuthForm type="google_analytics"        label="Google Analytics (GA4)" hint="Sign in with the Google account that owns your GA4 properties." />
-  if (type === 'google_search_console')   return <GoogleOAuthForm type="google_search_console"   label="Google Search Console"  hint="Sign in with the Google account that has access to your verified sites." />
+export default function NewConnectorForm({ type }: { type: ConnectorType | 'google' }) {
+  if (type === 'google')               return <GoogleUnifiedForm />
+  if (type === 'google_ads')           return <GoogleAdsForm />
+  if (type === 'google_analytics')     return <GoogleOAuthForm type="google_analytics"        label="Google Analytics (GA4)" hint="Sign in with the Google account that owns your GA4 properties." />
+  if (type === 'google_search_console')return <GoogleOAuthForm type="google_search_console"   label="Google Search Console"  hint="Sign in with the Google account that has access to your verified sites." />
   if (type === 'google_business_profile') return <GoogleOAuthForm type="google_business_profile" label="Google Business Profile" hint="Sign in with the Google account that manages your GBP locations." />
-  if (type === 'meta_ads')                return <MetaForm />
-  if (type === 'ahrefs')                  return <AhrefsForm />
+  if (type === 'meta_ads')             return <MetaForm />
+  if (type === 'ahrefs')               return <AhrefsForm />
   if (type === 'ghl' || type === 'wordpress') {
     return (
       <div
@@ -36,6 +37,117 @@ export default function NewConnectorForm({ type }: { type: ConnectorType }) {
     <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
       This connector type is not yet supported.
     </p>
+  )
+}
+
+// ─── Unified Google (all 4 services in one OAuth flow) ───────────────────────
+
+function GoogleUnifiedForm() {
+  const [developerToken, setDeveloperToken] = useState('')
+  const [mccCustomerId,  setMccCustomerId]  = useState('')
+  const [showAds,        setShowAds]        = useState(false)
+
+  function handleConnect() {
+    const params = new URLSearchParams()
+    if (developerToken.trim()) params.set('developer_token', developerToken.trim())
+    if (mccCustomerId.trim())  params.set('mcc_customer_id', mccCustomerId.trim().replace(/-/g, ''))
+    // No connector_type → start route treats this as unified mode
+    window.location.href = `/api/auth/google/start?${params}`
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Services included */}
+      <div
+        className="rounded-xl px-4 py-3 text-sm space-y-2"
+        style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
+      >
+        <p className="font-medium">One Google sign-in activates all four data sources:</p>
+        <ul className="list-none space-y-1 pl-1" style={{ color: 'var(--blue)' }}>
+          <li>· Google Ads — campaign &amp; keyword performance</li>
+          <li>· Google Analytics (GA4) — traffic &amp; conversions</li>
+          <li>· Search Console — organic search data</li>
+          <li>· Business Profile — views, calls &amp; reviews</li>
+        </ul>
+        <p style={{ color: 'var(--blue)', opacity: 0.8 }}>
+          You&apos;ll only need to do this once — we store a refresh token so syncs never expire.
+        </p>
+      </div>
+
+      {/* Optional Google Ads config */}
+      <div
+        className="rounded-xl overflow-hidden"
+        style={{ border: '1px solid var(--border)' }}
+      >
+        <button
+          type="button"
+          onClick={() => setShowAds(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm focus-ring"
+          style={{
+            background: 'var(--bg-subtle)',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-primary)',
+            textAlign: 'left',
+          }}
+        >
+          <span className="font-medium">Google Ads configuration <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>(optional)</span></span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>{showAds ? '▲' : '▼'}</span>
+        </button>
+
+        {showAds && (
+          <div className="p-4 space-y-3" style={{ borderTop: '1px solid var(--border)' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Required only if you want to sync Google Ads campaign and keyword data.
+              Skip this section if you don&apos;t use Google Ads.
+            </p>
+
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                Developer Token
+              </label>
+              <input
+                className="input"
+                type="password"
+                placeholder="ABcd1234…"
+                value={developerToken}
+                onChange={e => setDeveloperToken(e.target.value)}
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                Found in Google Ads → Admin → API Center under your MCC account.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                MCC Customer ID
+              </label>
+              <input
+                className="input"
+                type="text"
+                placeholder="1234567890"
+                value={mccCustomerId}
+                onChange={e => setMccCustomerId(e.target.value)}
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                Your top-level manager account ID. Dashes are stripped automatically.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          type="button"
+          onClick={handleConnect}
+          className="btn btn-primary"
+        >
+          Connect with Google Account
+        </button>
+        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
+      </div>
+    </div>
   )
 }
 
@@ -114,7 +226,6 @@ function GoogleAdsForm() {
 
 function GoogleOAuthForm({ type, label, hint }: { type: ConnectorType; label: string; hint: string }) {
   function handleConnect() {
-    // Pass connector_type directly — the start route encodes it into the OAuth state
     window.location.href = `/api/auth/google/start?connector_type=${encodeURIComponent(type)}`
   }
 
