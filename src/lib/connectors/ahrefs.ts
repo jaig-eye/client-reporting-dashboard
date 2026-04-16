@@ -77,6 +77,8 @@ export const ahrefsConnector: ConnectorAdapter = {
         target: domain,
         date:   dateTo,
       })
+      // Log raw response to diagnose format issues
+      console.log(`[ahrefs] DR response for ${domain}:`, JSON.stringify(drData).slice(0, 400))
       // Ahrefs v3 may return flat { domain_rating, ahrefs_rank } or nested { domain: { ... } }
       const d = (drData.domain as Record<string, unknown> | null) ?? drData
       domainRating = typeof d.domain_rating === 'number' ? d.domain_rating : null
@@ -93,6 +95,8 @@ export const ahrefsConnector: ConnectorAdapter = {
         date_to:   dateTo,
         select:    'backlinks,refdomains,org_keywords,org_traffic',
       })
+      // Log raw response to diagnose format issues
+      console.log(`[ahrefs] Metrics response for ${domain}:`, JSON.stringify(metricsData).slice(0, 400))
       const m = (metricsData.metrics as Record<string, unknown> | null) ?? metricsData
       backlinks       = typeof m.backlinks    === 'number' ? m.backlinks    : null
       referringDoms   = typeof m.refdomains   === 'number' ? m.refdomains   : null
@@ -104,7 +108,7 @@ export const ahrefsConnector: ConnectorAdapter = {
 
     // If both API calls returned nothing useful, skip writing a blank row
     if (domainRating === null && backlinks === null && organicTraffic === null) {
-      console.warn(`[ahrefs] All metrics null for ${domain} — skipping row write`)
+      console.warn(`[ahrefs] All metrics null for ${domain} — dateFrom=${dateFrom} dateTo=${dateTo} — skipping row write`)
       return { rows: [] }
     }
 

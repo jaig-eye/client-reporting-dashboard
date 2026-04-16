@@ -27,6 +27,8 @@ import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
 import ClientDirectConnections from './ClientDirectConnections'
 import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
+import GscInsightsPanel from '@/components/admin/GscInsightsPanel'
+import type { GscInsightRow } from '@/components/admin/GscInsightsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -495,13 +497,23 @@ export default async function ClientDetailPage({
 async function ClientContentSettingsSection({ clientId }: { clientId: string }) {
   const db = createAdminClient()
 
-  // Load WordPress connections for this client (for site + author dropdowns)
-  const { data: wpConnData } = await db
-    .from('client_connections')
-    .select('id, external_id, external_name, connector:connectors!inner(type, config)')
-    .eq('client_id', clientId)
-    .eq('status', 'active')
-    .eq('connector.type', 'wordpress')
+  // Load WordPress connections and GSC insights in parallel
+  const [{ data: wpConnData }, { data: gscInsightsRaw }] = await Promise.all([
+    db.from('client_connections')
+      .select('id, external_id, external_name, connector:connectors!inner(type, config)')
+      .eq('client_id', clientId)
+      .eq('status', 'active')
+      .eq('connector.type', 'wordpress'),
+    // GSC weak pages: high impressions, low CTR, position > 5
+    db.from('gsc_metrics')
+      .select('page, query, impressions, ctr, position')
+      .eq('client_id', clientId)
+      .gt('impressions', 50)
+      .gt('position', 5)
+      .lt('ctr', 0.05)
+      .order('impressions', { ascending: false })
+      .limit(10),
+  ])
 
   type WpConn = {
     id: string
@@ -517,12 +529,15 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
     clientId,
   }))
 
+  const gscInsights = (gscInsightsRaw ?? []) as GscInsightRow[]
+
   return (
     <div>
       <div className="mb-6">
         <h2 className="page-title" style={{ fontSize: '1.125rem' }}>Content Settings</h2>
         <p className="section-desc">Configure AI content generation for this client — business background, brand voice, publishing schedule, and more.</p>
       </div>
+      <GscInsightsPanel rows={gscInsights} />
       <ClientContentSettingsForm clientId={clientId} sites={sites} />
     </div>
   )

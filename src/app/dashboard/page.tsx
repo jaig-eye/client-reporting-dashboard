@@ -724,6 +724,8 @@ export default async function DashboardPage({
             connectionId={connectionsBySource['google_search_console']}
             dateFrom={fmtDate(fromDate)}
             dateTo={fmtDate(toDate)}
+            compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+            compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
           />
         )}
         {availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile'] && (

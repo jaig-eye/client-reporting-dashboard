@@ -27,6 +27,10 @@ function truncateUrl(url: string, max = 60) {
     return url.length > max ? url.slice(0, max) + '…' : url
   }
 }
+function calcDelta(curr: number, prev: number): number | null {
+  if (prev === 0) return null
+  return ((curr - prev) / Math.abs(prev)) * 100
+}
 
 export default async function SearchConsolePage({
   searchParams,
@@ -47,6 +51,21 @@ export default async function SearchConsolePage({
   const toDate   = params.to   ? new Date(params.to)   : new Date()
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
+
+  // Compute comparison date range
+  const showCompare = compare === 'prior_period' || compare === 'last_year'
+  let compFrom: Date | null = null
+  let compTo:   Date | null = null
+  if (showCompare) {
+    if (compare === 'last_year') {
+      compFrom = new Date(fromDate); compFrom.setFullYear(compFrom.getFullYear() - 1)
+      compTo   = new Date(toDate);   compTo.setFullYear(compTo.getFullYear() - 1)
+    } else {
+      const ms = toDate.getTime() - fromDate.getTime()
+      compTo   = new Date(fromDate.getTime() - 86400000)
+      compFrom = new Date(compTo.getTime() - ms)
+    }
+  }
 
   // Find active GSC connections
   const { data: connData } = await db
@@ -72,19 +91,25 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Fetch GSC metrics
-  const { data: rows } = await db
-    .from('gsc_metrics')
-    .select('*')
-    .eq('client_id', client.id)
-    .gte('date', fmtDate(fromDate))
-    .lte('date', fmtDate(toDate))
-    .order('date', { ascending: true })
+  // Fetch current and comparison period data in parallel
+  const [{ data: rows }, { data: compRowsRaw }] = await Promise.all([
+    db.from('gsc_metrics')
+      .select('*')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate))
+      .lte('date', fmtDate(toDate))
+      .order('date', { ascending: true }),
+    showCompare && compFrom && compTo
+      ? db.from('gsc_metrics')
+          .select('clicks, impressions, ctr, position')
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(compFrom))
+          .lte('date', fmtDate(compTo))
+      : Promise.resolve({ data: null }),
+  ])
 
-  const gscRows = (rows ?? []) as {
-    date: string; query: string | null; page: string | null; country: string | null;
-    clicks: number; impressions: number; ctr: number; position: number;
-  }[]
+  type GscRow = { date: string; query: string | null; page: string | null; country: string | null; clicks: number; impressions: number; ctr: number; position: number }
+  const gscRows = (rows ?? []) as GscRow[]
 
   if (gscRows.length === 0) {
     return (
@@ -97,18 +122,33 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Aggregate totals
+  // Aggregate totals (impression-weighted for CTR and position)
   const totals = gscRows.reduce(
     (acc, r) => ({
-      clicks:           acc.clicks      + (r.clicks      ?? 0),
-      impressions:      acc.impressions + (r.impressions  ?? 0),
-      ctr_sum:          acc.ctr_sum     + (r.ctr          ?? 0) * (r.impressions ?? 0),
-      position_sum:     acc.position_sum + (r.position    ?? 0) * (r.impressions ?? 0),
+      clicks:       acc.clicks      + (r.clicks      ?? 0),
+      impressions:  acc.impressions + (r.impressions  ?? 0),
+      ctr_sum:      acc.ctr_sum     + (r.ctr          ?? 0) * (r.impressions ?? 0),
+      position_sum: acc.position_sum + (r.position    ?? 0) * (r.impressions ?? 0),
     }),
     { clicks: 0, impressions: 0, ctr_sum: 0, position_sum: 0 }
   )
   const avgCtr      = totals.impressions > 0 ? totals.ctr_sum      / totals.impressions : 0
   const avgPosition = totals.impressions > 0 ? totals.position_sum / totals.impressions : 0
+
+  // Comparison period aggregates
+  type CompRow = { clicks: number; impressions: number; ctr: number; position: number }
+  const compRows = (compRowsRaw ?? []) as CompRow[]
+  const compTotals = compRows.reduce(
+    (acc, r) => ({
+      clicks:       acc.clicks      + (r.clicks      ?? 0),
+      impressions:  acc.impressions + (r.impressions  ?? 0),
+      ctr_sum:      acc.ctr_sum     + (r.ctr          ?? 0) * (r.impressions ?? 0),
+      position_sum: acc.position_sum + (r.position    ?? 0) * (r.impressions ?? 0),
+    }),
+    { clicks: 0, impressions: 0, ctr_sum: 0, position_sum: 0 }
+  )
+  const compAvgCtr      = compTotals.impressions > 0 ? compTotals.ctr_sum      / compTotals.impressions : 0
+  const compAvgPosition = compTotals.impressions > 0 ? compTotals.position_sum / compTotals.impressions : 0
 
   // Top Queries (aggregate by query, skip null/empty)
   const queryMap = new Map<string, { clicks: number; impressions: number; ctr_sum: number; position_sum: number }>()
@@ -169,10 +209,24 @@ export default async function SearchConsolePage({
     .slice(0, 25)
 
   const metricCards = [
-    { label: 'Organic Clicks',  value: fmtNum(totals.clicks),       color: '#10b981' },
-    { label: 'Impressions',     value: fmtNum(totals.impressions),   color: '#3b82f6' },
-    { label: 'Avg. CTR',        value: fmtPct(avgCtr),               color: '#8b5cf6' },
-    { label: 'Avg. Position',   value: fmtPos(avgPosition),          color: '#f59e0b' },
+    {
+      label: 'Organic Clicks', value: fmtNum(totals.clicks),     color: '#10b981',
+      delta: showCompare ? calcDelta(totals.clicks, compTotals.clicks) : null,
+    },
+    {
+      label: 'Impressions',    value: fmtNum(totals.impressions), color: '#3b82f6',
+      delta: showCompare ? calcDelta(totals.impressions, compTotals.impressions) : null,
+    },
+    {
+      label: 'Avg. CTR',       value: fmtPct(avgCtr),             color: '#8b5cf6',
+      delta: showCompare ? calcDelta(avgCtr, compAvgCtr) : null,
+    },
+    {
+      label: 'Avg. Position',  value: fmtPos(avgPosition),        color: '#f59e0b',
+      // Position: lower is better → invert sign for colour logic
+      delta: showCompare ? calcDelta(avgPosition, compAvgPosition) : null,
+      invertDelta: true,
+    },
   ]
 
   return (
@@ -182,17 +236,28 @@ export default async function SearchConsolePage({
 
         {/* KPI cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {metricCards.map(card => (
-            <div key={card.label} className="card p-5">
-              <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
-                {card.label}
-              </p>
-              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
-              <div style={{ width: '100%', height: 3, borderRadius: 9999, background: 'var(--border)', marginTop: 8 }}>
-                <div style={{ width: '60%', height: '100%', borderRadius: 9999, background: card.color }} />
+          {metricCards.map(card => {
+            const positive = card.invertDelta ? (card.delta !== null && card.delta < 0) : (card.delta !== null && card.delta >= 0)
+            return (
+              <div key={card.label} className="card p-5">
+                <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
+                  {card.label}
+                </p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
+                {card.delta !== null && (
+                  <p style={{
+                    fontSize: '0.75rem', fontWeight: 600, marginTop: 3,
+                    color: positive ? 'var(--green)' : 'var(--red)',
+                  }}>
+                    {card.delta >= 0 ? '▲' : '▼'} {Math.abs(card.delta).toFixed(1)}%
+                  </p>
+                )}
+                <div style={{ width: '100%', height: 3, borderRadius: 9999, background: 'var(--border)', marginTop: 8 }}>
+                  <div style={{ width: '60%', height: '100%', borderRadius: 9999, background: card.color }} />
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* Top Queries */}
