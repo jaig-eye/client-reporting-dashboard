@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { googleAdsConnector } from '@/lib/connectors/google-ads'
 import { metaAdsConnector } from '@/lib/connectors/meta-ads'
+import { googleAnalyticsConnector }       from '@/lib/connectors/google-analytics'
+import { googleSearchConsoleConnector }   from '@/lib/connectors/google-search-console'
+import { googleBusinessProfileConnector } from '@/lib/connectors/google-business-profile'
 import type { Connector } from '@/lib/types'
 
 function requireAdmin(req: NextRequest): boolean {
@@ -32,8 +35,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   console.log('discover: has developer_token:', !!auth.developer_token)
   console.log('discover: has GOOGLE_DEVELOPER_TOKEN env:', !!process.env.GOOGLE_DEVELOPER_TOKEN)
 
-  const adapter = connector.type === 'google_ads' ? googleAdsConnector
-                : connector.type === 'meta_ads'   ? metaAdsConnector
+  const adapter = connector.type === 'google_ads'              ? googleAdsConnector
+                : connector.type === 'meta_ads'                ? metaAdsConnector
+                : connector.type === 'google_analytics'        ? googleAnalyticsConnector
+                : connector.type === 'google_search_console'   ? googleSearchConsoleConnector
+                : connector.type === 'google_business_profile' ? googleBusinessProfileConnector
                 : null
 
   if (!adapter) return NextResponse.json({ error: 'No adapter for this connector type' }, { status: 400 })
