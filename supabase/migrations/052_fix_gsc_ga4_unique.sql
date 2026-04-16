@@ -1,19 +1,17 @@
 -- Migration 052: Fix unique constraints on gsc_metrics and ga4_metrics
 --
--- gsc_metrics: The original unique index used COALESCE expressions
--- (COALESCE(query,''), COALESCE(page,''), COALESCE(country,'')) which cannot be
--- used as an ON CONFLICT inference target with plain column names. This caused
--- every upsert to silently fail. Fix: convert query/page/country to NOT NULL with
--- default '' so a plain column-based UNIQUE index works.
+-- gsc_metrics: The original unique index used COALESCE expressions which cannot
+-- be used as an ON CONFLICT inference target with plain column names. Every
+-- upsert was silently failing. Fix: make query/page/country NOT NULL with
+-- default '' and replace the expression index with a plain UNIQUE index.
 --
--- ga4_metrics: channel_group is nullable, but a nullable column in a UNIQUE
--- constraint causes ON CONFLICT to use IS NOT DISTINCT FROM semantics — which
--- works in PostgreSQL but is fragile. Fix: make channel_group NOT NULL with a
--- safe default so the plain UNIQUE constraint works reliably.
+-- ga4_metrics: The table was created before channel_group was added to the
+-- schema, so CREATE TABLE IF NOT EXISTS silently skipped it. The column is
+-- missing, which causes every upsert to fail. Fix: add the column and the
+-- UNIQUE constraint if they don't already exist.
 
 -- ── gsc_metrics ───────────────────────────────────────────────────────────────
 
--- Coerce any existing NULLs to '' before adding NOT NULL
 UPDATE gsc_metrics SET
   query   = COALESCE(query,   ''),
   page    = COALESCE(page,    ''),
@@ -30,7 +28,6 @@ ALTER TABLE gsc_metrics
   ALTER COLUMN page    SET NOT NULL,
   ALTER COLUMN country SET NOT NULL;
 
--- Drop the expression-based unique index and replace with a plain one
 DROP INDEX IF EXISTS idx_gsc_unique_row;
 
 CREATE UNIQUE INDEX idx_gsc_unique_row
@@ -38,12 +35,21 @@ CREATE UNIQUE INDEX idx_gsc_unique_row
 
 -- ── ga4_metrics ───────────────────────────────────────────────────────────────
 
--- Coerce any existing NULLs to 'Direct' before adding NOT NULL
-UPDATE ga4_metrics SET channel_group = 'Direct'
-WHERE channel_group IS NULL;
-
+-- Add channel_group if it was missing (table pre-dated migration 038's full schema)
 ALTER TABLE ga4_metrics
-  ALTER COLUMN channel_group SET DEFAULT 'Direct';
+  ADD COLUMN IF NOT EXISTS channel_group TEXT NOT NULL DEFAULT 'Direct';
 
-ALTER TABLE ga4_metrics
-  ALTER COLUMN channel_group SET NOT NULL;
+-- Add the UNIQUE constraint only if it doesn't already exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'ga4_metrics'::regclass
+      AND contype = 'u'
+      AND conname = 'ga4_metrics_connection_id_date_channel_group_key'
+  ) THEN
+    ALTER TABLE ga4_metrics
+      ADD CONSTRAINT ga4_metrics_connection_id_date_channel_group_key
+      UNIQUE (connection_id, date, channel_group);
+  END IF;
+END $$;
