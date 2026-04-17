@@ -20,6 +20,8 @@ import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
+import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
+import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 
 interface AhrefsRow {
   date:              string
@@ -139,71 +141,43 @@ export async function syncClient(
           clientId,
           result.rows as GoogleAdsRawRow[]
         )
-        // Ad-level sync (best-effort — records error in job but doesn't fail it)
-        try {
-          const adRows = await fetchGoogleAdMetrics(
-            connection.external_id,
-            auth,
-            connection.connector.config,
-            resolvedFrom,
-            resolvedTo
-          )
+        // Run all Google Ads sub-fetches in parallel (best-effort — each is independent)
+        const [adResult, assetResult, kwResult, negResult] = await Promise.allSettled([
+          fetchGoogleAdMetrics(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
+          fetchGooglePMaxAssets(connection.external_id, auth, connection.connector.config),
+          fetchGoogleSearchKeywords(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
+          fetchGoogleNegativeKeywords(connection.external_id, auth, connection.connector.config),
+        ])
+
+        if (adResult.status === 'fulfilled') {
+          const adRows = adResult.value
           console.log(`[sync] Google Ads ad-level: ${adRows.length} rows for connection ${connection.id}`)
-          if (adRows.length > 0) {
-            await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
-          } else {
-            // 0 rows is not an error — common for Performance Max accounts
-            // (PMax uses asset_group, not ad_group_ad)
-            adLevelError = 'Ad-level: 0 rows returned — account may use Performance Max campaigns (PMax ads are not supported at ad-group level)'
-          }
-        } catch (adErr) {
-          adLevelError = `Ad-level sync failed: ${String(adErr)}`
-          console.error(`[sync] Google Ads ad-level sync failed for connection ${connection.id}:`, adErr)
+          if (adRows.length > 0) await upsertGoogleAdsAdMetrics(db, connection.id, clientId, adRows)
+          else adLevelError = 'Ad-level: 0 rows — account may use Performance Max campaigns'
+        } else {
+          adLevelError = `Ad-level sync failed: ${String(adResult.reason)}`
+          console.error(`[sync] Google Ads ad-level failed for connection ${connection.id}:`, adResult.reason)
         }
-        // pMax asset group assets (best-effort — not date-ranged, fetches current active set)
-        try {
-          const assetRows = await fetchGooglePMaxAssets(
-            connection.external_id,
-            auth,
-            connection.connector.config
-          )
-          console.log(`[sync] Google Ads pMax assets: ${assetRows.length} rows for connection ${connection.id}`)
-          if (assetRows.length > 0) {
-            await upsertGooglePMaxAssets(db, connection.id, clientId, assetRows)
-          }
-        } catch (assetErr) {
-          // non-fatal — accounts with no pMax campaigns will error here
-          console.error(`[sync] Google Ads pMax asset sync failed for connection ${connection.id}:`, assetErr)
+
+        if (assetResult.status === 'fulfilled' && assetResult.value.length > 0) {
+          console.log(`[sync] Google Ads pMax assets: ${assetResult.value.length} rows for connection ${connection.id}`)
+          await upsertGooglePMaxAssets(db, connection.id, clientId, assetResult.value)
+        } else if (assetResult.status === 'rejected') {
+          console.error(`[sync] Google Ads pMax assets failed for connection ${connection.id}:`, assetResult.reason)
         }
-        // Keyword-level metrics for Search campaigns (best-effort)
-        try {
-          const kwRows = await fetchGoogleSearchKeywords(
-            connection.external_id,
-            auth,
-            connection.connector.config,
-            resolvedFrom,
-            resolvedTo
-          )
-          console.log(`[sync] Google Ads keywords: ${kwRows.length} rows for connection ${connection.id}`)
-          if (kwRows.length > 0) {
-            await upsertGoogleAdsKeywords(db, connection.id, clientId, kwRows)
-          }
-        } catch (kwErr) {
-          console.error(`[sync] Google Ads keyword sync failed for connection ${connection.id}:`, kwErr)
+
+        if (kwResult.status === 'fulfilled' && kwResult.value.length > 0) {
+          console.log(`[sync] Google Ads keywords: ${kwResult.value.length} rows for connection ${connection.id}`)
+          await upsertGoogleAdsKeywords(db, connection.id, clientId, kwResult.value)
+        } else if (kwResult.status === 'rejected') {
+          console.error(`[sync] Google Ads keywords failed for connection ${connection.id}:`, kwResult.reason)
         }
-        // Negative keywords (best-effort, non-dated snapshot)
-        try {
-          const negRows = await fetchGoogleNegativeKeywords(
-            connection.external_id,
-            auth,
-            connection.connector.config
-          )
-          console.log(`[sync] Google Ads negative keywords: ${negRows.length} rows for connection ${connection.id}`)
-          if (negRows.length > 0) {
-            await upsertGoogleAdsNegativeKeywords(db, connection.id, clientId, negRows)
-          }
-        } catch (negErr) {
-          console.error(`[sync] Google Ads negative keyword sync failed for connection ${connection.id}:`, negErr)
+
+        if (negResult.status === 'fulfilled' && negResult.value.length > 0) {
+          console.log(`[sync] Google Ads negative keywords: ${negResult.value.length} rows for connection ${connection.id}`)
+          await upsertGoogleAdsNegativeKeywords(db, connection.id, clientId, negResult.value)
+        } else if (negResult.status === 'rejected') {
+          console.error(`[sync] Google Ads negative keywords failed for connection ${connection.id}:`, negResult.reason)
         }
       } else if (connection.connector.type === 'meta_ads') {
         recordCount = await upsertMetaAdsMetrics(
@@ -244,11 +218,10 @@ export async function syncClient(
           result.rows as unknown as import('./connectors/google-analytics').GA4RawRow[]
         )
       } else if (connection.connector.type === 'google_search_console') {
-        recordCount = await upsertGSCMetrics(
-          db,
-          connection.id,
-          clientId,
-          result.rows as unknown as import('./connectors/google-search-console').GSCRawRow[]
+        // Bypass the pre-fetched result — fetch in 30-day chunks to avoid timeouts
+        // on large sites during backfills. Each chunk is upserted immediately.
+        recordCount = await syncGSCInChunks(
+          db, adapter, connection, auth, resolvedFrom, resolvedTo, clientId
         )
       } else if (connection.connector.type === 'google_business_profile') {
         recordCount = await upsertGBPMetrics(
@@ -264,6 +237,27 @@ export async function syncClient(
           clientId,
           result.rows as unknown as AhrefsRow[]
         )
+        // Fetch keyword rankings + top pages snapshot for the end date
+        const ahrefsDomain = connection.external_id
+        const ahrefsApiKey = String((connection.connector.auth as Record<string, unknown> | null)?.api_key ?? '')
+        if (ahrefsDomain && ahrefsApiKey) {
+          const [kwResult, pgResult] = await Promise.allSettled([
+            fetchAhrefsKeywords(ahrefsDomain, ahrefsApiKey, resolvedTo),
+            fetchAhrefsPages(ahrefsDomain, ahrefsApiKey, resolvedTo),
+          ])
+          if (kwResult.status === 'fulfilled' && kwResult.value.length > 0) {
+            console.log(`[sync] Ahrefs keywords: ${kwResult.value.length} rows for connection ${connection.id}`)
+            await upsertAhrefsKeywords(db, connection.id, clientId, kwResult.value)
+          } else if (kwResult.status === 'rejected') {
+            console.error(`[sync] Ahrefs keywords failed for connection ${connection.id}:`, kwResult.reason)
+          }
+          if (pgResult.status === 'fulfilled' && pgResult.value.length > 0) {
+            console.log(`[sync] Ahrefs pages: ${pgResult.value.length} rows for connection ${connection.id}`)
+            await upsertAhrefsPages(db, connection.id, clientId, pgResult.value)
+          } else if (pgResult.status === 'rejected') {
+            console.error(`[sync] Ahrefs pages failed for connection ${connection.id}:`, pgResult.reason)
+          }
+        }
       }
       // WordPress connector: no metrics to sync (write-only connector)
 
@@ -283,6 +277,56 @@ export async function syncClient(
   }
 
   return totalRecords
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GSC chunked sync helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GSC_CHUNK_DAYS = 30
+
+/**
+ * Fetches GSC data in 30-day windows and upserts each chunk immediately.
+ * Prevents memory bloat and timeouts on large sites during backfills.
+ */
+async function syncGSCInChunks(
+  db:           ReturnType<typeof createAdminClient>,
+  adapter:      import('./connectors/types').ConnectorAdapter,
+  connection:   ClientConnection & { connector: Connector },
+  auth:         Record<string, unknown>,
+  dateFrom:     string,
+  dateTo:       string,
+  clientId:     string
+): Promise<number> {
+  let total      = 0
+  let chunkStart = new Date(dateFrom)
+  const end      = new Date(dateTo)
+
+  while (chunkStart <= end) {
+    const chunkEnd = new Date(chunkStart)
+    chunkEnd.setDate(chunkEnd.getDate() + GSC_CHUNK_DAYS - 1)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+
+    const chunkFrom = chunkStart.toISOString().split('T')[0]
+    const chunkTo   = chunkEnd.toISOString().split('T')[0]
+
+    const chunkResult = await adapter.fetchMetrics(
+      connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo
+    )
+
+    if (chunkResult.rows.length > 0) {
+      total += await upsertGSCMetrics(
+        db, connection.id, clientId,
+        chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[]
+      )
+    }
+    console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
+
+    chunkStart = new Date(chunkEnd)
+    chunkStart.setDate(chunkStart.getDate() + 1)
+  }
+
+  return total
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -870,9 +914,9 @@ export async function upsertGSCMetrics(
     connection_id: connectionId,
     client_id:     clientId,
     date:          r.date,
-    query:         r.query   ?? '',
-    page:          r.page    ?? '',
-    country:       r.country ?? '',
+    query:         r.query ?? '',
+    page:          r.page  ?? '',
+    // country: removed — no longer fetched (dropped from GSC API dimensions)
     clicks:        r.clicks,
     impressions:   r.impressions,
     ctr:           r.ctr,
@@ -884,7 +928,7 @@ export async function upsertGSCMetrics(
     const { error } = await db
       .from('gsc_metrics')
       .upsert(mapped.slice(i, i + 200), {
-        onConflict: 'connection_id,date,query,page,country',
+        onConflict: 'connection_id,date,query,page',
         ignoreDuplicates: false,
       })
     if (error) console.error(`[sync] gsc_metrics upsert error (batch ${i}):`, error)
@@ -957,4 +1001,60 @@ export async function upsertAhrefsMetrics(
       })
   }
   return mapped.length
+}
+
+export async function upsertAhrefsKeywords(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: AhrefsKeywordRow[]
+): Promise<void> {
+  if (!rows.length) return
+  const mapped = rows.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    date:          r.date,
+    keyword:       r.keyword,
+    position:      r.position   ?? null,
+    volume:        r.volume     ?? null,
+    traffic:       r.traffic    ?? null,
+    difficulty:    r.difficulty ?? null,
+    synced_at:     new Date().toISOString(),
+  }))
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('ahrefs_keywords')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date,keyword',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] ahrefs_keywords upsert error (batch ${i}):`, error)
+  }
+}
+
+export async function upsertAhrefsPages(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: AhrefsPageRow[]
+): Promise<void> {
+  if (!rows.length) return
+  const mapped = rows.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    date:             r.date,
+    url:              r.url,
+    organic_traffic:  r.organic_traffic  ?? null,
+    organic_keywords: r.organic_keywords ?? null,
+    synced_at:        new Date().toISOString(),
+  }))
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('ahrefs_pages')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date,url',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] ahrefs_pages upsert error (batch ${i}):`, error)
+  }
 }

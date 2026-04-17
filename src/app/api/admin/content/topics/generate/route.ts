@@ -68,9 +68,11 @@ export async function POST(request: NextRequest) {
       .order('clicks', { ascending: false })
       .limit(20),
     // GSC weak pages (impressions but low CTR / high position — good to improve)
+    // Exclude UTM/query-string pages: tracking variants inflate results with non-canonical URLs
     db.from('gsc_metrics')
       .select('page, query, clicks, impressions, position, ctr')
       .eq('client_id', client_id)
+      .not('page', 'ilike', '%?%')
       .gt('impressions', 50)
       .gt('position', 5)
       .lt('ctr', 0.05)

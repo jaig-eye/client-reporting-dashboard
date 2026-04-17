@@ -512,10 +512,11 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
       .eq('client_id', clientId)
       .eq('status', 'active')
       .eq('connector.type', 'wordpress'),
-    // GSC weak pages: high impressions, low CTR, position > 5
+    // GSC weak pages: high impressions, low CTR, position > 5 — exclude UTM/query-string pages
     db.from('gsc_metrics')
       .select('page, query, impressions, ctr, position')
       .eq('client_id', clientId)
+      .not('page', 'ilike', '%?%')
       .gt('impressions', 50)
       .gt('position', 5)
       .lt('ctr', 0.05)

@@ -37,10 +37,13 @@ interface ClientSettings {
 
 const DAY_NAMES  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const FREQ_OPTS  = [
-  { value: 'daily',    label: 'Daily' },
-  { value: 'weekly',   label: 'Weekly' },
-  { value: 'biweekly', label: 'Every 2 weeks' },
-  { value: 'monthly',  label: 'Monthly' },
+  { value: 'daily',         label: 'Daily' },
+  { value: 'weekly',        label: 'Weekly' },
+  { value: 'biweekly',      label: 'Every 2 weeks' },
+  { value: 'monthly',       label: 'Monthly (28-day rolling)' },
+  { value: 'monthly_first', label: 'Monthly — 1st of month' },
+  { value: 'monthly_mid',   label: 'Monthly — mid-month (15th)' },
+  { value: 'monthly_end',   label: 'Monthly — end of month (28th)' },
 ]
 
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {

@@ -11,6 +11,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import ExportButtons from '@/components/ExportButtons'
+import { GscQueriesTable, GscPagesTable } from './GscSortableTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -282,52 +283,10 @@ export default async function SearchConsolePage({
           <div className="card p-6">
             <div className="mb-4">
               <h2 className="section-title">Top Queries</h2>
-              <p className="section-desc">Top {topQueries.length} queries by organic clicks</p>
+              <p className="section-desc">Top {topQueries.length} queries by organic clicks · click column headers to sort</p>
             </div>
             <div className="overflow-x-auto">
-              <table className="data-table" style={{ minWidth: 520 }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Query</th>
-                    <th style={{ textAlign: 'right' }}>Clicks</th>
-                    <th style={{ textAlign: 'right' }}>Impressions</th>
-                    <th style={{ textAlign: 'right' }}>CTR</th>
-                    <th style={{ textAlign: 'right' }}>Avg. Position</th>
-                    {showCompare && <th style={{ textAlign: 'right' }}>Change</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {topQueries.map((q, i) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 500, color: 'var(--text-secondary)', maxWidth: 320 }}>
-                        <span className="block truncate" title={q.query}>{q.query}</span>
-                      </td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(q.clicks)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(q.impressions)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(q.ctr)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                        <span style={{
-                          color: q.position <= 3 ? 'var(--green)' : q.position <= 10 ? '#d97706' : 'var(--text-muted)',
-                          fontWeight: q.position <= 10 ? 600 : 400,
-                        }}>
-                          {fmtPos(q.position)}
-                        </span>
-                      </td>
-                      {showCompare && (
-                        <td style={{ textAlign: 'right' }}>
-                          {q.positionDelta != null && Math.abs(q.positionDelta) >= 0.05 ? (
-                            <span style={{ color: q.positionDelta < 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                              {q.positionDelta < 0 ? '▲' : '▼'} {Math.abs(q.positionDelta).toFixed(1)}
-                            </span>
-                          ) : (
-                            <span style={{ color: 'var(--text-faint)' }}>—</span>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <GscQueriesTable rows={topQueries} showCompare={showCompare} />
             </div>
           </div>
         )}
@@ -337,49 +296,10 @@ export default async function SearchConsolePage({
           <div className="card p-6">
             <div className="mb-4">
               <h2 className="section-title">Top Pages</h2>
-              <p className="section-desc">Top {topPages.length} pages by organic clicks</p>
+              <p className="section-desc">Top {topPages.length} pages by organic clicks · click column headers to sort</p>
             </div>
             <div className="overflow-x-auto">
-              <table className="data-table" style={{ minWidth: 520 }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Page</th>
-                    <th style={{ textAlign: 'right' }}>Clicks</th>
-                    <th style={{ textAlign: 'right' }}>Impressions</th>
-                    <th style={{ textAlign: 'right' }}>CTR</th>
-                    <th style={{ textAlign: 'right' }}>Avg. Position</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topPages.map((p, i) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 500, color: 'var(--text-secondary)', maxWidth: 320 }}>
-                        <a
-                          href={p.page}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:underline block truncate"
-                          style={{ color: 'var(--blue)' }}
-                          title={p.page}
-                        >
-                          {truncateUrl(p.page)}
-                        </a>
-                      </td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(p.clicks)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(p.impressions)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(p.ctr)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                        <span style={{
-                          color: p.position <= 3 ? 'var(--green)' : p.position <= 10 ? '#d97706' : 'var(--text-muted)',
-                          fontWeight: p.position <= 10 ? 600 : 400,
-                        }}>
-                          {fmtPos(p.position)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <GscPagesTable rows={topPages} />
             </div>
           </div>
         )}

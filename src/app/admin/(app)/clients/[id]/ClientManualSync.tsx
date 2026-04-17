@@ -31,7 +31,17 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+      let data: { ok?: boolean; records?: number; error?: string } = {}
+      try {
+        data = await res.json()
+      } catch {
+        // Vercel returns a plain-text page on 504 timeout — not valid JSON
+        throw new Error(
+          res.status === 504
+            ? 'Sync timed out (>5 min). Data was partially saved. Try a shorter date range or sync a single connector.'
+            : `Server error (${res.status})`
+        )
+      }
       if (!res.ok) throw new Error(data.error || 'Sync failed')
       setRecords(data.records ?? 0)
       setStatus('done')

@@ -527,59 +527,6 @@ export default async function CampaignDetailPage({
           />
         </div>
 
-        {/* ── Keyword Intelligence (Google Search only) ────────── */}
-        {isGoogleAds && !isPMax && keywordRows.length > 0 && (
-          <div className="card p-6 space-y-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <MagnifyingGlass size={16} aria-hidden style={{ color: 'var(--blue)' }} />
-                  <h2 className="section-title">Keyword Intelligence</h2>
-                </div>
-                <p className="section-desc">Top converting keywords across all ad groups in this campaign</p>
-              </div>
-              {totalKeywords > 0 && (
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <div className="text-right">
-                    <p className="text-2xl font-bold" style={{ color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
-                      {convertingCount}<span className="text-sm font-normal" style={{ color: 'var(--text-faint)' }}>/{totalKeywords}</span>
-                    </p>
-                    <p className="text-xs" style={{ color: 'var(--text-faint)' }}>converting ({convertingPct.toFixed(0)}%)</p>
-                  </div>
-                  <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
-                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--bg-subtle)" strokeWidth="4" />
-                    <circle cx="20" cy="20" r="16" fill="none" stroke="var(--green)" strokeWidth="4"
-                      strokeLinecap="round"
-                      strokeDasharray={`${(convertingPct / 100) * 100.53} 100.53`}
-                      transform="rotate(-90 20 20)"
-                    />
-                  </svg>
-                </div>
-              )}
-            </div>
-
-            {topConvertingKws.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {topConvertingKws.map((kw, i) => (
-                  <SparkMetricCard
-                    key={`${kw.keyword_text}-${i}`}
-                    label={kw.keyword_text.length > 24 ? kw.keyword_text.slice(0, 22) + '…' : kw.keyword_text}
-                    value={fmtNum(kw.conversions)}
-                    sparkData={[]}
-                    sparkColor="var(--green)"
-                    delay={i}
-                  />
-                ))}
-              </div>
-            )}
-
-            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
-              <h3 className="section-label mb-3">All Keywords ({keywordRows.length})</h3>
-              <KeywordTable rows={keywordRows} conversionLabel={conversionLabel} adFuelLabel="Cost" />
-            </div>
-          </div>
-        )}
-
       </main>
     </div>
   )

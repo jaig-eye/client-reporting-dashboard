@@ -56,6 +56,18 @@ export default async function GA4Page({
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
 
+  const showCompare = compare !== 'none'
+  const periodMs    = toDate.getTime() - fromDate.getTime()
+  let priorTo:   Date
+  let priorFrom: Date
+  if (compare === 'last_year') {
+    priorFrom = new Date(fromDate); priorFrom.setFullYear(priorFrom.getFullYear() - 1)
+    priorTo   = new Date(toDate);   priorTo.setFullYear(priorTo.getFullYear() - 1)
+  } else {
+    priorTo   = new Date(fromDate.getTime() - 86400000)
+    priorFrom = new Date(priorTo.getTime() - periodMs)
+  }
+
   // Find active GA4 connections
   const { data: connData } = await db
     .from('client_connections')
@@ -80,14 +92,18 @@ export default async function GA4Page({
     )
   }
 
-  // Fetch GA4 metrics
-  const { data: rows } = await db
-    .from('ga4_metrics')
-    .select('*')
-    .eq('client_id', client.id)
-    .gte('date', fmtDate(fromDate))
-    .lte('date', fmtDate(toDate))
-    .order('date', { ascending: true })
+  // Fetch GA4 metrics (current + prior period in parallel)
+  const [{ data: rows }, { data: priorRows }] = await Promise.all([
+    db.from('ga4_metrics').select('*')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      .order('date', { ascending: true }),
+    showCompare
+      ? db.from('ga4_metrics').select('date,channel_group,sessions,users,new_users,conversions,bounce_rate')
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
+      : Promise.resolve({ data: null }),
+  ])
 
   const ga4Rows = (rows ?? []) as {
     date: string; channel_group: string | null;
@@ -109,8 +125,40 @@ export default async function GA4Page({
     }),
     { sessions: 0, users: 0, new_users: 0, page_views: 0, conversions: 0, bounce_rate_sum: 0, duration_sum: 0 }
   )
-  const avgBounceRate = totals.sessions > 0 ? totals.bounce_rate_sum / totals.sessions : 0
-  const avgDuration   = totals.sessions > 0 ? totals.duration_sum   / totals.sessions : 0
+  const avgBounceRate  = totals.sessions > 0 ? totals.bounce_rate_sum / totals.sessions : 0
+  const avgDuration    = totals.sessions > 0 ? totals.duration_sum   / totals.sessions : 0
+  const engagementRate = 1 - avgBounceRate
+
+  // Prior period aggregation
+  type PriorRow = { sessions?: number; users?: number; new_users?: number; conversions?: number; bounce_rate?: number; channel_group?: string | null }
+  const priorData = (priorRows ?? []) as PriorRow[]
+  const priorTotals = priorData.reduce<{ sessions: number; new_users: number; conversions: number; bounce_rate_sum: number }>(
+    (acc, r) => ({
+      sessions:        acc.sessions        + (r.sessions    ?? 0),
+      new_users:       acc.new_users       + (r.new_users   ?? 0),
+      conversions:     acc.conversions     + (r.conversions ?? 0),
+      bounce_rate_sum: acc.bounce_rate_sum + (r.bounce_rate ?? 0) * (r.sessions ?? 0),
+    }),
+    { sessions: 0, new_users: 0, conversions: 0, bounce_rate_sum: 0 }
+  )
+  const priorEngagement = priorTotals.sessions > 0 ? 1 - (priorTotals.bounce_rate_sum / priorTotals.sessions) : 0
+
+  function calcDelta(curr: number, prev: number): number | null {
+    if (prev === 0) return null
+    return ((curr - prev) / Math.abs(prev)) * 100
+  }
+
+  const deltaSessions    = showCompare ? calcDelta(totals.sessions,  priorTotals.sessions)  : null
+  const deltaNewUsers    = showCompare ? calcDelta(totals.new_users,  priorTotals.new_users)  : null
+  const deltaConversions = showCompare ? calcDelta(totals.conversions, priorTotals.conversions) : null
+  const deltaEngagement  = showCompare ? calcDelta(engagementRate,     priorEngagement)        : null
+
+  // Prior channel map for Δ Sessions column
+  const priorChannelMap = new Map<string, number>()
+  for (const r of priorData) {
+    const ch = r.channel_group ?? 'Unassigned'
+    priorChannelMap.set(ch, (priorChannelMap.get(ch) ?? 0) + (r.sessions ?? 0))
+  }
 
   // Daily trend for chart
   const dailyByDate = new Map<string, { sessions: number; conversions: number }>()
@@ -128,8 +176,7 @@ export default async function GA4Page({
   const convSpark     = sortedDailyEntries.map(([, v]) => ({ v: v.conversions }))
 
   // Computed secondary metrics
-  const engagementRate = 1 - avgBounceRate
-  const convRate       = totals.sessions > 0 ? totals.conversions / totals.sessions : 0
+  const convRate = totals.sessions > 0 ? totals.conversions / totals.sessions : 0
 
   // Channel breakdown
   const channelMap = new Map<string, { sessions: number; users: number; conversions: number; bounce_rate_sum: number }>()
@@ -164,21 +211,32 @@ export default async function GA4Page({
           <>
             {/* KPI spark cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              <SparkMetricCard label="Sessions"   value={fmtNum(totals.sessions)}   sparkData={sessionsSpark} sparkColor="#3b82f6" delay={0} />
-              <SparkMetricCard label="Users"      value={fmtNum(totals.users)}      sparkColor="#10b981" delay={1} />
-              <SparkMetricCard label="New Users"  value={fmtNum(totals.new_users)}  sparkColor="#6366f1" delay={2} />
-              <SparkMetricCard label="Page Views" value={fmtNum(totals.page_views)} sparkColor="#f59e0b" delay={3} />
-              <SparkMetricCard label="Conversions" value={fmtNum(totals.conversions)} sparkData={convSpark} sparkColor="#ec4899" delay={4} />
+              <SparkMetricCard label="Sessions"    value={fmtNum(totals.sessions)}    sparkData={sessionsSpark} sparkColor="#3b82f6" delay={0} delta={deltaSessions    ?? undefined} />
+              <SparkMetricCard label="Users"       value={fmtNum(totals.users)}        sparkColor="#10b981" delay={1} />
+              <SparkMetricCard label="New Users"   value={fmtNum(totals.new_users)}    sparkColor="#6366f1" delay={2} delta={deltaNewUsers    ?? undefined} />
+              <SparkMetricCard label="Page Views"  value={fmtNum(totals.page_views)}   sparkColor="#f59e0b" delay={3} />
+              <SparkMetricCard label="Conversions" value={fmtNum(totals.conversions)}  sparkData={convSpark} sparkColor="#ec4899" delay={4} delta={deltaConversions ?? undefined} />
             </div>
 
             {/* Secondary compact cards */}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              {secondaryCards.map(card => (
-                <div key={card.label} className="card" style={{ padding: '1rem 1.25rem' }}>
-                  <p className="metric-label" style={{ marginBottom: '0.25rem' }}>{card.label}</p>
-                  <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{card.value}</p>
-                </div>
-              ))}
+              <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Avg. Session</p>
+                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtSec(avgDuration)}</p>
+              </div>
+              <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Engagement Rate</p>
+                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtPct(engagementRate)}</p>
+                {deltaEngagement != null && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deltaEngagement >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {deltaEngagement >= 0 ? '▲' : '▼'} {Math.abs(deltaEngagement).toFixed(1)}%
+                  </span>
+                )}
+              </div>
+              <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Conv. Rate</p>
+                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtPct(convRate)}</p>
+              </div>
             </div>
 
             {/* Sessions trend chart */}
@@ -210,6 +268,7 @@ export default async function GA4Page({
                       <tr>
                         <th style={{ textAlign: 'left' }}>Channel</th>
                         <th style={{ textAlign: 'right' }}>Sessions</th>
+                        {showCompare && <th style={{ textAlign: 'right' }}>Δ Sessions</th>}
                         <th style={{ textAlign: 'right' }}>Users</th>
                         <th style={{ textAlign: 'right' }}>Conversions</th>
                         <th style={{ textAlign: 'right' }}>Bounce Rate</th>
@@ -227,6 +286,18 @@ export default async function GA4Page({
                             {ch.name}
                           </td>
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(ch.sessions)}</td>
+                          {showCompare && (() => {
+                            const prev = priorChannelMap.get(ch.name) ?? 0
+                            const delta = prev > 0 ? ((ch.sessions - prev) / prev) * 100 : null
+                            return (
+                              <td style={{ textAlign: 'right' }}>
+                                {delta != null
+                                  ? <span style={{ fontSize: '0.8rem', fontWeight: 600, color: delta >= 0 ? 'var(--green)' : 'var(--red)' }}>{delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%</span>
+                                  : <span style={{ color: 'var(--text-faint)' }}>—</span>
+                                }
+                              </td>
+                            )
+                          })()}
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(ch.users)}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{ch.conversions > 0 ? fmtNum(ch.conversions) : '—'}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(ch.bounce_rate)}</td>
@@ -240,6 +311,7 @@ export default async function GA4Page({
                       <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
                         <td>Total</td>
                         <td style={{ textAlign: 'right' }}>{fmtNum(totals.sessions)}</td>
+                        {showCompare && <td />}
                         <td style={{ textAlign: 'right' }}>{fmtNum(totals.users)}</td>
                         <td style={{ textAlign: 'right' }}>{fmtNum(totals.conversions)}</td>
                         <td style={{ textAlign: 'right' }}>{fmtPct(avgBounceRate)}</td>

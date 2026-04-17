@@ -208,23 +208,31 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
 
 /**
  * Determines if a client is due for content generation today.
- * daily:    always
- * weekly:   today's weekday matches dayOfWeek
- * biweekly: today's weekday matches AND last generation was 13+ days ago
- * monthly:  last generation was 28+ days ago
+ * daily:         always
+ * weekly:        today's weekday matches dayOfWeek
+ * biweekly:      today's weekday matches AND last generation was 13+ days ago
+ * monthly:       last generation was 28+ days ago (rolling)
+ * monthly_first: 1st of the month
+ * monthly_mid:   15th of the month
+ * monthly_end:   28th of the month
  */
 function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: string | null): boolean {
-  const today = new Date().getDay()  // 0=Sun … 6=Sat
+  const now   = new Date()
+  const today = now.getDay()    // 0=Sun … 6=Sat
+  const dom   = now.getDate()   // 1–31
   const daysSinceLast = lastGeneratedAt
     ? (Date.now() - new Date(lastGeneratedAt).getTime()) / 86_400_000
     : Infinity
 
   switch (frequency) {
-    case 'daily':    return true
-    case 'weekly':   return today === dayOfWeek
-    case 'biweekly': return today === dayOfWeek && daysSinceLast >= 13
-    case 'monthly':  return daysSinceLast >= 28
-    default:         return today === dayOfWeek
+    case 'daily':         return true
+    case 'weekly':        return today === dayOfWeek
+    case 'biweekly':      return today === dayOfWeek && daysSinceLast >= 13
+    case 'monthly':       return daysSinceLast >= 28
+    case 'monthly_first': return dom === 1
+    case 'monthly_mid':   return dom === 15
+    case 'monthly_end':   return dom === 28
+    default:              return today === dayOfWeek
   }
 }
 

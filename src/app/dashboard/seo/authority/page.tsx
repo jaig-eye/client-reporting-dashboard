@@ -51,6 +51,24 @@ export default async function AuthorityPage({
       .limit(10),
   ])
 
+  const latestDate = metricsRows?.[0]?.date ?? dateTo
+
+  // Fetch keyword rankings + top pages for the latest snapshot date
+  const [{ data: keywordRows }, { data: pageRows }] = await Promise.all([
+    db.from('ahrefs_keywords')
+      .select('keyword, position, volume, traffic, difficulty')
+      .eq('client_id', client.id)
+      .eq('date', latestDate)
+      .order('traffic', { ascending: false })
+      .limit(25),
+    db.from('ahrefs_pages')
+      .select('url, organic_traffic, organic_keywords')
+      .eq('client_id', client.id)
+      .eq('date', latestDate)
+      .order('organic_traffic', { ascending: false })
+      .limit(15),
+  ])
+
   // Use metrics presence as primary signal — avoids Supabase join shape ambiguity
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const connectorMatch = (connData ?? []).some((c: any) => {
@@ -144,6 +162,106 @@ export default async function AuthorityPage({
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 No data for this period — sync pending or no snapshots yet.
               </p>
+            </div>
+          )}
+
+          {/* Keyword Rankings */}
+          {(keywordRows?.length ?? 0) > 0 && (
+            <div className="card mb-6" style={{ overflow: 'hidden' }}>
+              <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Keyword Rankings
+                </h2>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  Top keywords by estimated traffic · snapshot {latestDate}
+                </p>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
+                      <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Keyword</th>
+                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Position</th>
+                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Volume</th>
+                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
+                      <th style={{ padding: '0.5rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>KD</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keywordRows!.map((kw, i) => {
+                      const pos = kw.position ?? 999
+                      const posColor = pos <= 3 ? 'var(--green)' : pos <= 10 ? '#d97706' : 'var(--text-muted)'
+                      const kd = kw.difficulty ?? null
+                      const kdColor = kd == null ? 'var(--text-muted)' : kd < 30 ? 'var(--green)' : kd < 60 ? '#d97706' : 'var(--red)'
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+                          <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {kw.keyword}
+                          </td>
+                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600, color: posColor }}>
+                            {kw.position ?? '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                            {kw.volume != null ? kw.volume.toLocaleString() : '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                            {kw.traffic != null ? kw.traffic.toLocaleString() : '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem 1rem', textAlign: 'center', fontWeight: 600, color: kdColor }}>
+                            {kd != null ? kd : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Top Organic Pages */}
+          {(pageRows?.length ?? 0) > 0 && (
+            <div className="card mb-6" style={{ overflow: 'hidden' }}>
+              <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Top Organic Pages
+                </h2>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  Top pages by organic traffic · snapshot {latestDate}
+                </p>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
+                      <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Page</th>
+                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
+                      <th style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Keywords</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows!.map((pg, i) => {
+                      const path = (() => {
+                        try { return new URL(pg.url).pathname || pg.url } catch { return pg.url }
+                      })()
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+                          <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={pg.url}>
+                            {path}
+                          </td>
+                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                            {pg.organic_traffic != null ? pg.organic_traffic.toLocaleString() : '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                            {pg.organic_keywords != null ? pg.organic_keywords.toLocaleString() : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

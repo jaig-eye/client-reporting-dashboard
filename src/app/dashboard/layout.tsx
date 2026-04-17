@@ -38,18 +38,44 @@ export default async function DashboardLayout({ children }: { children: React.Re
     settings = agencySettings
 
     if (client) {
-      const { data: connectionsData } = await db
-        .from('client_connections')
-        .select('connector:connectors(type)')
-        .eq('client_id', client.id)
-        .eq('status', 'active')
+      const [
+        { data: connectionsData },
+        ga4Check, gscCheck, ahrefsCheck, gadsCheck, metaCheck, gbpCheck,
+      ] = await Promise.all([
+        db.from('client_connections').select('connector:connectors(type)')
+          .eq('client_id', client.id).eq('status', 'active'),
+        db.from('ga4_metrics').select('id',              { count: 'exact', head: true }).eq('client_id', client.id),
+        db.from('gsc_metrics').select('id',              { count: 'exact', head: true }).eq('client_id', client.id),
+        db.from('ahrefs_metrics').select('id',           { count: 'exact', head: true }).eq('client_id', client.id),
+        db.from('google_ads_metrics').select('id',       { count: 'exact', head: true }).eq('client_id', client.id),
+        db.from('meta_ads_metrics').select('id',         { count: 'exact', head: true }).eq('client_id', client.id),
+        db.from('gbp_metrics').select('id',              { count: 'exact', head: true }).eq('client_id', client.id),
+      ])
 
-      activeConnectorTypes = (
+      const connectedTypes = (
         (connectionsData ?? []) as unknown as { connector: { type: ConnectorType } | null }[]
       )
         .map(c => c.connector?.type)
         .filter((v): v is ConnectorType => !!v)
         .filter((v, i, arr) => arr.indexOf(v) === i)
+
+      // Only surface connector types that are both connected AND have synced data.
+      // This prevents stub sidebar items for connections that have never synced.
+      const typesWithData = new Set<string>([
+        ...(ga4Check.count    ? ['google_analytics']       : []),
+        ...(gscCheck.count    ? ['google_search_console']  : []),
+        ...(ahrefsCheck.count ? ['ahrefs']                 : []),
+        ...(gadsCheck.count   ? ['google_ads']             : []),
+        ...(metaCheck.count   ? ['meta_ads']               : []),
+        ...(gbpCheck.count    ? ['google_business_profile'] : []),
+      ])
+
+      // Keep only connected types that also have data; always pass through types
+      // without a dedicated metrics table (ghl, wordpress) so they don't vanish.
+      const metricsGatedTypes = new Set(['google_analytics', 'google_search_console', 'ahrefs', 'google_ads', 'meta_ads', 'google_business_profile'])
+      activeConnectorTypes = connectedTypes.filter(
+        t => !metricsGatedTypes.has(t) || typesWithData.has(t)
+      )
     }
   }
 

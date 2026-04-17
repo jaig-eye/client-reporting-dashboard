@@ -53,14 +53,14 @@ function resolveToken(auth: Record<string, unknown>): string | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface GSCRawRow {
-  date: string
-  query: string | null
-  page: string | null
-  country: string | null
-  clicks: number
+  date:        string
+  query:       string | null
+  page:        string | null
+  // country removed — never displayed in UI; caused 5–20× row inflation on backfills
+  clicks:      number
   impressions: number
-  ctr: number
-  position: number
+  ctr:         number
+  position:    number
 }
 
 /**
@@ -84,7 +84,7 @@ async function fetchSearchAnalytics(
     const body = {
       startDate:    dateFrom,
       endDate:      dateTo,
-      dimensions:   ['date', 'query', 'page', 'country'],
+      dimensions:   ['date', 'query', 'page'],
       rowLimit:     PAGE_SIZE,
       startRow,
       dataState:    'all', // include fresh (unconfirmed) data
@@ -121,7 +121,6 @@ async function fetchSearchAnalytics(
         date:        row.keys[0] ?? '',
         query:       row.keys[1] ?? null,
         page:        row.keys[2] ?? null,
-        country:     row.keys[3] ?? null,
         clicks:      row.clicks,
         impressions: row.impressions,
         ctr:         row.ctr,

@@ -19,7 +19,7 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import { resolveLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS } from '@/lib/metric-layouts'
+import { resolveLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
@@ -422,6 +422,38 @@ export default async function DashboardPage({
     metaTotal.clicks      += Number(row.clicks) || 0
   }
 
+  // ─── Platform card value maps (for layout-driven metric display) ─────────
+  const gSpend = adFuelCut > 0 ? applyAdFuel(googleTotal.spend, adFuelCut) : googleTotal.spend
+  const mSpend = adFuelCut > 0 ? applyAdFuel(metaTotal.spend, adFuelCut) : metaTotal.spend
+  const googleCardMap: Record<string, string> = {
+    spend:       fmt$(gSpend),
+    conversions: fmtNum(googleTotal.conversions),
+    revenue:     fmt$(googleTotal.convValue),
+    clicks:      fmtNum(googleTotal.clicks),
+    impressions: fmtNum(googleTotal.impressions),
+    ctr:         googleTotal.impressions > 0 ? fmtPct(googleTotal.clicks / googleTotal.impressions) : '—',
+    cpa:         googleTotal.conversions > 0 ? fmtCurrency(gSpend / googleTotal.conversions) : '—',
+    roas:        gSpend > 0 ? fmtRoas(googleTotal.convValue / gSpend) : '—',
+    cpm:         googleTotal.impressions > 0 ? fmtCurrency((gSpend / googleTotal.impressions) * 1000) : '—',
+    cpc:         googleTotal.clicks > 0 ? fmtCurrency(gSpend / googleTotal.clicks) : '—',
+    reach:       '—',
+    frequency:   '—',
+  }
+  const metaCardMap: Record<string, string> = {
+    spend:       fmt$(mSpend),
+    impressions: fmtNum(metaTotal.impressions),
+    clicks:      fmtNum(metaTotal.clicks),
+    ctr:         metaTotal.impressions > 0 ? fmtPct(metaTotal.clicks / metaTotal.impressions) : '—',
+    conversions: '—',
+    revenue:     '—',
+    cpa:         '—',
+    roas:        '—',
+    cpm:         metaTotal.impressions > 0 ? fmtCurrency((mSpend / metaTotal.impressions) * 1000) : '—',
+    cpc:         metaTotal.clicks > 0 ? fmtCurrency(mSpend / metaTotal.clicks) : '—',
+    reach:       '—',
+    frequency:   '—',
+  }
+
   // ─── Empty state — no connections ────────────────────────────────────────
   if (connections.length === 0) {
     return (
@@ -473,7 +505,7 @@ export default async function DashboardPage({
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
               {isFiltered
                 ? (source === 'google_ads' ? 'Google Ads Summary' : source === 'meta_ads' ? 'Meta Ads Summary' : 'Paid Ads Summary')
-                : 'Overview'}
+                : 'Summary'}
             </h1>
             {syncedAt && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
@@ -625,20 +657,19 @@ export default async function DashboardPage({
                           </div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Spend</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmt$(adFuelCut > 0 ? applyAdFuel(googleTotal.spend, adFuelCut) : googleTotal.spend)}</p>
-                          </div>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Conversions</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(googleTotal.conversions)}</p>
-                          </div>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>CTR</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{googleTotal.impressions > 0 ? fmtPct(googleTotal.clicks / googleTotal.impressions) : '—'}</p>
-                          </div>
-                        </div>
+                        {(() => {
+                          const keys = activeLayout.platform_google_metrics ?? ['spend', 'conversions', 'ctr']
+                          return (
+                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
+                              {keys.map(k => (
+                                <div key={k}>
+                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{googleCardMap[k] ?? '—'}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </div>
                     </a>
                   )}
@@ -652,20 +683,19 @@ export default async function DashboardPage({
                           </div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Spend</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmt$(adFuelCut > 0 ? applyAdFuel(metaTotal.spend, adFuelCut) : metaTotal.spend)}</p>
-                          </div>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>Impressions</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(metaTotal.impressions)}</p>
-                          </div>
-                          <div>
-                            <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>CTR</p>
-                            <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{metaTotal.impressions > 0 ? fmtPct(metaTotal.clicks / metaTotal.impressions) : '—'}</p>
-                          </div>
-                        </div>
+                        {(() => {
+                          const keys = activeLayout.platform_meta_metrics ?? ['spend', 'impressions', 'ctr']
+                          return (
+                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
+                              {keys.map(k => (
+                                <div key={k}>
+                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{metaCardMap[k] ?? '—'}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </div>
                     </a>
                   )}
@@ -736,6 +766,8 @@ export default async function DashboardPage({
                 connectionId={connectionsBySource['google_analytics']}
                 dateFrom={fmtDate(fromDate)}
                 dateTo={fmtDate(toDate)}
+                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
               />
             )}
             {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
@@ -761,6 +793,8 @@ export default async function DashboardPage({
                 clientId={client.id}
                 dateFrom={fmtDate(fromDate)}
                 dateTo={fmtDate(toDate)}
+                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
               />
             )}
           </>
