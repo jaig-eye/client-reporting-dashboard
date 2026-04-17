@@ -4,16 +4,19 @@
 // Tabbed: Branding / Benchmarks / Colors / AI / Sync / Notifications
 
 import { useEffect, useState } from 'react'
-import MetricLayoutEditor from '@/components/admin/MetricLayoutEditor'
+import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
-const OVERVIEW_COLUMN_DEFS = [
-  { id: 'spend',       label: 'Spend'      },
-  { id: 'roas_cpl',    label: 'ROAS / CPL' },
-  { id: 'conversions', label: 'Conversions'},
-  { id: 'ctr',         label: 'CTR'        },
-  { id: 'sync_status', label: 'Sync'       },
-]
+const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status'] as const
+const OVERVIEW_COLUMN_LABELS: Record<string, string> = {
+  spend:       'Spend',
+  roas_cpl:    'ROAS / CPL',
+  conversions: 'Conversions',
+  ctr:         'CTR',
+  clicks:      'Clicks',
+  impressions: 'Impressions',
+  sync_status: 'Sync Status',
+}
 const DEFAULT_OVERVIEW_COLUMNS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
 
 interface Settings {
@@ -508,31 +511,16 @@ export default function AgencySettingsPage() {
           <div className="card p-6 space-y-4">
             <div>
               <h2 className="section-title">Client Overview Table Columns</h2>
-              <p className="section-desc">Choose which metric columns appear in the Clients table on the admin dashboard. Client, Sources, and Actions are always shown.</p>
+              <p className="section-desc">Choose which metric columns appear in the Clients table on the admin dashboard. Client, Sources, and Actions are always shown. Drag columns into your preferred order.</p>
             </div>
-            <div className="space-y-2">
-              {OVERVIEW_COLUMN_DEFS.map(col => {
-                const cols = Array.isArray(form.overview_columns) ? form.overview_columns : DEFAULT_OVERVIEW_COLUMNS
-                const enabled = cols.includes(col.id)
-                return (
-                  <label key={col.id} className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={e => {
-                        const next = e.target.checked
-                          ? [...cols, col.id]
-                          : cols.filter(c => c !== col.id)
-                        field('overview_columns', next)
-                      }}
-                      className="rounded"
-                      style={{ width: 16, height: 16, accentColor: 'var(--blue)' }}
-                    />
-                    <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{col.label}</span>
-                  </label>
-                )
-              })}
-            </div>
+            <LayoutSection
+              title="Visible Columns"
+              description="Add, remove, and reorder the metric columns shown in the clients overview table"
+              items={Array.isArray(form.overview_columns) ? form.overview_columns : DEFAULT_OVERVIEW_COLUMNS}
+              allKeys={OVERVIEW_COLUMN_KEYS}
+              labels={OVERVIEW_COLUMN_LABELS}
+              onChange={cols => field('overview_columns', cols)}
+            />
           </div>
         )}
 

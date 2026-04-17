@@ -141,17 +141,6 @@ export default async function DashboardPage({
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
 
-  // Fetch all-time campaign names so paused/disabled campaigns with no activity
-  // in the current date range still appear in the table with zero values
-  type AllCampRow = { campaign_id: string; campaign_name: string; campaign_status: string | null }
-  const allCampaignNamesRes = isFiltered && (hasGoogle || hasMeta)
-    ? await db
-        .from(hasGoogle ? 'google_ads_metrics' : 'meta_ads_metrics')
-        .select('campaign_id, campaign_name, campaign_status')
-        .eq('client_id', client.id)
-        .order('date', { ascending: false })
-        .limit(500)
-    : { data: [] as AllCampRow[] }
 
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
   const leadCount  = assignmentsData.filter(a => a.display_mode !== 'ecommerce').length
@@ -356,30 +345,7 @@ export default async function DashboardPage({
     })
     .sort((a, b) => b.spend - a.spend)
 
-  // Merge in campaigns with no activity in the current period
-  const zeroCampaigns: typeof activeCampaigns = []
-  if (isFiltered && allCampaignNamesRes.data) {
-    const seenIds   = new Set(activeCampaigns.map(c => c.campaign_id))
-    const seenNames = new Map<string, { name: string; status: string | null }>()
-    for (const row of allCampaignNamesRes.data as AllCampRow[]) {
-      if (!seenIds.has(row.campaign_id) && !seenNames.has(row.campaign_id)) {
-        seenNames.set(row.campaign_id, { name: row.campaign_name, status: row.campaign_status ?? null })
-      }
-    }
-    for (const [id, info] of Array.from(seenNames)) {
-      const assignment = assignmentMap.get(id)
-      if (assignment?.hidden) continue
-      zeroCampaigns.push({
-        campaign_id: id, campaign_name: info.name,
-        source: (hasGoogle ? 'google_ads' : 'meta_ads') as never,
-        status: info.status, spend: 0, impressions: 0, clicks: 0,
-        conversions: 0, conversionValue: 0, ctr: 0, convRate: 0, cpl: 0,
-        display_mode: assignment?.display_mode ?? 'lead_gen', daily_budget: null,
-      })
-    }
-  }
-
-  const campaigns = [...activeCampaigns, ...zeroCampaigns]
+  const campaigns = activeCampaigns
 
   const syncedAt = lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })

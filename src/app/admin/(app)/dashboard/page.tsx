@@ -208,7 +208,7 @@ export default async function AdminOverviewPage({
     return {
       id: client.id, name: client.name, logoUrl: client.logo_url ?? null,
       connectors: conns.map(c => ({ type: c.connector.type as ConnectorType, label: c.connector.label })),
-      spend, conversions, ctr, roas, cpl, showRoas, efficiencyScore, hoursStale, syncStatus, syncErrCount,
+      spend, conversions, clicks, impressions, ctr, roas, cpl, showRoas, efficiencyScore, hoursStale, syncStatus, syncErrCount,
     }
   })
 
@@ -224,6 +224,10 @@ export default async function AdminOverviewPage({
         av = a.conversions; bv = b.conversions
       } else if (sortCol === 'ctr') {
         av = a.ctr; bv = b.ctr
+      } else if (sortCol === 'clicks') {
+        av = a.clicks; bv = b.clicks
+      } else if (sortCol === 'impressions') {
+        av = a.impressions; bv = b.impressions
       } else if (sortCol === 'name') {
         return sortDir === 'asc'
           ? a.name.localeCompare(b.name)
@@ -299,6 +303,8 @@ export default async function AdminOverviewPage({
                   {showCol('roas_cpl')    && <SortableTh col="roas_cpl"    label="ROAS / CPL"  sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
                   {showCol('conversions') && <SortableTh col="conversions" label="Conv."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
                   {showCol('ctr')         && <SortableTh col="ctr"         label="CTR"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('clicks')      && <SortableTh col="clicks"      label="Clicks"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
+                  {showCol('impressions') && <SortableTh col="impressions" label="Impr."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
                   {showCol('sync_status') && <th style={TH_STYLE}>Sync</th>}
                   <th style={TH_STYLE}></th>
                 </tr>
@@ -378,6 +384,20 @@ export default async function AdminOverviewPage({
                       {showCol('ctr') && (
                         <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                           {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
+                        </td>
+                      )}
+
+                      {/* Clicks */}
+                      {showCol('clicks') && (
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.clicks > 0 ? row.clicks.toLocaleString() : <Dash />}
+                        </td>
+                      )}
+
+                      {/* Impressions */}
+                      {showCol('impressions') && (
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.impressions > 0 ? row.impressions.toLocaleString() : <Dash />}
                         </td>
                       )}
 

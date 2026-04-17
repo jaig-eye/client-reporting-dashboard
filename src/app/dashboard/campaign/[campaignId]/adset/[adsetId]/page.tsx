@@ -14,6 +14,8 @@ import type { Client, DailyMetric } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
+import AdCreativeSlider from '@/components/AdCreativeSlider'
+import PMaxAssetSlider from '@/components/PMaxAssetSlider'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
@@ -832,16 +834,21 @@ export default async function AdSetDetailPage({
             })()}
           </div>
         ) : (
-          /* Meta or Google non-Search: just the ads table */
-          <div className="card p-6">
-            <div className="mb-5">
-              <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
+          /* Meta or Google non-Search: creative slider (Meta only) + ads table */
+          <>
+            {source === 'meta_ads' && (
+              <AdCreativeSlider ads={adCardList} />
+            )}
+            <div className="card p-6">
+              <div className="mb-5">
+                <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
+              </div>
+              <AdRowTable
+                rows={adRows}
+                conversionLabel={conversionLabel}
+              />
             </div>
-            <AdRowTable
-              rows={adRows}
-              conversionLabel={conversionLabel}
-            />
-          </div>
+          </>
         )}
 
       </main>
@@ -890,78 +897,9 @@ function PMaxAssetGallery({
         </p>
       )}
 
-      {/* Images */}
-      {images.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Images</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {images.map(a => (
-              <div key={a.asset_id + a.field_type} className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
-                <img
-                  src={a.image_url!}
-                  alt={a.field_type.replace(/_/g, ' ').toLowerCase()}
-                  className="w-full object-cover"
-                  style={{ maxHeight: 160 }}
-                />
-                <p className="text-xs px-2 py-1" style={{ color: 'var(--text-faint)' }}>
-                  {a.field_type.replace(/_/g, ' ').toLowerCase()}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Logos */}
-      {logos.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Logos</p>
-          <div className="flex flex-wrap gap-3">
-            {logos.map(a => (
-              <div key={a.asset_id + a.field_type} className="rounded-lg overflow-hidden border p-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-base)' }}>
-                <img src={a.image_url!} alt="logo" className="h-12 object-contain" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Videos */}
-      {videos.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-faint)' }}>Videos</p>
-          <div className="flex flex-wrap gap-3">
-            {videos.map(a => (
-              <a
-                key={a.asset_id}
-                href={`https://www.youtube.com/watch?v=${a.video_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block rounded-lg overflow-hidden border relative"
-                style={{ borderColor: 'var(--border)', width: 200 }}
-              >
-                <img
-                  src={`https://img.youtube.com/vi/${a.video_id}/mqdefault.jpg`}
-                  alt="video thumbnail"
-                  className="w-full object-cover"
-                />
-                <div
-                  className="absolute inset-0 flex items-center justify-center"
-                  style={{ background: 'rgba(0,0,0,0.3)' }}
-                >
-                  <div
-                    className="rounded-full flex items-center justify-center"
-                    style={{ width: 40, height: 40, background: 'rgba(255,255,255,0.9)' }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="#333">
-                      <polygon points="5,3 13,8 5,13" />
-                    </svg>
-                  </div>
-                </div>
-              </a>
-            ))}
-          </div>
-        </div>
+      {/* Images / Logos / Videos — slider with lightbox + broken-image filtering */}
+      {(images.length > 0 || logos.length > 0 || videos.length > 0) && (
+        <PMaxAssetSlider assets={assets} />
       )}
 
       {/* Text assets */}

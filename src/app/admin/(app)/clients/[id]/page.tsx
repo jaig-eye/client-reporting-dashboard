@@ -459,8 +459,18 @@ export default async function ClientDetailPage({
 
       {/* ── CONTENT ──────────────────────────────────────────────── */}
       {activeTab === 'content' && (
-        <div className="max-w-2xl">
-          <ClientContentSettingsSection clientId={id} />
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) 400px',
+          gap: '2rem',
+          alignItems: 'start',
+        }}>
+          <div>
+            <ClientContentSettingsSection clientId={id} />
+          </div>
+          <div>
+            <GscOpportunitiesPanel clientId={id} isEcom={client.layout_type === 'ecom'} />
+          </div>
         </div>
       )}
 
@@ -502,48 +512,17 @@ export default async function ClientDetailPage({
   )
 }
 
-// ─── Client Content Settings Section ─────────────────────────────────────────
+// ─── Client Content Settings Section (form only) ─────────────────────────────
 
 async function ClientContentSettingsSection({ clientId }: { clientId: string }) {
   const db = createAdminClient()
 
-  // Load WordPress connections and GSC insights (3 tiers) in parallel
-  const [{ data: wpConnData }, { data: gscQuickWinsRaw }, { data: gscGrowthRaw }, { data: gscLowCtrRaw }] = await Promise.all([
-    db.from('client_connections')
-      .select('id, external_id, external_name, connector:connectors!inner(type, config)')
-      .eq('client_id', clientId)
-      .eq('status', 'active')
-      .eq('connector.type', 'wordpress'),
-    // Quick Wins: position 5–10, near page 1 — optimise titles/meta
-    db.from('gsc_metrics')
-      .select('page, query, impressions, ctr, position')
-      .eq('client_id', clientId)
-      .not('page', 'ilike', '%?%')
-      .gt('impressions', 30)
-      .gte('position', 5).lte('position', 10)
-      .lt('ctr', 0.08)
-      .order('impressions', { ascending: false })
-      .limit(8),
-    // Growth Targets: position 10–20, second page — needs content/links
-    db.from('gsc_metrics')
-      .select('page, query, impressions, ctr, position')
-      .eq('client_id', clientId)
-      .not('page', 'ilike', '%?%')
-      .gt('impressions', 30)
-      .gt('position', 10).lte('position', 20)
-      .order('impressions', { ascending: false })
-      .limit(8),
-    // CTR Issues: position 1–5, low CTR — review title tags
-    db.from('gsc_metrics')
-      .select('page, query, impressions, ctr, position')
-      .eq('client_id', clientId)
-      .not('page', 'ilike', '%?%')
-      .gt('impressions', 50)
-      .gte('position', 1).lte('position', 5)
-      .lt('ctr', 0.04)
-      .order('impressions', { ascending: false })
-      .limit(6),
-  ])
+  const { data: wpConnData } = await db
+    .from('client_connections')
+    .select('id, external_id, external_name, connector:connectors!inner(type, config)')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .eq('connector.type', 'wordpress')
 
   type WpConn = {
     id: string
@@ -565,14 +544,94 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
         <h2 className="page-title" style={{ fontSize: '1.125rem' }}>Content Settings</h2>
         <p className="section-desc">Configure AI content generation for this client — business background, brand voice, publishing schedule, and more.</p>
       </div>
-      <GscInsightsPanel
-        quickWins={(gscQuickWinsRaw ?? []) as GscInsightRow[]}
-        growth={(gscGrowthRaw ?? []) as GscInsightRow[]}
-        lowCtr={(gscLowCtrRaw ?? []) as GscInsightRow[]}
-      />
       <ClientContentSettingsForm clientId={clientId} sites={sites} />
     </div>
   )
+}
+
+// ─── GSC Opportunities Panel (right column of content tab) ───────────────────
+
+function dedupeGsc(rows: GscInsightRow[]): GscInsightRow[] {
+  const seen = new Map<string, GscInsightRow>()
+  for (const r of rows) {
+    const key = `${r.query ?? ''}||${r.page ?? ''}`
+    const ex = seen.get(key)
+    if (!ex || (r.impressions ?? 0) > (ex.impressions ?? 0)) seen.set(key, r)
+  }
+  return Array.from(seen.values())
+}
+
+async function GscOpportunitiesPanel({ clientId, isEcom }: { clientId: string; isEcom: boolean }) {
+  const db = createAdminClient()
+
+  // Fetch with extra rows to account for dedup loss; apply ecom product-page exclusions when applicable
+  const [{ data: qwRaw }, { data: gtRaw }, { data: ciRaw }] = await Promise.all([
+    // Quick Wins: position 5–10, near page 1 — optimise titles/meta
+    (() => {
+      let q = db.from('gsc_metrics')
+        .select('page, query, impressions, ctr, position')
+        .eq('client_id', clientId)
+        .not('page', 'ilike', '%?%')
+        .gt('impressions', 30)
+        .gte('position', 5).lte('position', 10)
+        .lt('ctr', 0.08)
+        .order('impressions', { ascending: false })
+        .limit(40)
+      if (isEcom) {
+        q = q.not('page', 'ilike', '%/product/%')
+             .not('page', 'ilike', '%/products/%')
+             .not('page', 'ilike', '%/shop/%')
+             .not('page', 'ilike', '%/collection/%')
+             .not('page', 'ilike', '%/collections/%')
+      }
+      return q
+    })(),
+    // Growth Targets: position 10–20, second page — expand content/links
+    (() => {
+      let q = db.from('gsc_metrics')
+        .select('page, query, impressions, ctr, position')
+        .eq('client_id', clientId)
+        .not('page', 'ilike', '%?%')
+        .gt('impressions', 30)
+        .gt('position', 10).lte('position', 20)
+        .order('impressions', { ascending: false })
+        .limit(40)
+      if (isEcom) {
+        q = q.not('page', 'ilike', '%/product/%')
+             .not('page', 'ilike', '%/products/%')
+             .not('page', 'ilike', '%/shop/%')
+             .not('page', 'ilike', '%/collection/%')
+             .not('page', 'ilike', '%/collections/%')
+      }
+      return q
+    })(),
+    // CTR Issues: position 1–5, low CTR — review title tags
+    (() => {
+      let q = db.from('gsc_metrics')
+        .select('page, query, impressions, ctr, position')
+        .eq('client_id', clientId)
+        .not('page', 'ilike', '%?%')
+        .gt('impressions', 50)
+        .gte('position', 1).lte('position', 5)
+        .lt('ctr', 0.04)
+        .order('impressions', { ascending: false })
+        .limit(30)
+      if (isEcom) {
+        q = q.not('page', 'ilike', '%/product/%')
+             .not('page', 'ilike', '%/products/%')
+             .not('page', 'ilike', '%/shop/%')
+             .not('page', 'ilike', '%/collection/%')
+             .not('page', 'ilike', '%/collections/%')
+      }
+      return q
+    })(),
+  ])
+
+  const quickWins = dedupeGsc((qwRaw ?? []) as GscInsightRow[]).slice(0, 8)
+  const growth    = dedupeGsc((gtRaw ?? []) as GscInsightRow[]).slice(0, 8)
+  const lowCtr    = dedupeGsc((ciRaw ?? []) as GscInsightRow[]).slice(0, 6)
+
+  return <GscInsightsPanel quickWins={quickWins} growth={growth} lowCtr={lowCtr} />
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────

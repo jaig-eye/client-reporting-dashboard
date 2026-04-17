@@ -2,6 +2,9 @@
 // GSC Search Console Page — /dashboard/seo/search-console
 // Shows total clicks, impressions, avg CTR, avg position from Google Search Console
 // with top queries and top pages breakdowns.
+//
+// Data is aggregated in Postgres via get_gsc_summary() RPC to avoid timeouts
+// on large clients with 90-day ranges.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Suspense } from 'react'
@@ -19,18 +22,29 @@ function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function fmtNum(n: number) { return n.toLocaleString() }
 function fmtPct(n: number) { return `${(n * 100).toFixed(2)}%` }
 function fmtPos(n: number) { return n.toFixed(1) }
-function truncateUrl(url: string, max = 60) {
-  try {
-    const u = new URL(url)
-    const path = u.pathname + (u.search || '')
-    return path.length > max ? path.slice(0, max) + '…' : path
-  } catch {
-    return url.length > max ? url.slice(0, max) + '…' : url
-  }
-}
 function calcDelta(curr: number, prev: number): number | null {
   if (prev === 0) return null
   return ((curr - prev) / Math.abs(prev)) * 100
+}
+
+type GscSummaryTotals = {
+  clicks:      number | null
+  impressions: number | null
+  ctr:         number | null
+  position:    number | null
+}
+type GscSummaryRow = {
+  query?:      string
+  page?:       string
+  clicks:      number
+  impressions: number
+  ctr:         number
+  position:    number
+}
+type GscSummary = {
+  totals:  GscSummaryTotals
+  queries: GscSummaryRow[]
+  pages:   GscSummaryRow[]
 }
 
 export default async function SearchConsolePage({
@@ -92,27 +106,29 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Fetch current and comparison period data in parallel
-  const [{ data: rows }, { data: compRowsRaw }] = await Promise.all([
-    db.from('gsc_metrics')
-      .select('*')
-      .eq('client_id', client.id)
-      .gte('date', fmtDate(fromDate))
-      .lte('date', fmtDate(toDate))
-      .order('date', { ascending: true }),
+  // Fetch current and comparison period via Postgres RPC (avoids row-level timeout)
+  const [{ data: currRaw }, { data: compRaw }] = await Promise.all([
+    db.rpc('get_gsc_summary', {
+      p_client_id: client.id,
+      p_date_from: fmtDate(fromDate),
+      p_date_to:   fmtDate(toDate),
+      p_top_n:     25,
+    }),
     showCompare && compFrom && compTo
-      ? db.from('gsc_metrics')
-          .select('clicks, impressions, ctr, position, query, page')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(compFrom))
-          .lte('date', fmtDate(compTo))
+      ? db.rpc('get_gsc_summary', {
+          p_client_id: client.id,
+          p_date_from: fmtDate(compFrom),
+          p_date_to:   fmtDate(compTo),
+          p_top_n:     25,
+        })
       : Promise.resolve({ data: null }),
   ])
 
-  type GscRow = { date: string; query: string | null; page: string | null; country: string | null; clicks: number; impressions: number; ctr: number; position: number }
-  const gscRows = (rows ?? []) as GscRow[]
+  const curr = currRaw as GscSummary | null
+  const comp = compRaw as GscSummary | null
 
-  if (gscRows.length === 0) {
+  const hasData = (curr?.totals?.clicks ?? 0) > 0 || (curr?.totals?.impressions ?? 0) > 0
+  if (!curr || !hasData) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
         <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
@@ -123,138 +139,65 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Aggregate totals (impression-weighted for CTR and position)
-  const totals = gscRows.reduce(
-    (acc, r) => ({
-      clicks:       acc.clicks      + (r.clicks      ?? 0),
-      impressions:  acc.impressions + (r.impressions  ?? 0),
-      ctr_sum:      acc.ctr_sum     + (r.ctr          ?? 0) * (r.impressions ?? 0),
-      position_sum: acc.position_sum + (r.position    ?? 0) * (r.impressions ?? 0),
-    }),
-    { clicks: 0, impressions: 0, ctr_sum: 0, position_sum: 0 }
-  )
-  const avgCtr      = totals.impressions > 0 ? totals.ctr_sum      / totals.impressions : 0
-  const avgPosition = totals.impressions > 0 ? totals.position_sum / totals.impressions : 0
+  // Totals from RPC
+  const clicks      = curr.totals.clicks      ?? 0
+  const impressions = curr.totals.impressions  ?? 0
+  const avgCtr      = curr.totals.ctr          ?? 0
+  const avgPosition = curr.totals.position     ?? 0
 
-  // Comparison period aggregates
-  type CompRow = { clicks: number; impressions: number; ctr: number; position: number; query?: string | null; page?: string | null }
-  const compRows = (compRowsRaw ?? []) as CompRow[]
-  const compTotals = compRows.reduce(
-    (acc, r) => ({
-      clicks:       acc.clicks      + (r.clicks      ?? 0),
-      impressions:  acc.impressions + (r.impressions  ?? 0),
-      ctr_sum:      acc.ctr_sum     + (r.ctr          ?? 0) * (r.impressions ?? 0),
-      position_sum: acc.position_sum + (r.position    ?? 0) * (r.impressions ?? 0),
-    }),
-    { clicks: 0, impressions: 0, ctr_sum: 0, position_sum: 0 }
-  )
-  const compAvgCtr      = compTotals.impressions > 0 ? compTotals.ctr_sum      / compTotals.impressions : 0
-  const compAvgPosition = compTotals.impressions > 0 ? compTotals.position_sum / compTotals.impressions : 0
+  // Comparison totals
+  const compClicks      = comp?.totals?.clicks      ?? 0
+  const compImpressions = comp?.totals?.impressions ?? 0
+  const compAvgCtr      = comp?.totals?.ctr         ?? 0
+  const compAvgPosition = comp?.totals?.position    ?? 0
 
-  // Per-query comparison map for position delta
-  const compQueryMap = new Map<string, { pos_sum: number; imp_sum: number }>()
-  const compPageMap  = new Map<string, { pos_sum: number; imp_sum: number }>()
-  if (showCompare) {
-    for (const r of compRows) {
-      if (r.query) {
-        const ex = compQueryMap.get(r.query)
-        if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
-        else compQueryMap.set(r.query, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
-      }
-      if (r.page && !r.page.includes('?')) {
-        const ex = compPageMap.get(r.page)
-        if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
-        else compPageMap.set(r.page, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
-      }
-    }
+  // Build comparison position maps for per-query/page delta
+  const compQueryPosMap = new Map<string, number>()
+  const compPagePosMap  = new Map<string, number>()
+  if (comp) {
+    for (const q of (comp.queries ?? [])) if (q.query) compQueryPosMap.set(q.query, q.position)
+    for (const p of (comp.pages   ?? [])) if (p.page)  compPagePosMap.set(p.page,   p.position)
   }
 
-  // Top Queries (aggregate by query, skip null/empty)
-  const queryMap = new Map<string, { clicks: number; impressions: number; ctr_sum: number; position_sum: number }>()
-  for (const r of gscRows) {
-    if (!r.query) continue
-    const ex = queryMap.get(r.query)
-    if (ex) {
-      ex.clicks      += r.clicks ?? 0
-      ex.impressions += r.impressions ?? 0
-      ex.ctr_sum     += (r.ctr ?? 0) * (r.impressions ?? 0)
-      ex.position_sum += (r.position ?? 0) * (r.impressions ?? 0)
-    } else {
-      queryMap.set(r.query, {
-        clicks: r.clicks ?? 0, impressions: r.impressions ?? 0,
-        ctr_sum: (r.ctr ?? 0) * (r.impressions ?? 0),
-        position_sum: (r.position ?? 0) * (r.impressions ?? 0),
-      })
-    }
-  }
-  const topQueries = Array.from(queryMap.entries())
-    .map(([query, v]) => {
-      const position = v.impressions > 0 ? v.position_sum / v.impressions : 0
-      const compEntry = compQueryMap.get(query)
-      const compPosAvg = compEntry && compEntry.imp_sum > 0 ? compEntry.pos_sum / compEntry.imp_sum : null
-      return {
-        query,
-        clicks: v.clicks,
-        impressions: v.impressions,
-        ctr: v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
-        position,
-        positionDelta: showCompare && compPosAvg != null ? position - compPosAvg : null,
-      }
-    })
-    .sort((a, b) => b.clicks - a.clicks)
-    .slice(0, 25)
+  // Top queries — add position delta vs comparison period
+  const topQueries = (curr.queries ?? []).map(q => ({
+    query:         q.query ?? '',
+    clicks:        q.clicks,
+    impressions:   q.impressions,
+    ctr:           q.ctr,
+    position:      q.position,
+    positionDelta: showCompare && q.query && compQueryPosMap.has(q.query)
+      ? q.position - compQueryPosMap.get(q.query)!
+      : null,
+  }))
 
-  // Top Pages (aggregate by page URL, skip UTM/query-string pages)
-  const pageMap = new Map<string, { clicks: number; impressions: number; ctr_sum: number; position_sum: number }>()
-  for (const r of gscRows) {
-    if (!r.page) continue
-    if (r.page.includes('?')) continue  // skip UTM and query-string pages
-    const ex = pageMap.get(r.page)
-    if (ex) {
-      ex.clicks      += r.clicks ?? 0
-      ex.impressions += r.impressions ?? 0
-      ex.ctr_sum     += (r.ctr ?? 0) * (r.impressions ?? 0)
-      ex.position_sum += (r.position ?? 0) * (r.impressions ?? 0)
-    } else {
-      pageMap.set(r.page, {
-        clicks: r.clicks ?? 0, impressions: r.impressions ?? 0,
-        ctr_sum: (r.ctr ?? 0) * (r.impressions ?? 0),
-        position_sum: (r.position ?? 0) * (r.impressions ?? 0),
-      })
-    }
-  }
-  const topPages = Array.from(pageMap.entries())
-    .map(([page, v]) => {
-      const currentPos = v.impressions > 0 ? v.position_sum / v.impressions : 0
-      const compEntry  = compPageMap.get(page)
-      const compPos    = compEntry && compEntry.imp_sum > 0 ? compEntry.pos_sum / compEntry.imp_sum : null
-      return {
-        page,
-        clicks:        v.clicks,
-        impressions:   v.impressions,
-        ctr:           v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
-        position:      currentPos,
-        positionDelta: compPos !== null ? currentPos - compPos : undefined,
-      }
-    })
-    .sort((a, b) => b.clicks - a.clicks)
-    .slice(0, 25)
+  // Top pages — add position delta vs comparison period
+  const topPages = (curr.pages ?? []).map(p => ({
+    page:          p.page ?? '',
+    clicks:        p.clicks,
+    impressions:   p.impressions,
+    ctr:           p.ctr,
+    position:      p.position,
+    positionDelta: showCompare && p.page && compPagePosMap.has(p.page)
+      ? p.position - compPagePosMap.get(p.page)!
+      : undefined,
+  }))
 
   const metricCards = [
     {
-      label: 'Organic Clicks', value: fmtNum(totals.clicks),     color: '#10b981',
-      delta: showCompare ? calcDelta(totals.clicks, compTotals.clicks) : null,
+      label: 'Organic Clicks', value: fmtNum(clicks),      color: '#10b981',
+      delta: showCompare ? calcDelta(clicks, compClicks) : null,
     },
     {
-      label: 'Impressions',    value: fmtNum(totals.impressions), color: '#3b82f6',
-      delta: showCompare ? calcDelta(totals.impressions, compTotals.impressions) : null,
+      label: 'Impressions',    value: fmtNum(impressions),  color: '#3b82f6',
+      delta: showCompare ? calcDelta(impressions, compImpressions) : null,
     },
     {
-      label: 'Avg. CTR',       value: fmtPct(avgCtr),             color: '#8b5cf6',
+      label: 'Avg. CTR',       value: fmtPct(avgCtr),       color: '#8b5cf6',
       delta: showCompare ? calcDelta(avgCtr, compAvgCtr) : null,
     },
     {
-      label: 'Avg. Position',  value: fmtPos(avgPosition),        color: '#f59e0b',
+      label: 'Avg. Position',  value: fmtPos(avgPosition),  color: '#f59e0b',
       // Position: lower is better → invert sign for colour logic
       delta: showCompare ? calcDelta(avgPosition, compAvgPosition) : null,
       invertDelta: true,

@@ -340,7 +340,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
 
 // ── Reusable section component ────────────────────────────────────────────────
 
-function LayoutSection({
+export function LayoutSection({
   title,
   description,
   items,

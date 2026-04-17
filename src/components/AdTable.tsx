@@ -288,13 +288,13 @@ export function AdRowTable({
                     <LightboxImage
                       src={previewImg}
                       alt={row.ad_name}
-                      width={40}
-                      height={40}
+                      width={56}
+                      height={56}
                       videoId={row.video_id ?? undefined}
                     />
                   ) : (
                     <div style={{
-                      width: 40, height: 40, borderRadius: 4,
+                      width: 56, height: 56, borderRadius: 4,
                       background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
