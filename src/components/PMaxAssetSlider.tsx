@@ -27,7 +27,7 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
   const workingImages = imageAssets.filter(a => !failed.has(a.asset_id))
 
   function markFailed(assetId: string) {
-    setFailed(prev => new Set([...prev, assetId]))
+    setFailed(prev => { const next = new Set(prev); next.add(assetId); return next })
   }
 
   // Clamp index to valid range when images disappear
