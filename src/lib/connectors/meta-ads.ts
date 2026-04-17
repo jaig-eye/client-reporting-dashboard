@@ -275,11 +275,18 @@ async function fetchAdCreatives(
 
   const result: Record<string, Partial<AdCreativeData>> = {}
 
-  // Process in batches of 50 (Meta batch API limit)
+  // Ads that have a Facebook post backing them — query the post for full text + image
+  const needsPostData:    Array<{ adId: string; postId: string }> = []
+  // Ads with no real image — fetch creative thumbnail at 720px via a direct creative call
+  const needsLargerThumb: Array<{ adId: string; creativeId: string }> = []
+
+  // ── Pass 1: batch-fetch creative data for all ad IDs ─────────────────────
   for (let i = 0; i < adIds.length; i += 50) {
     const batch = adIds.slice(i, i + 50)
     try {
       const creativeFields = [
+        'id',                              // needed for pass-3 thumbnail upgrade
+        'effective_object_story_id',       // backing FB/IG post — best source of text + full image
         'image_url',
         'thumbnail_url',
         'video_id',
@@ -311,21 +318,17 @@ async function fetchAdCreatives(
           const creative = body.creative as Record<string, unknown> | undefined
           const adId     = batch[j]
 
-          // Resolve image URL — prefer full-size image_url, fall back to thumbnail
-          const imageUrl    = (creative?.image_url    as string | undefined) ?? ''
-          const thumbUrl    = (creative?.thumbnail_url as string | undefined) ?? ''
-          const videoId     = (creative?.video_id     as string | undefined) ?? ''
+          const creativeId      = (creative?.id                       as string | undefined) ?? ''
+          const effectivePostId = (creative?.effective_object_story_id as string | undefined) ?? ''
+          const imageUrl        = (creative?.image_url                 as string | undefined) ?? ''
+          const thumbUrl        = (creative?.thumbnail_url             as string | undefined) ?? ''
+          const videoId         = (creative?.video_id                  as string | undefined) ?? ''
+          const videoThumb      = videoId ? thumbUrl : ''
 
-          // For video ads, thumbnail_url is the poster frame — keep it separately
-          const videoThumb  = videoId ? thumbUrl : ''
-
-          // Extract text from object_story_spec when top-level body/title are absent.
-          // Covers link/carousel ads (link_data), video ads (video_data), and slideshow ads.
+          // Extract text from object_story_spec fallback paths
           const oss       = creative?.object_story_spec as Record<string, Record<string, string>> | undefined
           const linkData  = oss?.link_data
           const videoData = oss?.video_data
-
-          // asset_feed_spec.bodies / .titles — used by DPA / catalog / dynamic creative ads
           const afs       = creative?.asset_feed_spec as { bodies?: Array<{ text?: string }>; titles?: Array<{ text?: string }> } | undefined
 
           const resolvedBody  = (creative?.body  as string | undefined)
@@ -340,8 +343,8 @@ async function fetchAdCreatives(
                              || afs?.titles?.[0]?.text
                              || ''
 
-          // object_story_spec.link_data.picture can carry the full image for link ads
-          const ossImage  = linkData?.picture ?? ''
+          const ossImage = linkData?.picture ?? ''
+          const hasRealImage = !!(imageUrl || ossImage)
 
           result[adId] = {
             image_url:         imageUrl || ossImage || (!videoId ? thumbUrl : ''),
@@ -350,8 +353,15 @@ async function fetchAdCreatives(
             video_thumb_url:   videoThumb,
             creative_body:     resolvedBody,
             creative_title:    resolvedTitle,
-            creative_link_url: (creative?.link_url  as string | undefined) ?? linkData?.link ?? '',
-            ad_status:         (body.status         as string | undefined) ?? '',
+            creative_link_url: (creative?.link_url as string | undefined) ?? linkData?.link ?? '',
+            ad_status:         (body.status        as string | undefined) ?? '',
+          }
+
+          // Queue for subsequent passes
+          if (effectivePostId) {
+            needsPostData.push({ adId, postId: effectivePostId })
+          } else if (creativeId && !hasRealImage) {
+            needsLargerThumb.push({ adId, creativeId })
           }
         } catch {
           // ignore parse errors for individual ads
@@ -360,6 +370,74 @@ async function fetchAdCreatives(
     } catch {
       // ignore batch errors — creatives are best-effort
     }
+  }
+
+  // ── Pass 2: fetch backing Facebook post for full text + high-res image ────
+  // effective_object_story_id points to the FB/IG post that powers the ad.
+  // Posts reliably expose `message` (primary text) and `full_picture` (high-res).
+  for (let i = 0; i < needsPostData.length; i += 50) {
+    const slice = needsPostData.slice(i, i + 50)
+    try {
+      const batchRequests = slice.map(({ postId }) => ({
+        method: 'GET',
+        relative_url: `${postId}?fields=message,story,full_picture`,
+      }))
+
+      const batchUrl = new URL(`${BASE_URL}/`)
+      batchUrl.searchParams.set('access_token', accessToken)
+      batchUrl.searchParams.set('batch', JSON.stringify(batchRequests))
+
+      const res = await fetch(batchUrl.toString(), { method: 'POST' })
+      if (!res.ok) continue
+
+      const responses = (await res.json()) as Record<string, unknown>[]
+      for (let j = 0; j < responses.length; j++) {
+        const item = responses[j]
+        if (!item || (item.code as number) !== 200) continue
+        try {
+          const data        = JSON.parse(item.body as string) as Record<string, unknown>
+          const { adId }    = slice[j]
+          const fullPicture = data.full_picture as string | undefined
+          const message     = (data.message as string | undefined) || (data.story as string | undefined)
+
+          if (fullPicture && result[adId]) result[adId].image_url = fullPicture
+          if (message    && result[adId] && !result[adId].creative_body) {
+            result[adId].creative_body = message
+          }
+          // If the post had a good image, no need for the thumb-upgrade pass
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ── Pass 3: upgrade thumbnail to 720 px for ads still without a real image ─
+  for (let i = 0; i < needsLargerThumb.length; i += 50) {
+    const slice = needsLargerThumb.slice(i, i + 50)
+    try {
+      const batchRequests = slice.map(({ creativeId }) => ({
+        method: 'GET',
+        relative_url: `${creativeId}?fields=thumbnail_url&thumbnail_width=720&thumbnail_height=720`,
+      }))
+
+      const batchUrl = new URL(`${BASE_URL}/`)
+      batchUrl.searchParams.set('access_token', accessToken)
+      batchUrl.searchParams.set('batch', JSON.stringify(batchRequests))
+
+      const res = await fetch(batchUrl.toString(), { method: 'POST' })
+      if (!res.ok) continue
+
+      const responses = (await res.json()) as Record<string, unknown>[]
+      for (let j = 0; j < responses.length; j++) {
+        const item = responses[j]
+        if (!item || (item.code as number) !== 200) continue
+        try {
+          const data       = JSON.parse(item.body as string) as Record<string, unknown>
+          const largeThumb = data.thumbnail_url as string | undefined
+          const { adId }   = slice[j]
+          if (largeThumb && result[adId]) result[adId].image_url = largeThumb
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
   }
 
   return result

@@ -289,22 +289,25 @@ export function AdRowTable({
 
       {/* Card grid view */}
       {showCardView && viewMode === 'cards' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
           {sorted.map(row => {
-            const previewImg = row.image_url || row.thumbnail_url || row.video_thumb_url
+            const previewImg  = row.image_url || row.thumbnail_url || row.video_thumb_url
             const statusUpper = (row.ad_status ?? '').toUpperCase()
-            const isActive   = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
+            const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
+            const isPaused    = statusUpper === 'PAUSED'
+            const displayName = row.creative_title || row.ad_name || row.ad_id
             return (
               <div
                 key={row.ad_id}
                 onClick={() => setPreviewAd(row)}
                 style={{
-                  border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden',
+                  border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden',
                   background: 'var(--bg-surface)', cursor: 'pointer',
-                  opacity: isActive ? 1 : 0.55,
-                  transition: 'box-shadow 0.15s',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                  transition: 'box-shadow 0.15s, transform 0.1s',
                 }}
               >
+                {/* Image */}
                 {previewImg ? (
                   <img
                     src={previewImg}
@@ -316,26 +319,60 @@ export function AdRowTable({
                     width: '100%', aspectRatio: '1/1', background: 'var(--bg-subtle)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No image</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>No image</span>
                   </div>
                 )}
-                <div style={{ padding: '0.625rem' }}>
-                  <p style={{
-                    fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: '0 0 4px',
-                  }}>
-                    {row.ad_name || row.ad_id}
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span>{fmt$(row.spend)}</span>
-                    <span>{row.conversions > 0 ? `${fmtNum(row.conversions)} conv` : `${fmtNum(row.clicks)} clicks`}</span>
-                  </div>
+
+                <div style={{ padding: '0.75rem' }}>
+                  {/* Status badge */}
                   <span style={{
-                    fontSize: '0.65rem', fontWeight: 600, marginTop: 4, display: 'inline-block',
-                    color: isActive ? 'var(--green)' : '#d97706',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                    color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                    marginBottom: 6,
                   }}>
-                    ● {isActive ? 'Active' : 'Paused'}
+                    <span style={{
+                      width: 5, height: 5, borderRadius: '50%',
+                      background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                    }} />
+                    {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || 'Unknown')}
                   </span>
+
+                  {/* Ad name / title */}
+                  <p style={{
+                    fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)',
+                    margin: '0 0 0.625rem',
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                    lineHeight: 1.35,
+                  }}>
+                    {displayName}
+                  </p>
+
+                  {/* Metrics grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.375rem 0.75rem' }}>
+                    <div>
+                      <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Spend</p>
+                      <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>{fmt$(row.spend)}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {row.conversions > 0 ? 'CPL' : 'CTR'}
+                      </p>
+                      <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        {row.conversions > 0 ? fmtCurrency(row.cpl) : fmtPct(row.ctr)}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Results</p>
+                      <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        {row.conversions > 0 ? fmtNum(row.conversions) : fmtNum(row.clicks)}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Impr.</p>
+                      <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(row.impressions)}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             )
@@ -361,11 +398,12 @@ export function AdRowTable({
             </thead>
             <tbody>
               {sorted.map(row => {
-                const previewImg  = row.thumbnail_url || row.video_thumb_url || row.image_url
+                const previewImg  = row.image_url || row.thumbnail_url || row.video_thumb_url
                 const statusUpper = (row.ad_status ?? '').toUpperCase()
                 const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
                 const isPaused    = statusUpper === 'PAUSED'
                 const copyPreview = row.creative_title || row.creative_body || row.headlines?.[0] || ''
+                const thumbSize   = showCardView ? 80 : 56
 
                 return (
                   <tr key={row.ad_id}>
@@ -381,22 +419,22 @@ export function AdRowTable({
                             <img
                               src={previewImg}
                               alt={row.ad_name}
-                              style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 4, display: 'block' }}
+                              style={{ width: thumbSize, height: thumbSize, objectFit: 'cover', borderRadius: 6, display: 'block' }}
                             />
                           </button>
                         ) : (
                           <LightboxImage
                             src={previewImg}
                             alt={row.ad_name}
-                            width={56}
-                            height={56}
+                            width={thumbSize}
+                            height={thumbSize}
                             videoId={row.video_id ?? undefined}
                             fullSrc={row.image_url ?? undefined}
                           />
                         )
                       ) : (
                         <div style={{
-                          width: 56, height: 56, borderRadius: 4,
+                          width: thumbSize, height: thumbSize, borderRadius: 6,
                           background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
@@ -531,20 +569,18 @@ export function AdRowTable({
               />
             )}
 
-            {/* Headline + CTA strip */}
+            {/* Headline + CTA strip — fall back to ad_name when creative has no title */}
             <div style={{
               padding: '0.625rem 1rem', background: '#f0f2f5',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             }}>
               <div style={{ minWidth: 0 }}>
-                {(previewAd.creative_title || previewAd.headlines?.[0]) && (
-                  <p style={{
-                    margin: 0, fontSize: '0.875rem', fontWeight: 700, color: '#1c1e21',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {previewAd.creative_title || previewAd.headlines?.[0]}
-                  </p>
-                )}
+                <p style={{
+                  margin: 0, fontSize: '0.875rem', fontWeight: 700, color: '#1c1e21',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {previewAd.creative_title || previewAd.headlines?.[0] || previewAd.ad_name}
+                </p>
               </div>
               <button style={{
                 background: '#e4e6eb', border: 'none', borderRadius: 6, padding: '6px 14px',
