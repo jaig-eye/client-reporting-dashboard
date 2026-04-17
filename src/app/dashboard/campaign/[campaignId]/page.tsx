@@ -20,6 +20,10 @@ import SparkMetricCard from '@/components/SparkMetricCard'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
+import {
+  resolvePaidAdsLayout, resolvePlatformLayout,
+  METRIC_LABELS, type MetricLayouts, type MetricKey,
+} from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
 
@@ -132,8 +136,9 @@ export default async function CampaignDetailPage({
   }
 
   const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
-  let isPMax = false
+  let isPMax       = false
   let avgImprShare: number | null = null
+  let campTypeRaw  = ''
 
   // Daily series for sparklines
   type DayAgg = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
@@ -177,6 +182,7 @@ export default async function CampaignDetailPage({
     // Average impression share across the period (null if none available)
     const isRows = campRows.filter(r => r.search_impression_share !== null)
     avgImprShare = isRows.length > 0 ? isRows.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / isRows.length : null
+    campTypeRaw  = (firstCamp?.campaign_type ?? '').toUpperCase()
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0, cv = Number(r.conversions_value)||0
@@ -332,6 +338,74 @@ export default async function CampaignDetailPage({
   const ctrSeries   = sortedDays.map(([, v]) => ({ v: v.impressions > 0 ? v.clicks / v.impressions : 0 }))
   const clicksSeries = sortedDays.map(([, v]) => ({ v: v.clicks }))
 
+  // ── Layout resolution ─────────────────────────────────────────────────────
+  const isGoogleSearch = isGoogleAds && !isPMax && campTypeRaw.includes('SEARCH')
+  const isGoogleShop   = isGoogleAds && (isPMax || campTypeRaw.includes('SHOPPING'))
+
+  const agencyLayouts  = settings.metric_layouts as MetricLayouts | null | undefined
+  const clientOverride = client.metric_layout_override as MetricLayouts | null | undefined
+  const campaignLayout = isGoogleSearch
+    ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_search')
+    : isGoogleShop
+    ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_shopping')
+    : resolvePaidAdsLayout(agencyLayouts, clientOverride, isEcom)
+
+  // ── Metric value / spark / delta maps ─────────────────────────────────────
+  const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
+
+  const cpmSeries  = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: v.impressions > 0 ? (ds / v.impressions) * 1000 : 0 } })
+  const cpcSeries  = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: v.clicks > 0 ? ds / v.clicks : 0 } })
+  const crSeries   = sortedDays.map(([, v]) => ({ v: v.clicks > 0 ? v.conversions / v.clicks : 0 }))
+  const roasSeries = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: ds > 0 && v.conversionValue > 0 ? v.conversionValue / ds : 0 } })
+
+  const campaignValMap: Record<string, string> = {
+    spend:            fmt$(displaySpend),
+    leads:            totConversions > 0     ? fmtNum(totConversions)        : '—',
+    conversions:      totConversions > 0     ? fmtNum(totConversions)        : '—',
+    revenue:          totConversionValue > 0 ? fmt$(totConversionValue)      : '—',
+    roas:             roas > 0               ? fmtRoas(roas)                 : '—',
+    cpa:              cpl > 0               ? fmtCurrency(cpl)              : '—',
+    ctr:              fmtPct(ctr),
+    impression_share: avgImprShare != null   ? `${(avgImprShare * 100).toFixed(1)}%` : '—',
+    clicks:           fmtNum(totClicks),
+    impressions:      fmtNum(totImpressions),
+    cpm:              totImpressions > 0     ? fmtCurrency((displaySpend / totImpressions) * 1000) : '—',
+    cpc:              totClicks > 0          ? fmtCurrency(displaySpend / totClicks) : '—',
+    conv_rate:        totClicks > 0          ? fmtPct(totConversions / totClicks) : '—',
+  }
+  const campaignCurrNum: Record<string, number> = {
+    spend: displaySpend, leads: totConversions, conversions: totConversions,
+    revenue: totConversionValue, roas, cpa: cpl, ctr,
+    impression_share: avgImprShare ?? 0, clicks: totClicks, impressions: totImpressions,
+    cpm: totImpressions > 0 ? (displaySpend / totImpressions) * 1000 : 0,
+    cpc: totClicks > 0 ? displaySpend / totClicks : 0,
+    conv_rate: totClicks > 0 ? totConversions / totClicks : 0,
+  }
+  const campaignPriorNum: Record<string, number> = {
+    spend: priorDisplaySpend, leads: priorTotals.conversions, conversions: priorTotals.conversions,
+    revenue: priorTotals.conversionValue, roas: priorRoas, cpa: priorCpl, ctr: priorCtr,
+    clicks: priorTotals.clicks, impressions: priorTotals.impressions,
+    cpm: priorTotals.impressions > 0 ? (priorDisplaySpend / priorTotals.impressions) * 1000 : 0,
+    cpc: priorTotals.clicks > 0 ? priorDisplaySpend / priorTotals.clicks : 0,
+    conv_rate: priorTotals.clicks > 0 ? priorTotals.conversions / priorTotals.clicks : 0,
+  }
+  const campaignSparkMap: Record<string, { v: number }[]> = {
+    spend: spendSeries, leads: convSeries, conversions: convSeries, revenue: cvSeries,
+    roas: roasSeries, cpa: cplSeries, ctr: ctrSeries, clicks: clicksSeries,
+    impressions: sortedDays.map(([, v]) => ({ v: v.impressions })),
+    cpm: cpmSeries, cpc: cpcSeries, conv_rate: crSeries, impression_share: [],
+  }
+  const sparkColorMap: Record<string, string> = {
+    spend: 'var(--blue)', roas: 'var(--green)', revenue: 'var(--green)',
+    leads: 'var(--green)', conversions: 'var(--green)', cpa: '#f59e0b',
+    ctr: 'var(--blue)', clicks: '#8b5cf6', impressions: 'var(--text-muted)',
+    cpm: '#f59e0b', cpc: '#f59e0b', conv_rate: 'var(--green)', impression_share: '#6366f1',
+  }
+  function getMetricLabel(key: string): string {
+    if (key === 'conversions' || key === 'leads') return conversionLabel
+    return METRIC_LABELS[key as MetricKey] ?? key
+  }
+
   const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
   if (compare) dateQsObj.compare = compare
   const dateQs   = new URLSearchParams(dateQsObj)
@@ -411,106 +485,43 @@ export default async function CampaignDetailPage({
           </div>
         </div>
 
-        {/* ── Campaign KPI summary ────────────────────────────── */}
+        {/* ── Campaign KPI summary (layout-driven) ───────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <SparkMetricCard
-            label="Cost"
-            value={fmt$(displaySpend)}
-            delta={showCompare ? calcDelta(displaySpend, priorDisplaySpend) : undefined}
-            invertDelta
-            sparkData={spendSeries}
-            sparkColor="var(--blue)"
-            delay={0}
-          />
-          {isEcom ? (
-            <>
-              <SparkMetricCard
-                label="ROAS"
-                value={roas > 0 ? fmtRoas(roas) : '—'}
-                delta={showCompare && priorRoas > 0 ? calcDelta(roas, priorRoas) : undefined}
-                sparkData={sortedDays.map(([, v]) => {
-                  const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
-                  return { v: ds > 0 && v.conversionValue > 0 ? v.conversionValue / ds : 0 }
-                })}
-                sparkColor="var(--green)"
-                delay={1}
-              />
-              <SparkMetricCard
-                label="Revenue"
-                value={totConversionValue > 0 ? fmt$(totConversionValue) : '—'}
-                delta={showCompare ? calcDelta(totConversionValue, priorTotals.conversionValue) : undefined}
-                sparkData={cvSeries}
-                sparkColor="var(--green)"
-                delay={2}
-              />
-              <SparkMetricCard
-                label={conversionLabel}
-                value={totConversions > 0 ? fmtNum(totConversions) : '—'}
-                delta={showCompare ? calcDelta(totConversions, priorTotals.conversions) : undefined}
-                sparkData={convSeries}
-                sparkColor="#8b5cf6"
-                delay={3}
-              />
-            </>
-          ) : (
-            <>
-              <SparkMetricCard
-                label={conversionLabel}
-                value={totConversions > 0 ? totConversions.toFixed(0) : '—'}
-                delta={showCompare ? calcDelta(totConversions, priorTotals.conversions) : undefined}
-                sparkData={convSeries}
-                sparkColor="var(--green)"
-                delay={1}
-              />
-              <SparkMetricCard
-                label="CPL"
-                value={cpl > 0 ? fmtCurrency(cpl) : '—'}
-                delta={showCompare && priorCpl > 0 ? calcDelta(cpl, priorCpl) : undefined}
-                invertDelta
-                sparkData={cplSeries}
-                sparkColor="#f59e0b"
-                delay={2}
-              />
-              <SparkMetricCard
-                label="CTR"
-                value={fmtPct(ctr)}
-                delta={showCompare ? calcDelta(ctr, priorCtr) : undefined}
-                sparkData={ctrSeries}
-                sparkColor="var(--blue)"
-                delay={3}
-              />
-            </>
-          )}
+          {campaignLayout.kpi_cards.map((key, i) => (
+            <SparkMetricCard
+              key={key}
+              label={getMetricLabel(key)}
+              value={campaignValMap[key] ?? '—'}
+              delta={showCompare && campaignCurrNum[key] !== undefined
+                ? calcDelta(campaignCurrNum[key] ?? 0, campaignPriorNum[key] ?? 0)
+                : undefined}
+              invertDelta={invertDeltaKeys.has(key)}
+              sparkData={campaignSparkMap[key] ?? []}
+              sparkColor={sparkColorMap[key] ?? 'var(--blue)'}
+              delay={i}
+            />
+          ))}
         </div>
 
-        {/* ── Clicks card (always visible) ─────────────────────── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <SparkMetricCard
-            label="Clicks"
-            value={fmtNum(totClicks)}
-            delta={showCompare ? calcDelta(totClicks, priorTotals.clicks) : undefined}
-            sparkData={clicksSeries}
-            sparkColor="#8b5cf6"
-            delay={4}
-          />
-          <SparkMetricCard
-            label="Impressions"
-            value={fmtNum(totImpressions)}
-            delta={showCompare ? calcDelta(totImpressions, priorTotals.impressions) : undefined}
-            sparkData={sortedDays.map(([, v]) => ({ v: v.impressions }))}
-            sparkColor="var(--text-muted)"
-            delay={5}
-          />
-          {isGoogleAds && !isPMax && avgImprShare !== null && (
-            <SparkMetricCard
-              label="Impr. Share"
-              value={`${(avgImprShare * 100).toFixed(1)}%`}
-              sparkData={[]}
-              sparkColor="#6366f1"
-              delay={6}
-            />
-          )}
-        </div>
+        {/* ── Top metrics row (layout-driven) ─────────────────────── */}
+        {campaignLayout.top_metrics.length > 0 && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {campaignLayout.top_metrics.map((key, i) => (
+              <SparkMetricCard
+                key={key}
+                label={getMetricLabel(key)}
+                value={campaignValMap[key] ?? '—'}
+                delta={showCompare && campaignCurrNum[key] !== undefined
+                  ? calcDelta(campaignCurrNum[key] ?? 0, campaignPriorNum[key] ?? 0)
+                  : undefined}
+                invertDelta={invertDeltaKeys.has(key)}
+                sparkData={campaignSparkMap[key] ?? []}
+                sparkColor={sparkColorMap[key] ?? 'var(--text-muted)'}
+                delay={campaignLayout.kpi_cards.length + i}
+              />
+            ))}
+          </div>
+        )}
 
         {/* ── Ad Group / Ad Set table ───────────────────────────── */}
         <div className="card p-6">

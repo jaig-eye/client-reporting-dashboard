@@ -52,9 +52,10 @@ export default async function AuthorityPage({
   ])
 
   const latestDate = metricsRows?.[0]?.date ?? dateTo
+  const prevDate   = metricsRows?.[1]?.date ?? null
 
-  // Fetch keyword rankings + top pages for the latest snapshot date
-  const [{ data: keywordRows }, { data: pageRows }] = await Promise.all([
+  // Fetch keyword rankings + top pages for latest snapshot, and previous snapshot keywords for comparison
+  const [{ data: keywordRows }, { data: pageRows }, { data: prevKeywordRows }] = await Promise.all([
     db.from('ahrefs_keywords')
       .select('keyword, position, volume, traffic, difficulty')
       .eq('client_id', client.id)
@@ -67,7 +68,18 @@ export default async function AuthorityPage({
       .eq('date', latestDate)
       .order('organic_traffic', { ascending: false })
       .limit(15),
+    prevDate
+      ? db.from('ahrefs_keywords')
+          .select('keyword, position')
+          .eq('client_id', client.id)
+          .eq('date', prevDate)
+      : Promise.resolve({ data: null as null }),
   ])
+
+  // Map previous keyword positions for delta calculation
+  const prevKwMap = new Map<string, number>(
+    (prevKeywordRows ?? []).map(r => [r.keyword, r.position ?? 999])
+  )
 
   // Use metrics presence as primary signal — avoids Supabase join shape ambiguity
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,180 +104,212 @@ export default async function AuthorityPage({
 
   return (
     <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
-      {/* Page header */}
-      <div className="page-header">
-        <div className="flex items-center gap-2">
-          <LinkSimple size={18} weight="duotone" style={{ color: '#f59e0b' }} aria-hidden />
-          <h1 className="page-title">Authority</h1>
-          {!hasAhrefs && (
-            <span className="badge badge-amber" style={{ fontSize: '0.6875rem' }}>Not connected</span>
-          )}
-        </div>
-        <DateRangePicker from={dateFrom} to={dateTo} />
-      </div>
+      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-      {!hasAhrefs ? (
-        /* No connection state */
-        <div className="card p-12 text-center" style={{ maxWidth: 480, margin: '2rem auto' }}>
-          <LinkSimple size={40} style={{ color: '#f59e0b', margin: '0 auto 1rem' }} />
-          <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
-            Ahrefs not connected
-          </p>
-          <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Ask your account manager to connect Ahrefs to start tracking Domain Rating,
-            backlinks, and organic traffic.
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* KPI cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <SparkMetricCard
-              label="Domain Rating"
-              value={latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—'}
-              sparkData={drTrend}
-            />
-            <SparkMetricCard
-              label="Backlinks"
-              value={latest?.backlinks != null ? latest.backlinks.toLocaleString() : '—'}
-              sparkData={blTrend}
-            />
-            <SparkMetricCard
-              label="Referring Domains"
-              value={latest?.referring_domains != null ? latest.referring_domains.toLocaleString() : '—'}
-              sparkData={rdTrend}
-            />
-            <SparkMetricCard
-              label="Organic Traffic"
-              value={latest?.organic_traffic != null ? latest.organic_traffic.toLocaleString() : '—'}
-              sparkData={otTrend}
-            />
+        {/* Page header */}
+        <div className="page-header" style={{ marginBottom: 0 }}>
+          <div className="flex items-center gap-2">
+            <LinkSimple size={18} weight="duotone" style={{ color: '#f59e0b' }} aria-hidden />
+            <h1 className="page-title">Authority</h1>
+            {!hasAhrefs && (
+              <span className="badge badge-amber" style={{ fontSize: '0.6875rem' }}>Not connected</span>
+            )}
           </div>
+          <DateRangePicker from={dateFrom} to={dateTo} />
+        </div>
 
-          {/* Snapshot info */}
-          {latest ? (
-            <div className="card p-4" style={{ marginBottom: '1.5rem' }}>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                  Latest snapshot: <span style={{ color: 'var(--text-primary)' }}>{latest.date}</span>
-                  {latest.ahrefs_rank && (
-                    <> — Ahrefs Rank: <span style={{ color: 'var(--text-primary)' }}>#{latest.ahrefs_rank.toLocaleString()}</span></>
-                  )}
-                </p>
-                <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                  Organic keywords: {latest.organic_keywords?.toLocaleString() ?? '—'}
-                </p>
-              </div>
+        {!hasAhrefs ? (
+          /* No connection state */
+          <div className="card p-12 text-center" style={{ maxWidth: 480, margin: '2rem auto' }}>
+            <LinkSimple size={40} style={{ color: '#f59e0b', margin: '0 auto 1rem' }} />
+            <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+              Ahrefs not connected
+            </p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              Ask your account manager to connect Ahrefs to start tracking Domain Rating,
+              backlinks, and organic traffic.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* KPI cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <SparkMetricCard
+                label="Domain Rating"
+                value={latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—'}
+                sparkData={drTrend}
+              />
+              <SparkMetricCard
+                label="Backlinks"
+                value={latest?.backlinks != null ? latest.backlinks.toLocaleString() : '—'}
+                sparkData={blTrend}
+              />
+              <SparkMetricCard
+                label="Referring Domains"
+                value={latest?.referring_domains != null ? latest.referring_domains.toLocaleString() : '—'}
+                sparkData={rdTrend}
+              />
+              <SparkMetricCard
+                label="Organic Traffic"
+                value={latest?.organic_traffic != null ? latest.organic_traffic.toLocaleString() : '—'}
+                sparkData={otTrend}
+              />
             </div>
-          ) : (
-            <div className="card p-8 text-center mb-6">
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                No data for this period — sync pending or no snapshots yet.
-              </p>
-            </div>
-          )}
 
-          {/* Keyword Rankings */}
-          {(keywordRows?.length ?? 0) > 0 && (
-            <div className="card mb-6" style={{ overflow: 'hidden' }}>
-              <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
-                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Keyword Rankings
-                </h2>
-                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  Top keywords by estimated traffic · snapshot {latestDate}
+            {/* Snapshot info */}
+            {latest ? (
+              <div className="card p-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                    Latest snapshot: <span style={{ color: 'var(--text-primary)' }}>{latest.date}</span>
+                    {latest.ahrefs_rank && (
+                      <> — Ahrefs Rank: <span style={{ color: 'var(--text-primary)' }}>#{latest.ahrefs_rank.toLocaleString()}</span></>
+                    )}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                    Organic keywords: {latest.organic_keywords?.toLocaleString() ?? '—'}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="card p-8 text-center">
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  No data for this period — sync pending or no snapshots yet.
                 </p>
               </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
-                      <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Keyword</th>
-                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Position</th>
-                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Volume</th>
-                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
-                      <th style={{ padding: '0.5rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>KD</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {keywordRows!.map((kw, i) => {
-                      const pos = kw.position ?? 999
-                      const posColor = pos <= 3 ? 'var(--green)' : pos <= 10 ? '#d97706' : 'var(--text-muted)'
-                      const kd = kw.difficulty ?? null
-                      const kdColor = kd == null ? 'var(--text-muted)' : kd < 30 ? 'var(--green)' : kd < 60 ? '#d97706' : 'var(--red)'
-                      return (
-                        <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-                          <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {kw.keyword}
-                          </td>
-                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600, color: posColor }}>
-                            {kw.position ?? '—'}
-                          </td>
-                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                            {kw.volume != null ? kw.volume.toLocaleString() : '—'}
-                          </td>
-                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                            {kw.traffic != null ? kw.traffic.toLocaleString() : '—'}
-                          </td>
-                          <td style={{ padding: '0.5rem 1rem', textAlign: 'center', fontWeight: 600, color: kdColor }}>
-                            {kd != null ? kd : '—'}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Top Organic Pages */}
-          {(pageRows?.length ?? 0) > 0 && (
-            <div className="card mb-6" style={{ overflow: 'hidden' }}>
-              <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
-                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Top Organic Pages
-                </h2>
-                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  Top pages by organic traffic · snapshot {latestDate}
-                </p>
+            {/* Keyword Rankings */}
+            {(keywordRows?.length ?? 0) > 0 && (
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Keyword Rankings
+                  </h2>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Top keywords by estimated traffic · snapshot {latestDate}
+                  </p>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
+                        <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Keyword</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Position</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Change</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Volume</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
+                        <th style={{ padding: '0.5rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>KD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {keywordRows!.map((kw, i) => {
+                        const pos = kw.position ?? 999
+                        const posColor = pos <= 3 ? 'var(--green)' : pos <= 10 ? '#d97706' : 'var(--text-muted)'
+                        const kd = kw.difficulty ?? null
+                        const kdColor = kd == null ? 'var(--text-muted)' : kd < 30 ? 'var(--green)' : kd < 60 ? '#d97706' : 'var(--red)'
+
+                        // Compute position delta vs previous snapshot
+                        let deltaCell: React.ReactNode
+                        if (!prevKwMap.size) {
+                          deltaCell = <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</td>
+                        } else if (!prevKwMap.has(kw.keyword)) {
+                          deltaCell = <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--blue)', fontSize: '0.75rem', fontWeight: 600 }}>New</td>
+                        } else {
+                          const prevPos = prevKwMap.get(kw.keyword)!
+                          const currPos = kw.position ?? 999
+                          const delta   = prevPos - currPos // positive = improved (lower position #)
+                          if (delta === 0) {
+                            deltaCell = <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</td>
+                          } else {
+                            deltaCell = (
+                              <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600, fontSize: '0.75rem', color: delta > 0 ? 'var(--green)' : 'var(--red)' }}>
+                                {delta > 0 ? `▲${delta}` : `▼${Math.abs(delta)}`}
+                              </td>
+                            )
+                          }
+                        }
+
+                        return (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+                            <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {kw.keyword}
+                            </td>
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600, color: posColor }}>
+                              {kw.position ?? '—'}
+                            </td>
+                            {deltaCell}
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                              {kw.volume != null ? kw.volume.toLocaleString() : '—'}
+                            </td>
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                              {kw.traffic != null ? kw.traffic.toLocaleString() : '—'}
+                            </td>
+                            <td style={{ padding: '0.5rem 1rem', textAlign: 'center', fontWeight: 600, color: kdColor }}>
+                              {kd != null ? kd : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {prevDate && (
+                  <p className="text-xs px-4 pb-3 pt-2" style={{ color: 'var(--text-faint)' }}>
+                    Change vs snapshot {prevDate}
+                  </p>
+                )}
               </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
-                      <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Page</th>
-                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
-                      <th style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Keywords</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageRows!.map((pg, i) => {
-                      const path = (() => {
-                        try { return new URL(pg.url).pathname || pg.url } catch { return pg.url }
-                      })()
-                      return (
-                        <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
-                          <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                              title={pg.url}>
-                            {path}
-                          </td>
-                          <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                            {pg.organic_traffic != null ? pg.organic_traffic.toLocaleString() : '—'}
-                          </td>
-                          <td style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                            {pg.organic_keywords != null ? pg.organic_keywords.toLocaleString() : '—'}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            )}
+
+            {/* Top Organic Pages */}
+            {(pageRows?.length ?? 0) > 0 && (
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Top Organic Pages
+                  </h2>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Top pages by organic traffic · snapshot {latestDate}
+                  </p>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
+                        <th style={{ padding: '0.5rem 1rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}>Page</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Traffic</th>
+                        <th style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 500 }}>Keywords</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows!.map((pg, i) => {
+                        const path = (() => {
+                          try { return new URL(pg.url).pathname || pg.url } catch { return pg.url }
+                        })()
+                        return (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border-faint)' }}>
+                            <td style={{ padding: '0.5rem 1rem', color: 'var(--text-primary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={pg.url}>
+                              {path}
+                            </td>
+                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                              {pg.organic_traffic != null ? pg.organic_traffic.toLocaleString() : '—'}
+                            </td>
+                            <td style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                              {pg.organic_keywords != null ? pg.organic_keywords.toLocaleString() : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </>
+        )}
+      </main>
     </div>
   )
 }

@@ -15,11 +15,13 @@ export default function ClientMetricVisibility({
   initialHidden,
   initialLayoutType,
   initialLayoutOverride,
+  agencyLayouts,
 }: {
   clientId:             string
   initialHidden:        string[]
   initialLayoutType:    string | null
   initialLayoutOverride: MetricLayouts | null
+  agencyLayouts:        MetricLayouts | null
 }) {
   const [hidden,         setHidden]         = useState<Set<string>>(new Set(initialHidden))
   const [layoutType,     setLayoutType]     = useState<string>(initialLayoutType ?? 'auto')
@@ -45,8 +47,10 @@ export default function ClientMetricVisibility({
   }
 
   function handleLayoutOverrideChange(v: MetricLayouts) {
-    setLayoutOverride(v)
-    patch({ metric_layout_override: v })
+    const isDefault = agencyLayouts !== null && JSON.stringify(v) === JSON.stringify(agencyLayouts)
+    const effective = isDefault ? null : v
+    setLayoutOverride(effective)
+    patch({ metric_layout_override: effective })
   }
 
   async function resetLayoutOverride() {

@@ -68,7 +68,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(10),
-    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts').single(),
     db.from('meta_ads_metrics')
       .select('discovered_actions')
       .eq('client_id', id)
@@ -92,6 +92,7 @@ export default async function ClientDetailPage({
     benchmark_conv_rate?: number
     benchmark_cpm?: number
     benchmark_cpl?: number
+    metric_layouts?: MetricLayouts | null
   } | null
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
   const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
@@ -431,6 +432,7 @@ export default async function ClientDetailPage({
               initialHidden={Array.isArray(client.hidden_metrics) ? client.hidden_metrics : []}
               initialLayoutType={client.layout_type ?? null}
               initialLayoutOverride={(client.metric_layout_override as MetricLayouts | null) ?? null}
+              agencyLayouts={(agencySettings?.metric_layouts as MetricLayouts | null) ?? null}
             />
           </div>
 

@@ -21,6 +21,10 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import TabContainer from '@/components/TabContainer'
+import {
+  resolvePaidAdsLayout, resolvePlatformLayout,
+  METRIC_LABELS, type MetricLayouts, type MetricKey,
+} from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
 
@@ -150,7 +154,8 @@ export default async function AdSetDetailPage({
   let dailyTrend: DailyMetric[] = []
   let priorDailyTrend: DailyMetric[] = []
   let pMaxAssets: PMaxAsset[] = []
-  let isPMaxGroup = false
+  let isPMaxGroup  = false
+  let campTypeRaw  = ''
 
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }] = await Promise.all([
@@ -162,7 +167,7 @@ export default async function AdSetDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+        .select('campaign_name,campaign_type').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       db.from('google_ads_asset_group_assets')
         .select('asset_id,field_type,text_content,image_url,video_id')
         .eq('client_id', client.id)
@@ -177,7 +182,8 @@ export default async function AdSetDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
     ])
-    if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
+    if (campRow) campaignName = (campRow as { campaign_name: string; campaign_type?: string | null }).campaign_name
+    campTypeRaw  = ((campRow as { campaign_type?: string | null } | null)?.campaign_type ?? '').toUpperCase()
     isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
     pMaxAssets = (assetRows ?? []) as PMaxAsset[]
 
@@ -481,6 +487,85 @@ export default async function AdSetDetailPage({
   const totCpl        = totConv > 0 ? totDisplaySpd / totConv : 0
   const totCtr        = totImpr > 0 ? totClicks / totImpr : 0
 
+  // ── Layout resolution ─────────────────────────────────────────────────────
+  const isGoogleSearch = isGoogleAds && !isPMaxGroup && campTypeRaw.includes('SEARCH')
+  const isGoogleShop   = isGoogleAds && (isPMaxGroup || campTypeRaw.includes('SHOPPING'))
+
+  const agencyLayouts  = settings.metric_layouts as MetricLayouts | null | undefined
+  const clientOverride = client.metric_layout_override as MetricLayouts | null | undefined
+  const adsetLayout    = isGoogleSearch
+    ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_search')
+    : isGoogleShop
+    ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_shopping')
+    : resolvePaidAdsLayout(agencyLayouts, clientOverride, isEcom)
+
+  // ── Metric value / spark / delta maps ─────────────────────────────────────
+  const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
+
+  const prior           = showCompare ? priorTotals : null
+  const priorDisplaySpd = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
+  const priorRoas       = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
+  const priorCpl        = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
+  const priorCtr        = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
+
+  // DailyMetric has: date, spend, conversions, clicks, roas (no impressions/conversionValue)
+  const spendSpark  = dailyTrend.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
+  const convSpark   = dailyTrend.map(d => ({ v: d.conversions }))
+  const cvSpark     = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.roas > 0 ? d.roas * ds : 0 } })
+  const clicksSpark = dailyTrend.map(d => ({ v: d.clicks }))
+  const cplSpark    = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.conversions > 0 ? ds / d.conversions : 0 } })
+  const roasSpark   = dailyTrend.map(d => ({ v: d.roas }))
+  const cpcSpark    = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.clicks > 0 ? ds / d.clicks : 0 } })
+  const crSpark     = dailyTrend.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
+
+  const adsetValMap: Record<string, string> = {
+    spend:       fmt$(totDisplaySpd),
+    leads:       totConv > 0        ? fmtNum(totConv)               : '—',
+    conversions: totConv > 0        ? fmtNum(totConv)               : '—',
+    revenue:     totCv > 0          ? fmt$(totCv)                   : '—',
+    roas:        totRoas > 0        ? fmtRoas(totRoas)              : '—',
+    cpa:         totCpl > 0         ? fmtCurrency(totCpl)           : '—',
+    ctr:         fmtPct(totCtr),
+    clicks:      fmtNum(totClicks),
+    impressions: fmtNum(totImpr),
+    cpm:         totImpr > 0        ? fmtCurrency((totDisplaySpd / totImpr) * 1000) : '—',
+    cpc:         totClicks > 0      ? fmtCurrency(totDisplaySpd / totClicks) : '—',
+    conv_rate:   totClicks > 0      ? fmtPct(totConv / totClicks)  : '—',
+    impression_share: '—',
+  }
+  const adsetCurrNum: Record<string, number> = {
+    spend: totDisplaySpd, leads: totConv, conversions: totConv,
+    revenue: totCv, roas: totRoas, cpa: totCpl, ctr: totCtr,
+    clicks: totClicks, impressions: totImpr,
+    cpm: totImpr > 0 ? (totDisplaySpd / totImpr) * 1000 : 0,
+    cpc: totClicks > 0 ? totDisplaySpd / totClicks : 0,
+    conv_rate: totClicks > 0 ? totConv / totClicks : 0,
+  }
+  const adsetPriorNum: Record<string, number> = {
+    spend: priorDisplaySpd, leads: prior?.conversions ?? 0, conversions: prior?.conversions ?? 0,
+    revenue: prior?.conversionValue ?? 0, roas: priorRoas, cpa: priorCpl, ctr: priorCtr,
+    clicks: prior?.clicks ?? 0, impressions: prior?.impressions ?? 0,
+    cpm: (prior?.impressions ?? 0) > 0 ? (priorDisplaySpd / (prior?.impressions ?? 1)) * 1000 : 0,
+    cpc: (prior?.clicks ?? 0) > 0 ? priorDisplaySpd / (prior?.clicks ?? 1) : 0,
+    conv_rate: (prior?.clicks ?? 0) > 0 ? (prior?.conversions ?? 0) / (prior?.clicks ?? 1) : 0,
+  }
+  const adsetSparkMap: Record<string, { v: number }[]> = {
+    spend: spendSpark, leads: convSpark, conversions: convSpark, revenue: cvSpark,
+    roas: roasSpark, cpa: cplSpark, ctr: [], clicks: clicksSpark,
+    impressions: [], cpm: [], cpc: cpcSpark, conv_rate: crSpark,
+    impression_share: [],
+  }
+  const adsetSparkColorMap: Record<string, string> = {
+    spend: 'var(--blue)', roas: 'var(--green)', revenue: 'var(--green)',
+    leads: 'var(--green)', conversions: 'var(--green)', cpa: '#f59e0b',
+    ctr: 'var(--blue)', clicks: '#8b5cf6', impressions: 'var(--text-muted)',
+    cpm: '#f59e0b', cpc: '#f59e0b', conv_rate: 'var(--green)', impression_share: '#6366f1',
+  }
+  function getAdsetMetricLabel(key: string): string {
+    if (key === 'conversions' || key === 'leads') return conversionLabel
+    return METRIC_LABELS[key as MetricKey] ?? key
+  }
+
   const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
   if (compare) dateQsObj.compare = compare
   const dateQs    = new URLSearchParams(dateQsObj)
@@ -558,100 +643,42 @@ export default async function AdSetDetailPage({
           </div>
         </div>
 
-        {/* ── Group KPI summary ───────────────────────────────── */}
-        {(() => {
-          const prior           = showCompare ? priorTotals : null
-          const priorDisplaySpd = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
-          const priorRoas       = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
-          const priorCpl        = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
-          const priorCtr        = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
-          const spendSpark      = dailyTrend.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
-          const convSpark       = dailyTrend.map(d => ({ v: d.conversions }))
-          const clicksSpark     = dailyTrend.map(d => ({ v: d.clicks }))
-          const cplSpark        = dailyTrend.map(d => {
-            const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend
-            return { v: d.conversions > 0 ? ds / d.conversions : 0 }
-          })
-          const ctrSpark        = dailyTrend.map(d => ({ v: d.clicks }))
-          const roasSpark       = dailyTrend.map(d => ({ v: d.roas }))
-          return (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {/* ── Group KPI summary (layout-driven) ──────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {adsetLayout.kpi_cards.map((key, i) => (
+            <SparkMetricCard
+              key={key}
+              label={getAdsetMetricLabel(key)}
+              value={adsetValMap[key] ?? '—'}
+              delta={showCompare && adsetCurrNum[key] !== undefined
+                ? calcDelta(adsetCurrNum[key] ?? 0, adsetPriorNum[key] ?? 0)
+                : undefined}
+              invertDelta={invertDeltaKeys.has(key)}
+              sparkData={adsetSparkMap[key] ?? []}
+              sparkColor={adsetSparkColorMap[key] ?? 'var(--blue)'}
+              delay={i}
+            />
+          ))}
+        </div>
+
+        {adsetLayout.top_metrics.length > 0 && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {adsetLayout.top_metrics.map((key, i) => (
               <SparkMetricCard
-                label="Cost"
-                value={fmt$(totDisplaySpd)}
-                delta={prior ? calcDelta(totDisplaySpd, priorDisplaySpd) : undefined}
-                invertDelta
-                sparkData={spendSpark}
-                sparkColor="var(--blue)"
-                delay={0}
+                key={key}
+                label={getAdsetMetricLabel(key)}
+                value={adsetValMap[key] ?? '—'}
+                delta={showCompare && adsetCurrNum[key] !== undefined
+                  ? calcDelta(adsetCurrNum[key] ?? 0, adsetPriorNum[key] ?? 0)
+                  : undefined}
+                invertDelta={invertDeltaKeys.has(key)}
+                sparkData={adsetSparkMap[key] ?? []}
+                sparkColor={adsetSparkColorMap[key] ?? 'var(--text-muted)'}
+                delay={adsetLayout.kpi_cards.length + i}
               />
-              {isEcom ? (
-                <>
-                  <SparkMetricCard
-                    label="ROAS"
-                    value={totRoas > 0 ? fmtRoas(totRoas) : '—'}
-                    delta={prior && priorRoas > 0 ? calcDelta(totRoas, priorRoas) : undefined}
-                    sparkData={roasSpark}
-                    sparkColor="var(--green)"
-                    delay={1}
-                  />
-                  <SparkMetricCard
-                    label="Revenue"
-                    value={totCv > 0 ? fmt$(totCv) : '—'}
-                    delta={prior ? calcDelta(totCv, prior.conversionValue) : undefined}
-                    sparkData={dailyTrend.map(d => ({ v: d.roas * (adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend) }))}
-                    sparkColor="var(--green)"
-                    delay={2}
-                  />
-                  <SparkMetricCard
-                    label={conversionLabel}
-                    value={totConv > 0 ? fmtNum(totConv) : '—'}
-                    delta={prior ? calcDelta(totConv, prior.conversions) : undefined}
-                    sparkData={convSpark}
-                    sparkColor="#8b5cf6"
-                    delay={3}
-                  />
-                </>
-              ) : (
-                <>
-                  <SparkMetricCard
-                    label={conversionLabel}
-                    value={totConv > 0 ? totConv.toFixed(0) : '—'}
-                    delta={prior ? calcDelta(totConv, prior.conversions) : undefined}
-                    sparkData={convSpark}
-                    sparkColor="var(--green)"
-                    delay={1}
-                  />
-                  <SparkMetricCard
-                    label="CPL"
-                    value={totCpl > 0 ? fmtCurrency(totCpl) : '—'}
-                    delta={prior && priorCpl > 0 ? calcDelta(totCpl, priorCpl) : undefined}
-                    invertDelta
-                    sparkData={cplSpark}
-                    sparkColor="#f59e0b"
-                    delay={2}
-                  />
-                  <SparkMetricCard
-                    label="CTR"
-                    value={fmtPct(totCtr)}
-                    delta={prior ? calcDelta(totCtr, priorCtr) : undefined}
-                    sparkData={ctrSpark}
-                    sparkColor="var(--blue)"
-                    delay={3}
-                  />
-                </>
-              )}
-              <SparkMetricCard
-                label="Clicks"
-                value={fmtNum(totClicks)}
-                delta={prior ? calcDelta(totClicks, prior.clicks) : undefined}
-                sparkData={clicksSpark}
-                sparkColor="#8b5cf6"
-                delay={4}
-              />
-            </div>
-          )
-        })()}
+            ))}
+          </div>
+        )}
 
         {/* ── Daily performance chart ────────────────────────── */}
         {dailyTrend.length > 0 && (
