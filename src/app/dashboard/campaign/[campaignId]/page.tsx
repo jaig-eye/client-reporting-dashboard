@@ -17,6 +17,7 @@ import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import { AdGroupTable } from '@/components/AdTable'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import MetricCard from '@/components/MetricCard'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
@@ -136,8 +137,9 @@ export default async function CampaignDetailPage({
   }
 
   const priorTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }
-  let isPMax       = false
-  let avgImprShare: number | null = null
+  let isPMax             = false
+  let avgImprShare:      number | null = null
+  let priorAvgImprShare: number | null = null
   let campTypeRaw  = ''
 
   // Daily series for sparklines
@@ -154,7 +156,7 @@ export default async function CampaignDetailPage({
   }
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
         .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,date')
         .eq('client_id', client.id)
@@ -173,6 +175,14 @@ export default async function CampaignDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
+      showCompare
+        ? db.from('google_ads_metrics')
+            .select('search_impression_share')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
     ])
     const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null }[] | null) ?? []
     const firstCamp = campRows[0] ?? null
@@ -182,6 +192,11 @@ export default async function CampaignDetailPage({
     // Average impression share across the period (null if none available)
     const isRows = campRows.filter(r => r.search_impression_share !== null)
     avgImprShare = isRows.length > 0 ? isRows.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / isRows.length : null
+    // Prior period impression share for delta
+    const priorIsFiltered = (priorIsRows ?? []).filter(r => r.search_impression_share !== null)
+    priorAvgImprShare = priorIsFiltered.length > 0
+      ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length
+      : null
     campTypeRaw  = (firstCamp?.campaign_type ?? '').toUpperCase()
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
@@ -304,6 +319,10 @@ export default async function CampaignDetailPage({
         cpl:             s.conversions > 0 ? cost / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
         convRate:        s.clicks > 0 ? s.conversions / s.clicks : 0,
+        cpc:             s.clicks > 0 ? cost / s.clicks : 0,
+        cpm:             s.impressions > 0 ? (cost / s.impressions) * 1000 : 0,
+        roas:            cost > 0 && s.conversionValue > 0 ? s.conversionValue / cost : 0,
+        revenue:         s.conversionValue,
         href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
       }
     })
@@ -388,6 +407,7 @@ export default async function CampaignDetailPage({
     cpm: priorTotals.impressions > 0 ? (priorDisplaySpend / priorTotals.impressions) * 1000 : 0,
     cpc: priorTotals.clicks > 0 ? priorDisplaySpend / priorTotals.clicks : 0,
     conv_rate: priorTotals.clicks > 0 ? priorTotals.conversions / priorTotals.clicks : 0,
+    impression_share: priorAvgImprShare ?? 0,
   }
   const campaignSparkMap: Record<string, { v: number }[]> = {
     spend: spendSeries, leads: convSeries, conversions: convSeries, revenue: cvSeries,
@@ -503,11 +523,11 @@ export default async function CampaignDetailPage({
           ))}
         </div>
 
-        {/* ── Top metrics row (layout-driven) ─────────────────────── */}
+        {/* ── Top metrics row (layout-driven, no sparklines) ──────── */}
         {campaignLayout.top_metrics.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {campaignLayout.top_metrics.map((key, i) => (
-              <SparkMetricCard
+              <MetricCard
                 key={key}
                 label={getMetricLabel(key)}
                 value={campaignValMap[key] ?? '—'}
@@ -515,8 +535,6 @@ export default async function CampaignDetailPage({
                   ? calcDelta(campaignCurrNum[key] ?? 0, campaignPriorNum[key] ?? 0)
                   : undefined}
                 invertDelta={invertDeltaKeys.has(key)}
-                sparkData={campaignSparkMap[key] ?? []}
-                sparkColor={sparkColorMap[key] ?? 'var(--text-muted)'}
                 delay={campaignLayout.kpi_cards.length + i}
               />
             ))}
@@ -535,6 +553,7 @@ export default async function CampaignDetailPage({
             rows={adGroups}
             conversionLabel={conversionLabel}
             isPMax={isGoogleAds && isPMax}
+            tableColumns={campaignLayout.table_columns}
           />
         </div>
 

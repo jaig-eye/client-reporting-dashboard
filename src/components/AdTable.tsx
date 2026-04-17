@@ -25,19 +25,26 @@ export interface AdGroupRow {
   cpl:              number
   adCount:          number
   href:             string
+  cpc?:             number
+  cpm?:             number
+  roas?:            number
+  revenue?:         number
 }
 
-type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate' | 'adCount'
+type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate' | 'adCount' | 'cpc' | 'cpm' | 'roas' | 'revenue'
 
 export function AdGroupTable({
   rows,
   conversionLabel,
   isPMax = false,
+  tableColumns,
 }: {
   rows:             AdGroupRow[]
   conversionLabel:  string
   isPMax?:          boolean
+  tableColumns?:    string[]
 }) {
+  const showCol = (key: string) => !tableColumns || tableColumns.includes(key)
   const [sortKey, setSortKey] = useState<AdGroupSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -95,9 +102,13 @@ export function AdGroupTable({
             <SortTh sk="impressions">Impr.</SortTh>
             <SortTh sk="clicks">Clicks</SortTh>
             <SortTh sk="ctr">CTR</SortTh>
+            {showCol('cpc') && <SortTh sk="cpc">Avg. CPC</SortTh>}
+            {showCol('cpm') && <SortTh sk="cpm">CPM</SortTh>}
             <SortTh sk="conversions">{conversionLabel}</SortTh>
             <SortTh sk="convRate">Conv Rate</SortTh>
             <SortTh sk="cpl">CPL</SortTh>
+            {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
+            {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
             <SortTh sk="adCount">Ads</SortTh>
             <th></th>
           </tr>
@@ -116,6 +127,8 @@ export function AdGroupTable({
               <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>
               <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>
               <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>
+              {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpc ? fmtCurrency(row.cpc) : '—'}</td>}
+              {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpm ? fmtCurrency(row.cpm) : '—'}</td>}
               <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
                 {row.conversions > 0 ? fmtNum(row.conversions) : '—'}
               </td>
@@ -125,6 +138,8 @@ export function AdGroupTable({
               <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                 {row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}
               </td>
+              {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.roas && row.roas > 0 ? `${row.roas.toFixed(2)}x` : '—'}</td>}
+              {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
               <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>
               <td className="text-xs" style={{ textAlign: 'right' }}>
                 <a href={row.href} style={{ color: 'var(--blue)', textDecoration: 'none', whiteSpace: 'nowrap' }}>View →</a>
@@ -141,9 +156,13 @@ export function AdGroupTable({
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>
+            {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right' }}>{totClicks > 0 ? fmtCurrency(totSpend / totClicks) : '—'}</td>}
+            {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr > 0 ? fmtCurrency((totSpend / totImpr) * 1000) : '—'}</td>}
             <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>
             <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>
+            {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 && totSpend > 0 ? `${(totCv / totSpend).toFixed(2)}x` : '—' })()}</td>}
+            {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 ? fmt$(totCv) : '—' })()}</td>}
             <td></td>
             <td></td>
           </tr>

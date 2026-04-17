@@ -1,7 +1,5 @@
 // GscInsightsPanel — server component shown in the admin client Content tab.
-// Displays the top GSC pages with improvement potential for this client:
-// high impressions, low CTR, high average position (sitting just off page 1).
-// Helps the admin understand what content gaps exist before generating topics.
+// Three tiered sections: Quick Wins, Growth Targets, CTR Issues.
 
 function fmtNum(n: number) { return n.toLocaleString() }
 function fmtPct(n: number) { return `${(n * 100).toFixed(2)}%` }
@@ -25,74 +23,131 @@ export interface GscInsightRow {
 }
 
 interface Props {
-  rows: GscInsightRow[]
+  quickWins: GscInsightRow[]
+  growth:    GscInsightRow[]
+  lowCtr:    GscInsightRow[]
 }
 
-export default function GscInsightsPanel({ rows }: Props) {
+interface SectionProps {
+  badge:    string
+  badgeColor: string
+  subtitle: string
+  rows:     GscInsightRow[]
+}
+
+function InsightSection({ badge, badgeColor, subtitle, rows }: SectionProps) {
+  if (rows.length === 0) return null
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <span style={{
+          display: 'inline-block',
+          padding: '0.15rem 0.6rem',
+          borderRadius: 9999,
+          fontSize: '0.7rem',
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          background: badgeColor,
+          color: '#fff',
+        }}>
+          {badge}
+        </span>
+      </div>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+        {subtitle}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="data-table" style={{ minWidth: 520 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left' }}>Query</th>
+              <th style={{ textAlign: 'left' }}>Page</th>
+              <th style={{ textAlign: 'right' }}>Impressions</th>
+              <th style={{ textAlign: 'right' }}>CTR</th>
+              <th style={{ textAlign: 'right' }}>Avg. Position</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td style={{ fontWeight: 500, color: 'var(--text-secondary)', maxWidth: 200 }}>
+                  <span className="block truncate" title={r.query ?? ''}>{r.query || '—'}</span>
+                </td>
+                <td style={{ color: 'var(--text-muted)', maxWidth: 260 }}>
+                  {r.page ? (
+                    <a
+                      href={r.page}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline block truncate"
+                      style={{ color: 'var(--blue)' }}
+                      title={r.page}
+                    >
+                      {truncatePage(r.page)}
+                    </a>
+                  ) : '—'}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {fmtNum(r.impressions ?? 0)}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                  {fmtPct(r.ctr ?? 0)}
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <span style={{
+                    color: (r.position ?? 99) <= 10 ? '#d97706' : 'var(--text-muted)',
+                    fontWeight: (r.position ?? 99) <= 10 ? 600 : 400,
+                  }}>
+                    {fmtPos(r.position ?? 0)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+export default function GscInsightsPanel({ quickWins, growth, lowCtr }: Props) {
+  const isEmpty = quickWins.length === 0 && growth.length === 0 && lowCtr.length === 0
+
   return (
     <div className="card p-6 mb-6">
       <div className="mb-4">
-        <h3 className="section-title">GSC Opportunities — Pages to Improve</h3>
+        <h3 className="section-title">GSC Opportunities</h3>
         <p className="section-desc">
-          Pages with high impressions but weak click-through rates or positions beyond 5 — good candidates for new supporting content or on-page optimisation.
+          Content and on-page improvements identified from Search Console data — grouped by opportunity type.
         </p>
       </div>
 
-      {rows.length === 0 ? (
+      {isEmpty ? (
         <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-          No GSC data yet for this client. Connect Google Search Console and run a sync to see opportunities.
+          No GSC opportunities found for this client. Connect Google Search Console and run a sync to see insights.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="data-table" style={{ minWidth: 520 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left' }}>Query</th>
-                <th style={{ textAlign: 'left' }}>Page</th>
-                <th style={{ textAlign: 'right' }}>Impressions</th>
-                <th style={{ textAlign: 'right' }}>CTR</th>
-                <th style={{ textAlign: 'right' }}>Avg. Position</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 500, color: 'var(--text-secondary)', maxWidth: 200 }}>
-                    <span className="block truncate" title={r.query ?? ''}>{r.query || '—'}</span>
-                  </td>
-                  <td style={{ color: 'var(--text-muted)', maxWidth: 260 }}>
-                    {r.page ? (
-                      <a
-                        href={r.page}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline block truncate"
-                        style={{ color: 'var(--blue)' }}
-                        title={r.page}
-                      >
-                        {truncatePage(r.page)}
-                      </a>
-                    ) : '—'}
-                  </td>
-                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                    {fmtNum(r.impressions ?? 0)}
-                  </td>
-                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                    {fmtPct(r.ctr ?? 0)}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <span style={{
-                      color: (r.position ?? 99) <= 10 ? '#d97706' : 'var(--text-muted)',
-                      fontWeight: (r.position ?? 99) <= 10 ? 600 : 400,
-                    }}>
-                      {fmtPos(r.position ?? 0)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <InsightSection
+            badge="Quick Wins"
+            badgeColor="var(--green, #16a34a)"
+            subtitle="Position 5–10 · Near page 1 — improve titles and meta descriptions to enter top 5."
+            rows={quickWins}
+          />
+          <InsightSection
+            badge="Growth Targets"
+            badgeColor="#d97706"
+            subtitle="Position 10–20 · Off page 1 — expand content depth or build internal links."
+            rows={growth}
+          />
+          <InsightSection
+            badge="CTR Issues"
+            badgeColor="var(--blue, #2563eb)"
+            subtitle="Position 1–5 with low CTR — ranking well but few clicks. Review title tags and meta descriptions."
+            rows={lowCtr}
+          />
+        </>
       )}
     </div>
   )

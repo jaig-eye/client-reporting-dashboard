@@ -102,7 +102,7 @@ export default async function SearchConsolePage({
       .order('date', { ascending: true }),
     showCompare && compFrom && compTo
       ? db.from('gsc_metrics')
-          .select('clicks, impressions, ctr, position, query')
+          .select('clicks, impressions, ctr, position, query, page')
           .eq('client_id', client.id)
           .gte('date', fmtDate(compFrom))
           .lte('date', fmtDate(compTo))
@@ -137,7 +137,7 @@ export default async function SearchConsolePage({
   const avgPosition = totals.impressions > 0 ? totals.position_sum / totals.impressions : 0
 
   // Comparison period aggregates
-  type CompRow = { clicks: number; impressions: number; ctr: number; position: number; query?: string | null }
+  type CompRow = { clicks: number; impressions: number; ctr: number; position: number; query?: string | null; page?: string | null }
   const compRows = (compRowsRaw ?? []) as CompRow[]
   const compTotals = compRows.reduce(
     (acc, r) => ({
@@ -153,12 +153,19 @@ export default async function SearchConsolePage({
 
   // Per-query comparison map for position delta
   const compQueryMap = new Map<string, { pos_sum: number; imp_sum: number }>()
+  const compPageMap  = new Map<string, { pos_sum: number; imp_sum: number }>()
   if (showCompare) {
     for (const r of compRows) {
-      if (!r.query) continue
-      const ex = compQueryMap.get(r.query)
-      if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
-      else compQueryMap.set(r.query, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
+      if (r.query) {
+        const ex = compQueryMap.get(r.query)
+        if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
+        else compQueryMap.set(r.query, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
+      }
+      if (r.page && !r.page.includes('?')) {
+        const ex = compPageMap.get(r.page)
+        if (ex) { ex.pos_sum += (r.position ?? 0) * (r.impressions ?? 0); ex.imp_sum += r.impressions ?? 0 }
+        else compPageMap.set(r.page, { pos_sum: (r.position ?? 0) * (r.impressions ?? 0), imp_sum: r.impressions ?? 0 })
+      }
     }
   }
 
@@ -197,10 +204,11 @@ export default async function SearchConsolePage({
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 25)
 
-  // Top Pages (aggregate by page URL)
+  // Top Pages (aggregate by page URL, skip UTM/query-string pages)
   const pageMap = new Map<string, { clicks: number; impressions: number; ctr_sum: number; position_sum: number }>()
   for (const r of gscRows) {
     if (!r.page) continue
+    if (r.page.includes('?')) continue  // skip UTM and query-string pages
     const ex = pageMap.get(r.page)
     if (ex) {
       ex.clicks      += r.clicks ?? 0
@@ -216,13 +224,19 @@ export default async function SearchConsolePage({
     }
   }
   const topPages = Array.from(pageMap.entries())
-    .map(([page, v]) => ({
-      page,
-      clicks: v.clicks,
-      impressions: v.impressions,
-      ctr: v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
-      position: v.impressions > 0 ? v.position_sum / v.impressions : 0,
-    }))
+    .map(([page, v]) => {
+      const currentPos = v.impressions > 0 ? v.position_sum / v.impressions : 0
+      const compEntry  = compPageMap.get(page)
+      const compPos    = compEntry && compEntry.imp_sum > 0 ? compEntry.pos_sum / compEntry.imp_sum : null
+      return {
+        page,
+        clicks:        v.clicks,
+        impressions:   v.impressions,
+        ctr:           v.impressions > 0 ? v.ctr_sum / v.impressions : 0,
+        position:      currentPos,
+        positionDelta: compPos !== null ? currentPos - compPos : undefined,
+      }
+    })
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 25)
 
@@ -299,7 +313,7 @@ export default async function SearchConsolePage({
               <p className="section-desc">Top {topPages.length} pages by organic clicks · click column headers to sort</p>
             </div>
             <div className="overflow-x-auto">
-              <GscPagesTable rows={topPages} />
+              <GscPagesTable rows={topPages} showCompare={showCompare} />
             </div>
           </div>
         )}

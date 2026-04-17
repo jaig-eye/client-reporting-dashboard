@@ -106,14 +106,15 @@ export function GscQueriesTable({
 // ─── Pages table ─────────────────────────────────────────────────────────────
 
 export interface GscPageRow {
-  page:        string
-  clicks:      number
-  impressions: number
-  ctr:         number
-  position:    number
+  page:           string
+  clicks:         number
+  impressions:    number
+  ctr:            number
+  position:       number
+  positionDelta?: number
 }
 
-type PageSortCol = 'clicks' | 'impressions' | 'ctr' | 'position'
+type PageSortCol = 'clicks' | 'impressions' | 'ctr' | 'position' | 'positionDelta'
 
 function truncateUrl(url: string, max = 60) {
   try {
@@ -125,7 +126,7 @@ function truncateUrl(url: string, max = 60) {
   }
 }
 
-export function GscPagesTable({ rows }: { rows: GscPageRow[] }) {
+export function GscPagesTable({ rows, showCompare }: { rows: GscPageRow[]; showCompare?: boolean }) {
   const [sort, setSort] = useState<{ col: PageSortCol; dir: SortDir }>({ col: 'clicks', dir: 'desc' })
 
   function toggle(col: PageSortCol) {
@@ -133,8 +134,10 @@ export function GscPagesTable({ rows }: { rows: GscPageRow[] }) {
   }
 
   const sorted = [...rows].sort((a, b) => {
-    const v = sort.dir === 'asc' ? 1 : -1
-    return (a[sort.col] - b[sort.col]) * v
+    const v  = sort.dir === 'asc' ? 1 : -1
+    const av = a[sort.col] ?? 0
+    const bv = b[sort.col] ?? 0
+    return (Number(av) - Number(bv)) * v
   })
 
   function Hdr({ col, label }: { col: PageSortCol; label: string }) {
@@ -165,6 +168,7 @@ export function GscPagesTable({ rows }: { rows: GscPageRow[] }) {
           <Hdr col="impressions" label="Impressions" />
           <Hdr col="ctr"         label="CTR" />
           <Hdr col="position"    label="Avg. Position" />
+          {showCompare && <Hdr col="positionDelta" label="Change" />}
         </tr>
       </thead>
       <tbody>
@@ -193,6 +197,17 @@ export function GscPagesTable({ rows }: { rows: GscPageRow[] }) {
                 {p.position.toFixed(1)}
               </span>
             </td>
+            {showCompare && (
+              <td style={{ textAlign: 'right' }}>
+                {p.positionDelta !== undefined && Math.abs(p.positionDelta) >= 0.05
+                  ? <span style={{ fontWeight: 600, fontSize: '0.75rem',
+                      color: p.positionDelta < 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {p.positionDelta < 0 ? '▲' : '▼'}{Math.abs(p.positionDelta).toFixed(1)}
+                    </span>
+                  : <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                }
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

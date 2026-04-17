@@ -20,6 +20,7 @@ import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/Negat
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import MetricCard from '@/components/MetricCard'
 import TabContainer from '@/components/TabContainer'
 import {
   resolvePaidAdsLayout, resolvePlatformLayout,
@@ -154,11 +155,13 @@ export default async function AdSetDetailPage({
   let dailyTrend: DailyMetric[] = []
   let priorDailyTrend: DailyMetric[] = []
   let pMaxAssets: PMaxAsset[] = []
-  let isPMaxGroup  = false
-  let campTypeRaw  = ''
+  let isPMaxGroup      = false
+  let campTypeRaw      = ''
+  let avgImprShare:      number | null = null
+  let priorAvgImprShare: number | null = null
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }] = await Promise.all([
+    const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }, { data: isData }, { data: priorIsData }] = await Promise.all([
       db.from('google_ads_ad_metrics')
         .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value,date')
         .eq('client_id', client.id)
@@ -181,6 +184,21 @@ export default async function AdSetDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
+      // Campaign-level impression share for this adset's parent campaign
+      db.from('google_ads_metrics')
+        .select('search_impression_share')
+        .eq('client_id', client.id)
+        .eq('campaign_id', campaignId)
+        .gte('date', dateFrom)
+        .lte('date', dateTo),
+      showCompare
+        ? db.from('google_ads_metrics')
+            .select('search_impression_share')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string; campaign_type?: string | null }).campaign_name
     campTypeRaw  = ((campRow as { campaign_type?: string | null } | null)?.campaign_type ?? '').toUpperCase()
@@ -228,6 +246,13 @@ export default async function AdSetDetailPage({
     dailyTrend = getDailyTrend((rows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     priorDailyTrend = getDailyTrend((priorRows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
+    // Compute impression share from campaign-level data (IS is not available at ad group level)
+    const isFiltered = (isData ?? []).filter(r => r.search_impression_share !== null)
+    avgImprShare = isFiltered.length > 0
+      ? isFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / isFiltered.length : null
+    const priorIsFiltered = (priorIsData ?? []).filter(r => r.search_impression_share !== null)
+    priorAvgImprShare = priorIsFiltered.length > 0
+      ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length : null
   } else {
     const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_ad_metrics')
@@ -531,7 +556,7 @@ export default async function AdSetDetailPage({
     cpm:         totImpr > 0        ? fmtCurrency((totDisplaySpd / totImpr) * 1000) : '—',
     cpc:         totClicks > 0      ? fmtCurrency(totDisplaySpd / totClicks) : '—',
     conv_rate:   totClicks > 0      ? fmtPct(totConv / totClicks)  : '—',
-    impression_share: '—',
+    impression_share: avgImprShare != null ? `${(avgImprShare * 100).toFixed(1)}%` : '—',
   }
   const adsetCurrNum: Record<string, number> = {
     spend: totDisplaySpd, leads: totConv, conversions: totConv,
@@ -540,6 +565,7 @@ export default async function AdSetDetailPage({
     cpm: totImpr > 0 ? (totDisplaySpd / totImpr) * 1000 : 0,
     cpc: totClicks > 0 ? totDisplaySpd / totClicks : 0,
     conv_rate: totClicks > 0 ? totConv / totClicks : 0,
+    impression_share: avgImprShare ?? 0,
   }
   const adsetPriorNum: Record<string, number> = {
     spend: priorDisplaySpd, leads: prior?.conversions ?? 0, conversions: prior?.conversions ?? 0,
@@ -548,6 +574,7 @@ export default async function AdSetDetailPage({
     cpm: (prior?.impressions ?? 0) > 0 ? (priorDisplaySpd / (prior?.impressions ?? 1)) * 1000 : 0,
     cpc: (prior?.clicks ?? 0) > 0 ? priorDisplaySpd / (prior?.clicks ?? 1) : 0,
     conv_rate: (prior?.clicks ?? 0) > 0 ? (prior?.conversions ?? 0) / (prior?.clicks ?? 1) : 0,
+    impression_share: priorAvgImprShare ?? 0,
   }
   const adsetSparkMap: Record<string, { v: number }[]> = {
     spend: spendSpark, leads: convSpark, conversions: convSpark, revenue: cvSpark,
@@ -664,7 +691,7 @@ export default async function AdSetDetailPage({
         {adsetLayout.top_metrics.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {adsetLayout.top_metrics.map((key, i) => (
-              <SparkMetricCard
+              <MetricCard
                 key={key}
                 label={getAdsetMetricLabel(key)}
                 value={adsetValMap[key] ?? '—'}
@@ -672,8 +699,6 @@ export default async function AdSetDetailPage({
                   ? calcDelta(adsetCurrNum[key] ?? 0, adsetPriorNum[key] ?? 0)
                   : undefined}
                 invertDelta={invertDeltaKeys.has(key)}
-                sparkData={adsetSparkMap[key] ?? []}
-                sparkColor={adsetSparkColorMap[key] ?? 'var(--text-muted)'}
                 delay={adsetLayout.kpi_cards.length + i}
               />
             ))}

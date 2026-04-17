@@ -507,23 +507,42 @@ export default async function ClientDetailPage({
 async function ClientContentSettingsSection({ clientId }: { clientId: string }) {
   const db = createAdminClient()
 
-  // Load WordPress connections and GSC insights in parallel
-  const [{ data: wpConnData }, { data: gscInsightsRaw }] = await Promise.all([
+  // Load WordPress connections and GSC insights (3 tiers) in parallel
+  const [{ data: wpConnData }, { data: gscQuickWinsRaw }, { data: gscGrowthRaw }, { data: gscLowCtrRaw }] = await Promise.all([
     db.from('client_connections')
       .select('id, external_id, external_name, connector:connectors!inner(type, config)')
       .eq('client_id', clientId)
       .eq('status', 'active')
       .eq('connector.type', 'wordpress'),
-    // GSC weak pages: high impressions, low CTR, position > 5 — exclude UTM/query-string pages
+    // Quick Wins: position 5–10, near page 1 — optimise titles/meta
+    db.from('gsc_metrics')
+      .select('page, query, impressions, ctr, position')
+      .eq('client_id', clientId)
+      .not('page', 'ilike', '%?%')
+      .gt('impressions', 30)
+      .gte('position', 5).lte('position', 10)
+      .lt('ctr', 0.08)
+      .order('impressions', { ascending: false })
+      .limit(8),
+    // Growth Targets: position 10–20, second page — needs content/links
+    db.from('gsc_metrics')
+      .select('page, query, impressions, ctr, position')
+      .eq('client_id', clientId)
+      .not('page', 'ilike', '%?%')
+      .gt('impressions', 30)
+      .gt('position', 10).lte('position', 20)
+      .order('impressions', { ascending: false })
+      .limit(8),
+    // CTR Issues: position 1–5, low CTR — review title tags
     db.from('gsc_metrics')
       .select('page, query, impressions, ctr, position')
       .eq('client_id', clientId)
       .not('page', 'ilike', '%?%')
       .gt('impressions', 50)
-      .gt('position', 5)
-      .lt('ctr', 0.05)
+      .gte('position', 1).lte('position', 5)
+      .lt('ctr', 0.04)
       .order('impressions', { ascending: false })
-      .limit(10),
+      .limit(6),
   ])
 
   type WpConn = {
@@ -540,15 +559,17 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
     clientId,
   }))
 
-  const gscInsights = (gscInsightsRaw ?? []) as GscInsightRow[]
-
   return (
     <div>
       <div className="mb-6">
         <h2 className="page-title" style={{ fontSize: '1.125rem' }}>Content Settings</h2>
         <p className="section-desc">Configure AI content generation for this client — business background, brand voice, publishing schedule, and more.</p>
       </div>
-      <GscInsightsPanel rows={gscInsights} />
+      <GscInsightsPanel
+        quickWins={(gscQuickWinsRaw ?? []) as GscInsightRow[]}
+        growth={(gscGrowthRaw ?? []) as GscInsightRow[]}
+        lowCtr={(gscLowCtrRaw ?? []) as GscInsightRow[]}
+      />
       <ClientContentSettingsForm clientId={clientId} sites={sites} />
     </div>
   )
