@@ -371,14 +371,29 @@ export function AdRowTable({
                   <tr key={row.ad_id}>
                     <td style={{ padding: '6px 8px' }}>
                       {previewImg ? (
-                        <LightboxImage
-                          src={previewImg}
-                          alt={row.ad_name}
-                          width={56}
-                          height={56}
-                          videoId={row.video_id ?? undefined}
-                          fullSrc={row.image_url ?? undefined}
-                        />
+                        showCardView ? (
+                          /* Meta: clicking thumbnail opens the same preview modal as card view */
+                          <button
+                            onClick={() => setPreviewAd(row)}
+                            title="Preview ad"
+                            style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', display: 'block', flexShrink: 0 }}
+                          >
+                            <img
+                              src={previewImg}
+                              alt={row.ad_name}
+                              style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 4, display: 'block' }}
+                            />
+                          </button>
+                        ) : (
+                          <LightboxImage
+                            src={previewImg}
+                            alt={row.ad_name}
+                            width={56}
+                            height={56}
+                            videoId={row.video_id ?? undefined}
+                            fullSrc={row.image_url ?? undefined}
+                          />
+                        )
                       ) : (
                         <div style={{
                           width: 56, height: 56, borderRadius: 4,

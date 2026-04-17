@@ -287,6 +287,7 @@ async function fetchAdCreatives(
         'title',
         'link_url',
         'object_story_spec',
+        'asset_feed_spec{bodies,titles}',
       ].join(',')
 
       const batchRequests = batch.map(adId => ({
@@ -318,14 +319,38 @@ async function fetchAdCreatives(
           // For video ads, thumbnail_url is the poster frame — keep it separately
           const videoThumb  = videoId ? thumbUrl : ''
 
+          // Extract text from object_story_spec when top-level body/title are absent.
+          // Covers link/carousel ads (link_data), video ads (video_data), and slideshow ads.
+          const oss       = creative?.object_story_spec as Record<string, Record<string, string>> | undefined
+          const linkData  = oss?.link_data
+          const videoData = oss?.video_data
+
+          // asset_feed_spec.bodies / .titles — used by DPA / catalog / dynamic creative ads
+          const afs       = creative?.asset_feed_spec as { bodies?: Array<{ text?: string }>; titles?: Array<{ text?: string }> } | undefined
+
+          const resolvedBody  = (creative?.body  as string | undefined)
+                             || linkData?.message
+                             || videoData?.message
+                             || afs?.bodies?.[0]?.text
+                             || ''
+
+          const resolvedTitle = (creative?.title as string | undefined)
+                             || linkData?.name
+                             || videoData?.title
+                             || afs?.titles?.[0]?.text
+                             || ''
+
+          // object_story_spec.link_data.picture can carry the full image for link ads
+          const ossImage  = linkData?.picture ?? ''
+
           result[adId] = {
-            image_url:         imageUrl || (!videoId ? thumbUrl : ''),
+            image_url:         imageUrl || ossImage || (!videoId ? thumbUrl : ''),
             thumbnail_url:     thumbUrl,
             video_id:          videoId,
             video_thumb_url:   videoThumb,
-            creative_body:     (creative?.body      as string | undefined) ?? '',
-            creative_title:    (creative?.title     as string | undefined) ?? '',
-            creative_link_url: (creative?.link_url  as string | undefined) ?? '',
+            creative_body:     resolvedBody,
+            creative_title:    resolvedTitle,
+            creative_link_url: (creative?.link_url  as string | undefined) ?? linkData?.link ?? '',
             ad_status:         (body.status         as string | undefined) ?? '',
           }
         } catch {
