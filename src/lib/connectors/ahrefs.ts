@@ -175,11 +175,44 @@ export const ahrefsConnector: ConnectorAdapter = {
         history_grouping: 'weekly',
         select:           'backlinks,refdomains,org_keywords,org_traffic',
       })
-      console.log('[ahrefs] Metrics history sample:', JSON.stringify(metricsHistory).slice(0, 400))
-      metricsPoints = (metricsHistory.metrics ?? metricsHistory) as typeof metricsPoints
-      if (!Array.isArray(metricsPoints)) metricsPoints = []
+      console.log('[ahrefs] metrics-history keys:', Object.keys(metricsHistory ?? {}))
+      console.log('[ahrefs] metrics-history sample:', JSON.stringify(metricsHistory).slice(0, 600))
+      // Try multiple response key paths — Ahrefs v3 uses .metrics but may differ
+      const rawMetrics = metricsHistory.metrics ?? metricsHistory.history ?? metricsHistory.data ?? metricsHistory.results
+      metricsPoints = Array.isArray(rawMetrics) ? rawMetrics
+                    : Array.isArray(metricsHistory) ? metricsHistory
+                    : []
     } catch (e) {
       console.error(`[ahrefs] Metrics history failed for ${domain}:`, e)
+    }
+
+    // If history endpoint returned nothing but DR data exists, supplement with a
+    // single-snapshot metrics call so the most-recent row has backlinks/refdomains.
+    if (metricsPoints.length === 0 && drPoints.length > 0) {
+      console.warn('[ahrefs] metrics-history empty — supplementing with single-snapshot for', dateTo)
+      try {
+        const mSnap = await ahrefsGet('/site-explorer/metrics', apiKey, {
+          target: domain, date: dateTo,
+          select: 'backlinks,refdomains,org_keywords,org_traffic',
+        })
+        const mData = (mSnap.metrics as Record<string, unknown> | null) ?? mSnap
+        const snapBl  = typeof mData.backlinks    === 'number' ? mData.backlinks    : null
+        const snapRd  = typeof mData.refdomains   === 'number' ? mData.refdomains   : null
+        const snapKw  = typeof mData.org_keywords === 'number' ? mData.org_keywords : null
+        const snapTr  = typeof mData.org_traffic  === 'number' ? mData.org_traffic  : null
+        if (snapBl !== null || snapRd !== null) {
+          metricsPoints = [{
+            date:       dateTo,
+            backlinks:  snapBl  ?? undefined,
+            refdomains: snapRd  ?? undefined,
+            org_keywords: snapKw ?? undefined,
+            org_traffic:  snapTr ?? undefined,
+          }]
+          console.log('[ahrefs] supplemental snapshot metrics:', { backlinks: snapBl, refdomains: snapRd })
+        }
+      } catch (e) {
+        console.error('[ahrefs] supplemental snapshot metrics failed:', e)
+      }
     }
 
     // ── Merge DR + metrics by date

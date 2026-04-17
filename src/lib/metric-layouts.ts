@@ -205,6 +205,14 @@ export const ALL_METRIC_KEYS: MetricKey[] = [
   'impression_share', 'video_views', 'video_view_rate', 'thruplay',
 ]
 
+// Keys that have metricValMap entries on the dashboard page — safe to use in
+// Summary Page and Paid Ads layout tabs. The newer platform-specific keys
+// (impression_share, video_views, etc.) only apply to their dedicated tabs.
+export const DASHBOARD_METRIC_KEYS: MetricKey[] = [
+  'spend', 'leads', 'conversions', 'revenue', 'roas', 'cpa',
+  'ctr', 'conv_rate', 'cpm', 'cpc', 'impressions', 'clicks', 'reach', 'frequency',
+]
+
 export const ALL_PLATFORM_CARD_KEYS: PlatformCardKey[] = [
   'spend', 'conversions', 'ctr', 'impressions', 'clicks',
   'cpa', 'roas', 'cpm', 'cpc', 'revenue', 'reach', 'frequency',

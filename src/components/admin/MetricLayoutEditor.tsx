@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import {
   ALL_METRIC_KEYS,
+  DASHBOARD_METRIC_KEYS,
   ALL_COLUMN_KEYS,
   ALL_PLATFORM_CARD_KEYS,
   SEARCH_ADS_METRIC_KEYS,
@@ -39,6 +40,7 @@ import type {
 interface Props {
   value: MetricLayouts | null | undefined
   onChange: (layouts: MetricLayouts) => void
+  defaultInnerTab?: 'lead_gen' | 'ecom'
 }
 
 type OuterTab = 'summary' | 'paid_ads' | 'google_search' | 'google_shopping' | 'meta_media'
@@ -52,9 +54,9 @@ const OUTER_TABS: { id: OuterTab; label: string }[] = [
   { id: 'meta_media',      label: 'Meta Media' },
 ]
 
-export default function MetricLayoutEditor({ value, onChange }: Props) {
+export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }: Props) {
   const [outerTab, setOuterTab] = useState<OuterTab>('summary')
-  const [innerTab, setInnerTab] = useState<InnerTab>('lead_gen')
+  const [innerTab, setInnerTab] = useState<InnerTab>(defaultInnerTab ?? 'lead_gen')
 
   const layouts: MetricLayouts = value ?? DEFAULT_METRIC_LAYOUTS
 
@@ -152,7 +154,7 @@ export default function MetricLayoutEditor({ value, onChange }: Props) {
               title="KPI Cards"
               description="Shown with sparklines in the top row (typically 3)"
               items={summaryLayout.kpi_cards}
-              allKeys={ALL_METRIC_KEYS}
+              allKeys={DASHBOARD_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
               onChange={items => updateSummaryLayout(innerTab, { kpi_cards: items as MetricKey[] })}
             />
@@ -160,7 +162,7 @@ export default function MetricLayoutEditor({ value, onChange }: Props) {
               title="Top Metrics"
               description="Shown without sparklines below KPI row (typically 4)"
               items={summaryLayout.top_metrics}
-              allKeys={ALL_METRIC_KEYS}
+              allKeys={DASHBOARD_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
               onChange={items => updateSummaryLayout(innerTab, { top_metrics: items as MetricKey[] })}
             />
@@ -206,7 +208,7 @@ export default function MetricLayoutEditor({ value, onChange }: Props) {
               title="KPI Cards"
               description="Shown at top of campaign/adset pages (typically 4)"
               items={paidAdsLayout.kpi_cards}
-              allKeys={ALL_METRIC_KEYS}
+              allKeys={DASHBOARD_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
               onChange={items => updatePaidAdsLayout(innerTab, { kpi_cards: items as MetricKey[] })}
             />
@@ -214,7 +216,7 @@ export default function MetricLayoutEditor({ value, onChange }: Props) {
               title="Top Metrics"
               description="Secondary metrics row (typically 4)"
               items={paidAdsLayout.top_metrics}
-              allKeys={ALL_METRIC_KEYS}
+              allKeys={DASHBOARD_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
               onChange={items => updatePaidAdsLayout(innerTab, { top_metrics: items as MetricKey[] })}
             />

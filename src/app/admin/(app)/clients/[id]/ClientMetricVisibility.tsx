@@ -140,7 +140,13 @@ export default function ClientMetricVisibility({
             <MetricLayoutEditor
               value={layoutOverride}
               onChange={handleLayoutOverrideChange}
+              defaultInnerTab={layoutType === 'ecom' ? 'ecom' : 'lead_gen'}
             />
+            {layoutType === 'auto' && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 6 }}>
+                Auto-detect mode — edit both Lead Gen and Ecom sub-tabs to cover both cases, or set an explicit layout type above.
+              </p>
+            )}
             {layoutOverride ? (
               <button
                 type="button"
