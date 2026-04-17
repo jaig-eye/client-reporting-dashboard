@@ -2,6 +2,7 @@
 // Displays the most recent Domain Rating, backlinks, referring domains, and organic traffic.
 // Supports optional comparison period to show delta badges.
 
+import React from 'react'
 import { createAdminClient } from '@/lib/supabase/server'
 import ConnectionSummaryCard from './ConnectionSummaryCard'
 import { LinkSimple } from '@phosphor-icons/react/dist/ssr'
@@ -87,6 +88,44 @@ export default async function AhrefsSummaryCard({
   const deltaOrgKw      = showCompare ? calcDelta(latest?.organic_keywords  ?? null, comp?.organic_keywords  ?? null) : null
   const deltaOrgTraffic = showCompare ? calcDelta(latest?.organic_traffic   ?? null, comp?.organic_traffic   ?? null) : null
 
+  const tileDefs: Array<{ key: string; label: string; display: string; delta?: React.ReactNode }> = [
+    {
+      key:     'domain_rating',
+      label:   'Domain Rating',
+      display: latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : null!,
+      delta:   <DrDeltaBadge curr={latest?.domain_rating ?? null} prev={comp?.domain_rating ?? null} />,
+    },
+    {
+      key:     'backlinks',
+      label:   'Backlinks',
+      display: latest?.backlinks != null ? fmtNum(latest.backlinks) : null!,
+      delta:   <DeltaBadge delta={deltaBacklinks} />,
+    },
+    {
+      key:     'referring_domains',
+      label:   'Referring Domains',
+      display: latest?.referring_domains != null ? fmtNum(latest.referring_domains) : null!,
+      delta:   <DeltaBadge delta={deltaRefDomains} />,
+    },
+    {
+      key:     'ahrefs_rank',
+      label:   'Ahrefs Rank',
+      display: latest?.ahrefs_rank != null ? `#${latest.ahrefs_rank.toLocaleString()}` : null!,
+    },
+    {
+      key:     'organic_keywords',
+      label:   'Organic Keywords',
+      display: latest?.organic_keywords != null ? fmtNum(latest.organic_keywords) : null!,
+      delta:   <DeltaBadge delta={deltaOrgKw} />,
+    },
+    {
+      key:     'organic_traffic',
+      label:   'Organic Traffic',
+      display: latest?.organic_traffic != null ? fmtNum(latest.organic_traffic) : null!,
+      delta:   <DeltaBadge delta={deltaOrgTraffic} />,
+    },
+  ].filter(t => t.display != null)
+
   return (
     <ConnectionSummaryCard
       title="Authority (Ahrefs)"
@@ -95,63 +134,20 @@ export default async function AhrefsSummaryCard({
       href="/dashboard/seo/authority"
       hasData={hasData}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-        {/* Domain Rating — absolute delta */}
-        <div>
-          <p className="metric-label mb-1">Domain Rating</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—'}
-          </p>
-          <DrDeltaBadge curr={latest?.domain_rating ?? null} prev={comp?.domain_rating ?? null} />
+      {tileDefs.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+          {tileDefs.map(t => (
+            <div key={t.key}>
+              <p className="metric-label mb-1">{t.label}</p>
+              <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
+                {t.display}
+              </p>
+              {t.delta}
+            </div>
+          ))}
         </div>
-
-        {/* Backlinks */}
-        <div>
-          <p className="metric-label mb-1">Backlinks</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {fmtNum(latest?.backlinks)}
-          </p>
-          <DeltaBadge delta={deltaBacklinks} />
-        </div>
-
-        {/* Referring Domains */}
-        <div>
-          <p className="metric-label mb-1">Referring Domains</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {fmtNum(latest?.referring_domains)}
-          </p>
-          <DeltaBadge delta={deltaRefDomains} />
-        </div>
-
-        {/* Ahrefs Rank */}
-        <div>
-          <p className="metric-label mb-1">Ahrefs Rank</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {latest?.ahrefs_rank != null ? `#${latest.ahrefs_rank.toLocaleString()}` : '—'}
-          </p>
-        </div>
-
-        {/* Organic Keywords */}
-        <div>
-          <p className="metric-label mb-1">Organic Keywords</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {fmtNum(latest?.organic_keywords)}
-          </p>
-          <DeltaBadge delta={deltaOrgKw} />
-        </div>
-
-        {/* Organic Traffic */}
-        <div>
-          <p className="metric-label mb-1">Organic Traffic</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: hasData ? 'var(--text-primary)' : 'var(--text-faint)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-            {fmtNum(latest?.organic_traffic)}
-          </p>
-          <DeltaBadge delta={deltaOrgTraffic} />
-        </div>
-      </div>
-
-      {!hasData && (
-        <p style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+      ) : (
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
           No data for this period — trigger a sync to populate Ahrefs metrics.
         </p>
       )}

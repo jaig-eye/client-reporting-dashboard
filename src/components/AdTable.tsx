@@ -6,7 +6,7 @@
 import React, { useState } from 'react'
 import { fmt$, fmtNum, fmtPct, fmtCurrency } from '@/lib/metrics'
 import LightboxImage from './LightboxImage'
-import { CaretDown, CaretUp } from '@phosphor-icons/react'
+import { CaretDown, CaretUp, Rows, SquaresFour } from '@phosphor-icons/react'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ad Group / Ad Set table
@@ -206,12 +206,16 @@ type AdRowSortKey = 'ad_name' | 'spend' | 'conversions' | 'cpl' | 'impressions' 
 export function AdRowTable({
   rows,
   conversionLabel,
+  showCardView = false,
 }: {
   rows:             AdRow[]
   conversionLabel:  string
+  showCardView?:    boolean
 }) {
-  const [sortKey, setSortKey] = useState<AdRowSortKey | null>(null)
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [sortKey, setSortKey]   = useState<AdRowSortKey | null>(null)
+  const [sortDir, setSortDir]   = useState<'asc' | 'desc'>('desc')
+  const [viewMode, setViewMode] = useState<'list' | 'cards'>('list')
+  const [previewAd, setPreviewAd] = useState<AdRow | null>(null)
 
   function toggleSort(key: AdRowSortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir('desc') }
@@ -255,118 +259,293 @@ export function AdRowTable({
   const totCR     = totClicks > 0 ? totConv / totClicks : 0
   const totCpl    = totConv > 0 ? totSpend / totConv : 0
 
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="data-table" style={{ minWidth: 780 }}>
-        <thead>
-          <tr>
-            <th style={{ width: 48 }}></th>
-            <SortTh sk="ad_name" align="left">Ad</SortTh>
-            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-            <SortTh sk="spend">Cost</SortTh>
-            <SortTh sk="impressions">Impr.</SortTh>
-            <SortTh sk="clicks">Clicks</SortTh>
-            <SortTh sk="ctr">CTR</SortTh>
-            <SortTh sk="conversions">{conversionLabel}</SortTh>
-            <SortTh sk="convRate">Conv Rate</SortTh>
-            <SortTh sk="cpl">CPL</SortTh>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map(row => {
-            const previewImg  = row.image_url || row.thumbnail_url || row.video_thumb_url
-            const isVideo     = !!row.video_id
-            const statusUpper = (row.ad_status ?? '').toUpperCase()
-            const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
-            const isPaused    = statusUpper === 'PAUSED'
-            const copyPreview = row.creative_title || row.creative_body || row.headlines?.[0] || ''
+  const btnBase: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 30, height: 30, borderRadius: 6, border: '1px solid var(--border)',
+    cursor: 'pointer', background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+  }
 
+  return (
+    <>
+      {/* View toggle header */}
+      {showCardView && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: '0.75rem' }}>
+          <button
+            onClick={() => setViewMode('list')}
+            aria-label="List view"
+            style={{ ...btnBase, background: viewMode === 'list' ? 'var(--bg-active, #eff6ff)' : 'var(--bg-surface)', color: viewMode === 'list' ? 'var(--blue, #2563eb)' : 'var(--text-secondary)', borderColor: viewMode === 'list' ? 'var(--blue, #2563eb)' : 'var(--border)' }}
+          >
+            <Rows size={14} weight={viewMode === 'list' ? 'bold' : 'regular'} />
+          </button>
+          <button
+            onClick={() => setViewMode('cards')}
+            aria-label="Card view"
+            style={{ ...btnBase, background: viewMode === 'cards' ? 'var(--bg-active, #eff6ff)' : 'var(--bg-surface)', color: viewMode === 'cards' ? 'var(--blue, #2563eb)' : 'var(--text-secondary)', borderColor: viewMode === 'cards' ? 'var(--blue, #2563eb)' : 'var(--border)' }}
+          >
+            <SquaresFour size={14} weight={viewMode === 'cards' ? 'bold' : 'regular'} />
+          </button>
+        </div>
+      )}
+
+      {/* Card grid view */}
+      {showCardView && viewMode === 'cards' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+          {sorted.map(row => {
+            const previewImg = row.image_url || row.thumbnail_url || row.video_thumb_url
+            const statusUpper = (row.ad_status ?? '').toUpperCase()
+            const isActive   = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
             return (
-              <tr key={row.ad_id}>
-                <td style={{ padding: '6px 8px' }}>
-                  {previewImg ? (
-                    <LightboxImage
-                      src={previewImg}
-                      alt={row.ad_name}
-                      width={56}
-                      height={56}
-                      videoId={row.video_id ?? undefined}
-                    />
-                  ) : (
-                    <div style={{
-                      width: 56, height: 56, borderRadius: 4,
-                      background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Ad</span>
-                    </div>
-                  )}
-                </td>
-                <td style={{ maxWidth: 220 }}>
-                  <span className="text-xs font-medium" style={{
-                    color: 'var(--text-primary)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, display: 'block',
+              <div
+                key={row.ad_id}
+                onClick={() => setPreviewAd(row)}
+                style={{
+                  border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden',
+                  background: 'var(--bg-surface)', cursor: 'pointer',
+                  opacity: isActive ? 1 : 0.55,
+                  transition: 'box-shadow 0.15s',
+                }}
+              >
+                {previewImg ? (
+                  <img
+                    src={previewImg}
+                    alt={row.ad_name}
+                    style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }}
+                  />
+                ) : (
+                  <div style={{
+                    width: '100%', aspectRatio: '1/1', background: 'var(--bg-subtle)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No image</span>
+                  </div>
+                )}
+                <div style={{ padding: '0.625rem' }}>
+                  <p style={{
+                    fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: '0 0 4px',
                   }}>
                     {row.ad_name || row.ad_id}
-                  </span>
-                  {copyPreview && (
-                    <p className="text-xs" style={{
-                      color: 'var(--text-faint)',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200,
-                    }}>
-                      {copyPreview.length > 60 ? copyPreview.slice(0, 60) + '…' : copyPreview}
-                    </p>
-                  )}
-                </td>
-                <td>
+                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span>{fmt$(row.spend)}</span>
+                    <span>{row.conversions > 0 ? `${fmtNum(row.conversions)} conv` : `${fmtNum(row.clicks)} clicks`}</span>
+                  </div>
                   <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    fontSize: '0.7rem', fontWeight: 600,
-                    color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                    fontSize: '0.65rem', fontWeight: 600, marginTop: 4, display: 'inline-block',
+                    color: isActive ? 'var(--green)' : '#d97706',
                   }}>
-                    <span style={{
-                      width: 6, height: 6, borderRadius: '50%',
-                      background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
-                    }} />
-                    {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
+                    ● {isActive ? 'Active' : 'Paused'}
                   </span>
-                </td>
-                <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {fmt$(row.spend)}
-                </td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>
-                <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {row.conversions > 0 ? fmtNum(row.conversions) : '—'}
-                </td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {row.convRate > 0 ? fmtPct(row.convRate) : '—'}
-                </td>
-                <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}
-                </td>
-              </tr>
+                </div>
+              </div>
             )
           })}
-        </tbody>
-        <tfoot>
-          <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
-            <td></td>
-            <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              {rows.length} ad{rows.length !== 1 ? 's' : ''}
-            </td>
-            <td></td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+        </div>
+      ) : (
+        /* List / table view */
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table" style={{ minWidth: 780 }}>
+            <thead>
+              <tr>
+                <th style={{ width: 48 }}></th>
+                <SortTh sk="ad_name" align="left">Ad</SortTh>
+                <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+                <SortTh sk="spend">Cost</SortTh>
+                <SortTh sk="impressions">Impr.</SortTh>
+                <SortTh sk="clicks">Clicks</SortTh>
+                <SortTh sk="ctr">CTR</SortTh>
+                <SortTh sk="conversions">{conversionLabel}</SortTh>
+                <SortTh sk="convRate">Conv Rate</SortTh>
+                <SortTh sk="cpl">CPL</SortTh>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(row => {
+                const previewImg  = row.thumbnail_url || row.video_thumb_url || row.image_url
+                const statusUpper = (row.ad_status ?? '').toUpperCase()
+                const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
+                const isPaused    = statusUpper === 'PAUSED'
+                const copyPreview = row.creative_title || row.creative_body || row.headlines?.[0] || ''
+
+                return (
+                  <tr key={row.ad_id}>
+                    <td style={{ padding: '6px 8px' }}>
+                      {previewImg ? (
+                        <LightboxImage
+                          src={previewImg}
+                          alt={row.ad_name}
+                          width={56}
+                          height={56}
+                          videoId={row.video_id ?? undefined}
+                          fullSrc={row.image_url ?? undefined}
+                        />
+                      ) : (
+                        <div style={{
+                          width: 56, height: 56, borderRadius: 4,
+                          background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Ad</span>
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ maxWidth: 220 }}>
+                      <span className="text-xs font-medium" style={{
+                        color: 'var(--text-primary)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, display: 'block',
+                      }}>
+                        {row.ad_name || row.ad_id}
+                      </span>
+                      {copyPreview && (
+                        <p className="text-xs" style={{
+                          color: 'var(--text-faint)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200,
+                        }}>
+                          {copyPreview.length > 60 ? copyPreview.slice(0, 60) + '…' : copyPreview}
+                        </p>
+                      )}
+                    </td>
+                    <td>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        fontSize: '0.7rem', fontWeight: 600,
+                        color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                      }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                        }} />
+                        {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
+                      </span>
+                    </td>
+                    <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {fmt$(row.spend)}
+                    </td>
+                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>
+                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>
+                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>
+                    <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {row.conversions > 0 ? fmtNum(row.conversions) : '—'}
+                    </td>
+                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                      {row.convRate > 0 ? fmtPct(row.convRate) : '—'}
+                    </td>
+                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                      {row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
+                <td></td>
+                <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {rows.length} ad{rows.length !== 1 ? 's' : ''}
+                </td>
+                <td></td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>
+                <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Ad preview modal — Facebook-card style */}
+      {previewAd && (
+        <div
+          onClick={() => setPreviewAd(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, padding: '1rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 12, width: '100%', maxWidth: 420,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.4)', overflow: 'hidden',
+            }}
+          >
+            {/* FB-style header */}
+            <div style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: '50%', background: '#e5e7eb', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+              }}>
+                📢
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 700, color: '#111' }}>Your Page</p>
+                <p style={{ margin: 0, fontSize: '0.7rem', color: '#65676b' }}>Sponsored · 🌐</p>
+              </div>
+              <button
+                onClick={() => setPreviewAd(null)}
+                style={{
+                  background: 'none', border: 'none', fontSize: 22, cursor: 'pointer',
+                  color: '#9ca3af', lineHeight: 1, padding: '0 4px', flexShrink: 0,
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body copy */}
+            {(previewAd.creative_body || previewAd.descriptions?.[0]) && (
+              <p style={{
+                margin: '0 1rem 0.625rem', fontSize: '0.875rem', color: '#1c1e21', lineHeight: 1.55,
+                display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>
+                {previewAd.creative_body || previewAd.descriptions?.[0]}
+              </p>
+            )}
+
+            {/* Image */}
+            {(previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) && (
+              <img
+                src={previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!}
+                alt="ad creative"
+                style={{ width: '100%', maxHeight: 320, objectFit: 'cover', display: 'block' }}
+              />
+            )}
+
+            {/* Headline + CTA strip */}
+            <div style={{
+              padding: '0.625rem 1rem', background: '#f0f2f5',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                {(previewAd.creative_title || previewAd.headlines?.[0]) && (
+                  <p style={{
+                    margin: 0, fontSize: '0.875rem', fontWeight: 700, color: '#1c1e21',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {previewAd.creative_title || previewAd.headlines?.[0]}
+                  </p>
+                )}
+              </div>
+              <button style={{
+                background: '#e4e6eb', border: 'none', borderRadius: 6, padding: '6px 14px',
+                fontSize: '0.8125rem', fontWeight: 600, cursor: 'default', color: '#1c1e21', whiteSpace: 'nowrap', flexShrink: 0,
+              }}>
+                Learn more
+              </button>
+            </div>
+
+            {/* Ad name footer */}
+            <div style={{ padding: '0.5rem 1rem', borderTop: '1px solid #e5e7eb' }}>
+              <p style={{ margin: 0, fontSize: '0.7rem', color: '#9ca3af' }}>Ad: {previewAd.ad_name}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

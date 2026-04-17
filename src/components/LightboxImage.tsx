@@ -12,12 +12,14 @@ export default function LightboxImage({
   width = 40,
   height = 40,
   videoId,
+  fullSrc,
 }: {
   src:      string
   alt:      string
   width?:   number
   height?:  number
   videoId?: string | null
+  fullSrc?: string
 }) {
   const [open, setOpen] = useState(false)
 
@@ -69,7 +71,7 @@ export default function LightboxImage({
           }}
         >
           <img
-            src={src}
+            src={fullSrc ?? src}
             alt={alt}
             onClick={e => e.stopPropagation()}
             style={{

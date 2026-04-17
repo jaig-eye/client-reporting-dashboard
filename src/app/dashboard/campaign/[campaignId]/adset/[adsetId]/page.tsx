@@ -14,7 +14,6 @@ import type { Client, DailyMetric } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
 import type { AdCardData } from '@/components/AdSetCards'
 import { AdRowTable, type AdRow } from '@/components/AdTable'
-import AdCreativeSlider from '@/components/AdCreativeSlider'
 import PMaxAssetSlider from '@/components/PMaxAssetSlider'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
@@ -834,21 +833,17 @@ export default async function AdSetDetailPage({
             })()}
           </div>
         ) : (
-          /* Meta or Google non-Search: creative slider (Meta only) + ads table */
-          <>
-            {source === 'meta_ads' && (
-              <AdCreativeSlider ads={adCardList} />
-            )}
-            <div className="card p-6">
-              <div className="mb-5">
-                <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
-              </div>
-              <AdRowTable
-                rows={adRows}
-                conversionLabel={conversionLabel}
-              />
+          /* Meta or Google non-Search: ads table with optional card view toggle for Meta */
+          <div className="card p-6">
+            <div className="mb-5">
+              <h2 className="section-title">{adRows.length} Ad{adRows.length !== 1 ? 's' : ''}</h2>
             </div>
-          </>
+            <AdRowTable
+              rows={adRows}
+              conversionLabel={conversionLabel}
+              showCardView={source === 'meta_ads'}
+            />
+          </div>
         )}
 
       </main>
