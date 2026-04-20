@@ -90,14 +90,22 @@ async function fetchSearchAnalytics(
       dataState:    'all', // include fresh (unconfirmed) data
     }
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization:  `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
+    const controller = new AbortController()
+    const timeoutId  = setTimeout(() => controller.abort(), 25_000)
+    let res: Response
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization:  `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     if (!res.ok) {
       const text = await res.text()

@@ -386,6 +386,7 @@ export interface GoogleAdsAdRawRow {
   clicks: number
   conversions: number
   conversions_value: number
+  all_conversions_value?: number
 }
 
 /**
@@ -448,7 +449,8 @@ export async function fetchGoogleAdMetrics(
       metrics.impressions,
       metrics.clicks,
       metrics.conversions,
-      metrics.conversions_value
+      metrics.conversions_value,
+      metrics.all_conversions_value
     FROM ad_group_ad
     WHERE ad_group_ad.status != 'REMOVED'
       AND metrics.impressions > 0
@@ -518,8 +520,9 @@ export async function fetchGoogleAdMetrics(
       cost_micros:       Number(metrics?.costMicros       || 0),
       impressions:       Number(metrics?.impressions      || 0),
       clicks:            Number(metrics?.clicks           || 0),
-      conversions:       Number(metrics?.conversions      || 0),
-      conversions_value: Number(metrics?.conversionsValue || 0),
+      conversions:           Number(metrics?.conversions         || 0),
+      conversions_value:     Number(metrics?.conversionsValue    || 0),
+      all_conversions_value: Number(metrics?.allConversionsValue || 0),
     }
   })
 
@@ -543,7 +546,8 @@ export async function fetchGoogleAdMetrics(
         metrics.impressions,
         metrics.clicks,
         metrics.conversions,
-        metrics.conversions_value
+        metrics.conversions_value,
+        metrics.all_conversions_value
       FROM asset_group
       WHERE metrics.impressions > 0
         AND segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
@@ -574,8 +578,9 @@ export async function fetchGoogleAdMetrics(
         cost_micros:       Number(metrics?.costMicros       || 0),
         impressions:       Number(metrics?.impressions      || 0),
         clicks:            Number(metrics?.clicks           || 0),
-        conversions:       Number(metrics?.conversions      || 0),
-        conversions_value: Number(metrics?.conversionsValue || 0),
+        conversions:           Number(metrics?.conversions         || 0),
+        conversions_value:     Number(metrics?.conversionsValue    || 0),
+        all_conversions_value: Number(metrics?.allConversionsValue || 0),
       }
     })
   } catch {
@@ -742,6 +747,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         metrics.clicks,
         metrics.conversions,
         metrics.conversions_value,
+        metrics.all_conversions_value,
         metrics.view_through_conversions,
         metrics.search_impression_share,
         metrics.search_absolute_top_impression_share,
@@ -779,6 +785,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         clicks:                   Number(metrics?.clicks                  || 0),
         conversions:              Number(metrics?.conversions             || 0),
         conversions_value:        Number(metrics?.conversionsValue        || 0),
+        all_conversions_value:    Number(metrics?.allConversionsValue     || 0),
         view_through_conversions: Number(metrics?.viewThroughConversions  || 0),
         search_impression_share:         safeIS(rawImprShare),
         search_abs_top_impression_share: safeIS(rawAbsTop),

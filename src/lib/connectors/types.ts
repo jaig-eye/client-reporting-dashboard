@@ -30,6 +30,7 @@ export interface GoogleAdsRawRow {
   clicks: number
   conversions: number
   conversions_value: number
+  all_conversions_value?: number
   view_through_conversions: number
   // Impression share — only available for Search campaigns; null for others
   search_impression_share?:         number | null

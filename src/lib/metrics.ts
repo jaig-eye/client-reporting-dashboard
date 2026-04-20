@@ -129,21 +129,35 @@ export function resolveMetaConversions(
   const acts    = actions      ?? []
   const actVals = actionValues ?? []
 
-  // Try primary action
-  const primary    = acts.find(a => a.action_type === primaryAction)
-  const primaryVal = actVals.find(a => a.action_type === primaryAction)
-  const pConv = primary    ? parseFloat(primary.value    || '0') : 0
-  const pCV   = primaryVal ? parseFloat(primaryVal.value || '0') : 0
-
-  if (pConv > 0) return { conversions: pConv, conversionValue: pCV }
-
-  // Try fallback action
-  if (fallbackAction) {
-    const fb    = acts.find(a => a.action_type === fallbackAction)
-    const fbVal = actVals.find(a => a.action_type === fallbackAction)
+  function getVal(type: string) {
+    const act = acts.find(a => a.action_type === type)
+    const val = actVals.find(a => a.action_type === type)
     return {
-      conversions:     fb    ? parseFloat(fb.value    || '0') : 0,
-      conversionValue: fbVal ? parseFloat(fbVal.value || '0') : 0,
+      conversions:     act ? parseFloat(act.value || '0') : -1, // -1 = not found
+      conversionValue: val ? parseFloat(val.value || '0') : 0,
+    }
+  }
+
+  // Primary action — if the action type exists in the data, always use it (even if 0)
+  // to avoid falling through to unrelated action types when there are no conversions.
+  const primary = getVal(primaryAction)
+  if (primary.conversions >= 0) {
+    return { conversions: primary.conversions, conversionValue: primary.conversionValue }
+  }
+
+  // Primary not found at all — try configured fallback
+  if (fallbackAction) {
+    const fb = getVal(fallbackAction)
+    if (fb.conversions >= 0) {
+      return { conversions: fb.conversions, conversionValue: fb.conversionValue }
+    }
+  }
+
+  // Last resort: try omni_purchase (Meta's canonical aggregate purchase event)
+  if (primaryAction !== 'omni_purchase' && fallbackAction !== 'omni_purchase') {
+    const omni = getVal('omni_purchase')
+    if (omni.conversions >= 0) {
+      return { conversions: omni.conversions, conversionValue: omni.conversionValue }
     }
   }
 

@@ -62,6 +62,29 @@ export type ColumnKey =
   | 'revenue'
   | 'daily_budget'
 
+export type AdGroupColumnKey =
+  | 'spend'
+  | 'impressions'
+  | 'clicks'
+  | 'ctr'
+  | 'cpc'
+  | 'cpm'
+  | 'conversions'
+  | 'conv_rate'
+  | 'cpa'
+  | 'roas'
+  | 'revenue'
+  | 'ad_count'
+
+export type AdColumnKey =
+  | 'spend'
+  | 'impressions'
+  | 'clicks'
+  | 'ctr'
+  | 'conversions'
+  | 'conv_rate'
+  | 'cpa'
+
 export interface MetricLayout {
   kpi_cards:     MetricKey[]
   top_metrics:   MetricKey[]
@@ -73,9 +96,11 @@ export interface MetricLayout {
 
 // Platform-specific campaign pages use string[] to allow platform-native metric names
 export interface PlatformMetricLayout {
-  kpi_cards:     string[]
-  top_metrics:   string[]
-  table_columns: string[]
+  kpi_cards:              string[]
+  top_metrics:            string[]
+  table_columns:          string[]
+  adgroup_table_columns?: string[]
+  ads_table_columns?:     string[]
 }
 
 export interface MetricLayouts {
@@ -89,6 +114,9 @@ export interface MetricLayouts {
   google_search?:   PlatformMetricLayout
   google_shopping?: PlatformMetricLayout
   meta_media?:      PlatformMetricLayout
+  // Meta media split by conversion type
+  meta_media_lead_gen?: PlatformMetricLayout
+  meta_media_ecom?:     PlatformMetricLayout
 }
 
 // ── Human-readable labels for each key ───────────────────────────────────────
@@ -144,6 +172,31 @@ export const COLUMN_LABELS: Record<ColumnKey, string> = {
   daily_budget:  'Daily Budget',
 }
 
+export const ADGROUP_COLUMN_LABELS: Record<AdGroupColumnKey, string> = {
+  spend:       'Cost',
+  impressions: 'Impressions',
+  clicks:      'Clicks',
+  ctr:         'CTR',
+  cpc:         'Avg. CPC',
+  cpm:         'CPM',
+  conversions: 'Conversions',
+  conv_rate:   'Conv. Rate',
+  cpa:         'CPA',
+  roas:        'ROAS',
+  revenue:     'Revenue',
+  ad_count:    'Ads',
+}
+
+export const AD_COLUMN_LABELS: Record<AdColumnKey, string> = {
+  spend:       'Cost',
+  impressions: 'Impressions',
+  clicks:      'Clicks',
+  ctr:         'CTR',
+  conversions: 'Conversions',
+  conv_rate:   'Conv. Rate',
+  cpa:         'CPL',
+}
+
 // ── Default layouts ───────────────────────────────────────────────────────────
 
 export const DEFAULT_METRIC_LAYOUTS: MetricLayouts = {
@@ -180,21 +233,43 @@ export const DEFAULT_PAID_ADS_ECOM: MetricLayout = {
 }
 
 export const DEFAULT_GOOGLE_SEARCH_LAYOUT: PlatformMetricLayout = {
-  kpi_cards:     ['spend', 'conversions', 'impression_share', 'ctr'],
-  top_metrics:   ['clicks', 'impressions', 'cpc', 'conv_rate'],
-  table_columns: ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa'],
+  kpi_cards:             ['spend', 'conversions', 'impression_share', 'ctr'],
+  top_metrics:           ['clicks', 'impressions', 'cpc', 'conv_rate'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 export const DEFAULT_GOOGLE_SHOPPING_LAYOUT: PlatformMetricLayout = {
-  kpi_cards:     ['spend', 'revenue', 'roas', 'conversions'],
-  top_metrics:   ['clicks', 'impressions', 'ctr', 'cpa'],
-  table_columns: ['campaign_name', 'status', 'spend', 'revenue', 'roas', 'conversions', 'cpa'],
+  kpi_cards:             ['spend', 'revenue', 'roas', 'conversions'],
+  top_metrics:           ['clicks', 'impressions', 'ctr', 'cpa'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'revenue', 'roas', 'conversions', 'cpa'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'roas', 'revenue'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 export const DEFAULT_META_MEDIA_LAYOUT: PlatformMetricLayout = {
-  kpi_cards:     ['spend', 'reach', 'frequency', 'cpm'],
-  top_metrics:   ['impressions', 'clicks', 'ctr', 'video_views'],
-  table_columns: ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'cpm', 'impressions'],
+  kpi_cards:             ['spend', 'reach', 'frequency', 'cpm'],
+  top_metrics:           ['impressions', 'clicks', 'ctr', 'video_views'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'cpm', 'impressions'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+}
+
+export const DEFAULT_META_MEDIA_LEAD_GEN: PlatformMetricLayout = {
+  kpi_cards:             ['spend', 'reach', 'frequency', 'cpm'],
+  top_metrics:           ['impressions', 'clicks', 'ctr', 'video_views'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'cpm', 'impressions'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+}
+
+export const DEFAULT_META_MEDIA_ECOM: PlatformMetricLayout = {
+  kpi_cards:             ['spend', 'reach', 'frequency', 'roas'],
+  top_metrics:           ['impressions', 'clicks', 'ctr', 'video_views'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'revenue', 'roas'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'roas', 'revenue'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 // ── All available metrics (for the layout editor UI) ─────────────────────────
@@ -221,6 +296,15 @@ export const ALL_PLATFORM_CARD_KEYS: PlatformCardKey[] = [
 export const ALL_COLUMN_KEYS: ColumnKey[] = [
   'campaign_name', 'status', 'spend', 'impressions', 'clicks',
   'ctr', 'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'daily_budget',
+]
+
+export const ALL_ADGROUP_COLUMN_KEYS: AdGroupColumnKey[] = [
+  'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm',
+  'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'ad_count',
+]
+
+export const ALL_AD_COLUMN_KEYS: AdColumnKey[] = [
+  'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa',
 ]
 
 // Metric keys available per platform context (for editor dropdowns)
@@ -273,6 +357,20 @@ export function resolvePlatformLayout(
     agencyLayouts?.[platform]  ??
     defaults[platform]
   )
+}
+
+/**
+ * Returns the active PlatformMetricLayout for Meta Media, split by lead gen vs ecom.
+ * Falls back through client override → agency settings → built-in defaults.
+ */
+export function resolveMetaMediaLayout(
+  agencyLayouts: MetricLayouts | null | undefined,
+  clientOverride: MetricLayouts | null | undefined,
+  isEcom: boolean,
+): PlatformMetricLayout {
+  const key = isEcom ? 'meta_media_ecom' : 'meta_media_lead_gen'
+  const def = isEcom ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN
+  return clientOverride?.[key] ?? agencyLayouts?.[key] ?? def
 }
 
 /**

@@ -22,7 +22,7 @@ import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 import {
-  resolvePaidAdsLayout, resolvePlatformLayout,
+  resolvePaidAdsLayout, resolvePlatformLayout, resolveMetaMediaLayout,
   METRIC_LABELS, type MetricLayouts, type MetricKey,
 } from '@/lib/metric-layouts'
 
@@ -106,7 +106,7 @@ export default async function CampaignDetailPage({
   type GoogleAdRow = {
     ad_id: string; ad_group_id: string; ad_group_name: string; date: string
     spend: number; impressions: number; clicks: number
-    conversions: number; conversions_value: number
+    conversions: number; conversions_value: number; all_conversions_value?: number | null
   }
   type MetaAdRow = {
     ad_id: string; adset_id: string | null; adset_name: string | null; date: string
@@ -158,7 +158,7 @@ export default async function CampaignDetailPage({
   if (isGoogleAds) {
     const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,date')
+        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -169,12 +169,12 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom).lte('date', dateTo),
       showCompare
         ? db.from('google_ads_ad_metrics')
-            .select('spend,impressions,clicks,conversions,conversions_value')
+            .select('spend,impressions,clicks,conversions,conversions_value,all_conversions_value')
             .eq('client_id', client.id)
             .eq('campaign_id', campaignId)
             .gte('date', priorFrom)
             .lte('date', priorTo)
-        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
+        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[] }),
       showCompare
         ? db.from('google_ads_metrics')
             .select('search_impression_share')
@@ -200,37 +200,79 @@ export default async function CampaignDetailPage({
     campTypeRaw  = (firstCamp?.campaign_type ?? '').toUpperCase()
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
-      const co = Number(r.conversions)||0, cv = Number(r.conversions_value)||0
+      const co = Number(r.conversions)||0
+      // Prefer all_conversions_value when available (captures all conversion types)
+      const cv = (r.all_conversions_value != null && Number(r.all_conversions_value) > 0)
+        ? Number(r.all_conversions_value)
+        : Number(r.conversions_value)||0
       upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
-    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
+    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[]) {
       priorTotals.spend           += Number(r.spend)            || 0
       priorTotals.impressions     += Number(r.impressions)      || 0
       priorTotals.clicks          += Number(r.clicks)           || 0
       priorTotals.conversions     += Number(r.conversions)      || 0
-      priorTotals.conversionValue += Number(r.conversions_value) || 0
+      priorTotals.conversionValue += (r.all_conversions_value != null && Number(r.all_conversions_value) > 0)
+        ? Number(r.all_conversions_value)
+        : Number(r.conversions_value) || 0
     }
   } else {
-    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
+    // Fetch campaign-level rows for KPI totals/sparklines (matches dashboard source)
+    // and ad-level rows separately for the adset breakdown table.
+    type MetaCampRow = {
+      campaign_name: string; date: string
+      spend: number; impressions: number; clicks: number
+      conversions: number; conversion_value: number
+      actions: { action_type: string; value: string }[] | null
+      action_values: { action_type: string; value: string }[] | null
+    }
+    const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }] = await Promise.all([
+      db.from('meta_ads_metrics')
+        .select('campaign_name,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+        .eq('client_id', client.id)
+        .eq('campaign_id', campaignId)
+        .gte('date', dateFrom)
+        .lte('date', dateTo),
       db.from('meta_ads_ad_metrics')
         .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
         .lte('date', dateTo),
-      db.from('meta_ads_metrics')
-        .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
+      showCompare
+        ? db.from('meta_ads_metrics')
+            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id)
+            .eq('campaign_id', campaignId)
+            .gte('date', priorFrom)
+            .lte('date', priorTo)
+        : Promise.resolve({ data: [] as MetaCampRow[] }),
       showCompare
         ? db.from('meta_ads_ad_metrics')
-            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
             .eq('client_id', client.id)
             .eq('campaign_id', campaignId)
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
-    if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
+    if ((campRows ?? []).length > 0) campaignName = ((campRows as MetaCampRow[])[0]).campaign_name
+    // Campaign-level rows → KPI totals + sparklines
+    for (const r of (campRows ?? []) as MetaCampRow[]) {
+      const sp = Number(r.spend) || 0
+      const im = Number(r.impressions) || 0
+      const cl = Number(r.clicks) || 0
+      let co = Number(r.conversions) || 0
+      let cv = Number(r.conversion_value) || 0
+      if (convAction) {
+        const resolved = resolveMetaConversions(r.actions, r.action_values, convAction, convActionFallback)
+        co = resolved.conversions
+        cv = resolved.conversionValue
+      }
+      upsertDay(r.date, sp, im, cl, co, cv)
+    }
+    // Ad-level rows → adset breakdown table only
     for (const r of (rows ?? []) as MetaAdRow[]) {
       const setId = r.adset_id ?? r.adset_name ?? 'unknown'
       const sp = Number(r.spend) || 0
@@ -244,9 +286,9 @@ export default async function CampaignDetailPage({
         cv = resolved.conversionValue
       }
       upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
-      upsertDay(r.date, sp, im, cl, co, cv)
     }
-    for (const r of (priorRows ?? []) as MetaAdRow[]) {
+    // Prior period: campaign-level for compare deltas
+    for (const r of (priorCampRows ?? []) as MetaCampRow[]) {
       const sp = Number(r.spend) || 0
       let co = Number(r.conversions) || 0
       let cv = Number(r.conversion_value) || 0
@@ -261,6 +303,8 @@ export default async function CampaignDetailPage({
       priorTotals.conversions     += co
       priorTotals.conversionValue += cv
     }
+    // Suppress unused warning — priorRows kept for potential future ad-level compare
+    void priorRows
   }
 
   // ── Fetch campaign-level keywords (Google Search only) ────────────────────
@@ -328,12 +372,24 @@ export default async function CampaignDetailPage({
     })
     .sort((a, b) => b.spend - a.spend)
 
-  // Campaign-level totals (spend in adGroups is already cost after markup)
-  const totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
-  const totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
-  const totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
-  const totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
-  const totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
+  // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the
+  // dashboard campaign list; for Google adGroups are already from campaign-level ad_metrics.
+  let totSpend = 0, totImpressions = 0, totClicks = 0, totConversions = 0, totConversionValue = 0
+  if (!isGoogleAds && dailyMap.size > 0) {
+    for (const v of Array.from(dailyMap.values())) {
+      totSpend           += adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
+      totImpressions     += v.impressions
+      totClicks          += v.clicks
+      totConversions     += v.conversions
+      totConversionValue += v.conversionValue
+    }
+  } else {
+    totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
+    totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
+    totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
+    totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
+    totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
+  }
 
   // KPI derived values (totSpend is already after markup)
   const displaySpend      = totSpend
@@ -363,11 +419,18 @@ export default async function CampaignDetailPage({
 
   const agencyLayouts  = settings.metric_layouts as MetricLayouts | null | undefined
   const clientOverride = client.metric_layout_override as MetricLayouts | null | undefined
+  const isMetaMedia    = source === 'meta_ads' && (displayMode === 'awareness' || displayMode === 'engagement')
   const campaignLayout = isGoogleSearch
     ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_search')
     : isGoogleShop
     ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_shopping')
+    : isMetaMedia
+    ? resolveMetaMediaLayout(agencyLayouts, clientOverride, isEcom)
     : resolvePaidAdsLayout(agencyLayouts, clientOverride, isEcom)
+
+  const adgroupColumns: string[] | undefined = 'adgroup_table_columns' in campaignLayout
+    ? (campaignLayout as { adgroup_table_columns?: string[] }).adgroup_table_columns
+    : undefined
 
   // ── Metric value / spark / delta maps ─────────────────────────────────────
   const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
@@ -553,7 +616,7 @@ export default async function CampaignDetailPage({
             rows={adGroups}
             conversionLabel={conversionLabel}
             isPMax={isGoogleAds && isPMax}
-            tableColumns={campaignLayout.table_columns}
+            tableColumns={adgroupColumns}
           />
         </div>
 

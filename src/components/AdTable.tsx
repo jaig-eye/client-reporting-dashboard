@@ -98,18 +98,18 @@ export function AdGroupTable({
         <thead>
           <tr>
             <SortTh sk="setName" align="left">Ad Set / Group</SortTh>
-            <SortTh sk="spend">Cost</SortTh>
-            <SortTh sk="impressions">Impr.</SortTh>
-            <SortTh sk="clicks">Clicks</SortTh>
-            <SortTh sk="ctr">CTR</SortTh>
+            {showCol('spend') && <SortTh sk="spend">Cost</SortTh>}
+            {showCol('impressions') && <SortTh sk="impressions">Impr.</SortTh>}
+            {showCol('clicks') && <SortTh sk="clicks">Clicks</SortTh>}
+            {showCol('ctr') && <SortTh sk="ctr">CTR</SortTh>}
             {showCol('cpc') && <SortTh sk="cpc">Avg. CPC</SortTh>}
             {showCol('cpm') && <SortTh sk="cpm">CPM</SortTh>}
-            <SortTh sk="conversions">{conversionLabel}</SortTh>
-            <SortTh sk="convRate">Conv Rate</SortTh>
-            <SortTh sk="cpl">CPL</SortTh>
+            {showCol('conversions') && <SortTh sk="conversions">{conversionLabel}</SortTh>}
+            {showCol('conv_rate') && <SortTh sk="convRate">Conv Rate</SortTh>}
+            {showCol('cpa') && <SortTh sk="cpl">CPL</SortTh>}
             {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
             {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
-            <SortTh sk="adCount">Ads</SortTh>
+            {showCol('ad_count') && <SortTh sk="adCount">Ads</SortTh>}
             <th></th>
           </tr>
         </thead>
@@ -121,26 +121,18 @@ export function AdGroupTable({
                   {row.setName || row.setId}
                 </a>
               </td>
-              <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {fmt$(row.spend)}
-              </td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>
+              {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(row.spend)}</td>}
+              {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>}
+              {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>}
+              {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>}
               {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpc ? fmtCurrency(row.cpc) : '—'}</td>}
               {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpm ? fmtCurrency(row.cpm) : '—'}</td>}
-              <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {row.conversions > 0 ? fmtNum(row.conversions) : '—'}
-              </td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                {row.convRate > 0 ? fmtPct(row.convRate) : '—'}
-              </td>
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                {row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}
-              </td>
+              {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{row.conversions > 0 ? fmtNum(row.conversions) : '—'}</td>}
+              {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.convRate > 0 ? fmtPct(row.convRate) : '—'}</td>}
+              {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}</td>}
               {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.roas && row.roas > 0 ? `${row.roas.toFixed(2)}x` : '—'}</td>}
               {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
-              <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>
+              {showCol('ad_count') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>}
               <td className="text-xs" style={{ textAlign: 'right' }}>
                 <a href={row.href} style={{ color: 'var(--blue)', textDecoration: 'none', whiteSpace: 'nowrap' }}>View →</a>
               </td>
@@ -152,18 +144,18 @@ export function AdGroupTable({
             <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {rows.length} ad set{rows.length !== 1 ? 's' : ''}
             </td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>
+            {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>}
+            {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>}
+            {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>}
+            {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>}
             {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right' }}>{totClicks > 0 ? fmtCurrency(totSpend / totClicks) : '—'}</td>}
             {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr > 0 ? fmtCurrency((totSpend / totImpr) * 1000) : '—'}</td>}
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>
-            <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>
+            {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>}
+            {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>}
+            {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>}
             {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 && totSpend > 0 ? `${(totCv / totSpend).toFixed(2)}x` : '—' })()}</td>}
             {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 ? fmt$(totCv) : '—' })()}</td>}
-            <td></td>
+            {showCol('ad_count') && <td></td>}
             <td></td>
           </tr>
         </tfoot>
@@ -207,11 +199,14 @@ export function AdRowTable({
   rows,
   conversionLabel,
   showCardView = false,
+  tableColumns,
 }: {
   rows:             AdRow[]
   conversionLabel:  string
   showCardView?:    boolean
+  tableColumns?:    string[]
 }) {
+  const showCol = (key: string) => !tableColumns || tableColumns.includes(key)
   const [sortKey, setSortKey]   = useState<AdRowSortKey | null>(null)
   const [sortDir, setSortDir]   = useState<'asc' | 'desc'>('desc')
   const [viewMode, setViewMode] = useState<'list' | 'cards'>('list')
@@ -387,13 +382,13 @@ export function AdRowTable({
                 <th style={{ width: 48 }}></th>
                 <SortTh sk="ad_name" align="left">Ad</SortTh>
                 <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-                <SortTh sk="spend">Cost</SortTh>
-                <SortTh sk="impressions">Impr.</SortTh>
-                <SortTh sk="clicks">Clicks</SortTh>
-                <SortTh sk="ctr">CTR</SortTh>
-                <SortTh sk="conversions">{conversionLabel}</SortTh>
-                <SortTh sk="convRate">Conv Rate</SortTh>
-                <SortTh sk="cpl">CPL</SortTh>
+                {showCol('spend') && <SortTh sk="spend">Cost</SortTh>}
+                {showCol('impressions') && <SortTh sk="impressions">Impr.</SortTh>}
+                {showCol('clicks') && <SortTh sk="clicks">Clicks</SortTh>}
+                {showCol('ctr') && <SortTh sk="ctr">CTR</SortTh>}
+                {showCol('conversions') && <SortTh sk="conversions">{conversionLabel}</SortTh>}
+                {showCol('conv_rate') && <SortTh sk="convRate">Conv Rate</SortTh>}
+                {showCol('cpa') && <SortTh sk="cpl">CPL</SortTh>}
               </tr>
             </thead>
             <tbody>
@@ -471,21 +466,13 @@ export function AdRowTable({
                         {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
                       </span>
                     </td>
-                    <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {fmt$(row.spend)}
-                    </td>
-                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>
-                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>
-                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>
-                    <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {row.conversions > 0 ? fmtNum(row.conversions) : '—'}
-                    </td>
-                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                      {row.convRate > 0 ? fmtPct(row.convRate) : '—'}
-                    </td>
-                    <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                      {row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}
-                    </td>
+                    {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(row.spend)}</td>}
+                    {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>}
+                    {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>}
+                    {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>}
+                    {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{row.conversions > 0 ? fmtNum(row.conversions) : '—'}</td>}
+                    {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.convRate > 0 ? fmtPct(row.convRate) : '—'}</td>}
+                    {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}</td>}
                   </tr>
                 )
               })}
@@ -497,13 +484,13 @@ export function AdRowTable({
                   {rows.length} ad{rows.length !== 1 ? 's' : ''}
                 </td>
                 <td></td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>
-                <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>
+                {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>}
+                {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>}
+                {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>}
+                {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>}
+                {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>}
+                {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>}
+                {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>}
               </tr>
             </tfoot>
           </table>

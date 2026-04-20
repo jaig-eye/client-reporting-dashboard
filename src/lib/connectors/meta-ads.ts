@@ -560,13 +560,20 @@ export const metaAdsConnector: ConnectorAdapter = {
 
     // Fetch campaign daily budgets and effective_status from the Campaigns API
     // (neither field is available in the Insights API)
-    const budgetMap = new Map<string, number>()
+    const budgetMap = new Map<string, number>() // CBO: campaign-level budget
     const statusMap = new Map<string, string>()
+    const adsetBudgetMap = new Map<string, number>() // ABO: sum of active adset budgets per campaign
     try {
-      const campData = await metaGet(`/${externalId}/campaigns`, accessToken, {
-        fields: 'id,daily_budget,effective_status',
-        limit: '500',
-      })
+      const [campData, adsetData] = await Promise.all([
+        metaGet(`/${externalId}/campaigns`, accessToken, {
+          fields: 'id,daily_budget,effective_status',
+          limit: '500',
+        }),
+        metaGet(`/${externalId}/adsets`, accessToken, {
+          fields: 'campaign_id,daily_budget,effective_status',
+          limit: '500',
+        }),
+      ])
       for (const camp of (campData.data || []) as Record<string, unknown>[]) {
         const cid    = String(camp.id || '')
         const budget = Number(camp.daily_budget || 0) / 100  // cents → account currency
@@ -576,13 +583,22 @@ export const metaAdsConnector: ConnectorAdapter = {
           if (status)     statusMap.set(cid, status)
         }
       }
+      // For ABO campaigns (no campaign-level budget), sum active adset budgets
+      for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+        const cid    = String(adset.campaign_id || '')
+        const budget = Number(adset.daily_budget || 0) / 100
+        const status = String(adset.effective_status || '')
+        if (cid && budget > 0 && status === 'ACTIVE') {
+          adsetBudgetMap.set(cid, (adsetBudgetMap.get(cid) ?? 0) + budget)
+        }
+      }
     } catch {
       // best-effort — budget/status stays undefined if unavailable
     }
 
-    // Enrich rows with budget and status data
+    // Enrich rows: prefer CBO campaign budget, fall back to sum of active adset budgets
     for (const row of rows) {
-      const budget = budgetMap.get(row.campaign_id)
+      const budget = budgetMap.get(row.campaign_id) ?? adsetBudgetMap.get(row.campaign_id)
       const status = statusMap.get(row.campaign_id)
       if (budget !== undefined) row.daily_budget    = budget
       if (status !== undefined) row.campaign_status = status

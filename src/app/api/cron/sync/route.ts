@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
 
+export const maxDuration = 300
+
 function shouldRunSync(
   freq: string,
   hourUtc: number,

@@ -15,6 +15,8 @@ import {
   DASHBOARD_METRIC_KEYS,
   ALL_COLUMN_KEYS,
   ALL_PLATFORM_CARD_KEYS,
+  ALL_ADGROUP_COLUMN_KEYS,
+  ALL_AD_COLUMN_KEYS,
   SEARCH_ADS_METRIC_KEYS,
   SHOPPING_METRIC_KEYS,
   META_MEDIA_METRIC_KEYS,
@@ -23,10 +25,13 @@ import {
   DEFAULT_PAID_ADS_ECOM,
   DEFAULT_GOOGLE_SEARCH_LAYOUT,
   DEFAULT_GOOGLE_SHOPPING_LAYOUT,
-  DEFAULT_META_MEDIA_LAYOUT,
+  DEFAULT_META_MEDIA_LEAD_GEN,
+  DEFAULT_META_MEDIA_ECOM,
   METRIC_LABELS,
   PLATFORM_CARD_LABELS,
   COLUMN_LABELS,
+  ADGROUP_COLUMN_LABELS,
+  AD_COLUMN_LABELS,
 } from '@/lib/metric-layouts'
 import type {
   MetricLayouts,
@@ -57,6 +62,7 @@ const OUTER_TABS: { id: OuterTab; label: string }[] = [
 export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }: Props) {
   const [outerTab, setOuterTab] = useState<OuterTab>('summary')
   const [innerTab, setInnerTab] = useState<InnerTab>(defaultInnerTab ?? 'lead_gen')
+  const [metaInnerTab, setMetaInnerTab] = useState<InnerTab>('lead_gen')
 
   const layouts: MetricLayouts = value ?? DEFAULT_METRIC_LAYOUTS
 
@@ -81,9 +87,16 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
     const defaults = {
       google_search:   DEFAULT_GOOGLE_SEARCH_LAYOUT,
       google_shopping: DEFAULT_GOOGLE_SHOPPING_LAYOUT,
-      meta_media:      DEFAULT_META_MEDIA_LAYOUT,
+      meta_media:      DEFAULT_META_MEDIA_LEAD_GEN,
     }
     const current = layouts[key] ?? defaults[key]
+    onChange({ ...layouts, [key]: { ...current, ...patch } })
+  }
+
+  function updateMetaMediaLayout(type: InnerTab, patch: Partial<PlatformMetricLayout>) {
+    const key = type === 'ecom' ? 'meta_media_ecom' : 'meta_media_lead_gen'
+    const def = type === 'ecom' ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN
+    const current = layouts[key] ?? def
     onChange({ ...layouts, [key]: { ...current, ...patch } })
   }
 
@@ -95,9 +108,11 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
 
   const googleSearchLayout   = layouts.google_search   ?? DEFAULT_GOOGLE_SEARCH_LAYOUT
   const googleShoppingLayout = layouts.google_shopping ?? DEFAULT_GOOGLE_SHOPPING_LAYOUT
-  const metaMediaLayout      = layouts.meta_media      ?? DEFAULT_META_MEDIA_LAYOUT
+  const metaMediaLayout      = metaInnerTab === 'ecom'
+    ? (layouts.meta_media_ecom   ?? DEFAULT_META_MEDIA_ECOM)
+    : (layouts.meta_media_lead_gen ?? DEFAULT_META_MEDIA_LEAD_GEN)
 
-  const hasInnerTabs = outerTab === 'summary' || outerTab === 'paid_ads'
+  const hasInnerTabs = outerTab === 'summary' || outerTab === 'paid_ads' || outerTab === 'meta_media'
 
   return (
     <div>
@@ -121,27 +136,31 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
         ))}
       </div>
 
-      {/* Inner sub-tabs (Summary + Paid Ads only) */}
+      {/* Inner sub-tabs (Summary, Paid Ads, Meta Media) */}
       {hasInnerTabs && (
         <div style={{ display: 'flex', gap: 4, marginBottom: '1rem' }}>
-          {(['lead_gen', 'ecom'] as InnerTab[]).map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setInnerTab(t)}
-              style={{
-                padding: '0.25rem 0.75rem', borderRadius: 6,
-                fontSize: '0.75rem', fontWeight: innerTab === t ? 600 : 400,
-                border: '1px solid',
-                borderColor: innerTab === t ? 'var(--blue)' : 'var(--border)',
-                background: innerTab === t ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
-                color: innerTab === t ? 'var(--blue)' : 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              {t === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
-            </button>
-          ))}
+          {(['lead_gen', 'ecom'] as InnerTab[]).map(t => {
+            const active = outerTab === 'meta_media' ? metaInnerTab === t : innerTab === t
+            const onClick = outerTab === 'meta_media' ? () => setMetaInnerTab(t) : () => setInnerTab(t)
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={onClick}
+                style={{
+                  padding: '0.25rem 0.75rem', borderRadius: 6,
+                  fontSize: '0.75rem', fontWeight: active ? 600 : 400,
+                  border: '1px solid',
+                  borderColor: active ? 'var(--blue)' : 'var(--border)',
+                  background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
+                  color: active ? 'var(--blue)' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                {t === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -261,6 +280,14 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               labels={COLUMN_LABELS as Record<string, string>}
               onChange={items => updatePlatformLayout('google_search', { table_columns: items })}
             />
+            <LayoutSection
+              title="Ad Group Columns"
+              description="Columns shown in the ad group breakdown table"
+              items={googleSearchLayout.adgroup_table_columns ?? DEFAULT_GOOGLE_SEARCH_LAYOUT.adgroup_table_columns!}
+              allKeys={ALL_ADGROUP_COLUMN_KEYS}
+              labels={ADGROUP_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updatePlatformLayout('google_search', { adgroup_table_columns: items })}
+            />
           </>
         )}
 
@@ -294,6 +321,14 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               labels={COLUMN_LABELS as Record<string, string>}
               onChange={items => updatePlatformLayout('google_shopping', { table_columns: items })}
             />
+            <LayoutSection
+              title="Ad Group Columns"
+              description="Columns shown in the ad group breakdown table"
+              items={googleShoppingLayout.adgroup_table_columns ?? DEFAULT_GOOGLE_SHOPPING_LAYOUT.adgroup_table_columns!}
+              allKeys={ALL_ADGROUP_COLUMN_KEYS}
+              labels={ADGROUP_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updatePlatformLayout('google_shopping', { adgroup_table_columns: items })}
+            />
           </>
         )}
 
@@ -309,7 +344,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={metaMediaLayout.kpi_cards}
               allKeys={META_MEDIA_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('meta_media', { kpi_cards: items })}
+              onChange={items => updateMetaMediaLayout(metaInnerTab, { kpi_cards: items })}
             />
             <LayoutSection
               title="Top Metrics"
@@ -317,7 +352,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={metaMediaLayout.top_metrics}
               allKeys={META_MEDIA_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('meta_media', { top_metrics: items })}
+              onChange={items => updateMetaMediaLayout(metaInnerTab, { top_metrics: items })}
             />
             <LayoutSection
               title="Table Columns"
@@ -325,7 +360,23 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={metaMediaLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
               labels={COLUMN_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('meta_media', { table_columns: items })}
+              onChange={items => updateMetaMediaLayout(metaInnerTab, { table_columns: items })}
+            />
+            <LayoutSection
+              title="Ad Set Columns"
+              description="Columns shown in the ad set breakdown table"
+              items={metaMediaLayout.adgroup_table_columns ?? (metaInnerTab === 'ecom' ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN).adgroup_table_columns!}
+              allKeys={ALL_ADGROUP_COLUMN_KEYS}
+              labels={ADGROUP_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updateMetaMediaLayout(metaInnerTab, { adgroup_table_columns: items })}
+            />
+            <LayoutSection
+              title="Ads Columns"
+              description="Columns shown in the individual ads table"
+              items={metaMediaLayout.ads_table_columns ?? (metaInnerTab === 'ecom' ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN).ads_table_columns!}
+              allKeys={ALL_AD_COLUMN_KEYS}
+              labels={AD_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updateMetaMediaLayout(metaInnerTab, { ads_table_columns: items })}
             />
           </>
         )}

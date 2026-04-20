@@ -14,7 +14,7 @@ export default function DeleteClientButton({ clientId, clientName }: { clientId:
     setError('')
     const res = await fetch(`/api/admin/clients/${clientId}`, { method: 'DELETE' })
     if (res.ok) {
-      window.location.href = '/admin/clients'
+      window.location.href = '/admin/dashboard'
     } else {
       const d = await res.json().catch(() => ({}))
       setError(d.error || 'Failed to delete client')

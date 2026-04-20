@@ -24,7 +24,7 @@ import SparkMetricCard from '@/components/SparkMetricCard'
 import MetricCard from '@/components/MetricCard'
 import TabContainer from '@/components/TabContainer'
 import {
-  resolvePaidAdsLayout, resolvePlatformLayout,
+  resolvePaidAdsLayout, resolvePlatformLayout, resolveMetaMediaLayout,
   METRIC_LABELS, type MetricLayouts, type MetricKey,
 } from '@/lib/metric-layouts'
 
@@ -519,11 +519,18 @@ export default async function AdSetDetailPage({
 
   const agencyLayouts  = settings.metric_layouts as MetricLayouts | null | undefined
   const clientOverride = client.metric_layout_override as MetricLayouts | null | undefined
+  const isMetaMedia    = source === 'meta_ads' && (displayMode === 'awareness' || displayMode === 'engagement')
   const adsetLayout    = isGoogleSearch
     ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_search')
     : isGoogleShop
     ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_shopping')
+    : isMetaMedia
+    ? resolveMetaMediaLayout(agencyLayouts, clientOverride, isEcom)
     : resolvePaidAdsLayout(agencyLayouts, clientOverride, isEcom)
+
+  const adsColumns: string[] | undefined = 'ads_table_columns' in adsetLayout
+    ? (adsetLayout as { ads_table_columns?: string[] }).ads_table_columns
+    : undefined
 
   // ── Metric value / spark / delta maps ─────────────────────────────────────
   const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
@@ -802,6 +809,7 @@ export default async function AdSetDetailPage({
                       <AdRowTable
                         rows={adRows}
                         conversionLabel={conversionLabel}
+                        tableColumns={adsColumns}
                       />
                     )}
                   </div>
@@ -842,6 +850,7 @@ export default async function AdSetDetailPage({
               rows={adRows}
               conversionLabel={conversionLabel}
               showCardView={source === 'meta_ads'}
+              tableColumns={adsColumns}
             />
           </div>
         )}

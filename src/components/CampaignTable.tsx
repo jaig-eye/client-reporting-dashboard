@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import Link from 'next/link'
 import { CaretDown, CaretUp } from '@phosphor-icons/react'
 import type { ColumnKey } from '@/lib/metric-layouts'
+import { fmtCurrency } from '@/lib/metrics'
 
 export interface Campaign {
   campaign_id: string
@@ -98,7 +99,6 @@ export default function CampaignTable({
   const totCpa     = totConv  > 0 ? totSpend / totConv  : 0
   const totRoas    = totSpend > 0 ? totRevenue / totSpend : 0
 
-  function fmt$(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
   function fmtPct(n: number) { return n > 0 ? `${(n * 100).toFixed(2)}%` : '—' }
   function fmtNum(n: number) { return n > 0 ? n.toLocaleString() : '—' }
 
@@ -159,8 +159,8 @@ export default function CampaignTable({
     },
     spend: {
       header: () => <SortTh sk="spend">Cost</SortTh>,
-      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>${c.spend.toFixed(2)}</td>,
-      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>${totSpend.toFixed(2)}</td>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtCurrency(c.spend)}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmtCurrency(totSpend)}</td>,
     },
     impressions: {
       header: () => <SortTh sk="impressions">Impr.</SortTh>,
@@ -189,8 +189,8 @@ export default function CampaignTable({
     },
     cpa: {
       header: () => <SortTh sk="cpl">CPA</SortTh>,
-      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.cpl > 0 ? `$${c.cpl.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
-      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totCpa)}</td>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.cpl > 0 ? fmtCurrency(c.cpl) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totCpa > 0 ? fmtCurrency(totCpa) : '—'}</td>,
     },
     roas: {
       header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>ROAS</th>,
@@ -202,12 +202,12 @@ export default function CampaignTable({
     },
     revenue: {
       header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Revenue</th>,
-      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.conversionValue > 0 ? `$${c.conversionValue.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
-      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totRevenue)}</td>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.conversionValue > 0 ? fmtCurrency(c.conversionValue) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totRevenue > 0 ? fmtCurrency(totRevenue) : '—'}</td>,
     },
     daily_budget: {
       header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>,
-      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.daily_budget ? `$${c.daily_budget.toFixed(2)}` : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.daily_budget ? fmtCurrency(c.daily_budget) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
       foot: () => <td></td>,
     },
   }

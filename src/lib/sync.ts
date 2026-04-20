@@ -370,8 +370,11 @@ export async function upsertGoogleAdsMetrics(
     const impressions   = Number(r.impressions)    || 0
     const clicks        = Number(r.clicks)         || 0
     const conversions   = Number(r.conversions)    || 0
-    const convValue     = Number(r.conversions_value) || 0
-    const vtc           = Number(r.view_through_conversions) || 0
+    const convValue        = Number(r.conversions_value)     || 0
+    const allConvValue     = Number(r.all_conversions_value) || 0
+    const vtc              = Number(r.view_through_conversions) || 0
+    // Use all_conversions_value for ROAS when available (captures all conversion types)
+    const roasConvValue    = allConvValue > 0 ? allConvValue : convValue
 
     return {
       connection_id:            connectionId,
@@ -387,9 +390,10 @@ export async function upsertGoogleAdsMetrics(
       clicks,
       conversions,
       conversions_value:        convValue,
+      all_conversions_value:    allConvValue > 0 ? allConvValue : null,
       view_through_conversions: vtc,
       // Derived metrics computed from source values
-      roas: spend > 0 ? convValue / spend : 0,
+      roas: spend > 0 ? roasConvValue / spend : 0,
       ctr:  impressions > 0 ? clicks / impressions : 0,
       cpc:  clicks > 0 ? spend / clicks : 0,
       cpm:  impressions > 0 ? (spend / impressions) * 1000 : 0,
@@ -528,8 +532,9 @@ export async function upsertGoogleAdsAdMetrics(
       spend,
       impressions:       Number(r.impressions)      || 0,
       clicks:            Number(r.clicks)           || 0,
-      conversions:       Number(r.conversions)      || 0,
-      conversions_value: Number(r.conversions_value)|| 0,
+      conversions:           Number(r.conversions)          || 0,
+      conversions_value:     Number(r.conversions_value)    || 0,
+      all_conversions_value: Number(r.all_conversions_value) > 0 ? Number(r.all_conversions_value) : null,
     }
   })
 

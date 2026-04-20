@@ -186,12 +186,16 @@ export default async function DashboardPage({
     daily_budget?: number | null
     conversions: number; conversion_value: number
     roas: number; ctr: number; cpc: number; cpm: number
+    reach?: number; frequency?: number
   }
 
   function normalise(rows: Record<string, unknown>[], rowSource: string): NormRow[] {
     return rows.map(m => {
       let conversions      = Number(m.conversions) || 0
-      let conversion_value = Number(m.conversion_value ?? m.conversions_value ?? 0)
+      // Prefer all_conversions_value for Google (more complete); fall back to conversions_value
+      let conversion_value = Number(
+        m.all_conversions_value ?? m.conversion_value ?? m.conversions_value ?? 0
+      )
 
       if (Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
@@ -227,6 +231,8 @@ export default async function DashboardPage({
         cpc:              Number(m.cpc)   || 0,
         cpm:              Number(m.cpm)   || 0,
         daily_budget:     m.daily_budget != null ? Number(m.daily_budget) : null,
+        reach:            m.reach    != null ? Number(m.reach)    : undefined,
+        frequency:        m.frequency != null ? Number(m.frequency) : undefined,
       }
     })
   }
@@ -378,24 +384,45 @@ export default async function DashboardPage({
   const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
   // ─── Per-source totals for platform cards (overview mode) ────────────────
+  // Use normalised currentMetrics so Meta revenue uses resolveMetaConversions
+  // (raw DB conversion_value is an ingest-time approximation of ALL actions).
   let googleTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0 }
-  for (const row of (gRes.data ?? []) as Record<string, unknown>[]) {
-    googleTotal.spend       += Number(row.spend) || 0
-    googleTotal.conversions += Number(row.conversions) || 0
-    googleTotal.clicks      += Number(row.clicks) || 0
-    googleTotal.impressions += Number(row.impressions) || 0
-    googleTotal.convValue   += Number(row.conversions_value) || 0
+  for (const r of currentMetrics.filter(r => r._source === 'google_ads')) {
+    googleTotal.spend       += r.spend
+    googleTotal.conversions += r.conversions
+    googleTotal.clicks      += r.clicks
+    googleTotal.impressions += r.impressions
+    googleTotal.convValue   += r.conversion_value
   }
   let metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0, reach: 0, frequency: 0 }
-  for (const row of (mRes.data ?? []) as Record<string, unknown>[]) {
-    metaTotal.spend       += Number(row.spend)            || 0
-    metaTotal.impressions += Number(row.impressions)      || 0
-    metaTotal.clicks      += Number(row.clicks)           || 0
-    metaTotal.conversions += Number(row.conversions)      || 0
-    metaTotal.convValue   += Number(row.conversion_value) || 0
-    metaTotal.reach       += Number(row.reach)            || 0
-    metaTotal.frequency   += Number(row.frequency)        || 0
+  let metaFreqImprTotal = 0
+  for (const r of currentMetrics.filter(r => r._source === 'meta_ads')) {
+    metaTotal.spend       += r.spend
+    metaTotal.impressions += r.impressions
+    metaTotal.clicks      += r.clicks
+    metaTotal.conversions += r.conversions
+    metaTotal.convValue   += r.conversion_value
+    metaTotal.reach       += r.reach ?? 0
+    // frequency: impressions-weighted average
+    metaFreqImprTotal     += r.impressions
+    metaTotal.frequency   += (r.frequency ?? 0) * r.impressions
   }
+  if (metaFreqImprTotal > 0) metaTotal.frequency = metaTotal.frequency / metaFreqImprTotal
+
+  // ─── Daily budget per platform (max per campaign, summed; AdFuel applied at display time) ─
+  function sumBudgetBySource(src: string): number {
+    const maxPerCampaign = new Map<string, number>()
+    for (const r of currentMetrics) {
+      if (r._source !== src || r.daily_budget == null) continue
+      const prev = maxPerCampaign.get(r.campaign_id)
+      if (prev == null || r.daily_budget > prev) maxPerCampaign.set(r.campaign_id, r.daily_budget)
+    }
+    return Array.from(maxPerCampaign.values()).reduce((s, v) => s + v, 0)
+  }
+  const googleDailyBudgetRaw = sumBudgetBySource('google_ads')
+  const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
+  const googleDailyBudget = adFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, adFuelCut) : googleDailyBudgetRaw
+  const metaDailyBudget   = adFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   adFuelCut) : metaDailyBudgetRaw
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────
   const gSpend = adFuelCut > 0 ? applyAdFuel(googleTotal.spend, adFuelCut) : googleTotal.spend
@@ -428,6 +455,9 @@ export default async function DashboardPage({
     reach:       metaTotal.reach > 0 ? fmtNum(metaTotal.reach) : '—',
     frequency:   metaTotal.frequency > 0 ? metaTotal.frequency.toFixed(2) : '—',
   }
+  // Append daily budget (AdFuel-adjusted) to both card maps
+  if (googleDailyBudget > 0) googleCardMap['daily_budget'] = fmtCurrency(googleDailyBudget) + '/day'
+  if (metaDailyBudget   > 0) metaCardMap['daily_budget']   = fmtCurrency(metaDailyBudget)   + '/day'
 
   // ─── Empty state — no connections ────────────────────────────────────────
   if (connections.length === 0) {
@@ -652,6 +682,11 @@ export default async function DashboardPage({
                             </div>
                           )
                         })()}
+                        {googleCardMap['daily_budget'] && (
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 8 }}>
+                            Daily budget: <strong style={{ color: 'var(--text-secondary)' }}>{googleCardMap['daily_budget']}</strong>
+                          </p>
+                        )}
                       </div>
                     </a>
                   )}
@@ -678,6 +713,11 @@ export default async function DashboardPage({
                             </div>
                           )
                         })()}
+                        {metaCardMap['daily_budget'] && (
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 8 }}>
+                            Daily budget: <strong style={{ color: 'var(--text-secondary)' }}>{metaCardMap['daily_budget']}</strong>
+                          </p>
+                        )}
                       </div>
                     </a>
                   )}
