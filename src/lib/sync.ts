@@ -31,6 +31,9 @@ interface AhrefsRow {
   referring_domains: number | null
   organic_keywords:  number | null
   organic_traffic:   number | null
+  traffic_value?:    number | null
+  paid_keywords?:    number | null
+  paid_traffic?:     number | null
 }
 import type { GoogleAdsAdRawRow } from './connectors/google-ads'
 import type { MetaAdRawRow } from './connectors/meta-ads'
@@ -75,7 +78,8 @@ export async function syncClient(
   connectionId?: string,
   dateFrom?: string,
   dateTo?: string,
-  triggeredBy?: 'cron' | 'admin' | 'system'
+  triggeredBy?: 'cron' | 'admin' | 'system',
+  excludeGsc?: boolean,
 ): Promise<number> {
   const db = createAdminClient()
 
@@ -101,6 +105,8 @@ export async function syncClient(
   let totalRecords = 0
 
   for (const connection of connections) {
+    if (excludeGsc && connection.connector.type === 'google_search_console') continue
+
     const adapter = getConnectorAdapter(connection.connector.type)
     if (!adapter) {
       // Connector type exists in DB but has no implementation yet (e.g. Search Console)
@@ -373,8 +379,9 @@ export async function upsertGoogleAdsMetrics(
     const convValue        = Number(r.conversions_value)     || 0
     const allConvValue     = Number(r.all_conversions_value) || 0
     const vtc              = Number(r.view_through_conversions) || 0
-    // Use all_conversions_value for ROAS when available (captures all conversion types)
-    const roasConvValue    = allConvValue > 0 ? allConvValue : convValue
+    // Prefer primary conversions_value for ROAS (matches Google Ads UI); only fall back
+    // to all_conversions_value when primary is zero (prevents micro-conversion inflation).
+    const roasConvValue    = convValue > 0 ? convValue : allConvValue
 
     return {
       connection_id:            connectionId,
@@ -1013,6 +1020,9 @@ export async function upsertAhrefsMetrics(
     referring_domains: r.referring_domains ?? null,
     organic_keywords:  r.organic_keywords  ?? null,
     organic_traffic:   r.organic_traffic   ?? null,
+    traffic_value:     r.traffic_value     ?? null,
+    paid_keywords:     r.paid_keywords     ?? null,
+    paid_traffic:      r.paid_traffic      ?? null,
     synced_at:         new Date().toISOString(),
   }))
   for (let i = 0; i < mapped.length; i += 200) {

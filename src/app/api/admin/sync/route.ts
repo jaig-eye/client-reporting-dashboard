@@ -5,6 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncClient } from '@/lib/sync'
 
+// Allow up to 5 minutes for large syncs (Vercel Pro: up to 900s)
+export const maxDuration = 300
+
 export async function POST(req: NextRequest) {
   // Auth check: must have admin_session cookie
   const session = req.cookies.get('admin_session')?.value
@@ -12,14 +15,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { clientId?: string; connectionId?: string; jobType?: string; days?: number }
+  let body: { clientId?: string; connectionId?: string; jobType?: string; days?: number; excludeGsc?: boolean }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const { clientId, connectionId, jobType, days } = body
+  const { clientId, connectionId, jobType, days, excludeGsc } = body
   if (!clientId) {
     return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
   }
@@ -34,7 +37,8 @@ export async function POST(req: NextRequest) {
       connectionId,
       undefined,
       undefined,
-      'admin'
+      'admin',
+      excludeGsc,
     )
     return NextResponse.json({ ok: true, records })
   } catch (err) {

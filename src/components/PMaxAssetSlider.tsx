@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import LightboxImage from './LightboxImage'
 
 const IMAGE_TYPES = new Set(['MARKETING_IMAGE', 'SQUARE_MARKETING_IMAGE', 'PORTRAIT_MARKETING_IMAGE'])
 const LOGO_TYPES  = new Set(['LOGO', 'LANDSCAPE_LOGO'])
@@ -15,22 +14,20 @@ interface PMaxAsset {
 }
 
 export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
-  const [index, setIndex] = useState(0)
-  // Track image IDs that failed to load so we can hide them
-  const [failed, setFailed] = useState<Set<string>>(new Set())
+  const [index,      setIndex]      = useState(0)
+  const [failed,     setFailed]     = useState<Set<string>>(new Set())
+  const [videoModal, setVideoModal] = useState<string | null>(null)
 
   const imageAssets = assets.filter(a => IMAGE_TYPES.has(a.field_type) && a.image_url)
   const logoAssets  = assets.filter(a => LOGO_TYPES.has(a.field_type)  && a.image_url)
   const videoAssets = assets.filter(a => a.field_type === 'YOUTUBE_VIDEO' && a.video_id)
 
-  // Working images — exclude ones that errored
   const workingImages = imageAssets.filter(a => !failed.has(a.asset_id))
 
   function markFailed(assetId: string) {
     setFailed(prev => { const next = new Set(prev); next.add(assetId); return next })
   }
 
-  // Clamp index to valid range when images disappear
   const clampedIndex = workingImages.length > 0 ? Math.min(index, workingImages.length - 1) : 0
 
   function prev() { setIndex(i => (i - 1 + workingImages.length) % workingImages.length) }
@@ -58,52 +55,49 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
             </p>
           ) : (
             <>
-              {/* Slide area */}
+              {/* Slide area — full width */}
               <div style={{
-                display: 'flex', alignItems: 'center', gap: '0.75rem',
-                padding: '0.5rem', background: 'var(--bg-subtle)',
-                borderRadius: 8, border: '1px solid var(--border)',
+                position: 'relative', borderRadius: 8, overflow: 'hidden',
+                border: '1px solid var(--border)', background: 'var(--bg-subtle)',
               }}>
-                {/* Prev */}
-                {workingImages.length > 1 && (
-                  <button
-                    onClick={prev}
-                    style={{
-                      flexShrink: 0, width: 32, height: 32, borderRadius: 16,
-                      border: '1px solid var(--border)', background: 'var(--bg-surface)',
-                      color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1rem',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                    aria-label="Previous image"
-                  >
-                    ‹
-                  </button>
-                )}
+                {/* Full-width image */}
+                <img
+                  src={workingImages[clampedIndex].image_url!}
+                  alt={workingImages[clampedIndex].field_type.replace(/_/g, ' ').toLowerCase()}
+                  style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }}
+                  onError={() => markFailed(workingImages[clampedIndex].asset_id)}
+                />
 
-                {/* Current image */}
-                <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minHeight: 140 }}>
-                  <LightboxImage
-                    src={workingImages[clampedIndex].image_url!}
-                    alt={workingImages[clampedIndex].field_type.replace(/_/g, ' ').toLowerCase()}
-                    width={220}
-                    height={160}
-                  />
-                </div>
-
-                {/* Next */}
+                {/* Prev / Next overlaid on image */}
                 {workingImages.length > 1 && (
-                  <button
-                    onClick={next}
-                    style={{
-                      flexShrink: 0, width: 32, height: 32, borderRadius: 16,
-                      border: '1px solid var(--border)', background: 'var(--bg-surface)',
-                      color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1rem',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                    aria-label="Next image"
-                  >
-                    ›
-                  </button>
+                  <>
+                    <button
+                      onClick={prev}
+                      style={{
+                        position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)',
+                        width: 32, height: 32, borderRadius: 16,
+                        border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.45)',
+                        color: '#fff', cursor: 'pointer', fontSize: '1.1rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      aria-label="Previous image"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      onClick={next}
+                      style={{
+                        position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)',
+                        width: 32, height: 32, borderRadius: 16,
+                        border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.45)',
+                        color: '#fff', cursor: 'pointer', fontSize: '1.1rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      aria-label="Next image"
+                    >
+                      ›
+                    </button>
+                  </>
                 )}
               </div>
 
@@ -143,12 +137,7 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
           {/* Hidden preload images — used to detect broken URLs client-side */}
           <div style={{ display: 'none' }}>
             {imageAssets.map(a => (
-              <img
-                key={a.asset_id}
-                src={a.image_url!}
-                alt=""
-                onError={() => markFailed(a.asset_id)}
-              />
+              <img key={a.asset_id} src={a.image_url!} alt="" onError={() => markFailed(a.asset_id)} />
             ))}
           </div>
         </div>
@@ -169,11 +158,7 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
                   padding: '0.5rem', background: 'var(--bg-base)',
                 }}
               >
-                <img
-                  src={a.image_url!}
-                  alt="logo"
-                  style={{ height: 48, objectFit: 'contain', display: 'block' }}
-                />
+                <img src={a.image_url!} alt="logo" style={{ height: 48, objectFit: 'contain', display: 'block' }} />
               </div>
             ))}
           </div>
@@ -188,12 +173,15 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
             {videoAssets.map(a => (
-              <a
+              <button
                 key={a.asset_id}
-                href={`https://www.youtube.com/watch?v=${a.video_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ display: 'block', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', width: 200, position: 'relative', textDecoration: 'none' }}
+                onClick={() => setVideoModal(a.video_id)}
+                style={{
+                  display: 'block', borderRadius: 8, overflow: 'hidden',
+                  border: '1px solid var(--border)', width: 200, position: 'relative',
+                  cursor: 'pointer', padding: 0, background: 'none',
+                }}
+                aria-label="Play video"
               >
                 <img
                   src={`https://img.youtube.com/vi/${a.video_id}/mqdefault.jpg`}
@@ -202,13 +190,47 @@ export default function PMaxAssetSlider({ assets }: { assets: PMaxAsset[] }) {
                 />
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
                   <div style={{ width: 40, height: 40, borderRadius: 20, background: 'rgba(255,255,255,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="#333">
-                      <polygon points="5,3 13,8 5,13" />
-                    </svg>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="#333"><polygon points="5,3 13,8 5,13" /></svg>
                   </div>
                 </div>
-              </a>
+              </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* YouTube video modal */}
+      {videoModal && (
+        <div
+          onClick={() => setVideoModal(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, padding: '1rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 800, borderRadius: 12, overflow: 'hidden', background: '#000', position: 'relative' }}
+          >
+            <button
+              onClick={() => setVideoModal(null)}
+              style={{
+                position: 'absolute', top: 8, right: 8, zIndex: 1,
+                background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+                width: 32, height: 32, color: '#fff', cursor: 'pointer', fontSize: 18,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              aria-label="Close video"
+            >
+              ×
+            </button>
+            <iframe
+              src={`https://www.youtube.com/embed/${videoModal}?autoplay=1`}
+              allow="autoplay; encrypted-media; fullscreen"
+              allowFullScreen
+              style={{ width: '100%', aspectRatio: '16/9', border: 'none', display: 'block' }}
+            />
           </div>
         </div>
       )}

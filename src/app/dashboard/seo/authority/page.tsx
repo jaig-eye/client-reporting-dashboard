@@ -43,7 +43,7 @@ export default async function AuthorityPage({
       .eq('client_id', client.id)
       .eq('status', 'active'),
     db.from('ahrefs_metrics')
-      .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic')
+      .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic, traffic_value, paid_keywords, paid_traffic')
       .eq('client_id', client.id)
       .gte('date', dateFrom)
       .lte('date', dateTo)
@@ -99,6 +99,9 @@ export default async function AuthorityPage({
   const blTrend  = trend.map(r => ({ v: r.backlinks         ?? 0 }))
   const rdTrend  = trend.map(r => ({ v: r.referring_domains ?? 0 }))
   const otTrend  = trend.map(r => ({ v: r.organic_traffic   ?? 0 }))
+  const tvTrend  = trend.map(r => ({ v: (r as Record<string, unknown>).traffic_value as number ?? 0 }))
+  const pkTrend  = trend.map(r => ({ v: (r as Record<string, unknown>).paid_keywords as number ?? 0 }))
+  const ptTrend  = trend.map(r => ({ v: (r as Record<string, unknown>).paid_traffic  as number ?? 0 }))
 
   // ── render ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +158,33 @@ export default async function AuthorityPage({
                 sparkData={otTrend}
               />
             </div>
+
+            {/* Extended metrics row (traffic value + paid) */}
+            {(() => {
+              const tv = (latest as Record<string, unknown> | undefined)?.traffic_value as number | null | undefined
+              const pk = (latest as Record<string, unknown> | undefined)?.paid_keywords as number | null | undefined
+              const pt = (latest as Record<string, unknown> | undefined)?.paid_traffic  as number | null | undefined
+              if (tv == null && pk == null && pt == null) return null
+              return (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                  <SparkMetricCard
+                    label="Traffic Value"
+                    value={tv != null ? `$${tv.toLocaleString()}` : '—'}
+                    sparkData={tvTrend}
+                  />
+                  <SparkMetricCard
+                    label="Paid Keywords"
+                    value={pk != null ? pk.toLocaleString() : '—'}
+                    sparkData={pkTrend}
+                  />
+                  <SparkMetricCard
+                    label="Paid Traffic"
+                    value={pt != null ? pt.toLocaleString() : '—'}
+                    sparkData={ptTrend}
+                  />
+                </div>
+              )
+            })()}
 
             {/* Snapshot info */}
             {latest ? (

@@ -200,10 +200,11 @@ export default async function CampaignDetailPage({
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
-      // Prefer all_conversions_value when available (captures all conversion types)
-      const cv = (r.all_conversions_value != null && Number(r.all_conversions_value) > 0)
-        ? Number(r.all_conversions_value)
-        : Number(r.conversions_value)||0
+      // Prefer primary conversions_value (matches Google Ads UI); only fall back to
+      // all_conversions_value when primary is zero (prevents micro-conversion inflation).
+      const cvPrimary = Number(r.conversions_value) || 0
+      const cvAll     = Number(r.all_conversions_value ?? 0)
+      const cv        = cvPrimary > 0 ? cvPrimary : cvAll
       upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
@@ -212,9 +213,9 @@ export default async function CampaignDetailPage({
       priorTotals.impressions     += Number(r.impressions)      || 0
       priorTotals.clicks          += Number(r.clicks)           || 0
       priorTotals.conversions     += Number(r.conversions)      || 0
-      priorTotals.conversionValue += (r.all_conversions_value != null && Number(r.all_conversions_value) > 0)
-        ? Number(r.all_conversions_value)
-        : Number(r.conversions_value) || 0
+      const pCvPrimary = Number(r.conversions_value) || 0
+      const pCvAll     = Number(r.all_conversions_value ?? 0)
+      priorTotals.conversionValue += pCvPrimary > 0 ? pCvPrimary : pCvAll
     }
   } else {
     // Fetch campaign-level rows for KPI totals/sparklines (matches dashboard source)

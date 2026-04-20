@@ -1,15 +1,27 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string }
 
 const SYNC_JOBS: SyncJob[] = [
-  { jobType: 'manual',   days: 30,  label: 'Sync 30 days'       },
-  { jobType: 'manual',   days: 90,  label: 'Sync 90 days'       },
-  { jobType: 'backfill',            label: 'Full backfill (2 yrs)' },
+  { jobType: 'manual',  days: 3,   label: 'Sync 3 days'          },
+  { jobType: 'manual',  days: 7,   label: 'Sync 7 days'          },
+  { jobType: 'manual',  days: 30,  label: 'Sync 30 days'         },
+  { jobType: 'manual',  days: 90,  label: 'Sync 90 days'         },
+  { jobType: 'backfill',           label: 'Full backfill (2 yrs)' },
 ]
+
+type JobStatus = {
+  id: string
+  source_label: string
+  status: 'running' | 'success' | 'error' | string
+  records_synced: number
+  started_at: string
+  completed_at: string | null
+  error_message: string | null
+}
 
 export default function ClientManualSync({ clientId }: { clientId: string }) {
   const router = useRouter()
@@ -18,22 +30,47 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
   const [error,       setError]       = useState('')
   const [activeLabel, setActiveLabel] = useState('')
   const [elapsed,     setElapsed]     = useState(0)
+  const [excludeGsc,  setExcludeGsc]  = useState(false)
+  const [jobStatuses, setJobStatuses] = useState<JobStatus[]>([])
+  const sinceRef  = useRef<string | null>(null)
+  const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isSyncing = status === 'syncing'
 
+  // Elapsed timer
   useEffect(() => {
     if (!isSyncing) { setElapsed(0); return }
     const id = setInterval(() => setElapsed(e => e + 1), 1000)
     return () => clearInterval(id)
   }, [isSyncing])
 
+  // Per-source polling
+  useEffect(() => {
+    if (!isSyncing) {
+      if (pollRef.current) clearInterval(pollRef.current)
+      return
+    }
+    pollRef.current = setInterval(async () => {
+      if (!sinceRef.current) return
+      try {
+        const res  = await fetch(`/api/admin/sync/status?clientId=${clientId}&since=${encodeURIComponent(sinceRef.current)}`)
+        if (!res.ok) return
+        const jobs = await res.json() as JobStatus[]
+        if (Array.isArray(jobs)) setJobStatuses(jobs)
+      } catch { /* ignore polling errors */ }
+    }, 2000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [isSyncing, clientId])
+
   async function handleSync(job: SyncJob) {
+    sinceRef.current  = new Date().toISOString()
     setStatus('syncing')
     setActiveLabel(job.label)
     setError('')
     setRecords(null)
+    setJobStatuses([])
     try {
-      const body: Record<string, unknown> = { clientId, jobType: job.jobType }
+      const body: Record<string, unknown> = { clientId, jobType: job.jobType, excludeGsc }
       if (job.days) body.days = job.days
       const res = await fetch('/api/admin/sync', {
         method: 'POST',
@@ -44,14 +81,23 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
       try {
         data = await res.json()
       } catch {
-        // Vercel returns a plain-text page on 504 timeout — not valid JSON
         throw new Error(
           res.status === 504
-            ? 'Sync timed out (>5 min). Data was partially saved. Try a shorter date range or sync a single connector.'
+            ? 'Sync timed out (>5 min). Data was partially saved. Try a shorter date range.'
             : `Server error (${res.status})`
         )
       }
       if (!res.ok) throw new Error(data.error || 'Sync failed')
+      // Final poll to get completed statuses
+      if (sinceRef.current) {
+        try {
+          const finalRes  = await fetch(`/api/admin/sync/status?clientId=${clientId}&since=${encodeURIComponent(sinceRef.current)}`)
+          if (finalRes.ok) {
+            const finalJobs = await finalRes.json() as JobStatus[]
+            if (Array.isArray(finalJobs)) setJobStatuses(finalJobs)
+          }
+        } catch { /* ignore */ }
+      }
       setRecords(data.records ?? 0)
       setStatus('done')
       router.refresh()
@@ -61,8 +107,16 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
     }
   }
 
+  function statusIcon(s: string) {
+    if (s === 'success') return <span style={{ color: 'var(--green)' }}>✓</span>
+    if (s === 'error')   return <span style={{ color: 'var(--red)' }}>✗</span>
+    if (s === 'running') return <span style={{ color: 'var(--blue)' }}>⏳</span>
+    return <span style={{ color: 'var(--text-faint)' }}>⬜</span>
+  }
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {/* Sync buttons */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         {SYNC_JOBS.map(job => (
           <button
@@ -77,25 +131,27 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
         ))}
       </div>
 
-      {/* Progress bar */}
+      {/* Skip GSC option */}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <input
+          type="checkbox"
+          checked={excludeGsc}
+          onChange={e => setExcludeGsc(e.target.checked)}
+          disabled={isSyncing}
+          style={{ width: 14, height: 14 }}
+        />
+        Skip Search Console (faster sync)
+      </label>
+
+      {/* Progress bar + per-source status */}
       {isSyncing && (
         <div>
-          {/* Indeterminate bar */}
           <div style={{
-            height: 4,
-            borderRadius: 2,
-            background: 'var(--bg-subtle)',
-            overflow: 'hidden',
-            position: 'relative',
+            height: 4, borderRadius: 2, background: 'var(--bg-subtle)', overflow: 'hidden', position: 'relative',
           }}>
             <div style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              height: '100%',
-              width: '40%',
-              background: 'var(--blue)',
-              borderRadius: 2,
+              position: 'absolute', top: 0, left: 0, height: '100%', width: '40%',
+              background: 'var(--blue)', borderRadius: 2,
               animation: 'syncSlide 1.4s ease-in-out infinite',
             }} />
           </div>
@@ -105,12 +161,35 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
               100% { transform: translateX(350%); }
             }
           `}</style>
-          <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
-            Syncing <strong>{activeLabel}</strong>… {elapsed}s elapsed. Do not close or refresh.
-          </p>
+
+          {/* Per-source rows */}
+          {jobStatuses.length > 0 ? (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {jobStatuses.map(j => (
+                <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}>
+                  {statusIcon(j.status)}
+                  <span style={{ color: 'var(--text-primary)', minWidth: 130 }}>{j.source_label}</span>
+                  {j.status === 'success' && (
+                    <span style={{ color: 'var(--text-muted)' }}>{(j.records_synced ?? 0).toLocaleString()} records</span>
+                  )}
+                  {j.status === 'running' && (
+                    <span style={{ color: 'var(--text-muted)' }}>running…</span>
+                  )}
+                  {j.status === 'error' && j.error_message && (
+                    <span style={{ color: 'var(--red)' }} title={j.error_message}>error</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
+              Syncing <strong>{activeLabel}</strong>… {elapsed}s elapsed. Do not close or refresh.
+            </p>
+          )}
         </div>
       )}
 
+      {/* Final status */}
       {status === 'done' && records !== null && (
         <p className="text-xs" style={{ color: 'var(--green)' }}>
           ✓ Done — {records.toLocaleString()} rows synced

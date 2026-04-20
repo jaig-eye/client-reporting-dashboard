@@ -107,7 +107,7 @@ export default async function SearchConsolePage({
   }
 
   // Fetch current and comparison period via Postgres RPC (avoids row-level timeout)
-  const [{ data: currRaw }, { data: compRaw }] = await Promise.all([
+  const [{ data: currRaw, error: currError }, { data: compRaw }] = await Promise.all([
     db.rpc('get_gsc_summary', {
       p_client_id: client.id,
       p_date_from: fmtDate(fromDate),
@@ -123,6 +123,18 @@ export default async function SearchConsolePage({
         })
       : Promise.resolve({ data: null }),
   ])
+
+  if (currError) {
+    console.error('[gsc-page] RPC error:', currError)
+    return (
+      <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <main className="max-w-7xl mx-auto px-6 py-8">
+          <EmptyState title="Search Console data unavailable" description={`Database function error: ${currError.message}. Run migration 059_gsc_summary_rpc.sql in Supabase or contact support.`} />
+        </main>
+      </div>
+    )
+  }
 
   const curr = currRaw as GscSummary | null
   const comp = compRaw as GscSummary | null

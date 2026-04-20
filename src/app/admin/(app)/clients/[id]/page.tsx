@@ -19,6 +19,7 @@ import ClientSyncButton from './ClientSyncButton'
 import ClientManualSync from './ClientManualSync'
 import EditClientInfo from './EditClientInfo'
 import DeleteClientButton from './DeleteClientButton'
+import DataPurgeButton from './DataPurgeButton'
 import ClientLogoUpload from './ClientLogoUpload'
 import ClientAdFuelCut from './ClientAdFuelCut'
 import ClientRawData from './ClientRawData'
@@ -501,8 +502,10 @@ export default async function ClientDetailPage({
             <ClientRawData clientId={id} />
           </div>
 
+          <DataPurgeButton clientId={id} />
+
           <div className="card p-5">
-            <h2 className="section-title mb-3">Danger Zone</h2>
+            <h2 className="section-title mb-3">Delete Client</h2>
             <p className="section-desc mb-3">Deleting this client will remove all their data sources and sync history. Metrics data is also removed.</p>
             <DeleteClientButton clientId={id} clientName={client.name} />
           </div>

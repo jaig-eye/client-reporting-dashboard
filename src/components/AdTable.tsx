@@ -552,7 +552,7 @@ export function AdRowTable({
               <img
                 src={previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!}
                 alt="ad creative"
-                style={{ width: '100%', maxHeight: 320, objectFit: 'cover', display: 'block' }}
+                style={{ width: '100%', aspectRatio: '4/5', objectFit: 'cover', display: 'block' }}
               />
             )}
 

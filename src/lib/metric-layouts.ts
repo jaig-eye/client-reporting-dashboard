@@ -123,7 +123,7 @@ export interface MetricLayouts {
 
 export const METRIC_LABELS: Record<MetricKey, string> = {
   spend:            'Total Cost',
-  leads:            'Leads',
+  leads:            'Conversions',
   conversions:      'Conversions',
   revenue:          'Revenue',
   roas:             'ROAS',

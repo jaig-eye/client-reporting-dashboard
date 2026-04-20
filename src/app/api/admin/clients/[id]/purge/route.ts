@@ -2,11 +2,55 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 
+const VALID_SOURCES = [
+  'google_ads',
+  'meta_ads',
+  'google_search_console',
+  'google_analytics_4',
+  'google_business',
+  'ahrefs',
+  'all',
+] as const
+type Source = typeof VALID_SOURCES[number]
+
+async function purgeSource(db: ReturnType<typeof createAdminClient>, clientId: string, source: Exclude<Source, 'all'>) {
+  const results: { table: string; count: number }[] = []
+
+  async function del(table: string) {
+    const { count } = await db.from(table).delete({ count: 'exact' }).eq('client_id', clientId)
+    results.push({ table, count: count ?? 0 })
+  }
+
+  if (source === 'google_ads') {
+    await del('google_ads_keywords')
+    await del('google_ads_negative_keywords')
+    await del('google_ads_asset_group_assets')
+    await del('google_ads_ad_metrics')
+    await del('google_ads_metrics')
+  } else if (source === 'meta_ads') {
+    await del('meta_ads_ad_metrics')
+    await del('meta_ads_metrics')
+  } else if (source === 'google_search_console') {
+    await del('gsc_metrics')
+  } else if (source === 'google_analytics_4') {
+    await del('ga4_metrics')
+  } else if (source === 'google_business') {
+    await del('gbp_metrics')
+  } else if (source === 'ahrefs') {
+    await del('ahrefs_keywords')
+    await del('ahrefs_pages')
+    await del('ahrefs_metrics')
+  }
+
+  return results
+}
+
 /**
- * DELETE /api/admin/clients/[id]/purge?source=meta_ads
+ * DELETE /api/admin/clients/[id]/purge?source=<source>
  *
- * Purges all metric data for a specific source type for this client.
- * Useful when data integrity issues require a clean re-sync.
+ * Purges all metric data for a specific source (or all sources) for this client.
+ * Valid sources: google_ads, meta_ads, google_search_console, google_analytics_4,
+ *                google_business, ahrefs, all
  */
 export async function DELETE(
   request: NextRequest,
@@ -18,33 +62,28 @@ export async function DELETE(
   }
 
   const { id } = await params
-  const source = request.nextUrl.searchParams.get('source')
+  const source = request.nextUrl.searchParams.get('source') as Source | null
 
-  if (!source || !['google_ads', 'meta_ads'].includes(source)) {
-    return NextResponse.json({ error: 'Invalid source. Must be google_ads or meta_ads' }, { status: 400 })
+  if (!source || !VALID_SOURCES.includes(source)) {
+    return NextResponse.json(
+      { error: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` },
+      { status: 400 }
+    )
   }
 
   const db = createAdminClient()
-  const results: { table: string; count: number }[] = []
+  let allResults: { table: string; count: number }[] = []
 
-  if (source === 'meta_ads') {
-    const { count: adCount } = await db.from('meta_ads_ad_metrics').delete({ count: 'exact' }).eq('client_id', id)
-    const { count: campCount } = await db.from('meta_ads_metrics').delete({ count: 'exact' }).eq('client_id', id)
-    results.push({ table: 'meta_ads_ad_metrics', count: adCount ?? 0 })
-    results.push({ table: 'meta_ads_metrics', count: campCount ?? 0 })
+  if (source === 'all') {
+    const sources = VALID_SOURCES.filter(s => s !== 'all') as Exclude<Source, 'all'>[]
+    for (const s of sources) {
+      const r = await purgeSource(db, id, s)
+      allResults = allResults.concat(r)
+    }
   } else {
-    const { count: kwCount } = await db.from('google_ads_keywords').delete({ count: 'exact' }).eq('client_id', id)
-    const { count: negCount } = await db.from('google_ads_negative_keywords').delete({ count: 'exact' }).eq('client_id', id)
-    const { count: assetCount } = await db.from('google_ads_asset_group_assets').delete({ count: 'exact' }).eq('client_id', id)
-    const { count: adCount } = await db.from('google_ads_ad_metrics').delete({ count: 'exact' }).eq('client_id', id)
-    const { count: campCount } = await db.from('google_ads_metrics').delete({ count: 'exact' }).eq('client_id', id)
-    results.push({ table: 'google_ads_keywords', count: kwCount ?? 0 })
-    results.push({ table: 'google_ads_negative_keywords', count: negCount ?? 0 })
-    results.push({ table: 'google_ads_asset_group_assets', count: assetCount ?? 0 })
-    results.push({ table: 'google_ads_ad_metrics', count: adCount ?? 0 })
-    results.push({ table: 'google_ads_metrics', count: campCount ?? 0 })
+    allResults = await purgeSource(db, id, source)
   }
 
-  const totalPurged = results.reduce((t, r) => t + r.count, 0)
-  return NextResponse.json({ success: true, source, totalPurged, details: results })
+  const totalPurged = allResults.reduce((t, r) => t + r.count, 0)
+  return NextResponse.json({ success: true, source, totalPurged, details: allResults })
 }

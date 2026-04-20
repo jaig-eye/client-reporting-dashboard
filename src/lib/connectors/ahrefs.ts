@@ -27,6 +27,9 @@ interface AhrefsRawRow {
   referring_domains: number | null
   organic_keywords:  number | null
   organic_traffic:   number | null
+  traffic_value?:    number | null
+  paid_keywords?:    number | null
+  paid_traffic?:     number | null
 }
 
 export interface AhrefsKeywordRow {
@@ -166,14 +169,14 @@ export const ahrefsConnector: ConnectorAdapter = {
     }
 
     // ── Metrics history (weekly snapshots — backlinks, ref domains, organic)
-    let metricsPoints: { date: string; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number }[] = []
+    let metricsPoints: { date: string; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number }[] = []
     try {
       const metricsHistory = await ahrefsGet('/site-explorer/metrics-history', apiKey, {
         target:           domain,
         date_from:        dateFrom,
         date_to:          dateTo,
         history_grouping: 'weekly',
-        select:           'backlinks,refdomains,org_keywords,org_traffic',
+        select:           'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
       })
       console.log('[ahrefs] metrics-history keys:', Object.keys(metricsHistory ?? {}))
       console.log('[ahrefs] metrics-history sample:', JSON.stringify(metricsHistory).slice(0, 600))
@@ -193,20 +196,26 @@ export const ahrefsConnector: ConnectorAdapter = {
       try {
         const mSnap = await ahrefsGet('/site-explorer/metrics', apiKey, {
           target: domain, date: dateTo,
-          select: 'backlinks,refdomains,org_keywords,org_traffic',
+          select: 'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
         })
         const mData = (mSnap.metrics as Record<string, unknown> | null) ?? mSnap
-        const snapBl  = typeof mData.backlinks    === 'number' ? mData.backlinks    : null
-        const snapRd  = typeof mData.refdomains   === 'number' ? mData.refdomains   : null
-        const snapKw  = typeof mData.org_keywords === 'number' ? mData.org_keywords : null
-        const snapTr  = typeof mData.org_traffic  === 'number' ? mData.org_traffic  : null
+        const snapBl  = typeof mData.backlinks     === 'number' ? mData.backlinks     : null
+        const snapRd  = typeof mData.refdomains    === 'number' ? mData.refdomains    : null
+        const snapKw  = typeof mData.org_keywords  === 'number' ? mData.org_keywords  : null
+        const snapTr  = typeof mData.org_traffic   === 'number' ? mData.org_traffic   : null
+        const snapOc  = typeof mData.org_cost      === 'number' ? mData.org_cost      : null
+        const snapPk  = typeof mData.paid_keywords === 'number' ? mData.paid_keywords : null
+        const snapPt  = typeof mData.paid_traffic  === 'number' ? mData.paid_traffic  : null
         if (snapBl !== null || snapRd !== null) {
           metricsPoints = [{
-            date:       dateTo,
-            backlinks:  snapBl  ?? undefined,
-            refdomains: snapRd  ?? undefined,
-            org_keywords: snapKw ?? undefined,
-            org_traffic:  snapTr ?? undefined,
+            date:          dateTo,
+            backlinks:     snapBl  ?? undefined,
+            refdomains:    snapRd  ?? undefined,
+            org_keywords:  snapKw  ?? undefined,
+            org_traffic:   snapTr  ?? undefined,
+            org_cost:      snapOc  ?? undefined,
+            paid_keywords: snapPk  ?? undefined,
+            paid_traffic:  snapPt  ?? undefined,
           }]
           console.log('[ahrefs] supplemental snapshot metrics:', { backlinks: snapBl, refdomains: snapRd })
         }
@@ -224,30 +233,36 @@ export const ahrefsConnector: ConnectorAdapter = {
         const diff = Math.abs(new Date(m.date).getTime() - drMs)
         if (diff < bestDiff && diff <= 3 * 86_400_000) { best = m; bestDiff = diff }
       }
-      return best ?? ({} as { backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number })
+      return best ?? ({} as { backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number })
     }
     let rows: AhrefsRawRow[] = drPoints.map(dr => {
       const m = findNearestMetrics(dr.date)
       return {
         date:              dr.date,
-        domain_rating:     typeof dr.domain_rating === 'number' ? dr.domain_rating : null,
-        ahrefs_rank:       typeof dr.ahrefs_rank   === 'number' ? dr.ahrefs_rank   : null,
-        backlinks:         typeof m.backlinks       === 'number' ? m.backlinks      : null,
-        referring_domains: typeof m.refdomains      === 'number' ? m.refdomains     : null,
-        organic_keywords:  typeof m.org_keywords    === 'number' ? m.org_keywords   : null,
-        organic_traffic:   typeof m.org_traffic     === 'number' ? m.org_traffic    : null,
+        domain_rating:     typeof dr.domain_rating  === 'number' ? dr.domain_rating  : null,
+        ahrefs_rank:       typeof dr.ahrefs_rank    === 'number' ? dr.ahrefs_rank    : null,
+        backlinks:         typeof m.backlinks        === 'number' ? m.backlinks       : null,
+        referring_domains: typeof m.refdomains       === 'number' ? m.refdomains      : null,
+        organic_keywords:  typeof m.org_keywords     === 'number' ? m.org_keywords    : null,
+        organic_traffic:   typeof m.org_traffic      === 'number' ? m.org_traffic     : null,
+        traffic_value:     typeof m.org_cost         === 'number' ? m.org_cost        : null,
+        paid_keywords:     typeof m.paid_keywords    === 'number' ? m.paid_keywords   : null,
+        paid_traffic:      typeof m.paid_traffic     === 'number' ? m.paid_traffic    : null,
       }
     }).filter(r => r.domain_rating !== null || r.backlinks !== null)
 
     // ── Fallback: history endpoints returned nothing — write a single snapshot
     if (rows.length === 0) {
       console.warn(`[ahrefs] History endpoints returned no rows for ${domain} — falling back to single snapshot`)
-      let domainRating: number | null = null
-      let ahrefsRank:   number | null = null
-      let backlinks:    number | null = null
-      let referringDoms: number | null = null
+      let domainRating:    number | null = null
+      let ahrefsRank:      number | null = null
+      let backlinks:       number | null = null
+      let referringDoms:   number | null = null
       let organicKeywords: number | null = null
       let organicTraffic:  number | null = null
+      let trafficValue:    number | null = null
+      let paidKeywords:    number | null = null
+      let paidTraffic:     number | null = null
 
       try {
         const drData = await ahrefsGet('/site-explorer/domain-rating', apiKey, { target: domain, date: dateTo })
@@ -261,20 +276,24 @@ export const ahrefsConnector: ConnectorAdapter = {
 
       try {
         const mData = await ahrefsGet('/site-explorer/metrics', apiKey, {
-          target: domain, date: dateTo, select: 'backlinks,refdomains,org_keywords,org_traffic',
+          target: domain, date: dateTo, select: 'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
         })
         const m = (mData.metrics as Record<string, unknown> | null) ?? mData
-        backlinks       = typeof m.backlinks    === 'number' ? m.backlinks    : null
-        referringDoms   = typeof m.refdomains   === 'number' ? m.refdomains   : null
-        organicKeywords = typeof m.org_keywords === 'number' ? m.org_keywords : null
-        organicTraffic  = typeof m.org_traffic  === 'number' ? m.org_traffic  : null
+        backlinks       = typeof m.backlinks     === 'number' ? m.backlinks     : null
+        referringDoms   = typeof m.refdomains    === 'number' ? m.refdomains    : null
+        organicKeywords = typeof m.org_keywords  === 'number' ? m.org_keywords  : null
+        organicTraffic  = typeof m.org_traffic   === 'number' ? m.org_traffic   : null
+        trafficValue    = typeof m.org_cost      === 'number' ? m.org_cost      : null
+        paidKeywords    = typeof m.paid_keywords === 'number' ? m.paid_keywords : null
+        paidTraffic     = typeof m.paid_traffic  === 'number' ? m.paid_traffic  : null
       } catch (e) {
         console.error(`[ahrefs] Metrics fallback failed for ${domain}:`, e)
       }
 
       if (domainRating !== null || backlinks !== null) {
         rows = [{ date: dateTo, domain_rating: domainRating, ahrefs_rank: ahrefsRank,
-          backlinks, referring_domains: referringDoms, organic_keywords: organicKeywords, organic_traffic: organicTraffic }]
+          backlinks, referring_domains: referringDoms, organic_keywords: organicKeywords, organic_traffic: organicTraffic,
+          traffic_value: trafficValue, paid_keywords: paidKeywords, paid_traffic: paidTraffic }]
       }
     }
 
