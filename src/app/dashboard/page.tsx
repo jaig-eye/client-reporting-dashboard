@@ -381,11 +381,15 @@ export default async function DashboardPage({
     googleTotal.impressions += Number(row.impressions) || 0
     googleTotal.convValue   += Number(row.conversions_value) || 0
   }
-  let metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0 }
+  let metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0, reach: 0, frequency: 0 }
   for (const row of (mRes.data ?? []) as Record<string, unknown>[]) {
-    metaTotal.spend       += Number(row.spend) || 0
-    metaTotal.impressions += Number(row.impressions) || 0
-    metaTotal.clicks      += Number(row.clicks) || 0
+    metaTotal.spend       += Number(row.spend)            || 0
+    metaTotal.impressions += Number(row.impressions)      || 0
+    metaTotal.clicks      += Number(row.clicks)           || 0
+    metaTotal.conversions += Number(row.conversions)      || 0
+    metaTotal.convValue   += Number(row.conversion_value) || 0
+    metaTotal.reach       += Number(row.reach)            || 0
+    metaTotal.frequency   += Number(row.frequency)        || 0
   }
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────
@@ -393,13 +397,13 @@ export default async function DashboardPage({
   const mSpend = adFuelCut > 0 ? applyAdFuel(metaTotal.spend, adFuelCut) : metaTotal.spend
   const googleCardMap: Record<string, string> = {
     spend:       fmt$(gSpend),
-    conversions: fmtNum(googleTotal.conversions),
-    revenue:     fmt$(googleTotal.convValue),
-    clicks:      fmtNum(googleTotal.clicks),
-    impressions: fmtNum(googleTotal.impressions),
+    conversions: googleTotal.conversions > 0 ? fmtNum(googleTotal.conversions) : '—',
+    revenue:     googleTotal.convValue > 0 ? fmt$(googleTotal.convValue) : '—',
+    clicks:      googleTotal.clicks > 0 ? fmtNum(googleTotal.clicks) : '—',
+    impressions: googleTotal.impressions > 0 ? fmtNum(googleTotal.impressions) : '—',
     ctr:         googleTotal.impressions > 0 ? fmtPct(googleTotal.clicks / googleTotal.impressions) : '—',
     cpa:         googleTotal.conversions > 0 ? fmtCurrency(gSpend / googleTotal.conversions) : '—',
-    roas:        gSpend > 0 ? fmtRoas(googleTotal.convValue / gSpend) : '—',
+    roas:        gSpend > 0 && googleTotal.convValue > 0 ? fmtRoas(googleTotal.convValue / gSpend) : '—',
     cpm:         googleTotal.impressions > 0 ? fmtCurrency((gSpend / googleTotal.impressions) * 1000) : '—',
     cpc:         googleTotal.clicks > 0 ? fmtCurrency(gSpend / googleTotal.clicks) : '—',
     reach:       '—',
@@ -410,14 +414,14 @@ export default async function DashboardPage({
     impressions: fmtNum(metaTotal.impressions),
     clicks:      fmtNum(metaTotal.clicks),
     ctr:         metaTotal.impressions > 0 ? fmtPct(metaTotal.clicks / metaTotal.impressions) : '—',
-    conversions: '—',
-    revenue:     '—',
-    cpa:         '—',
-    roas:        '—',
+    conversions: metaTotal.conversions > 0 ? fmtNum(metaTotal.conversions) : '—',
+    revenue:     metaTotal.convValue > 0 ? fmt$(metaTotal.convValue) : '—',
+    cpa:         metaTotal.conversions > 0 ? fmtCurrency(mSpend / metaTotal.conversions) : '—',
+    roas:        mSpend > 0 && metaTotal.convValue > 0 ? fmtRoas(metaTotal.convValue / mSpend) : '—',
     cpm:         metaTotal.impressions > 0 ? fmtCurrency((mSpend / metaTotal.impressions) * 1000) : '—',
     cpc:         metaTotal.clicks > 0 ? fmtCurrency(mSpend / metaTotal.clicks) : '—',
-    reach:       '—',
-    frequency:   '—',
+    reach:       metaTotal.reach > 0 ? fmtNum(metaTotal.reach) : '—',
+    frequency:   metaTotal.frequency > 0 ? metaTotal.frequency.toFixed(2) : '—',
   }
 
   // ─── Empty state — no connections ────────────────────────────────────────
@@ -502,6 +506,14 @@ export default async function DashboardPage({
         )}
 
         <>
+            {/* ── Paid Advertising section label (overview only) ────────────── */}
+            {!isFiltered && (hasGoogle || hasMeta) && (
+              <div>
+                <h2 className="section-title">Paid Advertising</h2>
+                <p className="section-desc">Performance across all paid channels</p>
+              </div>
+            )}
+
             {/* ── KPI cards (sparklines) — driven by activeLayout.kpi_cards ─── */}
             <div className={`grid grid-cols-2 lg:grid-cols-${activeLayout.kpi_cards.length || 3} gap-4`}>
               {activeLayout.kpi_cards.map((key, i) => {
@@ -611,7 +623,6 @@ export default async function DashboardPage({
             {/* ── Platform cards (overview mode) ───────────────────── */}
             {!isFiltered && (hasGoogle || hasMeta) && (
               <div>
-                <h2 className="section-title mb-3">Paid Advertising</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {hasGoogle && (
                     <a href="?source=google_ads" style={{ textDecoration: 'none' }}>
@@ -726,15 +737,34 @@ export default async function DashboardPage({
         {/* ── Connection summary cards (summary / overview only) ── */}
         {!isFiltered && (
           <>
+            {/* Analytics — GA4 */}
             {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
-              <GA4SummaryCard
-                clientId={client.id}
-                connectionId={connectionsBySource['google_analytics']}
-                dateFrom={fmtDate(fromDate)}
-                dateTo={fmtDate(toDate)}
-                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
-                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
-              />
+              <>
+                <div>
+                  <h2 className="section-title">Analytics</h2>
+                  <p className="section-desc">Sessions, users, and engagement from Google Analytics</p>
+                </div>
+                <GA4SummaryCard
+                  clientId={client.id}
+                  connectionId={connectionsBySource['google_analytics']}
+                  dateFrom={fmtDate(fromDate)}
+                  dateTo={fmtDate(toDate)}
+                  compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                  compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
+                />
+              </>
+            )}
+
+            {/* SEO — Search Console, Business Profile, Ahrefs (grouped together) */}
+            {(
+              (availableSources.includes('google_search_console') && connectionsBySource['google_search_console']) ||
+              (availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile']) ||
+              (availableSources as string[]).includes('ahrefs')
+            ) && (
+              <div>
+                <h2 className="section-title">SEO</h2>
+                <p className="section-desc">Organic search, local visibility, and domain authority</p>
+              </div>
             )}
             {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
               <GSCSummaryCard

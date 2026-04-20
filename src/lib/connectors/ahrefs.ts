@@ -215,10 +215,19 @@ export const ahrefsConnector: ConnectorAdapter = {
       }
     }
 
-    // ── Merge DR + metrics by date
-    const metricsMap = new Map(metricsPoints.map(m => [m.date, m]))
+    // ── Merge DR + metrics by date (nearest-date within ±3 days to handle weekly offset)
+    function findNearestMetrics(drDate: string) {
+      const drMs = new Date(drDate).getTime()
+      let best: (typeof metricsPoints)[0] | undefined
+      let bestDiff = Infinity
+      for (const m of metricsPoints) {
+        const diff = Math.abs(new Date(m.date).getTime() - drMs)
+        if (diff < bestDiff && diff <= 3 * 86_400_000) { best = m; bestDiff = diff }
+      }
+      return best ?? ({} as { backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number })
+    }
     let rows: AhrefsRawRow[] = drPoints.map(dr => {
-      const m = metricsMap.get(dr.date) ?? {} as { backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number }
+      const m = findNearestMetrics(dr.date)
       return {
         date:              dr.date,
         domain_rating:     typeof dr.domain_rating === 'number' ? dr.domain_rating : null,

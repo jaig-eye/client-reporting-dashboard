@@ -12,6 +12,7 @@ import DateRangePicker               from '@/components/DateRangePicker'
 import AdminDateSync                 from './AdminDateSync'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
 import type { AgencySettings }       from '@/lib/types'
+import { resolveMetaConversions }    from '@/lib/metrics'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,9 +58,10 @@ export default async function AdminOverviewPage({
     googleMetricsRes,
     metaMetricsRes,
     settingsRes,
+    campaignAssignmentsRes,
   ] = await Promise.all([
     db.from('clients')
-      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks')
+      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback')
       .order('name'),
 
     db.from('client_connections')
@@ -78,13 +80,17 @@ export default async function AdminOverviewPage({
       .lte('date', dateTo),
 
     db.from('meta_ads_metrics')
-      .select('client_id, spend, clicks, impressions, conversions')
+      .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
       .gte('date', dateFrom)
       .lte('date', dateTo),
 
     db.from('agency_settings')
-      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, overview_columns')
+      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, overview_columns, default_lead_action, default_lead_action_fallback, default_purchase_action, default_purchase_action_fallback')
       .single(),
+
+    db.from('client_campaign_assignments')
+      .select('client_id, campaign_id, display_mode')
+      .eq('source', 'meta_ads'),
   ])
 
   interface ConnRow {
@@ -104,6 +110,8 @@ export default async function AdminOverviewPage({
     benchmark_roas?: number | null; benchmark_ctr?: number | null
     benchmark_cpc?: number | null; benchmark_conv_rate?: number | null
     enabled_benchmarks?: string[] | null
+    lead_action?: string | null; lead_action_fallback?: string | null
+    purchase_action?: string | null; purchase_action_fallback?: string | null
   }
 
   const clients     = (clientsRes.data     ?? []) as ClientRow[]
@@ -111,14 +119,36 @@ export default async function AdminOverviewPage({
   const syncJobs    = (syncJobsRes.data    ?? []) as SyncJobRow[]
   const googleRows  = googleMetricsRes.data ?? []
   const metaRows    = metaMetricsRes.data   ?? []
-  const globalSettings = (settingsRes.data as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate'> | null) ?? {
+  const rawSettings = settingsRes.data as Record<string, unknown> | null
+  const globalSettings = (rawSettings as Pick<AgencySettings, 'benchmark_roas' | 'benchmark_ctr' | 'benchmark_cpc' | 'benchmark_conv_rate'> | null) ?? {
     benchmark_roas: 3.0, benchmark_ctr: 0.03, benchmark_cpc: 3.0, benchmark_conv_rate: 0.03,
   }
+  const defaultLeadAction         = (rawSettings?.default_lead_action         as string | null) ?? 'onsite_conversion.lead_grouped'
+  const defaultLeadFallback       = (rawSettings?.default_lead_action_fallback as string | null) ?? 'lead'
+  const defaultPurchaseAction     = (rawSettings?.default_purchase_action      as string | null) ?? 'purchase'
+  const defaultPurchaseFallback   = (rawSettings?.default_purchase_action_fallback as string | null) ?? null
   const DEFAULT_COLS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
-  const overviewCols: string[] = Array.isArray((settingsRes.data as Record<string, unknown> | null)?.overview_columns)
-    ? (settingsRes.data as Record<string, unknown>).overview_columns as string[]
+  const overviewCols: string[] = Array.isArray(rawSettings?.overview_columns)
+    ? rawSettings!.overview_columns as string[]
     : DEFAULT_COLS
-  const showCol = (col: string) => overviewCols.includes(col)
+
+  // Campaign display_mode map: `${clientId}:${campaignId}` → 'ecommerce' | 'lead_gen'
+  const campaignModeMap = new Map<string, string>()
+  for (const a of (campaignAssignmentsRes.data ?? []) as { client_id: string; campaign_id: string; display_mode: string }[]) {
+    campaignModeMap.set(`${a.client_id}:${a.campaign_id}`, a.display_mode)
+  }
+
+  // Build per-client conversion action config (client override → agency default)
+  const clientConfigMap = new Map<string, { leadAction: string; leadFallback: string | null; purchaseAction: string; purchaseFallback: string | null }>()
+  for (const c of clients) {
+    clientConfigMap.set(c.id, {
+      leadAction:      c.lead_action      ?? defaultLeadAction,
+      leadFallback:    c.lead_action_fallback  ?? defaultLeadFallback,
+      purchaseAction:  c.purchase_action   ?? defaultPurchaseAction,
+      purchaseFallback: c.purchase_action_fallback ?? defaultPurchaseFallback,
+    })
+  }
+
 
   // Group connections by client_id
   const connsByClient = new Map<string, ConnRow[]>()
@@ -150,7 +180,7 @@ export default async function AdminOverviewPage({
     m.impressions += (row.impressions       as number) ?? 0
   }
 
-  // Aggregate Meta Ads metrics per client
+  // Aggregate Meta Ads metrics per client — apply per-client conversion mapping
   const metaByClient = new Map<string, { spend: number; clicks: number; conv: number; impressions: number }>()
   for (const row of metaRows) {
     const cid = row.client_id as string
@@ -158,8 +188,22 @@ export default async function AdminOverviewPage({
     const m = metaByClient.get(cid)!
     m.spend       += (row.spend        as number) ?? 0
     m.clicks      += (row.clicks       as number) ?? 0
-    m.conv        += (row.conversions  as number) ?? 0
     m.impressions += (row.impressions  as number) ?? 0
+    // Apply client-specific conversion mapping (same logic as client dashboard)
+    const cfg      = clientConfigMap.get(cid)
+    const campMode = campaignModeMap.get(`${cid}:${row.campaign_id as string}`) ?? 'lead_gen'
+    const isEcom   = campMode === 'ecommerce'
+    const primary  = isEcom ? (cfg?.purchaseAction  ?? defaultPurchaseAction)  : (cfg?.leadAction    ?? defaultLeadAction)
+    const fallback = isEcom ? (cfg?.purchaseFallback ?? defaultPurchaseFallback) : (cfg?.leadFallback ?? defaultLeadFallback)
+    if (Array.isArray(row.actions)) {
+      const resolved = resolveMetaConversions(
+        row.actions as { action_type: string; value: string }[],
+        (row.action_values as { action_type: string; value: string }[] | null) ?? [],
+        primary,
+        fallback,
+      )
+      m.conv += resolved.conversions
+    }
   }
 
   // Summary totals
@@ -297,15 +341,18 @@ export default async function AdminOverviewPage({
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <SortableTh col="name"        label="Client"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                  <SortableTh col="name" label="Client" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                   <th style={TH_STYLE}>Sources</th>
-                  {showCol('spend')       && <SortableTh col="spend"       label="Spend"       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('roas_cpl')    && <SortableTh col="roas_cpl"    label="ROAS / CPL"  sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('conversions') && <SortableTh col="conversions" label="Conv."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('ctr')         && <SortableTh col="ctr"         label="CTR"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('clicks')      && <SortableTh col="clicks"      label="Clicks"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('impressions') && <SortableTh col="impressions" label="Impr."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />}
-                  {showCol('sync_status') && <th style={TH_STYLE}>Sync</th>}
+                  {overviewCols.map(col => {
+                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas_cpl"    label="ROAS / CPL" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"        sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
+                    return null
+                  })}
                   <th style={TH_STYLE}></th>
                 </tr>
               </thead>
@@ -354,66 +401,57 @@ export default async function AdminOverviewPage({
                         )}
                       </td>
 
-                      {/* Spend */}
-                      {showCol('spend') && (
-                        <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
-                        </td>
-                      )}
-
-                      {/* ROAS / CPL */}
-                      {showCol('roas_cpl') && (
-                        <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.showRoas && row.roas !== null
-                            ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
-                            : row.cpl !== null
-                              ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
-                              : <Dash />
-                          }
-                        </td>
-                      )}
-
-                      {/* Conversions */}
-                      {showCol('conversions') && (
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
-                        </td>
-                      )}
-
-                      {/* CTR */}
-                      {showCol('ctr') && (
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
-                        </td>
-                      )}
-
-                      {/* Clicks */}
-                      {showCol('clicks') && (
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.clicks > 0 ? row.clicks.toLocaleString() : <Dash />}
-                        </td>
-                      )}
-
-                      {/* Impressions */}
-                      {showCol('impressions') && (
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.impressions > 0 ? row.impressions.toLocaleString() : <Dash />}
-                        </td>
-                      )}
-
-                      {/* Sync status — dot only, no date */}
-                      {showCol('sync_status') && (
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <span style={{ width: 9, height: 9, borderRadius: '50%', background: syncDot, display: 'inline-block', flexShrink: 0 }} />
-                            {row.syncErrCount > 0 && (
-                              <span style={{ background: 'var(--red-subtle)', color: 'var(--red)', borderRadius: 4, padding: '0 0.3rem', fontSize: '0.6875rem', fontWeight: 600 }}>
-                                {row.syncErrCount}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      )}
+                      {/* Dynamic columns in saved order */}
+                      {overviewCols.map(col => {
+                        if (col === 'spend') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
+                          </td>
+                        )
+                        if (col === 'roas_cpl') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.showRoas && row.roas !== null
+                              ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
+                              : row.cpl !== null
+                                ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
+                                : <Dash />
+                            }
+                          </td>
+                        )
+                        if (col === 'conversions') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
+                          </td>
+                        )
+                        if (col === 'ctr') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
+                          </td>
+                        )
+                        if (col === 'clicks') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.clicks > 0 ? row.clicks.toLocaleString() : <Dash />}
+                          </td>
+                        )
+                        if (col === 'impressions') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.impressions > 0 ? row.impressions.toLocaleString() : <Dash />}
+                          </td>
+                        )
+                        if (col === 'sync_status') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span style={{ width: 9, height: 9, borderRadius: '50%', background: syncDot, display: 'inline-block', flexShrink: 0 }} />
+                              {row.syncErrCount > 0 && (
+                                <span style={{ background: 'var(--red-subtle)', color: 'var(--red)', borderRadius: 4, padding: '0 0.3rem', fontSize: '0.6875rem', fontWeight: 600 }}>
+                                  {row.syncErrCount}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )
+                        return null
+                      })}
 
                       {/* Actions — gear icon */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
