@@ -351,7 +351,7 @@ export default async function DashboardPage({
         convRate:        c.clicks > 0 ? c.conversions / c.clicks : 0,
         cpl:             c.conversions > 0 ? cost / c.conversions : 0,
         display_mode:    c.display_mode,
-        daily_budget:    c.daily_budget ?? null,
+        daily_budget:    c.daily_budget != null ? (adFuelCut > 0 ? applyAdFuel(c.daily_budget, adFuelCut) : c.daily_budget) : null,
       }
     })
     .sort((a, b) => b.spend - a.spend)
