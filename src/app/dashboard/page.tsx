@@ -19,7 +19,7 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import { resolveLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
+import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
@@ -150,6 +150,11 @@ export default async function DashboardPage({
 
   // Resolve active metric layout (agency default → client override → built-in)
   const activeLayout = resolveLayout(
+    (settings.metric_layouts as MetricLayouts | null | undefined),
+    (client.metric_layout_override as MetricLayouts | null | undefined),
+    isEcomDash
+  )
+  const paidAdsLayout = resolvePaidAdsLayout(
     (settings.metric_layouts as MetricLayouts | null | undefined),
     (client.metric_layout_override as MetricLayouts | null | undefined),
     isEcomDash
@@ -635,12 +640,12 @@ export default async function DashboardPage({
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
                         {(() => {
-                          const keys = activeLayout.platform_google_metrics ?? ['spend', 'conversions', 'ctr']
+                          const keys = paidAdsLayout.kpi_cards
                           return (
                             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
                               {keys.map(k => (
                                 <div key={k}>
-                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
                                   <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{googleCardMap[k] ?? '—'}</p>
                                 </div>
                               ))}
@@ -661,12 +666,12 @@ export default async function DashboardPage({
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
                         {(() => {
-                          const keys = activeLayout.platform_meta_metrics ?? ['spend', 'impressions', 'ctr']
+                          const keys = paidAdsLayout.kpi_cards
                           return (
                             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
                               {keys.map(k => (
                                 <div key={k}>
-                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
                                   <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{metaCardMap[k] ?? '—'}</p>
                                 </div>
                               ))}

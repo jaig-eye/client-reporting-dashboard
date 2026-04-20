@@ -45,6 +45,13 @@ export const BACKFILL_DAYS = 730
  */
 export const INCREMENTAL_DAYS = 3
 
+/**
+ * Days re-synced for GSC on incremental runs.
+ * GSC data is query×page dimensional — even 3 days can be 50K+ rows on large sites.
+ * Incremental syncs use ignoreDuplicates=true so only net-new rows are written.
+ */
+export const GSC_INCREMENTAL_DAYS = 2
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main sync entry points
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,8 +227,14 @@ export async function syncClient(
       } else if (connection.connector.type === 'google_search_console') {
         // Bypass the pre-fetched result — fetch in 30-day chunks to avoid timeouts
         // on large sites during backfills. Each chunk is upserted immediately.
+        // Incremental syncs use a 2-day window and skip existing rows (ignoreDuplicates).
+        let gscFrom = resolvedFrom
+        if (jobType === 'incremental') {
+          const d = new Date(); d.setDate(d.getDate() - GSC_INCREMENTAL_DAYS)
+          gscFrom = d.toISOString().split('T')[0]
+        }
         recordCount = await syncGSCInChunks(
-          db, adapter, connection, auth, resolvedFrom, resolvedTo, clientId
+          db, adapter, connection, auth, gscFrom, resolvedTo, clientId, jobType
         )
       } else if (connection.connector.type === 'google_business_profile') {
         recordCount = await upsertGBPMetrics(
@@ -288,6 +301,7 @@ const GSC_CHUNK_DAYS = 30
 /**
  * Fetches GSC data in 30-day windows and upserts each chunk immediately.
  * Prevents memory bloat and timeouts on large sites during backfills.
+ * Incremental syncs use ignoreDuplicates=true — only net-new rows are written.
  */
 async function syncGSCInChunks(
   db:           ReturnType<typeof createAdminClient>,
@@ -296,8 +310,10 @@ async function syncGSCInChunks(
   auth:         Record<string, unknown>,
   dateFrom:     string,
   dateTo:       string,
-  clientId:     string
+  clientId:     string,
+  jobType:      SyncJobType = 'manual'
 ): Promise<number> {
+  const ignoreDuplicates = jobType === 'incremental'
   let total      = 0
   let chunkStart = new Date(dateFrom)
   const end      = new Date(dateTo)
@@ -317,10 +333,11 @@ async function syncGSCInChunks(
     if (chunkResult.rows.length > 0) {
       total += await upsertGSCMetrics(
         db, connection.id, clientId,
-        chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[]
+        chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[],
+        ignoreDuplicates
       )
     }
-    console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
+    console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows (ignoreDuplicates=${ignoreDuplicates})`)
 
     chunkStart = new Date(chunkEnd)
     chunkStart.setDate(chunkStart.getDate() + 1)
@@ -905,7 +922,8 @@ export async function upsertGSCMetrics(
   db: ReturnType<typeof createAdminClient>,
   connectionId: string,
   clientId: string,
-  rows: import('./connectors/google-search-console').GSCRawRow[]
+  rows: import('./connectors/google-search-console').GSCRawRow[],
+  ignoreDuplicates = false
 ): Promise<number> {
   const valid = rows.filter(r => r.date)
   if (!valid.length) return 0
@@ -929,7 +947,7 @@ export async function upsertGSCMetrics(
       .from('gsc_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,date,query,page',
-        ignoreDuplicates: false,
+        ignoreDuplicates,
       })
     if (error) console.error(`[sync] gsc_metrics upsert error (batch ${i}):`, error)
   }

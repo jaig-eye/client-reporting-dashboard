@@ -152,7 +152,7 @@ export const DEFAULT_METRIC_LAYOUTS: MetricLayouts = {
     top_metrics:            ['impressions', 'clicks', 'ctr', 'conv_rate'],
     table_columns:          ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa', 'daily_budget'],
     platform_google_metrics: ['spend', 'conversions', 'ctr'],
-    platform_meta_metrics:   ['spend', 'impressions', 'ctr'],
+    platform_meta_metrics:   ['spend', 'conversions', 'ctr'],
   },
   ecom: {
     kpi_cards:              ['spend', 'roas', 'revenue'],

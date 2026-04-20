@@ -89,8 +89,7 @@ export default async function AdminOverviewPage({
       .single(),
 
     db.from('client_campaign_assignments')
-      .select('client_id, campaign_id, display_mode')
-      .eq('source', 'meta_ads'),
+      .select('client_id, campaign_id, display_mode'),
   ])
 
   interface ConnRow {
@@ -138,6 +137,14 @@ export default async function AdminOverviewPage({
     campaignModeMap.set(`${a.client_id}:${a.campaign_id}`, a.display_mode)
   }
 
+  // Derive whether each client has any ecom campaign (across all sources)
+  const clientHasEcomMap = new Map<string, boolean>()
+  for (const [key, mode] of Array.from(campaignModeMap.entries())) {
+    const cid = key.split(':')[0]
+    if (mode === 'ecommerce') clientHasEcomMap.set(cid, true)
+    else if (!clientHasEcomMap.has(cid)) clientHasEcomMap.set(cid, false)
+  }
+
   // Build per-client conversion action config (client override → agency default)
   const clientConfigMap = new Map<string, { leadAction: string; leadFallback: string | null; purchaseAction: string; purchaseFallback: string | null }>()
   for (const c of clients) {
@@ -181,10 +188,10 @@ export default async function AdminOverviewPage({
   }
 
   // Aggregate Meta Ads metrics per client — apply per-client conversion mapping
-  const metaByClient = new Map<string, { spend: number; clicks: number; conv: number; impressions: number }>()
+  const metaByClient = new Map<string, { spend: number; clicks: number; conv: number; value: number; impressions: number }>()
   for (const row of metaRows) {
     const cid = row.client_id as string
-    if (!metaByClient.has(cid)) metaByClient.set(cid, { spend: 0, clicks: 0, conv: 0, impressions: 0 })
+    if (!metaByClient.has(cid)) metaByClient.set(cid, { spend: 0, clicks: 0, conv: 0, value: 0, impressions: 0 })
     const m = metaByClient.get(cid)!
     m.spend       += (row.spend        as number) ?? 0
     m.clicks      += (row.clicks       as number) ?? 0
@@ -202,7 +209,8 @@ export default async function AdminOverviewPage({
         primary,
         fallback,
       )
-      m.conv += resolved.conversions
+      m.conv  += resolved.conversions
+      m.value += resolved.conversionValue
     }
   }
 
@@ -223,8 +231,12 @@ export default async function AdminOverviewPage({
     const impressions  = (gData?.impressions ?? 0) + (mData?.impressions ?? 0)
     const conversions  = Math.round((gData?.conv ?? 0) + (mData?.conv ?? 0))
     const enabledBenchmarks = client.enabled_benchmarks ?? null
-    const showRoas     = enabledBenchmarks ? enabledBenchmarks.includes('roas') : (gData?.value ?? 0) > 0
-    const roas         = showRoas && gData && gData.spend > 0 ? gData.value / gData.spend : null
+    const showRoas     = enabledBenchmarks
+      ? enabledBenchmarks.includes('roas')
+      : clientHasEcomMap.get(client.id) === true
+    const totalValue   = (gData?.value ?? 0) + (mData?.value ?? 0)
+    const totalAdSpend = (gData?.spend ?? 0) + (mData?.spend ?? 0)
+    const roas         = showRoas && totalAdSpend > 0 && totalValue > 0 ? totalValue / totalAdSpend : null
     const ctr          = impressions > 0 ? clicks / impressions : 0
     const cpl          = conversions > 0 ? spend / conversions : null
 
