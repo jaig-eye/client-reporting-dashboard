@@ -58,7 +58,7 @@ export default async function CategoriesPage() {
 }
 
 const DISPLAY_MODE_GUIDE = [
-  { mode: 'lead_gen',   label: 'Lead Gen',   desc: 'Shows CPL, conversion count. No ROAS.' },
+  { mode: 'lead_gen',   label: 'Lead Gen',   desc: 'Shows CPA, conversion count. No ROAS.' },
   { mode: 'ecommerce',  label: 'Ecommerce',  desc: 'Shows ROAS, revenue, purchase count.' },
   { mode: 'awareness',  label: 'Awareness',  desc: 'Shows impressions, CPM, reach, frequency.' },
   { mode: 'engagement', label: 'Engagement', desc: 'Shows clicks, CTR, engagement rate.' },

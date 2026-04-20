@@ -88,8 +88,7 @@ export default async function AdSetDetailPage({
     .maybeSingle()
 
   const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
-  const conversionLabel = (assignmentData?.conversion_label as string | null)
-    ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
+  const conversionLabel = (assignmentData?.conversion_label as string | null) ?? 'Conversions'
   const isEcom          = displayMode === 'ecommerce'
 
   // Conversion action for Meta remapping with fallback

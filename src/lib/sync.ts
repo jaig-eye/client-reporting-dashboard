@@ -947,10 +947,10 @@ export async function upsertGSCMetrics(
     synced_at:     new Date().toISOString(),
   }))
 
-  for (let i = 0; i < mapped.length; i += 200) {
+  for (let i = 0; i < mapped.length; i += 1000) {
     const { error } = await db
       .from('gsc_metrics')
-      .upsert(mapped.slice(i, i + 200), {
+      .upsert(mapped.slice(i, i + 1000), {
         onConflict: 'connection_id,date,query,page',
         ignoreDuplicates,
       })

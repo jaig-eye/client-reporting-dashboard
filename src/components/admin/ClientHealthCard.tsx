@@ -153,7 +153,7 @@ export default function ClientHealthCard({
             : <KpiCell label="CTR"  value={ctr > 0 ? `${(ctr * 100).toFixed(2)}%` : '—'} />
           }
           <KpiCell label="Conversions" value={conversions > 0 ? conversions.toLocaleString() : '—'} />
-          <KpiCell label="CPL"         value={cpl !== null ? fmtCpl(cpl) : '—'} />
+          <KpiCell label="CPA"         value={cpl !== null ? fmtCpl(cpl) : '—'} />
         </div>
       </div>
 

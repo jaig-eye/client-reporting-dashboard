@@ -1,7 +1,7 @@
 'use client'
 
 // AdTable — Ads-Manager-style table layout for ad groups/sets and individual ads.
-// Column order: Name, Daily Budget, Cost, Impressions, Clicks, CTR, Conv, Conv Rate, CPL
+// Column order: Name, Daily Budget, Cost, Impressions, Clicks, CTR, Conv, Conv Rate, CPA
 
 import React, { useState } from 'react'
 import { fmt$, fmtNum, fmtPct, fmtCurrency } from '@/lib/metrics'
@@ -106,7 +106,7 @@ export function AdGroupTable({
             {showCol('cpm') && <SortTh sk="cpm">CPM</SortTh>}
             {showCol('conversions') && <SortTh sk="conversions">{conversionLabel}</SortTh>}
             {showCol('conv_rate') && <SortTh sk="convRate">Conv Rate</SortTh>}
-            {showCol('cpa') && <SortTh sk="cpl">CPL</SortTh>}
+            {showCol('cpa') && <SortTh sk="cpl">CPA</SortTh>}
             {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
             {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
             {showCol('ad_count') && <SortTh sk="adCount">Ads</SortTh>}
@@ -351,7 +351,7 @@ export function AdRowTable({
                     </div>
                     <div>
                       <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        {row.conversions > 0 ? 'CPL' : 'CTR'}
+                        {row.conversions > 0 ? 'CPA' : 'CTR'}
                       </p>
                       <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
                         {row.conversions > 0 ? fmtCurrency(row.cpl) : fmtPct(row.ctr)}
@@ -388,7 +388,7 @@ export function AdRowTable({
                 {showCol('ctr') && <SortTh sk="ctr">CTR</SortTh>}
                 {showCol('conversions') && <SortTh sk="conversions">{conversionLabel}</SortTh>}
                 {showCol('conv_rate') && <SortTh sk="convRate">Conv Rate</SortTh>}
-                {showCol('cpa') && <SortTh sk="cpl">CPL</SortTh>}
+                {showCol('cpa') && <SortTh sk="cpl">CPA</SortTh>}
               </tr>
             </thead>
             <tbody>

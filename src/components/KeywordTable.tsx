@@ -105,7 +105,7 @@ export default function KeywordTable({
             <SortTh sk="spend" right>{adFuelLabel}</SortTh>
             <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Avg. CPC</th>
             <SortTh sk="conversions" right>{conversionLabel}</SortTh>
-            {!isEcom && <SortTh sk="cpl" right>CPL</SortTh>}
+            {!isEcom && <SortTh sk="cpl" right>CPA</SortTh>}
           </tr>
         </thead>
         <tbody>

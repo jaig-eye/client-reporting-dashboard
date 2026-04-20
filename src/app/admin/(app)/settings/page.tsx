@@ -10,7 +10,7 @@ import type { MetricLayouts } from '@/lib/metric-layouts'
 const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status'] as const
 const OVERVIEW_COLUMN_LABELS: Record<string, string> = {
   spend:       'Spend',
-  roas_cpl:    'ROAS / CPL',
+  roas_cpl:    'ROAS / CPA',
   conversions: 'Conversions',
   ctr:         'CTR',
   clicks:      'Clicks',

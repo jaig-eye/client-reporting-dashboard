@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string }
@@ -17,6 +17,15 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
   const [records,     setRecords]     = useState<number | null>(null)
   const [error,       setError]       = useState('')
   const [activeLabel, setActiveLabel] = useState('')
+  const [elapsed,     setElapsed]     = useState(0)
+
+  const isSyncing = status === 'syncing'
+
+  useEffect(() => {
+    if (!isSyncing) { setElapsed(0); return }
+    const id = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(id)
+  }, [isSyncing])
 
   async function handleSync(job: SyncJob) {
     setStatus('syncing')
@@ -51,8 +60,6 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
       setStatus('error')
     }
   }
-
-  const isSyncing = status === 'syncing'
 
   return (
     <div className="space-y-2">
@@ -94,12 +101,12 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
           </div>
           <style>{`
             @keyframes syncSlide {
-              0%   { left: -40%; }
-              100% { left: 100%; }
+              0%   { transform: translateX(-150%); }
+              100% { transform: translateX(350%); }
             }
           `}</style>
           <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
-            Syncing <strong>{activeLabel}</strong>… do not close or refresh this page.
+            Syncing <strong>{activeLabel}</strong>… {elapsed}s elapsed. Do not close or refresh.
           </p>
         </div>
       )}

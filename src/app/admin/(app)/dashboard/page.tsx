@@ -357,7 +357,7 @@ export default async function AdminOverviewPage({
                   <th style={TH_STYLE}>Sources</th>
                   {overviewCols.map(col => {
                     if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas_cpl"    label="ROAS / CPL" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas_cpl"    label="ROAS / CPA" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"        sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />

@@ -118,7 +118,7 @@ export default function AdSetCards({
                       {setCpl > 0 && (
                         <>
                           <span style={{ color: 'var(--border)' }}>·</span>
-                          <span>{fmtCurrency(setCpl)} CPL</span>
+                          <span>{fmtCurrency(setCpl)} CPA</span>
                         </>
                       )}
                       <span style={{ color: 'var(--border)' }}>·</span>
@@ -295,7 +295,7 @@ export function AdCard({
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>CPL</span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>CPA</span>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   {ad.cpl > 0 ? fmtCurrency(ad.cpl) : '—'}
                 </span>

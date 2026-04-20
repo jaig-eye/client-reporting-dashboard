@@ -119,7 +119,7 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
       input: <input type="number" step="0.1" min="0" className="input" value={roas} onChange={e => { setRoas(e.target.value); setSaved(false) }} placeholder={String(globalDefaults.benchmark_roas)} disabled={!enabled.has('roas')} />,
     },
     {
-      key: 'cpl', label: 'Target CPL ($)', hint: `global: $${globalDefaults.benchmark_cpl}`,
+      key: 'cpl', label: 'Target CPA ($)', hint: `global: $${globalDefaults.benchmark_cpl}`,
       input: <input type="number" step="1" min="0" className="input" value={cpl} onChange={e => { setCpl(e.target.value); setSaved(false) }} placeholder={String(globalDefaults.benchmark_cpl)} disabled={!enabled.has('cpl')} />,
     },
     {

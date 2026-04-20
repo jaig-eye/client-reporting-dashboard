@@ -395,8 +395,8 @@ function generatePrintHtml(d: ReportData, hidden: Set<string>): string {
           <th style="padding:10px 12px;text-align:left;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">Campaign</th>
           <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">Source</th>
           <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">Spend</th>
-          <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">${d.isEcomDash ? 'Conv.' : 'Leads'}</th>
-          <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">${d.isEcomDash ? 'ROAS' : 'CPL'}</th>
+          <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">Conversions</th>
+          <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">${d.isEcomDash ? 'ROAS' : 'CPA'}</th>
           <th style="padding:10px 12px;text-align:right;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">CTR</th>
           <th style="padding:10px 12px;text-align:center;font-size:0.7rem;font-weight:700;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;">Status</th>
         </tr>
@@ -595,8 +595,8 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
                   <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:left;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">Campaign</th>
                   <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">Source</th>
                   <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">Spend</th>
-                  <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">${d.isEcomDash ? 'Conv.' : 'Leads'}</th>
-                  <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">${d.isEcomDash ? 'ROAS' : 'CPL'}</th>
+                  <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">Conversions</th>
+                  <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">${d.isEcomDash ? 'ROAS' : 'CPA'}</th>
                   <th style="font-family:Arial,sans-serif;padding:9px 10px;font-size:10px;font-weight:700;color:${MUTED};text-align:right;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid ${BORDER};">CTR</th>
                 </tr>
               </thead>

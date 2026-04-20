@@ -83,8 +83,7 @@ export default async function CampaignDetailPage({
     .maybeSingle()
 
   const displayMode     = ((assignmentData?.display_mode as string | null) ?? 'lead_gen') as DisplayMode
-  const conversionLabel = (assignmentData?.conversion_label as string | null)
-    ?? (displayMode === 'ecommerce' ? 'Purchases' : 'Leads')
+  const conversionLabel = (assignmentData?.conversion_label as string | null) ?? 'Conversions'
   const isEcom          = displayMode === 'ecommerce'
 
   const isGoogleAds  = source === 'google_ads'

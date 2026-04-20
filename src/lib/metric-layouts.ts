@@ -194,14 +194,14 @@ export const AD_COLUMN_LABELS: Record<AdColumnKey, string> = {
   ctr:         'CTR',
   conversions: 'Conversions',
   conv_rate:   'Conv. Rate',
-  cpa:         'CPL',
+  cpa:         'CPA',
 }
 
 // ── Default layouts ───────────────────────────────────────────────────────────
 
 export const DEFAULT_METRIC_LAYOUTS: MetricLayouts = {
   lead_gen: {
-    kpi_cards:              ['spend', 'leads', 'cpa'],
+    kpi_cards:              ['spend', 'conversions', 'cpa'],
     top_metrics:            ['impressions', 'clicks', 'ctr', 'conv_rate'],
     table_columns:          ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa', 'daily_budget'],
     platform_google_metrics: ['spend', 'conversions', 'ctr'],

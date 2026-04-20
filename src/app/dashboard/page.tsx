@@ -297,7 +297,7 @@ export default async function DashboardPage({
     const cpl = current.conversions > 0 ? current.spend / current.conversions : 0
     const showCpl = enabledBenchmarks ? enabledBenchmarks.includes('cpl') : !isEcomDash
     if (showCpl && (effectiveBenchmarks.benchmark_cpl ?? 0) > 0 && cpl > 0) {
-      benchmarkRows.push({ key: 'cpl', label: 'CPL', actualLabel: fmtCurrency(cpl), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpl), pct: pctOfBenchmark(cpl, effectiveBenchmarks.benchmark_cpl, true), color: '#ec4899' })
+      benchmarkRows.push({ key: 'cpl', label: 'CPA', actualLabel: fmtCurrency(cpl), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpl), pct: pctOfBenchmark(cpl, effectiveBenchmarks.benchmark_cpl, true), color: '#ec4899' })
     }
     if (benchmarkRows.length > 0) {
       efficiencyScore = Math.min(100, Math.round(benchmarkRows.reduce((s, r) => s + r.pct, 0) / benchmarkRows.length))
