@@ -433,7 +433,7 @@ export default async function AdminOverviewPage({
       </div>
 
       {/* Row hover via CSS — server component can't use onMouseEnter/Leave */}
-      <style>{`.client-row:hover { background: var(--bg-secondary) !important; }`}</style>
+      <style>{`.client-row:hover { background: var(--bg-muted) !important; }`}</style>
 
       {/* Client table */}
       {clients.length === 0 ? (
@@ -453,14 +453,14 @@ export default async function AdminOverviewPage({
                   <SortableTh col="name" label="Client" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                   <th style={TH_STYLE}>Sources</th>
                   {overviewCols.map(col => {
-                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas"        label="ROAS / CPA"  sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas')        return <SortableTh key={col} col="roas"        label="ROAS"        sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'cpa')         return <SortableTh key={col} col="cpa"         label="CPA"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"      align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas"        label="ROAS / CPA" align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas')        return <SortableTh key={col} col="roas"        label="ROAS"       align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'cpa')         return <SortableTh key={col} col="cpa"         label="CPA"        align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."      align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"        align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."      align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
                     return null
                   })}
@@ -478,6 +478,7 @@ export default async function AdminOverviewPage({
                   return (
                     <tr key={row.id} className="client-row" style={{
                       borderBottom: i < clientRows.length - 1 ? '1px solid var(--border-subtle)' : undefined,
+                      background: i % 2 === 1 ? 'var(--bg-subtle)' : undefined,
                       transition: 'background 0.15s',
                     }}>
                       {/* Client name + logo */}
@@ -611,15 +612,16 @@ const TH_STYLE: React.CSSProperties = {
   textTransform: 'uppercase', letterSpacing: '0.05em',
 }
 
-function SortableTh({ col, label, sortHref, sortCol, sortDir }: {
+function SortableTh({ col, label, sortHref, sortCol, sortDir, align = 'left' }: {
   col: string; label: string
   sortHref: (col: string) => string
   sortCol: string; sortDir: string
+  align?: 'left' | 'right'
 }) {
   const active = sortCol === col
   return (
-    <th style={{ ...TH_STYLE, cursor: 'pointer' }}>
-      <a href={sortHref(col)} style={{ textDecoration: 'none', color: active ? 'var(--text-primary)' : 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+    <th style={{ ...TH_STYLE, cursor: 'pointer', textAlign: align }}>
+      <a href={sortHref(col)} style={{ textDecoration: 'none', color: active ? 'var(--text-primary)' : 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', justifyContent: align === 'right' ? 'flex-end' : 'flex-start', gap: 2, width: '100%' }}>
         {label}
         <span style={{ opacity: active ? 1 : 0.35, fontSize: '0.7rem' }}>
           {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
