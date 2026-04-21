@@ -1,5 +1,6 @@
 // GscInsightsPanel — server component shown in the admin client Content tab.
 // Three tiered sections: Quick Wins, Growth Targets, CTR Issues.
+// Purpose: content generation strategy only — queries = keyword targets, pages = internal link destinations.
 
 function fmtNum(n: number) { return n.toLocaleString() }
 function fmtPct(n: number) { return `${(n * 100).toFixed(2)}%` }
@@ -61,8 +62,8 @@ function InsightSection({ badge, badgeColor, subtitle, rows }: SectionProps) {
         <table className="data-table" style={{ minWidth: 520 }}>
           <thead>
             <tr>
-              <th style={{ textAlign: 'left' }}>Query</th>
-              <th style={{ textAlign: 'left' }}>Page</th>
+              <th style={{ textAlign: 'left' }}>Query <span style={{ fontWeight: 400, opacity: 0.6 }}>→ keyword target</span></th>
+              <th style={{ textAlign: 'left' }}>Page <span style={{ fontWeight: 400, opacity: 0.6 }}>→ link to this</span></th>
               <th style={{ textAlign: 'right' }}>Impressions</th>
               <th style={{ textAlign: 'right' }}>CTR</th>
               <th style={{ textAlign: 'right' }}>Avg. Position</th>
@@ -119,7 +120,7 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: Props) {
       <div className="mb-4">
         <h3 className="section-title">GSC Opportunities</h3>
         <p className="section-desc">
-          Content and on-page improvements identified from Search Console data — grouped by opportunity type.
+          Keyword and page opportunities from Search Console to guide new content creation — use queries as target keywords and pages as internal link destinations in new articles.
         </p>
       </div>
 
@@ -132,19 +133,19 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: Props) {
           <InsightSection
             badge="Quick Wins"
             badgeColor="var(--green, #16a34a)"
-            subtitle="Position 5–10 · Near page 1 — improve titles and meta descriptions to enter top 5."
+            subtitle="Pos 5–10 · Nearly page 1 — write new content targeting adjacent or long-tail versions of these queries, then internally link to the ranking page to reinforce it."
             rows={quickWins}
           />
           <InsightSection
             badge="Growth Targets"
             badgeColor="#d97706"
-            subtitle="Position 10–20 · Off page 1 — expand content depth or build internal links."
+            subtitle="Pos 10–20 · Off page 1 — create new articles targeting these queries or related keywords, with a strong internal link back to the existing ranking page."
             rows={growth}
           />
           <InsightSection
             badge="CTR Issues"
             badgeColor="var(--blue, #2563eb)"
-            subtitle="Position 1–5 with low CTR — ranking well but few clicks. Review title tags and meta descriptions."
+            subtitle="Pos 1–5 · High impressions, low CTR — write supporting content for related queries to broaden topic authority and drive more click share to the ranking page."
             rows={lowCtr}
           />
         </>
