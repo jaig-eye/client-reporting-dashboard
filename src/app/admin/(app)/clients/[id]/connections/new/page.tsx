@@ -46,6 +46,14 @@ export default async function NewClientConnectionPage({
   let discoveredAccounts: { external_id: string; external_name: string | null }[] = []
   let discoveryError: string | null = null
 
+  async function loadCachedAccounts() {
+    const cached = await db.from('connector_accounts')
+      .select('external_id, external_name')
+      .eq('connector_id', connectorId)
+      .order('external_name')
+    return (cached.data ?? []) as { external_id: string; external_name: string | null }[]
+  }
+
   if (adapter) {
     try {
       const live = await adapter.discoverAccounts(auth, config)
@@ -63,23 +71,17 @@ export default async function NewClientConnectionPage({
             { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
           )
         ).catch(() => {})
+      } else {
+        // Live returned empty (e.g. MCC-script setup, expired token) — use cache
+        discoveredAccounts = await loadCachedAccounts()
       }
     } catch (e) {
       discoveryError = e instanceof Error ? e.message : 'Account discovery failed'
-      // Fall back to cached accounts
-      const cached = await db.from('connector_accounts')
-        .select('external_id, external_name')
-        .eq('connector_id', connectorId)
-        .order('external_name')
-      discoveredAccounts = (cached.data ?? []) as { external_id: string; external_name: string | null }[]
+      discoveredAccounts = await loadCachedAccounts()
     }
   } else {
     // No adapter — use cache only
-    const cached = await db.from('connector_accounts')
-      .select('external_id, external_name')
-      .eq('connector_id', connectorId)
-      .order('external_name')
-    discoveredAccounts = (cached.data ?? []) as { external_id: string; external_name: string | null }[]
+    discoveredAccounts = await loadCachedAccounts()
   }
 
   return (
