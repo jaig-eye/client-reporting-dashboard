@@ -52,15 +52,17 @@ export default async function NewClientConnectionPage({
       if (live.length > 0) {
         discoveredAccounts = live.map(a => ({ external_id: a.external_id, external_name: a.external_name ?? null }))
         // Update cache in background (don't await)
-        db.from('connector_accounts').upsert(
-          live.map(a => ({
-            connector_id:  connectorId,
-            external_id:   a.external_id,
-            external_name: a.external_name ?? null,
-            metadata:      a.metadata ?? null,
-          })),
-          { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
-        ).then(() => {}).catch(() => {})
+        void Promise.resolve(
+          db.from('connector_accounts').upsert(
+            live.map(a => ({
+              connector_id:  connectorId,
+              external_id:   a.external_id,
+              external_name: a.external_name ?? null,
+              metadata:      a.metadata ?? null,
+            })),
+            { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
+          )
+        ).catch(() => {})
       }
     } catch (e) {
       discoveryError = e instanceof Error ? e.message : 'Account discovery failed'
