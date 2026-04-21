@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // GA4 Analytics Page — /dashboard/analytics
-// Shows sessions, users, bounce rate, avg session duration, and conversions
+// Shows sessions, users, engagement rate, avg session duration, and conversions
 // from Google Analytics 4, broken down by channel group.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -271,7 +271,7 @@ export default async function GA4Page({
                         {showCompare && <th style={{ textAlign: 'right' }}>Δ Sessions</th>}
                         <th style={{ textAlign: 'right' }}>Users</th>
                         <th style={{ textAlign: 'right' }}>Conversions</th>
-                        <th style={{ textAlign: 'right' }}>Bounce Rate</th>
+                        <th style={{ textAlign: 'right' }}>Engagement Rate</th>
                         <th style={{ textAlign: 'right' }}>Share</th>
                       </tr>
                     </thead>
@@ -300,7 +300,7 @@ export default async function GA4Page({
                           })()}
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(ch.users)}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{ch.conversions > 0 ? fmtNum(ch.conversions) : '—'}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(ch.bounce_rate)}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(1 - ch.bounce_rate)}</td>
                           <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                             {totals.sessions > 0 ? `${((ch.sessions / totals.sessions) * 100).toFixed(1)}%` : '—'}
                           </td>
@@ -314,7 +314,7 @@ export default async function GA4Page({
                         {showCompare && <td />}
                         <td style={{ textAlign: 'right' }}>{fmtNum(totals.users)}</td>
                         <td style={{ textAlign: 'right' }}>{fmtNum(totals.conversions)}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtPct(avgBounceRate)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmtPct(engagementRate)}</td>
                         <td style={{ textAlign: 'right' }}>100%</td>
                       </tr>
                     </tfoot>

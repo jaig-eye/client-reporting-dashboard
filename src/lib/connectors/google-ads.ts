@@ -828,7 +828,7 @@ export const googleAdsConnector: ConnectorAdapter = {
             customer_client.manager,
             customer_client.test_account
           FROM customer_client
-          WHERE customer_client.level = 1
+          WHERE customer_client.manager = FALSE
             AND customer_client.status = 'ENABLED'`,
           devToken
         )

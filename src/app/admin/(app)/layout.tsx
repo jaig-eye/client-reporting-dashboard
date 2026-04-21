@@ -1,5 +1,7 @@
 // Admin Layout — sidebar shell for all protected /admin/* pages
 
+export const dynamic = 'force-dynamic'
+
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'

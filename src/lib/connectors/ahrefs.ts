@@ -169,14 +169,15 @@ export const ahrefsConnector: ConnectorAdapter = {
     }
 
     // ── Metrics history (weekly snapshots — backlinks, ref domains, organic)
-    let metricsPoints: { date: string; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number }[] = []
+    // Ahrefs API v3 uses `all_backlinks` as the field name in metrics-history; `backlinks` kept as fallback
+    let metricsPoints: { date: string; all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number }[] = []
     try {
       const metricsHistory = await ahrefsGet('/site-explorer/metrics-history', apiKey, {
         target:           domain,
         date_from:        dateFrom,
         date_to:          dateTo,
         history_grouping: 'weekly',
-        select:           'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
+        select:           'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
       })
       console.log('[ahrefs] metrics-history keys:', Object.keys(metricsHistory ?? {}))
       console.log('[ahrefs] metrics-history sample:', JSON.stringify(metricsHistory).slice(0, 600))
@@ -189,17 +190,20 @@ export const ahrefsConnector: ConnectorAdapter = {
       console.error(`[ahrefs] Metrics history failed for ${domain}:`, e)
     }
 
-    // If history endpoint returned nothing but DR data exists, supplement with a
+    // If history endpoint returned nothing OR backlinks are all null, supplement with a
     // single-snapshot metrics call so the most-recent row has backlinks/refdomains.
-    if (metricsPoints.length === 0 && drPoints.length > 0) {
-      console.warn('[ahrefs] metrics-history empty — supplementing with single-snapshot for', dateTo)
+    const backlinksAllNull = metricsPoints.length > 0 &&
+      metricsPoints.every(m => typeof m.all_backlinks !== 'number' && typeof m.backlinks !== 'number')
+    if ((metricsPoints.length === 0 || backlinksAllNull) && drPoints.length > 0) {
+      console.warn('[ahrefs] metrics-history missing backlinks — supplementing with single-snapshot for', dateTo)
       try {
         const mSnap = await ahrefsGet('/site-explorer/metrics', apiKey, {
           target: domain, date: dateTo,
-          select: 'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
+          select: 'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
         })
         const mData = (mSnap.metrics as Record<string, unknown> | null) ?? mSnap
-        const snapBl  = typeof mData.backlinks     === 'number' ? mData.backlinks     : null
+        const snapBl  = typeof mData.all_backlinks  === 'number' ? mData.all_backlinks  :
+                        typeof mData.backlinks       === 'number' ? mData.backlinks       : null
         const snapRd  = typeof mData.refdomains    === 'number' ? mData.refdomains    : null
         const snapKw  = typeof mData.org_keywords  === 'number' ? mData.org_keywords  : null
         const snapTr  = typeof mData.org_traffic   === 'number' ? mData.org_traffic   : null
@@ -207,16 +211,27 @@ export const ahrefsConnector: ConnectorAdapter = {
         const snapPk  = typeof mData.paid_keywords === 'number' ? mData.paid_keywords : null
         const snapPt  = typeof mData.paid_traffic  === 'number' ? mData.paid_traffic  : null
         if (snapBl !== null || snapRd !== null) {
-          metricsPoints = [{
-            date:          dateTo,
-            backlinks:     snapBl  ?? undefined,
-            refdomains:    snapRd  ?? undefined,
-            org_keywords:  snapKw  ?? undefined,
-            org_traffic:   snapTr  ?? undefined,
-            org_cost:      snapOc  ?? undefined,
-            paid_keywords: snapPk  ?? undefined,
-            paid_traffic:  snapPt  ?? undefined,
-          }]
+          if (metricsPoints.length === 0) {
+            metricsPoints = [{
+              date:          dateTo,
+              all_backlinks: snapBl  ?? undefined,
+              refdomains:    snapRd  ?? undefined,
+              org_keywords:  snapKw  ?? undefined,
+              org_traffic:   snapTr  ?? undefined,
+              org_cost:      snapOc  ?? undefined,
+              paid_keywords: snapPk  ?? undefined,
+              paid_traffic:  snapPt  ?? undefined,
+            }]
+          } else {
+            // backlinks missing from history — inject into the most-recent existing entry
+            const mostRecentIdx = metricsPoints.reduce((bi, m, i) =>
+              m.date > metricsPoints[bi].date ? i : bi, 0)
+            metricsPoints[mostRecentIdx] = {
+              ...metricsPoints[mostRecentIdx],
+              all_backlinks: snapBl ?? undefined,
+              refdomains:    snapRd ?? metricsPoints[mostRecentIdx].refdomains,
+            }
+          }
           console.log('[ahrefs] supplemental snapshot metrics:', { backlinks: snapBl, refdomains: snapRd })
         }
       } catch (e) {
@@ -233,7 +248,7 @@ export const ahrefsConnector: ConnectorAdapter = {
         const diff = Math.abs(new Date(m.date).getTime() - drMs)
         if (diff < bestDiff && diff <= 3 * 86_400_000) { best = m; bestDiff = diff }
       }
-      return best ?? ({} as { backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number })
+      return best ?? ({} as { all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number })
     }
     let rows: AhrefsRawRow[] = drPoints.map(dr => {
       const m = findNearestMetrics(dr.date)
@@ -241,7 +256,8 @@ export const ahrefsConnector: ConnectorAdapter = {
         date:              dr.date,
         domain_rating:     typeof dr.domain_rating  === 'number' ? dr.domain_rating  : null,
         ahrefs_rank:       typeof dr.ahrefs_rank    === 'number' ? dr.ahrefs_rank    : null,
-        backlinks:         typeof m.backlinks        === 'number' ? m.backlinks       : null,
+        backlinks:         typeof m.all_backlinks     === 'number' ? m.all_backlinks    :
+                         typeof m.backlinks        === 'number' ? m.backlinks       : null,
         referring_domains: typeof m.refdomains       === 'number' ? m.refdomains      : null,
         organic_keywords:  typeof m.org_keywords     === 'number' ? m.org_keywords    : null,
         organic_traffic:   typeof m.org_traffic      === 'number' ? m.org_traffic     : null,
@@ -276,10 +292,11 @@ export const ahrefsConnector: ConnectorAdapter = {
 
       try {
         const mData = await ahrefsGet('/site-explorer/metrics', apiKey, {
-          target: domain, date: dateTo, select: 'backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
+          target: domain, date: dateTo, select: 'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
         })
         const m = (mData.metrics as Record<string, unknown> | null) ?? mData
-        backlinks       = typeof m.backlinks     === 'number' ? m.backlinks     : null
+        backlinks       = typeof m.all_backlinks === 'number' ? m.all_backlinks :
+                          typeof m.backlinks     === 'number' ? m.backlinks     : null
         referringDoms   = typeof m.refdomains    === 'number' ? m.refdomains    : null
         organicKeywords = typeof m.org_keywords  === 'number' ? m.org_keywords  : null
         organicTraffic  = typeof m.org_traffic   === 'number' ? m.org_traffic   : null
