@@ -14,6 +14,11 @@ interface Author {
   name: string
 }
 
+interface ManualLink {
+  url:   string
+  label: string
+}
+
 interface ClientSettings {
   business_background?:  string
   services?:             string
@@ -21,7 +26,6 @@ interface ClientSettings {
   geographic_focus?:     string
   brand_voice?:          string
   phone_number?:         string
-  sitemap_url?:          string
   post_structure?:       string
   auto_generate?:        boolean
   posts_per_run?:        number
@@ -80,20 +84,22 @@ export default function ClientContentSettingsForm({
   clientId: string
   sites:    SiteOption[]
 }) {
-  const [form,      setForm]      = useState<ClientSettings>({})
-  const [authors,   setAuthors]   = useState<Author[]>([])
-  const [saving,    setSaving]    = useState(false)
-  const [saved,     setSaved]     = useState(false)
-  const [error,     setError]     = useState('')
-  const [loading,   setLoading]   = useState(true)
-  const [running,   setRunning]   = useState(false)
-  const [runResult, setRunResult] = useState('')
+  const [form,         setForm]         = useState<ClientSettings>({})
+  const [sitemapUrls,  setSitemapUrls]  = useState<string[]>([])
+  const [manualLinks,  setManualLinks]  = useState<ManualLink[]>([])
+  const [authors,      setAuthors]      = useState<Author[]>([])
+  const [saving,       setSaving]       = useState(false)
+  const [saved,        setSaved]        = useState(false)
+  const [error,        setError]        = useState('')
+  const [loading,      setLoading]      = useState(true)
+  const [running,      setRunning]      = useState(false)
+  const [runResult,    setRunResult]    = useState('')
 
   useEffect(() => {
     setLoading(true)
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
       .then(r => r.json())
-      .then((d: ClientSettings) => {
+      .then((d: ClientSettings & { sitemap_url?: string; sitemap_urls?: string[]; manual_link_urls?: string[] }) => {
         setForm({
           business_background:  d.business_background  ?? '',
           services:             d.services             ?? '',
@@ -101,7 +107,6 @@ export default function ClientContentSettingsForm({
           geographic_focus:     d.geographic_focus     ?? '',
           brand_voice:          d.brand_voice          ?? '',
           phone_number:         d.phone_number          ?? '',
-          sitemap_url:          d.sitemap_url           ?? '',
           post_structure:       d.post_structure        ?? '',
           auto_generate:        d.auto_generate         ?? false,
           posts_per_run:        d.posts_per_run          ?? 1,
@@ -114,6 +119,21 @@ export default function ClientContentSettingsForm({
           topics_per_run:       d.topics_per_run         ?? 5,
           weeks_ahead:          d.weeks_ahead            ?? 4,
         })
+        // Multi-sitemap: use sitemap_urls if populated, fall back to legacy sitemap_url
+        const urls: string[] = Array.isArray(d.sitemap_urls) && d.sitemap_urls.length > 0
+          ? d.sitemap_urls
+          : (d.sitemap_url ? [d.sitemap_url] : [])
+        setSitemapUrls(urls)
+        // Manual links: each entry is a JSON string { url, label }
+        const links: ManualLink[] = (d.manual_link_urls ?? []).map(s => {
+          try {
+            const p = JSON.parse(s)
+            if (p && typeof p === 'object' && p.url) return { url: String(p.url), label: String(p.label ?? '') }
+          } catch { /* ignore */ }
+          if (typeof s === 'string' && s.startsWith('http')) return { url: s, label: '' }
+          return null
+        }).filter(Boolean) as ManualLink[]
+        setManualLinks(links)
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -130,17 +150,35 @@ export default function ClientContentSettingsForm({
     setForm(p => ({ ...p, [key]: val }))
   }
 
+  // ── Sitemap helpers ────────────────────────────────────────────────────────
+  function addSitemap() { setSitemapUrls(p => [...p, '']) }
+  function updateSitemap(i: number, val: string) {
+    setSitemapUrls(p => p.map((u, idx) => idx === i ? val : u))
+  }
+  function removeSitemap(i: number) {
+    setSitemapUrls(p => p.filter((_, idx) => idx !== i))
+  }
+
+  // ── Manual link helpers ────────────────────────────────────────────────────
+  function addManualLink() { setManualLinks(p => [...p, { url: '', label: '' }]) }
+  function updateManualLink(i: number, field: 'url' | 'label', val: string) {
+    setManualLinks(p => p.map((l, idx) => idx === i ? { ...l, [field]: val } : l))
+  }
+  function removeManualLink(i: number) {
+    setManualLinks(p => p.filter((_, idx) => idx !== i))
+  }
+
   async function runNow() {
     setRunning(true); setRunResult('')
-    const res = await fetch('/api/admin/content/schedule', {
+    const res = await fetch('/api/admin/content/topics/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId }),
+      body: JSON.stringify({ client_id: clientId, count: form.topics_per_run ?? 5 }),
     })
     const data = await res.json()
     setRunning(false)
     setRunResult(res.ok
-      ? `${data.generated ?? 0} post${data.generated === 1 ? '' : 's'} generated`
+      ? `${data.count ?? 0} topic${data.count === 1 ? '' : 's'} generated`
       : data.error || 'Generation failed')
   }
 
@@ -149,7 +187,14 @@ export default function ClientContentSettingsForm({
     const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, ...form }),
+      body: JSON.stringify({
+        client_id: clientId,
+        ...form,
+        sitemap_urls:     sitemapUrls.filter(u => u.trim()),
+        manual_link_urls: manualLinks
+          .filter(l => l.url.trim())
+          .map(l => JSON.stringify({ url: l.url.trim(), label: l.label.trim() })),
+      }),
     })
     setSaving(false)
     if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 2500) }
@@ -195,14 +240,91 @@ export default function ClientContentSettingsForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label hint="used when referencing phone in content">Phone Number</Label>
-            <input className="input" type="tel" style={{ width: '100%' }} value={form.phone_number ?? ''} onChange={e => set('phone_number', e.target.value)} placeholder="(321) 555-5555" />
+        <div>
+          <Label hint="used when referencing phone in content">Phone Number</Label>
+          <input className="input" type="tel" style={{ width: '50%' }} value={form.phone_number ?? ''} onChange={e => set('phone_number', e.target.value)} placeholder="(321) 555-5555" />
+        </div>
+      </div>
+
+      {/* ── Sitemaps & Internal Links ─────────────────────────────────────── */}
+      <div className="card p-6 space-y-4">
+        <h3 className="section-title">Sitemaps &amp; Internal Links</h3>
+        <p className="section-desc">
+          Sitemaps give the AI page context for internal linking. Always-include links are injected into every generated post.
+        </p>
+
+        {/* Multi-sitemap */}
+        <div>
+          <Label hint="for internal link suggestions">Sitemap URLs</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {sitemapUrls.map((url, i) => (
+              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  className="input"
+                  type="url"
+                  style={{ flex: 1 }}
+                  value={url}
+                  onChange={e => updateSitemap(i, e.target.value)}
+                  placeholder="https://example.com/sitemap.xml"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSitemap(i)}
+                  style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addSitemap}
+              className="btn btn-secondary"
+              style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}
+            >
+              + Add Sitemap
+            </button>
           </div>
-          <div>
-            <Label hint="used for internal link suggestions">Sitemap URL</Label>
-            <input className="input" type="url" style={{ width: '100%' }} value={form.sitemap_url ?? ''} onChange={e => set('sitemap_url', e.target.value)} />
+        </div>
+
+        {/* Always-include links */}
+        <div>
+          <Label hint="included as internal links in every generated post">Always-Include Links</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {manualLinks.map((link, i) => (
+              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  className="input"
+                  type="url"
+                  style={{ flex: 2 }}
+                  value={link.url}
+                  onChange={e => updateManualLink(i, 'url', e.target.value)}
+                  placeholder="https://example.com/services"
+                />
+                <input
+                  className="input"
+                  style={{ flex: 1 }}
+                  value={link.label}
+                  onChange={e => updateManualLink(i, 'label', e.target.value)}
+                  placeholder="Label (e.g. Services)"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeManualLink(i)}
+                  style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addManualLink}
+              className="btn btn-secondary"
+              style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}
+            >
+              + Add Link
+            </button>
           </div>
         </div>
       </div>
@@ -212,7 +334,7 @@ export default function ClientContentSettingsForm({
         <h3 className="section-title">Content Generation</h3>
 
         <div>
-          <Label hint="overrides global post structure template">Custom Post Structure</Label>
+          <Label hint="adds on top of the global post structure">Custom Post Structure</Label>
           <textarea
             className="input"
             rows={4}
@@ -221,6 +343,9 @@ export default function ClientContentSettingsForm({
             onChange={e => set('post_structure', e.target.value)}
             placeholder="Leave blank to use global default"
           />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            The global post structure is the base template. Anything entered here is appended as client-specific additions.
+          </p>
         </div>
 
         <div style={{ maxWidth: 160 }}>
@@ -288,11 +413,11 @@ export default function ClientContentSettingsForm({
                 </div>
               )}
               <div>
-                <Label hint="topics per run">Topics per Run</Label>
+                <Label hint="topic ideas generated per cycle">Topics per Run</Label>
                 <input className="input" type="number" min={1} max={20} value={form.topics_per_run ?? 5} onChange={e => set('topics_per_run', Number(e.target.value))} />
               </div>
               <div>
-                <Label>Posts per Run</Label>
+                <Label hint="topics that must be approved to proceed">Posts per Run</Label>
                 <input className="input" type="number" min={1} max={5} value={form.posts_per_run ?? 1} onChange={e => set('posts_per_run', Number(e.target.value))} />
               </div>
               <div>
@@ -304,8 +429,9 @@ export default function ClientContentSettingsForm({
             <div className="rounded-xl px-4 py-3"
               style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
               <div className="text-xs space-y-1" style={{ marginBottom: '0.75rem' }}>
-                <p><strong>Auto-flow:</strong> 30 days before each scheduled run: topics generated and sent for approval.</p>
-                <p>7 days before: approved topics get a post generated automatically using fresh GSC data.</p>
+                <p><strong>Auto-flow:</strong> 30 days before publish — topics generated and sent for approval.</p>
+                <p>7 days before publish — approved topics get a post generated automatically using fresh GSC data.</p>
+                <p>Approving a topic past the 7-day deadline generates the post immediately.</p>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <button
@@ -315,10 +441,10 @@ export default function ClientContentSettingsForm({
                   onClick={runNow}
                   disabled={running}
                 >
-                  {running ? 'Generating…' : '▶ Run Now'}
+                  {running ? 'Generating…' : '▶ Generate Topics'}
                 </button>
                 {runResult && (
-                  <span className="text-xs" style={{ color: runResult.includes('failed') || runResult.includes('error') ? 'var(--red)' : 'var(--green)' }}>
+                  <span className="text-xs" style={{ color: runResult.toLowerCase().includes('fail') || runResult.toLowerCase().includes('error') ? 'var(--red)' : 'var(--green)' }}>
                     {runResult}
                   </span>
                 )}

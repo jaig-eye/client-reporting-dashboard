@@ -668,7 +668,7 @@ export default async function DashboardPage({
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
                         {(() => {
-                          const keys = paidAdsLayout.kpi_cards
+                          const keys = activeLayout.platform_google_metrics ?? ['spend', 'conversions', 'ctr']
                           return (
                             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
                               {keys.map(k => (
@@ -699,7 +699,7 @@ export default async function DashboardPage({
                           <span style={{ fontSize: '0.75rem', color: 'var(--blue)' }}>View campaigns →</span>
                         </div>
                         {(() => {
-                          const keys = paidAdsLayout.kpi_cards
+                          const keys = activeLayout.platform_meta_metrics ?? ['spend', 'impressions', 'ctr']
                           return (
                             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
                               {keys.map(k => (

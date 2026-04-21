@@ -185,14 +185,6 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               labels={METRIC_LABELS as Record<string, string>}
               onChange={items => updateSummaryLayout(innerTab, { top_metrics: items as MetricKey[] })}
             />
-            <LayoutSection
-              title="Table Columns"
-              description="Campaign table columns in display order"
-              items={summaryLayout.table_columns}
-              allKeys={ALL_COLUMN_KEYS}
-              labels={COLUMN_LABELS as Record<string, string>}
-              onChange={items => updateSummaryLayout(innerTab, { table_columns: items as ColumnKey[] })}
-            />
             <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
               <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>Platform Summary Cards</p>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>

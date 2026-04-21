@@ -1,5 +1,6 @@
 // PATCH /api/admin/content/topics/[id]
 // Updates topic status (approve/reject) and target_publish_date.
+// When approving past the generate_by_date deadline, fires post generation immediately.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -38,10 +39,32 @@ export async function PATCH(
     .from('content_topics')
     .update(patch)
     .eq('id', id)
-    .select()
+    .select('id, status, generate_by_date, client_id')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Late-approval: if topic just approved and past generate_by_date, trigger post gen immediately
+  const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string }
+  if (
+    patch.status === 'approved' &&
+    topic.generate_by_date &&
+    new Date(topic.generate_by_date) <= new Date()
+  ) {
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+    // Fire and forget — don't await so response returns immediately
+    void fetch(`${appUrl}/api/admin/content/generate`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+      },
+      body: JSON.stringify({ topic_id: id }),
+    }).then(() =>
+      db.from('content_topics').update({ status: 'generating' }).eq('id', id)
+    ).catch(err => console.error(`[topics PATCH] late-approval post gen failed for ${id}:`, err))
+  }
+
   return NextResponse.json(data)
 }
 

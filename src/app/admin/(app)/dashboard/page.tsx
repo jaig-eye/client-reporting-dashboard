@@ -12,7 +12,7 @@ import DateRangePicker               from '@/components/DateRangePicker'
 import AdminDateSync                 from './AdminDateSync'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
 import type { AgencySettings }       from '@/lib/types'
-import { resolveMetaConversions }    from '@/lib/metrics'
+import { resolveMetaConversions, calcDelta } from '@/lib/metrics'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +39,7 @@ function fmtX(n: number)   { return `${n.toFixed(2)}x` }
 export default async function AdminOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; sort?: string; dir?: string }>
+  searchParams: Promise<{ from?: string; to?: string; sort?: string; dir?: string; compare?: string }>
 }) {
   noStore()
   const today    = new Date()
@@ -48,6 +48,25 @@ export default async function AdminOverviewPage({
   const dateTo   = params.to    ?? fmtDate(today)
   const sortCol  = params.sort  ?? ''
   const sortDir  = params.dir   === 'asc' ? 'asc' : 'desc'
+  const compare  = params.compare ?? 'none'
+
+  // Prior period date range
+  let priorFromStr = ''
+  let priorToStr   = ''
+  if (compare !== 'none') {
+    const fromDate = new Date(dateFrom)
+    const toDate   = new Date(dateTo)
+    if (compare === 'last_year') {
+      priorFromStr = fmtDate(new Date(fromDate.getFullYear() - 1, fromDate.getMonth(), fromDate.getDate()))
+      priorToStr   = fmtDate(new Date(toDate.getFullYear() - 1, toDate.getMonth(), toDate.getDate()))
+    } else {
+      const periodMs  = toDate.getTime() - fromDate.getTime()
+      const priorTo   = new Date(fromDate.getTime() - 86_400_000)
+      const priorFrom = new Date(priorTo.getTime() - periodMs)
+      priorFromStr = fmtDate(priorFrom)
+      priorToStr   = fmtDate(priorTo)
+    }
+  }
 
   const db = createAdminClient()
 
@@ -92,6 +111,18 @@ export default async function AdminOverviewPage({
       .select('client_id, campaign_id, display_mode'),
   ])
 
+  // Prior period queries — only fetched when comparison is active
+  const [priorGoogleRes, priorMetaRes] = compare !== 'none' && priorFromStr
+    ? await Promise.all([
+        db.from('google_ads_metrics')
+          .select('client_id, spend, clicks, impressions, conversions, conversions_value')
+          .gte('date', priorFromStr).lte('date', priorToStr),
+        db.from('meta_ads_metrics')
+          .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
+          .gte('date', priorFromStr).lte('date', priorToStr),
+      ])
+    : [{ data: null }, { data: null }]
+
   interface ConnRow {
     client_id: string
     connector: { id: string; type: string; label: string; status: string }
@@ -126,10 +157,12 @@ export default async function AdminOverviewPage({
   const defaultLeadFallback       = (rawSettings?.default_lead_action_fallback as string | null) ?? 'lead'
   const defaultPurchaseAction     = (rawSettings?.default_purchase_action      as string | null) ?? 'purchase'
   const defaultPurchaseFallback   = (rawSettings?.default_purchase_action_fallback as string | null) ?? null
-  const DEFAULT_COLS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
-  const overviewCols: string[] = Array.isArray(rawSettings?.overview_columns)
+  const DEFAULT_COLS = ['spend', 'roas', 'cpa', 'conversions', 'ctr', 'sync_status']
+  const rawCols: string[] = Array.isArray(rawSettings?.overview_columns)
     ? rawSettings!.overview_columns as string[]
     : DEFAULT_COLS
+  // Expand legacy 'roas_cpl' column into separate 'roas' + 'cpa' columns
+  const overviewCols: string[] = rawCols.flatMap(c => c === 'roas_cpl' ? ['roas', 'cpa'] : [c])
 
   // Campaign display_mode map: `${clientId}:${campaignId}` → 'ecommerce' | 'lead_gen'
   const campaignModeMap = new Map<string, string>()
@@ -214,6 +247,45 @@ export default async function AdminOverviewPage({
     }
   }
 
+  // Aggregate prior-period Google Ads metrics per client
+  const priorGoogleByClient = new Map<string, { spend: number; clicks: number; conv: number; value: number; impressions: number }>()
+  for (const row of (priorGoogleRes.data ?? [])) {
+    const cid = row.client_id as string
+    if (!priorGoogleByClient.has(cid)) priorGoogleByClient.set(cid, { spend: 0, clicks: 0, conv: 0, value: 0, impressions: 0 })
+    const m = priorGoogleByClient.get(cid)!
+    m.spend       += (row.spend             as number) ?? 0
+    m.clicks      += (row.clicks            as number) ?? 0
+    m.conv        += (row.conversions       as number) ?? 0
+    m.value       += (row.conversions_value as number) ?? 0
+    m.impressions += (row.impressions       as number) ?? 0
+  }
+
+  // Aggregate prior-period Meta Ads metrics per client
+  const priorMetaByClient = new Map<string, { spend: number; clicks: number; conv: number; value: number; impressions: number }>()
+  for (const row of (priorMetaRes.data ?? [])) {
+    const cid = row.client_id as string
+    if (!priorMetaByClient.has(cid)) priorMetaByClient.set(cid, { spend: 0, clicks: 0, conv: 0, value: 0, impressions: 0 })
+    const m = priorMetaByClient.get(cid)!
+    m.spend       += (row.spend        as number) ?? 0
+    m.clicks      += (row.clicks       as number) ?? 0
+    m.impressions += (row.impressions  as number) ?? 0
+    const cfg      = clientConfigMap.get(cid)
+    const campMode = campaignModeMap.get(`${cid}:${row.campaign_id as string}`) ?? 'lead_gen'
+    const isEcom   = campMode === 'ecommerce'
+    const primary  = isEcom ? (cfg?.purchaseAction  ?? defaultPurchaseAction)  : (cfg?.leadAction    ?? defaultLeadAction)
+    const fallback = isEcom ? (cfg?.purchaseFallback ?? defaultPurchaseFallback) : (cfg?.leadFallback ?? defaultLeadFallback)
+    if (Array.isArray(row.actions)) {
+      const resolved = resolveMetaConversions(
+        row.actions as { action_type: string; value: string }[],
+        (row.action_values as { action_type: string; value: string }[] | null) ?? [],
+        primary,
+        fallback,
+      )
+      m.conv  += resolved.conversions
+      m.value += resolved.conversionValue
+    }
+  }
+
   // Summary totals
   const googleSpendTotal  = Array.from(googleByClient.values()).reduce((s, m) => s + m.spend, 0)
   const metaSpendTotal    = Array.from(metaByClient.values()).reduce((s, m) => s + m.spend, 0)
@@ -261,10 +333,32 @@ export default async function AdminOverviewPage({
 
     const syncErrCount = syncJobs.filter(j => j.client_id === client.id && j.status === 'error').length
 
+    // Prior period metrics + deltas
+    const pgData   = priorGoogleByClient.get(client.id)
+    const pmData   = priorMetaByClient.get(client.id)
+    const priorSpend       = (pgData?.spend ?? 0) + (pmData?.spend ?? 0)
+    const priorConversions = Math.round((pgData?.conv ?? 0) + (pmData?.conv ?? 0))
+    const priorImpr        = (pgData?.impressions ?? 0) + (pmData?.impressions ?? 0)
+    const priorClicks      = (pgData?.clicks ?? 0) + (pmData?.clicks ?? 0)
+    const priorValue       = (pgData?.value ?? 0) + (pmData?.value ?? 0)
+    const priorAdSpend     = (pgData?.spend ?? 0) + (pmData?.spend ?? 0)
+    const priorRoas        = showRoas && priorAdSpend > 0 && priorValue > 0 ? priorValue / priorAdSpend : null
+    const priorCpl         = priorConversions > 0 ? priorSpend / priorConversions : null
+    const priorCtr         = priorImpr > 0 ? priorClicks / priorImpr : 0
+
+    const deltaSpend       = compare !== 'none' && priorSpend > 0       ? calcDelta(spend, priorSpend)             : undefined
+    const deltaConv        = compare !== 'none' && priorConversions > 0 ? calcDelta(conversions, priorConversions) : undefined
+    const deltaCtr         = compare !== 'none' && priorCtr > 0         ? calcDelta(ctr, priorCtr)                : undefined
+    const deltaClicks      = compare !== 'none' && priorClicks > 0      ? calcDelta(clicks, priorClicks)          : undefined
+    const deltaImpr        = compare !== 'none' && priorImpr > 0        ? calcDelta(impressions, priorImpr)       : undefined
+    const deltaRoas        = compare !== 'none' && roas !== null && priorRoas !== null ? calcDelta(roas, priorRoas) : undefined
+    const deltaCpl         = compare !== 'none' && cpl !== null && priorCpl !== null   ? calcDelta(cpl, priorCpl)  : undefined
+
     return {
       id: client.id, name: client.name, logoUrl: client.logo_url ?? null,
       connectors: conns.map(c => ({ type: c.connector.type as ConnectorType, label: c.connector.label })),
       spend, conversions, clicks, impressions, ctr, roas, cpl, showRoas, efficiencyScore, hoursStale, syncStatus, syncErrCount,
+      deltaSpend, deltaConv, deltaCtr, deltaClicks, deltaImpr, deltaRoas, deltaCpl,
     }
   })
 
@@ -274,8 +368,10 @@ export default async function AdminOverviewPage({
       let av: number, bv: number
       if (sortCol === 'spend') {
         av = a.spend; bv = b.spend
-      } else if (sortCol === 'roas_cpl') {
-        av = a.roas ?? a.cpl ?? -1; bv = b.roas ?? b.cpl ?? -1
+      } else if (sortCol === 'roas_cpl' || sortCol === 'roas') {
+        av = a.roas ?? -1; bv = b.roas ?? -1
+      } else if (sortCol === 'cpa') {
+        av = a.cpl ?? Infinity; bv = b.cpl ?? Infinity
       } else if (sortCol === 'conversions') {
         av = a.conversions; bv = b.conversions
       } else if (sortCol === 'ctr') {
@@ -298,8 +394,9 @@ export default async function AdminOverviewPage({
   function sortHref(col: string) {
     const newDir = sortCol === col && sortDir === 'desc' ? 'asc' : 'desc'
     const base = new URLSearchParams()
-    if (params.from) base.set('from', params.from)
-    if (params.to)   base.set('to',   params.to)
+    if (params.from)    base.set('from', params.from)
+    if (params.to)      base.set('to',   params.to)
+    if (compare !== 'none') base.set('compare', compare)
     base.set('sort', col)
     base.set('dir',  newDir)
     return `/admin/dashboard?${base}`
@@ -321,7 +418,7 @@ export default async function AdminOverviewPage({
         <h1 className="page-title">Clients</h1>
         <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
           <Suspense fallback={null}>
-            <DateRangePicker from={dateFrom} to={dateTo} />
+            <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
           </Suspense>
           <Link href="/admin/clients/new" className="btn btn-primary">+ Add Client</Link>
         </div>
@@ -356,12 +453,14 @@ export default async function AdminOverviewPage({
                   <SortableTh col="name" label="Client" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                   <th style={TH_STYLE}>Sources</th>
                   {overviewCols.map(col => {
-                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas_cpl"    label="ROAS / CPA" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"        sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas"        label="ROAS / CPA"  sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'roas')        return <SortableTh key={col} col="roas"        label="ROAS"        sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'cpa')         return <SortableTh key={col} col="cpa"         label="CPA"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"         sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"      sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
+                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."       sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
                     return null
                   })}
@@ -418,36 +517,53 @@ export default async function AdminOverviewPage({
                         if (col === 'spend') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                             {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
+                            <DeltaBadge delta={row.deltaSpend} neutral />
                           </td>
                         )
                         if (col === 'roas_cpl') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {row.showRoas && row.roas !== null
-                              ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span>
+                              ? <><span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span><DeltaBadge delta={row.deltaRoas} /></>
                               : row.cpl !== null
-                                ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span>
+                                ? <><span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span><DeltaBadge delta={row.deltaCpl} inverse /></>
                                 : <Dash />
                             }
+                          </td>
+                        )
+                        if (col === 'roas') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.roas !== null ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span> : <Dash />}
+                            <DeltaBadge delta={row.deltaRoas} />
+                          </td>
+                        )
+                        if (col === 'cpa') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {row.cpl !== null ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span> : <Dash />}
+                            <DeltaBadge delta={row.deltaCpl} inverse />
                           </td>
                         )
                         if (col === 'conversions') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                             {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
+                            <DeltaBadge delta={row.deltaConv} />
                           </td>
                         )
                         if (col === 'ctr') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                             {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
+                            <DeltaBadge delta={row.deltaCtr} />
                           </td>
                         )
                         if (col === 'clicks') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                             {row.clicks > 0 ? row.clicks.toLocaleString() : <Dash />}
+                            <DeltaBadge delta={row.deltaClicks} />
                           </td>
                         )
                         if (col === 'impressions') return (
                           <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                             {row.impressions > 0 ? row.impressions.toLocaleString() : <Dash />}
+                            <DeltaBadge delta={row.deltaImpr} />
                           </td>
                         )
                         if (col === 'sync_status') return (
@@ -515,6 +631,18 @@ function SortableTh({ col, label, sortHref, sortCol, sortDir }: {
 
 function Dash() {
   return <span style={{ color: 'var(--text-faint)' }}>—</span>
+}
+
+function DeltaBadge({ delta, inverse = false, neutral = false }: { delta: number | undefined; inverse?: boolean; neutral?: boolean }) {
+  if (delta == null || !isFinite(delta)) return null
+  const up    = delta > 0
+  const good  = neutral ? null : (inverse ? !up : up)
+  const color = good === null ? 'var(--text-faint)' : good ? '#16a34a' : '#dc2626'
+  return (
+    <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: 600, lineHeight: 1, marginTop: 2, color }}>
+      {up ? '+' : ''}{delta.toFixed(1)}%
+    </span>
+  )
 }
 
 function StatCard({

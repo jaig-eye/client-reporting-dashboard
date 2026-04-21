@@ -41,7 +41,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       />
       <NavigationRefresher />
       <div className="flex-1 min-w-0">
-        <main className="p-8 max-w-5xl">{children}</main>
+        <main className="p-8">{children}</main>
       </div>
     </div>
   )

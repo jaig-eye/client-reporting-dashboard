@@ -1,24 +1,49 @@
 // GET /api/cron/content-topics
 // Daily cron (7 AM UTC) that drives automated content scheduling:
-//   - 30 days before monthly_publish_day: auto-generate topics for approval
-//   - 7 days before: auto-generate posts for approved topics with approaching target dates
+//   - 30 days before next publish date: auto-generate topics for approval
+//   - 7 days before: auto-generate posts for approved topics
 //
-// Gated by: content_settings.monthly_publish_day IS NOT NULL
+// Gated by: content_settings.auto_generate = true (all frequency types)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 
-function nextOccurrence(dayOfMonth: number): Date {
+function calcNextPublishDate(
+  frequency: string,
+  dayOfWeek: number,
+  lastPublishedAt: string | null
+): Date {
   const now = new Date()
-  const year  = now.getUTCFullYear()
-  const month = now.getUTCMonth()
-  // Try this month
-  let d = new Date(Date.UTC(year, month, dayOfMonth))
-  if (d <= now) {
-    // Advance to next month
-    d = new Date(Date.UTC(year, month + 1, dayOfMonth))
+  const y   = now.getUTCFullYear()
+  const m   = now.getUTCMonth()
+  const daysSinceLast = lastPublishedAt
+    ? (Date.now() - new Date(lastPublishedAt).getTime()) / 86_400_000
+    : Infinity
+
+  switch (frequency) {
+    case 'monthly_first': {
+      const d = new Date(Date.UTC(y, m, 1))
+      return d <= now ? new Date(Date.UTC(y, m + 1, 1)) : d
+    }
+    case 'monthly_mid': {
+      const d = new Date(Date.UTC(y, m, 15))
+      return d <= now ? new Date(Date.UTC(y, m + 1, 15)) : d
+    }
+    case 'monthly_end': {
+      const d = new Date(Date.UTC(y, m, 28))
+      return d <= now ? new Date(Date.UTC(y, m + 1, 28)) : d
+    }
+    case 'monthly':
+      return new Date(Date.now() + (28 - Math.min(daysSinceLast, 28)) * 86_400_000)
+    case 'biweekly':
+      return new Date(Date.now() + (14 - Math.min(daysSinceLast, 14)) * 86_400_000)
+    case 'weekly': {
+      const daysUntil = ((dayOfWeek - now.getUTCDay()) + 7) % 7 || 7
+      return new Date(Date.now() + daysUntil * 86_400_000)
+    }
+    default: // daily
+      return new Date(Date.now() + 86_400_000)
   }
-  return d
 }
 
 function daysFromNow(target: Date): number {
@@ -33,21 +58,26 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  // Load all clients that have a monthly publish day set
+  // Load all clients with auto_generate enabled (any frequency)
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, monthly_publish_day, topics_per_run, weeks_ahead')
-    .not('monthly_publish_day', 'is', null)
+    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead')
+    .eq('auto_generate', true)
+    .not('client_id', 'is', null)
 
   if (!settingsRows || settingsRows.length === 0) {
-    return NextResponse.json({ skipped: true, reason: 'No clients with monthly_publish_day set' })
+    return NextResponse.json({ skipped: true, reason: 'No clients with auto_generate enabled' })
   }
 
-  // Load agency notification settings
-  const { data: agencySettings } = await db
-    .from('agency_settings')
-    .select('notification_email, notify_schedule_generated, ai_provider, ai_model, ai_api_key, agency_name')
-    .single()
+  // Load global fallback schedule
+  const { data: globalSettings } = await db
+    .from('content_settings')
+    .select('schedule_frequency, schedule_day_of_week')
+    .is('client_id', null)
+    .maybeSingle()
+
+  const globalFreq = (globalSettings as { schedule_frequency?: string } | null)?.schedule_frequency ?? 'weekly'
+  const globalDay  = (globalSettings as { schedule_day_of_week?: number } | null)?.schedule_day_of_week ?? 1
 
   const topicsGenerated: string[] = []
   const postsTriggered:  string[] = []
@@ -55,20 +85,37 @@ export async function GET(request: NextRequest) {
   for (const row of settingsRows) {
     const {
       client_id,
-      monthly_publish_day: publishDay,
-      topics_per_run: topicsPerRun = 5,
+      schedule_frequency,
+      schedule_day_of_week,
+      topics_per_run = 5,
     } = row as {
-      client_id: string
-      monthly_publish_day: number
-      topics_per_run: number
-      weeks_ahead: number
+      client_id:            string
+      schedule_frequency:   string | null
+      schedule_day_of_week: number | null
+      topics_per_run:       number
+      posts_per_run:        number
+      weeks_ahead:          number
     }
 
-    const nextPublish = nextOccurrence(publishDay)
-    const days        = daysFromNow(nextPublish)
+    // Get last published date for this client
+    const { data: lastPublish } = await db
+      .from('content_posts')
+      .select('generated_at')
+      .eq('client_id', client_id)
+      .in('status', ['published', 'approved'])
+      .order('generated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const lastPublishedAt = (lastPublish as { generated_at: string } | null)?.generated_at ?? null
+
+    const frequency = (schedule_frequency as string | null) ?? globalFreq
+    const dayOfWeek = (schedule_day_of_week as number | null) ?? globalDay
+
+    const nextPublish    = calcNextPublishDate(frequency, dayOfWeek, lastPublishedAt)
+    const days           = daysFromNow(nextPublish)
     const publishDateStr = nextPublish.toISOString().split('T')[0]
 
-    // ── 30 days out: generate topics if none exist yet ─────────────────────
+    // ── 30 days out: generate topics if none exist for this cycle ─────────
     if (days <= 30 && days > 0) {
       const { data: existing } = await db
         .from('content_topics')
@@ -89,18 +136,18 @@ export async function GET(request: NextRequest) {
             },
             body: JSON.stringify({
               client_id,
-              count:               topicsPerRun,
+              count:               topics_per_run,
               target_publish_date: publishDateStr,
             }),
           })
           topicsGenerated.push(client_id)
         } catch (e) {
-          console.error(`Failed to generate topics for client ${client_id}:`, e)
+          console.error(`[content-topics cron] Failed to generate topics for client ${client_id}:`, e)
         }
       }
     }
 
-    // ── 7 days out: auto-generate posts for approved topics ────────────────
+    // ── 7 days out: auto-generate posts for approved topics ───────────────
     if (days <= 7 && days > 0) {
       const { data: approvedTopics } = await db
         .from('content_topics')
@@ -121,7 +168,6 @@ export async function GET(request: NextRequest) {
             body: JSON.stringify({ topic_id: topic.id }),
           })
 
-          // Mark topic as scheduled
           await db
             .from('content_topics')
             .update({ status: 'scheduled' })
@@ -129,16 +175,16 @@ export async function GET(request: NextRequest) {
 
           postsTriggered.push(topic.id)
         } catch (e) {
-          console.error(`Failed to generate post for topic ${topic.id}:`, e)
+          console.error(`[content-topics cron] Failed to generate post for topic ${topic.id}:`, e)
         }
       }
     }
   }
 
-  console.log(`content-topics cron: generated topics for ${topicsGenerated.length} clients, triggered ${postsTriggered.length} posts`)
+  console.log(`[content-topics cron] topics generated for ${topicsGenerated.length} clients, triggered ${postsTriggered.length} posts`)
 
   return NextResponse.json({
-    ok: true,
+    ok:              true,
     topicsGenerated: topicsGenerated.length,
     postsTriggered:  postsTriggered.length,
   })
