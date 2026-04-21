@@ -238,92 +238,61 @@ export default function ClientContentSettingsForm({
         </div>
       </div>
 
-      {/* ── Auto-Generation Schedule ─────────────────────────────────────── */}
+      {/* ── Content Schedule ─────────────────────────────────────────────── */}
       <div className="card p-6 space-y-4">
-        <h3 className="section-title">Auto-Generation Schedule</h3>
-
-        <label className="flex items-center gap-3 cursor-pointer">
-          <Toggle checked={form.auto_generate ?? false} onChange={v => set('auto_generate', v)} />
-          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {form.auto_generate ? 'Auto-generate enabled' : 'Auto-generate disabled'}
-          </span>
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+          <div>
+            <h3 className="section-title" style={{ marginBottom: 0 }}>Content Schedule</h3>
+            <p className="section-desc" style={{ marginTop: '0.125rem' }}>Automate topic generation and post creation on a recurring schedule.</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+            <Toggle checked={form.auto_generate ?? false} onChange={v => set('auto_generate', v)} />
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {form.auto_generate ? 'Enabled' : 'Disabled'}
+            </span>
+          </label>
+        </div>
 
         {form.auto_generate && (
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <Label hint="or use global default">Frequency</Label>
-              <select className="input" value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
-                <option value="">Use global default</option>
-                {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            {showDayPicker(form.schedule_frequency) && (
+          <>
+            <div className="grid grid-cols-3 gap-4">
               <div>
-                <Label>Day of Week</Label>
-                <select className="input" value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
-                  {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                <Label>Frequency</Label>
+                <select className="input" value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
+                  <option value="">Use global default</option>
+                  {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
-            )}
-            <div>
-              <Label>Posts per Run</Label>
-              <input className="input" type="number" min={1} max={5} value={form.posts_per_run ?? 1} onChange={e => set('posts_per_run', Number(e.target.value))} />
+              {showDayPicker(form.schedule_frequency) && (
+                <div>
+                  <Label>Day of Week</Label>
+                  <select className="input" value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
+                    {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <Label hint="topics per run">Topics per Run</Label>
+                <input className="input" type="number" min={1} max={20} value={form.topics_per_run ?? 5} onChange={e => set('topics_per_run', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label>Posts per Run</Label>
+                <input className="input" type="number" min={1} max={5} value={form.posts_per_run ?? 1} onChange={e => set('posts_per_run', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label hint="how far ahead to schedule topics">Weeks Ahead</Label>
+                <input className="input" type="number" min={1} max={12} value={form.weeks_ahead ?? 4} onChange={e => set('weeks_ahead', Number(e.target.value))} />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* ── Monthly Content Schedule ─────────────────────────────────────── */}
-      <div className="card p-6 space-y-4">
-        <div>
-          <h3 className="section-title">Monthly Content Schedule</h3>
-          <p className="section-desc">Set a monthly publish date to enable automated topic generation and post creation.</p>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <Label hint="1–28, or blank for manual only">Publish Day of Month</Label>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={28}
-              placeholder="e.g. 15"
-              value={form.monthly_publish_day ?? ''}
-              onChange={e => set('monthly_publish_day', e.target.value ? Math.min(28, Math.max(1, parseInt(e.target.value))) : null)}
-            />
-          </div>
-          <div>
-            <Label hint="topics per auto-generate run">Topics per Run</Label>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={20}
-              value={form.topics_per_run ?? 5}
-              onChange={e => set('topics_per_run', Number(e.target.value))}
-            />
-          </div>
-          <div>
-            <Label hint="how far ahead to schedule topics">Weeks Ahead</Label>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={12}
-              value={form.weeks_ahead ?? 4}
-              onChange={e => set('weeks_ahead', Number(e.target.value))}
-            />
-          </div>
-        </div>
-
-        {form.monthly_publish_day && (
-          <div className="rounded-xl px-4 py-3 text-xs space-y-1"
-            style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
-            <p><strong>Auto-flow:</strong> 30 days before the {form.monthly_publish_day}{form.monthly_publish_day === 1 ? 'st' : form.monthly_publish_day === 2 ? 'nd' : form.monthly_publish_day === 3 ? 'rd' : 'th'}: topics generated and sent for approval.</p>
-            <p>7 days before: approved topics get a post generated automatically using fresh GSC data.</p>
-          </div>
+            {form.schedule_frequency && (
+              <div className="rounded-xl px-4 py-3 text-xs space-y-1"
+                style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
+                <p><strong>Auto-flow:</strong> 30 days before each scheduled run: topics generated and sent for approval.</p>
+                <p>7 days before: approved topics get a post generated automatically using fresh GSC data.</p>
+              </div>
+            )}
+          </>
         )}
       </div>
 
