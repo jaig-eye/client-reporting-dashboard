@@ -1,12 +1,12 @@
 // New Client Connection — /admin/clients/[id]/connections/new?connector=[connectorId]
 // Assigns a specific account from an agency connector to this client.
-// Loads discovered accounts for easy selection via dropdown.
+// Calls discoverAccounts() live so the list is always fresh (falls back to cache on failure).
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Client, Connector } from '@/lib/types'
-import { getConnectorDef } from '@/lib/connectors/registry'
+import { getConnectorDef, getConnectorAdapter } from '@/lib/connectors/registry'
 import NewConnectionForm from './NewConnectionForm'
 
 export const dynamic = 'force-dynamic'
@@ -26,13 +26,9 @@ export default async function NewClientConnectionPage({
 
   const db = createAdminClient()
 
-  const [clientRes, connectorRes, discoveredRes] = await Promise.all([
+  const [clientRes, connectorRes] = await Promise.all([
     db.from('clients').select('id, name').eq('id', id).single(),
     db.from('connectors').select('*').eq('id', connectorId).single(),
-    db.from('connector_accounts')
-      .select('external_id, external_name')
-      .eq('connector_id', connectorId)
-      .order('external_name'),
   ])
 
   const client    = clientRes.data as Client | null
@@ -40,8 +36,49 @@ export default async function NewClientConnectionPage({
 
   if (!client || !connector) notFound()
 
-  const def              = getConnectorDef(connector.type)
-  const discoveredAccounts = discoveredRes.data ?? []
+  const def     = getConnectorDef(connector.type)
+  const adapter = getConnectorAdapter(connector.type)
+
+  const auth   = (connector.auth   ?? {}) as Record<string, unknown>
+  const config = (connector.config ?? {}) as Record<string, unknown>
+
+  // Try live discovery first — always fresh, no stale cache
+  let discoveredAccounts: { external_id: string; external_name: string | null }[] = []
+  let discoveryError: string | null = null
+
+  if (adapter) {
+    try {
+      const live = await adapter.discoverAccounts(auth, config)
+      if (live.length > 0) {
+        discoveredAccounts = live.map(a => ({ external_id: a.external_id, external_name: a.external_name ?? null }))
+        // Update cache in background (don't await)
+        db.from('connector_accounts').upsert(
+          live.map(a => ({
+            connector_id:  connectorId,
+            external_id:   a.external_id,
+            external_name: a.external_name ?? null,
+            metadata:      (a as Record<string, unknown>).metadata ?? null,
+          })),
+          { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
+        ).then(() => {}).catch(() => {})
+      }
+    } catch (e) {
+      discoveryError = e instanceof Error ? e.message : 'Account discovery failed'
+      // Fall back to cached accounts
+      const cached = await db.from('connector_accounts')
+        .select('external_id, external_name')
+        .eq('connector_id', connectorId)
+        .order('external_name')
+      discoveredAccounts = (cached.data ?? []) as { external_id: string; external_name: string | null }[]
+    }
+  } else {
+    // No adapter — use cache only
+    const cached = await db.from('connector_accounts')
+      .select('external_id, external_name')
+      .eq('connector_id', connectorId)
+      .order('external_name')
+    discoveredAccounts = (cached.data ?? []) as { external_id: string; external_name: string | null }[]
+  }
 
   return (
     <div className="max-w-lg">
@@ -76,11 +113,18 @@ export default async function NewClientConnectionPage({
           </div>
         </div>
 
+        {discoveryError && (
+          <div className="rounded-xl px-4 py-3 text-sm mb-4"
+            style={{ background: 'var(--amber-subtle, #fffbeb)', border: '1px solid #fde68a', color: '#92400e' }}>
+            Could not refresh account list: {discoveryError}. Showing cached results.
+          </div>
+        )}
+
         <NewConnectionForm
           clientId={id}
           connectorId={connectorId}
           connectorType={connector.type}
-          discoveredAccounts={discoveredAccounts as { external_id: string; external_name: string | null }[]}
+          discoveredAccounts={discoveredAccounts}
         />
       </div>
     </div>
