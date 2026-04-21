@@ -626,16 +626,16 @@ async function GscOpportunitiesPanel({ clientId, isEcom }: { clientId: string; i
       .slice(0, limit)
 
   const quickWins = sortSection(
-    aggRows.filter(r => r.position >= 5 && r.position <= 10 && r.impressions > 80  && r.ctr < 0.12),
-    8
+    aggRows.filter(r => r.position >= 5 && r.position <= 10 && r.impressions > 15 && r.ctr < 0.15),
+    12
   )
   const growth = sortSection(
-    aggRows.filter(r => r.position > 10 && r.position <= 20 && r.impressions > 50),
-    8
+    aggRows.filter(r => r.position > 10 && r.position <= 20 && r.impressions > 10),
+    12
   )
   const lowCtr = sortSection(
-    aggRows.filter(r => r.position >= 1 && r.position <= 5  && r.impressions > 100 && r.ctr < 0.05),
-    6
+    aggRows.filter(r => r.position >= 1 && r.position <= 5  && r.impressions > 20 && r.ctr < 0.06),
+    10
   )
 
   return <GscInsightsPanel quickWins={quickWins} growth={growth} lowCtr={lowCtr} />

@@ -123,20 +123,20 @@ function QueryRow({ r }: { r: GscInsightRow }) {
           fontSize: '0.68rem', fontWeight: 500, padding: '2px 6px', borderRadius: 999,
           background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)',
         }}>
-          {fmtImpr(r.impressions)}
+          {fmtImpr(r.impressions)} impr
         </span>
         <span style={{
           fontSize: '0.68rem', fontWeight: 600, padding: '2px 6px', borderRadius: 999,
           background: posBackground(r.position), color: posColor(r.position),
         }}>
-          {fmtPos(r.position)}
+          pos {fmtPos(r.position)}
         </span>
         <span style={{
           fontSize: '0.68rem', fontWeight: 500, padding: '2px 6px', borderRadius: 999,
           background: lowCtr ? '#fef3c7' : 'var(--bg-muted, #f3f4f6)',
           color:      lowCtr ? '#92400e' : 'var(--text-muted)',
         }}>
-          {fmtPct(r.ctr)}
+          {fmtPct(r.ctr)} CTR
         </span>
       </div>
     </div>
@@ -188,7 +188,7 @@ function PageCard({ group }: { group: PageGroup }) {
             fontSize: '0.68rem', fontWeight: 500, padding: '2px 7px', borderRadius: 999,
             background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)',
           }}>
-            {fmtImpr(group.totalImpr)} total
+            {fmtImpr(group.totalImpr)} impr
           </span>
           <span style={{
             fontSize: '0.68rem', fontWeight: 500, padding: '2px 7px', borderRadius: 999,
