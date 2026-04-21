@@ -26,6 +26,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Optional: target a single client (admin-only manual trigger)
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>
+  const targetClientId = isAdminAuth && typeof body.client_id === 'string' ? body.client_id : null
+
   const db = createAdminClient()
 
   // Load agency AI settings
@@ -56,6 +60,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'No clients with auto_generate enabled', generated: 0 })
   }
 
+  // When targeting a specific client, verify it's in the list
+  if (targetClientId && !clientSettingsRows.some(cs => cs.client_id === targetClientId)) {
+    return NextResponse.json({ error: 'Client not found or auto_generate not enabled', generated: 0 }, { status: 404 })
+  }
+
   const provider = agencySettings.ai_provider || 'anthropic'
   const model    = agencySettings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
   const apiKey   = agencySettings.ai_api_key
@@ -70,6 +79,7 @@ export async function POST(request: NextRequest) {
 
   for (const cs of clientSettingsRows) {
     if (!cs.client_id) continue
+    if (targetClientId && cs.client_id !== targetClientId) continue
 
     // Determine last generated date for this client
     const { data: lastPost } = await db
@@ -85,8 +95,8 @@ export async function POST(request: NextRequest) {
     const frequency = (cs.schedule_frequency as string  | null) ?? globalFrequency
     const dayOfWeek = (cs.schedule_day_of_week as number | null) ?? globalDayOfWeek
 
-    // Skip if not due today (always run when manually triggered by admin)
-    if (isCronAuth && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
+    // Skip if not due today — bypass when admin targets a specific client or when not cron
+    if (isCronAuth && !targetClientId && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
 
     const postsPerRun  = (cs.posts_per_run  as number | null) ?? 1
     const targetLength = (cs.target_length  as number | null) ?? 1500

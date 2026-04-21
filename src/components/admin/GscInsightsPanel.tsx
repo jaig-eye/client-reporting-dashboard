@@ -44,11 +44,12 @@ function truncatePath(url: string, max = 48): string {
 }
 
 export interface GscInsightRow {
-  page:        string | null
-  query:       string | null
-  impressions: number | null
-  ctr:         number | null
-  position:    number | null
+  page:              string | null
+  query:             string | null
+  impressions:       number | null
+  ctr:               number | null
+  position:          number | null
+  recentlyTargeted?: boolean
 }
 
 interface PageGroup {
@@ -92,19 +93,29 @@ function QueryRow({ r }: { r: GscInsightRow }) {
       borderRadius:   7,
       background:     'var(--bg-base, #fff)',
     }}>
-      {/* Keyword */}
-      <span style={{
-        flex:         1,
-        minWidth:     0,
-        fontSize:     '0.8rem',
-        fontWeight:   500,
-        color:        'var(--text-primary)',
-        whiteSpace:   'nowrap',
-        overflow:     'hidden',
-        textOverflow: 'ellipsis',
-      }} title={r.query ?? ''}>
-        {r.query || '—'}
-      </span>
+      {/* Keyword + recently-targeted badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flex: 1, minWidth: 0 }}>
+        <span style={{
+          minWidth:     0,
+          fontSize:     '0.8rem',
+          fontWeight:   500,
+          color:        'var(--text-primary)',
+          whiteSpace:   'nowrap',
+          overflow:     'hidden',
+          textOverflow: 'ellipsis',
+        }} title={r.query ?? ''}>
+          {r.query || '—'}
+        </span>
+        {r.recentlyTargeted && (
+          <span style={{
+            flexShrink: 0, fontSize: '0.62rem', color: 'var(--text-faint)',
+            padding: '1px 5px', borderRadius: 999, background: 'var(--bg-muted, #f3f4f6)',
+            whiteSpace: 'nowrap',
+          }}>
+            ↩ used
+          </span>
+        )}
+      </div>
 
       {/* Metrics */}
       <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0, alignItems: 'center' }}>
@@ -251,17 +262,13 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
         <div style={{
           display: 'flex', gap: '0.5rem', fontSize: '0.7rem', color: 'var(--text-faint)',
           paddingTop: '0.5rem', borderTop: '1px solid var(--border)',
-          flexWrap: 'wrap',
+          flexWrap: 'wrap', rowGap: '0.25rem',
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Core Page</span>
-            internal link destination in new articles
-          </span>
+          <span><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Core Page</span> → internal link destination</span>
           <span style={{ color: 'var(--border)' }}>·</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Keywords</span>
-            target these in new content
-          </span>
+          <span><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Keywords</span> → target in new content</span>
+          <span style={{ color: 'var(--border)' }}>·</span>
+          <span><span style={{ fontWeight: 600, color: 'var(--text-faint)' }}>↩ used</span> = targeted in last 90 days</span>
         </div>
       </div>
 

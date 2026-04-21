@@ -80,12 +80,14 @@ export default function ClientContentSettingsForm({
   clientId: string
   sites:    SiteOption[]
 }) {
-  const [form,    setForm]    = useState<ClientSettings>({})
-  const [authors, setAuthors] = useState<Author[]>([])
-  const [saving,  setSaving]  = useState(false)
-  const [saved,   setSaved]   = useState(false)
-  const [error,   setError]   = useState('')
-  const [loading, setLoading] = useState(true)
+  const [form,      setForm]      = useState<ClientSettings>({})
+  const [authors,   setAuthors]   = useState<Author[]>([])
+  const [saving,    setSaving]    = useState(false)
+  const [saved,     setSaved]     = useState(false)
+  const [error,     setError]     = useState('')
+  const [loading,   setLoading]   = useState(true)
+  const [running,   setRunning]   = useState(false)
+  const [runResult, setRunResult] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -126,6 +128,20 @@ export default function ClientContentSettingsForm({
 
   function set<K extends keyof ClientSettings>(key: K, val: ClientSettings[K]) {
     setForm(p => ({ ...p, [key]: val }))
+  }
+
+  async function runNow() {
+    setRunning(true); setRunResult('')
+    const res = await fetch('/api/admin/content/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId }),
+    })
+    const data = await res.json()
+    setRunning(false)
+    setRunResult(res.ok
+      ? `${data.generated ?? 0} post${data.generated === 1 ? '' : 's'} generated`
+      : data.error || 'Generation failed')
   }
 
   async function save() {
@@ -285,13 +301,29 @@ export default function ClientContentSettingsForm({
               </div>
             </div>
 
-            {form.schedule_frequency && (
-              <div className="rounded-xl px-4 py-3 text-xs space-y-1"
-                style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
+            <div className="rounded-xl px-4 py-3"
+              style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}>
+              <div className="text-xs space-y-1" style={{ marginBottom: '0.75rem' }}>
                 <p><strong>Auto-flow:</strong> 30 days before each scheduled run: topics generated and sent for approval.</p>
                 <p>7 days before: approved topics get a post generated automatically using fresh GSC data.</p>
               </div>
-            )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8125rem', padding: '0.3rem 0.875rem' }}
+                  onClick={runNow}
+                  disabled={running}
+                >
+                  {running ? 'Generating…' : '▶ Run Now'}
+                </button>
+                {runResult && (
+                  <span className="text-xs" style={{ color: runResult.includes('failed') || runResult.includes('error') ? 'var(--red)' : 'var(--green)' }}>
+                    {runResult}
+                  </span>
+                )}
+              </div>
+            </div>
           </>
         )}
       </div>

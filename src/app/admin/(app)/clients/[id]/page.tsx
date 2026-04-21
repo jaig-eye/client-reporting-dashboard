@@ -554,85 +554,89 @@ async function ClientContentSettingsSection({ clientId }: { clientId: string }) 
 
 // ─── GSC Opportunities Panel (right column of content tab) ───────────────────
 
-function dedupeGsc(rows: GscInsightRow[]): GscInsightRow[] {
-  const seen = new Map<string, GscInsightRow>()
-  for (const r of rows) {
-    const key = `${r.query ?? ''}||${r.page ?? ''}`
-    const ex = seen.get(key)
-    if (!ex || (r.impressions ?? 0) > (ex.impressions ?? 0)) seen.set(key, r)
-  }
-  return Array.from(seen.values())
-}
-
 async function GscOpportunitiesPanel({ clientId, isEcom }: { clientId: string; isEcom: boolean }) {
   const db = createAdminClient()
 
-  // Fetch with extra rows to account for dedup loss; apply ecom product-page exclusions when applicable
-  const [{ data: qwRaw }, { data: gtRaw }, { data: ciRaw }] = await Promise.all([
-    // Quick Wins: position 5–10, near page 1 — optimise titles/meta
-    (() => {
-      let q = db.from('gsc_metrics')
-        .select('page, query, impressions, ctr, position')
-        .eq('client_id', clientId)
-        .not('page', 'ilike', '%?%')
-        .gt('impressions', 30)
-        .gte('position', 5).lte('position', 10)
-        .lt('ctr', 0.08)
-        .order('impressions', { ascending: false })
-        .limit(40)
-      if (isEcom) {
-        q = q.not('page', 'ilike', '%/product/%')
-             .not('page', 'ilike', '%/products/%')
-             .not('page', 'ilike', '%/shop/%')
-             .not('page', 'ilike', '%/collection/%')
-             .not('page', 'ilike', '%/collections/%')
-      }
-      return q
-    })(),
-    // Growth Targets: position 10–20, second page — expand content/links
-    (() => {
-      let q = db.from('gsc_metrics')
-        .select('page, query, impressions, ctr, position')
-        .eq('client_id', clientId)
-        .not('page', 'ilike', '%?%')
-        .gt('impressions', 30)
-        .gt('position', 10).lte('position', 20)
-        .order('impressions', { ascending: false })
-        .limit(40)
-      if (isEcom) {
-        q = q.not('page', 'ilike', '%/product/%')
-             .not('page', 'ilike', '%/products/%')
-             .not('page', 'ilike', '%/shop/%')
-             .not('page', 'ilike', '%/collection/%')
-             .not('page', 'ilike', '%/collections/%')
-      }
-      return q
-    })(),
-    // CTR Issues: position 1–5, low CTR — review title tags
-    (() => {
-      let q = db.from('gsc_metrics')
-        .select('page, query, impressions, ctr, position')
-        .eq('client_id', clientId)
-        .not('page', 'ilike', '%?%')
-        .gt('impressions', 50)
-        .gte('position', 1).lte('position', 5)
-        .lt('ctr', 0.04)
-        .order('impressions', { ascending: false })
-        .limit(30)
-      if (isEcom) {
-        q = q.not('page', 'ilike', '%/product/%')
-             .not('page', 'ilike', '%/products/%')
-             .not('page', 'ilike', '%/shop/%')
-             .not('page', 'ilike', '%/collection/%')
-             .not('page', 'ilike', '%/collections/%')
-      }
-      return q
-    })(),
+  // 28-day window so per-day rows aggregate to meaningful totals per (query, page)
+  const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+
+  const [{ data: rawRows }, { data: recentPosts }] = await Promise.all([
+    db.from('gsc_metrics')
+      .select('page, query, impressions, clicks, ctr, position')
+      .eq('client_id', clientId)
+      .gte('date', windowStart)
+      .neq('page', '')
+      .neq('query', '')
+      .not('page', 'ilike', '%?%'),
+    db.from('content_posts')
+      .select('target_keyword')
+      .eq('client_id', clientId)
+      .gte('generated_at', new Date(Date.now() - 90 * 86_400_000).toISOString())
+      .limit(60),
   ])
 
-  const quickWins = dedupeGsc((qwRaw ?? []) as GscInsightRow[]).slice(0, 8)
-  const growth    = dedupeGsc((gtRaw ?? []) as GscInsightRow[]).slice(0, 8)
-  const lowCtr    = dedupeGsc((ciRaw ?? []) as GscInsightRow[]).slice(0, 6)
+  // Aggregate by (query, page) — weighted average for position and CTR
+  type AggRow = { page: string; query: string; impressions: number; clicks: number; weightedPos: number; weightedCtr: number }
+  const agg = new Map<string, AggRow>()
+
+  for (const r of (rawRows ?? []) as { page: string; query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
+    if (!r.page || !r.query) continue
+    if (isEcom && (
+      r.page.includes('/product/') || r.page.includes('/products/') ||
+      r.page.includes('/shop/')    || r.page.includes('/collection/') ||
+      r.page.includes('/collections/')
+    )) continue
+
+    const key  = `${r.query}||${r.page}`
+    const impr = r.impressions ?? 0
+    const ex   = agg.get(key)
+    if (ex) {
+      const total = ex.impressions + impr
+      ex.weightedPos = total > 0 ? (ex.weightedPos * ex.impressions + (r.position ?? 0) * impr) / total : ex.weightedPos
+      ex.weightedCtr = total > 0 ? (ex.weightedCtr * ex.impressions + (r.ctr      ?? 0) * impr) / total : ex.weightedCtr
+      ex.impressions += impr
+      ex.clicks      += r.clicks ?? 0
+    } else {
+      agg.set(key, { page: r.page, query: r.query, impressions: impr, clicks: r.clicks ?? 0,
+        weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0 })
+    }
+  }
+
+  // Mark keywords used in the last 90 days of generated posts
+  const recentKeywords = new Set(
+    (recentPosts ?? []).map(p => ((p as { target_keyword?: string }).target_keyword ?? '').toLowerCase().trim()).filter(Boolean)
+  )
+
+  const aggRows = Array.from(agg.values()).map(r => ({
+    page:             r.page,
+    query:            r.query,
+    impressions:      r.impressions,
+    ctr:              r.weightedCtr,
+    position:         r.weightedPos,
+    recentlyTargeted: recentKeywords.has(r.query.toLowerCase().trim()),
+  }))
+
+  // Filter into sections — thresholds are 28-day totals (not single-day)
+  const sortSection = (rows: typeof aggRows, limit: number) =>
+    rows
+      .sort((a, b) => {
+        if (a.recentlyTargeted !== b.recentlyTargeted) return a.recentlyTargeted ? 1 : -1
+        return b.impressions - a.impressions
+      })
+      .slice(0, limit)
+
+  const quickWins = sortSection(
+    aggRows.filter(r => r.position >= 5 && r.position <= 10 && r.impressions > 80  && r.ctr < 0.12),
+    8
+  )
+  const growth = sortSection(
+    aggRows.filter(r => r.position > 10 && r.position <= 20 && r.impressions > 50),
+    8
+  )
+  const lowCtr = sortSection(
+    aggRows.filter(r => r.position >= 1 && r.position <= 5  && r.impressions > 100 && r.ctr < 0.05),
+    6
+  )
 
   return <GscInsightsPanel quickWins={quickWins} growth={growth} lowCtr={lowCtr} />
 }
