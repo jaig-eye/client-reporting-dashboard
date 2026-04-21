@@ -57,7 +57,7 @@ export default async function NewClientConnectionPage({
             connector_id:  connectorId,
             external_id:   a.external_id,
             external_name: a.external_name ?? null,
-            metadata:      (a as Record<string, unknown>).metadata ?? null,
+            metadata:      a.metadata ?? null,
           })),
           { onConflict: 'connector_id,external_id', ignoreDuplicates: false }
         ).then(() => {}).catch(() => {})
