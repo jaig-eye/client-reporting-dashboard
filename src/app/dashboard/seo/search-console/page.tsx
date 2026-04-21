@@ -106,38 +106,64 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Fetch current and comparison period via Postgres RPC (avoids row-level timeout)
-  const [{ data: currRaw, error: currError }, { data: compRaw }] = await Promise.all([
-    db.rpc('get_gsc_summary', {
-      p_client_id: client.id,
-      p_date_from: fmtDate(fromDate),
-      p_date_to:   fmtDate(toDate),
-      p_top_n:     25,
-    }),
+  // Fetch current and comparison periods via direct DB queries — no Postgres function required.
+  // Aggregation is done in JS (same approach as GSCSummaryCard on the main dashboard).
+  type GscRawRow = { clicks: number; impressions: number; ctr: number; position: number; query: string | null; page: string | null }
+  const gscSelect = 'clicks,impressions,ctr,position,query,page'
+
+  const [{ data: currRows }, { data: compRows }] = await Promise.all([
+    db.from('gsc_metrics')
+      .select(gscSelect)
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate))
+      .lte('date', fmtDate(toDate)),
     showCompare && compFrom && compTo
-      ? db.rpc('get_gsc_summary', {
-          p_client_id: client.id,
-          p_date_from: fmtDate(compFrom),
-          p_date_to:   fmtDate(compTo),
-          p_top_n:     25,
-        })
+      ? db.from('gsc_metrics')
+          .select(gscSelect)
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(compFrom))
+          .lte('date', fmtDate(compTo))
       : Promise.resolve({ data: null }),
   ])
 
-  if (currError) {
-    console.error('[gsc-page] RPC error:', currError)
-    return (
-      <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
-        <main className="max-w-7xl mx-auto px-6 py-8">
-          <EmptyState title="Search Console data unavailable" description={`Database function error: ${currError.message}. Run migration 059_gsc_summary_rpc.sql in Supabase or contact support.`} />
-        </main>
-      </div>
-    )
+  function buildSummary(rows: GscRawRow[]): GscSummary {
+    const totImpr = rows.reduce((s, r) => s + (r.impressions ?? 0), 0)
+    const totals: GscSummaryTotals = {
+      clicks:      rows.reduce((s, r) => s + (r.clicks      ?? 0), 0),
+      impressions: totImpr,
+      ctr:         totImpr > 0 ? rows.reduce((s, r) => s + (r.ctr      ?? 0) * (r.impressions ?? 0), 0) / totImpr : 0,
+      position:    totImpr > 0 ? rows.reduce((s, r) => s + (r.position ?? 0) * (r.impressions ?? 0), 0) / totImpr : 0,
+    }
+    // Aggregate top queries grouped by keyword
+    type Agg = { clicks: number; impressions: number; ctrSum: number; posSum: number }
+    const qMap = new Map<string, Agg>()
+    for (const r of rows) {
+      if (!r.query) continue
+      const impr = r.impressions ?? 0
+      const ex = qMap.get(r.query)
+      if (ex) { ex.clicks += r.clicks ?? 0; ex.impressions += impr; ex.ctrSum += (r.ctr ?? 0) * impr; ex.posSum += (r.position ?? 0) * impr }
+      else qMap.set(r.query, { clicks: r.clicks ?? 0, impressions: impr, ctrSum: (r.ctr ?? 0) * impr, posSum: (r.position ?? 0) * impr })
+    }
+    const queries: GscSummaryRow[] = Array.from(qMap.entries())
+      .sort((a, b) => b[1].clicks - a[1].clicks).slice(0, 25)
+      .map(([query, v]) => ({ query, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.ctrSum / v.impressions : 0, position: v.impressions > 0 ? v.posSum / v.impressions : 0 }))
+    // Aggregate top pages grouped by URL
+    const pMap = new Map<string, Agg>()
+    for (const r of rows) {
+      if (!r.page) continue
+      const impr = r.impressions ?? 0
+      const ex = pMap.get(r.page)
+      if (ex) { ex.clicks += r.clicks ?? 0; ex.impressions += impr; ex.ctrSum += (r.ctr ?? 0) * impr; ex.posSum += (r.position ?? 0) * impr }
+      else pMap.set(r.page, { clicks: r.clicks ?? 0, impressions: impr, ctrSum: (r.ctr ?? 0) * impr, posSum: (r.position ?? 0) * impr })
+    }
+    const pages: GscSummaryRow[] = Array.from(pMap.entries())
+      .sort((a, b) => b[1].clicks - a[1].clicks).slice(0, 25)
+      .map(([page, v]) => ({ page, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.ctrSum / v.impressions : 0, position: v.impressions > 0 ? v.posSum / v.impressions : 0 }))
+    return { totals, queries, pages }
   }
 
-  const curr = currRaw as GscSummary | null
-  const comp = compRaw as GscSummary | null
+  const curr = currRows && currRows.length > 0 ? buildSummary(currRows as GscRawRow[]) : null
+  const comp = compRows && compRows.length > 0 ? buildSummary(compRows as GscRawRow[]) : null
 
   const hasData = (curr?.totals?.clicks ?? 0) > 0 || (curr?.totals?.impressions ?? 0) > 0
   if (!curr || !hasData) {

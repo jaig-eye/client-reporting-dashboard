@@ -416,7 +416,7 @@ async function fetchAdCreatives(
     try {
       const batchRequests = slice.map(({ creativeId }) => ({
         method: 'GET',
-        relative_url: `${creativeId}?fields=thumbnail_url&thumbnail_width=720&thumbnail_height=720`,
+        relative_url: `${creativeId}?fields=thumbnail_url&thumbnail_width=1080&thumbnail_height=1080`,
       }))
 
       const batchUrl = new URL(`${BASE_URL}/`)

@@ -379,9 +379,7 @@ export async function upsertGoogleAdsMetrics(
     const convValue        = Number(r.conversions_value)     || 0
     const allConvValue     = Number(r.all_conversions_value) || 0
     const vtc              = Number(r.view_through_conversions) || 0
-    // Prefer primary conversions_value for ROAS (matches Google Ads UI); only fall back
-    // to all_conversions_value when primary is zero (prevents micro-conversion inflation).
-    const roasConvValue    = convValue > 0 ? convValue : allConvValue
+    const roasConvValue    = convValue  // stored ROAS uses primary conversions_value only
 
     return {
       connection_id:            connectionId,

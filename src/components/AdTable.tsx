@@ -549,11 +549,16 @@ export function AdRowTable({
 
             {/* Image */}
             {(previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) && (
-              <img
-                src={previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!}
-                alt="ad creative"
-                style={{ width: '100%', aspectRatio: '4/5', objectFit: 'cover', display: 'block' }}
-              />
+              <>
+                <img
+                  src={previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!}
+                  alt="ad creative"
+                  style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }}
+                />
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', margin: '5px 1rem 0', lineHeight: 1.4 }}>
+                  Preview is for reference only. Actual ad appearance and image quality may differ from how the platform serves it.
+                </p>
+              </>
             )}
 
             {/* Headline + CTA strip — fall back to ad_name when creative has no title */}

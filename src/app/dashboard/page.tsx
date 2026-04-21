@@ -192,11 +192,10 @@ export default async function DashboardPage({
   function normalise(rows: Record<string, unknown>[], rowSource: string): NormRow[] {
     return rows.map(m => {
       let conversions      = Number(m.conversions) || 0
-      // Prefer primary conversions_value (matches Google Ads UI); only fall back to
-      // all_conversions_value when primary is zero (prevents micro-conversion inflation).
-      const _primaryConvValue = Number(m.conversions_value ?? m.conversion_value ?? 0)
-      const _allConvValue      = Number(m.all_conversions_value ?? 0)
-      let conversion_value     = _primaryConvValue > 0 ? _primaryConvValue : _allConvValue
+      // Use primary conversion value only — matches Google Ads "Conv. value" column.
+      // all_conversions_value is intentionally excluded: it inflates revenue by including
+      // micro-conversions, store visits, and view-throughs not tracked as primary goals.
+      let conversion_value = Number(m.conversions_value ?? m.conversion_value ?? 0)
 
       if (Array.isArray(m.actions)) {
         const campaignIsEcom = (assignmentMap.get(String(m.campaign_id || ''))?.display_mode ?? 'lead_gen') === 'ecommerce'
