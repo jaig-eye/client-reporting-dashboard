@@ -5,6 +5,8 @@
 //
 // Gated by: content_settings.auto_generate = true (all frequency types)
 
+export const maxDuration = 300
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 

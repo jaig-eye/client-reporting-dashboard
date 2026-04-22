@@ -47,7 +47,7 @@ export default function SparkMetricCard({
       animate={{ opacity: 1, y: 0 }}
       transition={prefersReduced ? {} : { duration: 0.25, delay: delay * 0.05, ease: [0.16, 1, 0.3, 1] }}
       className="card flex flex-col gap-2"
-      style={{ padding: '1.25rem' }}
+      style={{ padding: '1.25rem', overflow: 'hidden' }}
     >
       {/* Label + delta badge */}
       <div className="flex items-start justify-between gap-2">

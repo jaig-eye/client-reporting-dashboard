@@ -20,16 +20,20 @@ import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 const BASE_URL = 'https://api.ahrefs.com/v3'
 
 interface AhrefsRawRow {
-  date:              string
-  domain_rating:     number | null
-  ahrefs_rank:       number | null
-  backlinks:         number | null
-  referring_domains: number | null
-  organic_keywords:  number | null
-  organic_traffic:   number | null
-  traffic_value?:    number | null
-  paid_keywords?:    number | null
-  paid_traffic?:     number | null
+  date:                   string
+  domain_rating:          number | null
+  ahrefs_rank:            number | null
+  backlinks:              number | null
+  referring_domains:      number | null
+  organic_keywords:       number | null
+  organic_traffic:        number | null
+  traffic_value?:         number | null
+  paid_keywords?:         number | null
+  paid_traffic?:          number | null
+  new_backlinks?:         number | null
+  lost_backlinks?:        number | null
+  new_referring_domains?: number | null
+  lost_referring_domains?:number | null
 }
 
 export interface AhrefsKeywordRow {
@@ -170,14 +174,14 @@ export const ahrefsConnector: ConnectorAdapter = {
 
     // ── Metrics history (weekly snapshots — backlinks, ref domains, organic)
     // Ahrefs API v3 uses `all_backlinks` as the field name in metrics-history; `backlinks` kept as fallback
-    let metricsPoints: { date: string; all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number }[] = []
+    let metricsPoints: { date: string; all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number; new_backlinks?: number; lost_backlinks?: number; new_referring_domains?: number; lost_referring_domains?: number }[] = []
     try {
       const metricsHistory = await ahrefsGet('/site-explorer/metrics-history', apiKey, {
         target:           domain,
         date_from:        dateFrom,
         date_to:          dateTo,
         history_grouping: 'weekly',
-        select:           'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
+        select:           'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic,new_backlinks,lost_backlinks,new_referring_domains,lost_referring_domains',
       })
       console.log('[ahrefs] metrics-history keys:', Object.keys(metricsHistory ?? {}))
       console.log('[ahrefs] metrics-history sample:', JSON.stringify(metricsHistory).slice(0, 600))
@@ -248,22 +252,26 @@ export const ahrefsConnector: ConnectorAdapter = {
         const diff = Math.abs(new Date(m.date).getTime() - drMs)
         if (diff < bestDiff && diff <= 3 * 86_400_000) { best = m; bestDiff = diff }
       }
-      return best ?? ({} as { all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number })
+      return best ?? ({} as (typeof metricsPoints)[0])
     }
     let rows: AhrefsRawRow[] = drPoints.map(dr => {
       const m = findNearestMetrics(dr.date)
       return {
-        date:              dr.date,
-        domain_rating:     typeof dr.domain_rating  === 'number' ? dr.domain_rating  : null,
-        ahrefs_rank:       typeof dr.ahrefs_rank    === 'number' ? dr.ahrefs_rank    : null,
-        backlinks:         typeof m.all_backlinks     === 'number' ? m.all_backlinks    :
-                         typeof m.backlinks        === 'number' ? m.backlinks       : null,
-        referring_domains: typeof m.refdomains       === 'number' ? m.refdomains      : null,
-        organic_keywords:  typeof m.org_keywords     === 'number' ? m.org_keywords    : null,
-        organic_traffic:   typeof m.org_traffic      === 'number' ? m.org_traffic     : null,
-        traffic_value:     typeof m.org_cost         === 'number' ? m.org_cost        : null,
-        paid_keywords:     typeof m.paid_keywords    === 'number' ? m.paid_keywords   : null,
-        paid_traffic:      typeof m.paid_traffic     === 'number' ? m.paid_traffic    : null,
+        date:                   dr.date,
+        domain_rating:          typeof dr.domain_rating  === 'number' ? dr.domain_rating  : null,
+        ahrefs_rank:            typeof dr.ahrefs_rank    === 'number' ? dr.ahrefs_rank    : null,
+        backlinks:              typeof m.all_backlinks    === 'number' ? m.all_backlinks   :
+                                typeof m.backlinks       === 'number' ? m.backlinks       : null,
+        referring_domains:      typeof m.refdomains              === 'number' ? m.refdomains              : null,
+        organic_keywords:       typeof m.org_keywords            === 'number' ? m.org_keywords            : null,
+        organic_traffic:        typeof m.org_traffic             === 'number' ? m.org_traffic             : null,
+        traffic_value:          typeof m.org_cost                === 'number' ? m.org_cost                : null,
+        paid_keywords:          typeof m.paid_keywords           === 'number' ? m.paid_keywords           : null,
+        paid_traffic:           typeof m.paid_traffic            === 'number' ? m.paid_traffic            : null,
+        new_backlinks:          typeof m.new_backlinks           === 'number' ? m.new_backlinks           : null,
+        lost_backlinks:         typeof m.lost_backlinks          === 'number' ? m.lost_backlinks          : null,
+        new_referring_domains:  typeof m.new_referring_domains   === 'number' ? m.new_referring_domains   : null,
+        lost_referring_domains: typeof m.lost_referring_domains  === 'number' ? m.lost_referring_domains  : null,
       }
     }).filter(r => r.domain_rating !== null || r.backlinks !== null)
 
@@ -310,7 +318,8 @@ export const ahrefsConnector: ConnectorAdapter = {
       if (domainRating !== null || backlinks !== null) {
         rows = [{ date: dateTo, domain_rating: domainRating, ahrefs_rank: ahrefsRank,
           backlinks, referring_domains: referringDoms, organic_keywords: organicKeywords, organic_traffic: organicTraffic,
-          traffic_value: trafficValue, paid_keywords: paidKeywords, paid_traffic: paidTraffic }]
+          traffic_value: trafficValue, paid_keywords: paidKeywords, paid_traffic: paidTraffic,
+          new_backlinks: null, lost_backlinks: null, new_referring_domains: null, lost_referring_domains: null }]
       }
     }
 

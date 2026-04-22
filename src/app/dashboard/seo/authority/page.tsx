@@ -9,7 +9,6 @@ import { redirect }          from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client }       from '@/lib/types'
 import SparkMetricCard       from '@/components/SparkMetricCard'
-import DateRangePicker       from '@/components/DateRangePicker'
 import { LinkSimple }        from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -43,7 +42,7 @@ export default async function AuthorityPage({
       .eq('client_id', client.id)
       .eq('status', 'active'),
     db.from('ahrefs_metrics')
-      .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic, traffic_value, paid_keywords, paid_traffic')
+      .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic, traffic_value, paid_keywords, paid_traffic, new_backlinks, lost_backlinks, new_referring_domains, lost_referring_domains')
       .eq('client_id', client.id)
       .gte('date', dateFrom)
       .lte('date', dateTo)
@@ -109,7 +108,7 @@ export default async function AuthorityPage({
     <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-        {/* Page header */}
+        {/* Page header — no date picker: Ahrefs data is periodic weekly snapshots, not date-range data */}
         <div className="page-header" style={{ marginBottom: 0 }}>
           <div className="flex items-center gap-2">
             <LinkSimple size={18} weight="duotone" style={{ color: '#f59e0b' }} aria-hidden />
@@ -118,7 +117,6 @@ export default async function AuthorityPage({
               <span className="badge badge-amber" style={{ fontSize: '0.6875rem' }}>Not connected</span>
             )}
           </div>
-          <DateRangePicker from={dateFrom} to={dateTo} />
         </div>
 
         {!hasAhrefs ? (
@@ -158,6 +156,46 @@ export default async function AuthorityPage({
                 sparkData={otTrend}
               />
             </div>
+
+            {/* Link Velocity — new/lost backlinks & referring domains (shown when available) */}
+            {(() => {
+              const nb = (latest as Record<string, unknown> | undefined)?.new_backlinks          as number | null | undefined
+              const lb = (latest as Record<string, unknown> | undefined)?.lost_backlinks         as number | null | undefined
+              const nr = (latest as Record<string, unknown> | undefined)?.new_referring_domains  as number | null | undefined
+              const lr = (latest as Record<string, unknown> | undefined)?.lost_referring_domains as number | null | undefined
+              if (nb == null && lb == null && nr == null && lr == null) return null
+              return (
+                <div className="card p-4">
+                  <p className="metric-label mb-3" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Link Velocity</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {nb != null && (
+                      <div>
+                        <p className="metric-label mb-1">New Backlinks</p>
+                        <p style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--green)' }}>+{nb.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {lb != null && (
+                      <div>
+                        <p className="metric-label mb-1">Lost Backlinks</p>
+                        <p style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--red)' }}>−{lb.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {nr != null && (
+                      <div>
+                        <p className="metric-label mb-1">New Ref. Domains</p>
+                        <p style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--green)' }}>+{nr.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {lr != null && (
+                      <div>
+                        <p className="metric-label mb-1">Lost Ref. Domains</p>
+                        <p style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--red)' }}>−{lr.toLocaleString()}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Extended metrics row (traffic value + paid) */}
             {(() => {

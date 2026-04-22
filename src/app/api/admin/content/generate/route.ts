@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 
+export const maxDuration = 300
+
 /**
  * POST /api/admin/content/generate
  *

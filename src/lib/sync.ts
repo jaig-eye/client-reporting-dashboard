@@ -24,16 +24,20 @@ import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 
 interface AhrefsRow {
-  date:              string
-  domain_rating:     number | null
-  ahrefs_rank:       number | null
-  backlinks:         number | null
-  referring_domains: number | null
-  organic_keywords:  number | null
-  organic_traffic:   number | null
-  traffic_value?:    number | null
-  paid_keywords?:    number | null
-  paid_traffic?:     number | null
+  date:                   string
+  domain_rating:          number | null
+  ahrefs_rank:            number | null
+  backlinks:              number | null
+  referring_domains:      number | null
+  organic_keywords:       number | null
+  organic_traffic:        number | null
+  traffic_value?:         number | null
+  paid_keywords?:         number | null
+  paid_traffic?:          number | null
+  new_backlinks?:         number | null
+  lost_backlinks?:        number | null
+  new_referring_domains?: number | null
+  lost_referring_domains?:number | null
 }
 import type { GoogleAdsAdRawRow } from './connectors/google-ads'
 import type { MetaAdRawRow } from './connectors/meta-ads'
@@ -51,9 +55,9 @@ export const INCREMENTAL_DAYS = 3
 /**
  * Days re-synced for GSC on incremental runs.
  * GSC data is query×page dimensional — even 3 days can be 50K+ rows on large sites.
- * Incremental syncs use ignoreDuplicates=true so only net-new rows are written.
+ * GSC finalizes data over 3–7 days, so we re-sync 7 days to keep rows fresh.
  */
-export const GSC_INCREMENTAL_DAYS = 2
+export const GSC_INCREMENTAL_DAYS = 7
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main sync entry points
@@ -319,7 +323,9 @@ async function syncGSCInChunks(
   clientId:     string,
   jobType:      SyncJobType = 'manual'
 ): Promise<number> {
-  const ignoreDuplicates = jobType === 'incremental'
+  // Always overwrite — GSC data finalizes over 3-7 days so we need to refresh existing rows.
+  // ignoreDuplicates=false ensures stale click/impression counts get updated on each resync.
+  const ignoreDuplicates = false
   let total      = 0
   let chunkStart = new Date(dateFrom)
   const end      = new Date(dateTo)
@@ -1009,19 +1015,23 @@ export async function upsertAhrefsMetrics(
 ): Promise<number> {
   if (!rows.length) return 0
   const mapped = rows.map(r => ({
-    connection_id:     connectionId,
-    client_id:         clientId,
-    date:              r.date,
-    domain_rating:     r.domain_rating     ?? null,
-    ahrefs_rank:       r.ahrefs_rank       ?? null,
-    backlinks:         r.backlinks         ?? null,
-    referring_domains: r.referring_domains ?? null,
-    organic_keywords:  r.organic_keywords  ?? null,
-    organic_traffic:   r.organic_traffic   ?? null,
-    traffic_value:     r.traffic_value     ?? null,
-    paid_keywords:     r.paid_keywords     ?? null,
-    paid_traffic:      r.paid_traffic      ?? null,
-    synced_at:         new Date().toISOString(),
+    connection_id:          connectionId,
+    client_id:              clientId,
+    date:                   r.date,
+    domain_rating:          r.domain_rating          ?? null,
+    ahrefs_rank:            r.ahrefs_rank            ?? null,
+    backlinks:              r.backlinks              ?? null,
+    referring_domains:      r.referring_domains      ?? null,
+    organic_keywords:       r.organic_keywords       ?? null,
+    organic_traffic:        r.organic_traffic        ?? null,
+    traffic_value:          r.traffic_value          ?? null,
+    paid_keywords:          r.paid_keywords          ?? null,
+    paid_traffic:           r.paid_traffic           ?? null,
+    new_backlinks:          r.new_backlinks          ?? null,
+    lost_backlinks:         r.lost_backlinks         ?? null,
+    new_referring_domains:  r.new_referring_domains  ?? null,
+    lost_referring_domains: r.lost_referring_domains ?? null,
+    synced_at:              new Date().toISOString(),
   }))
   for (let i = 0; i < mapped.length; i += 200) {
     await db

@@ -3,6 +3,8 @@ import { cookies }           from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed }     from '@/lib/auth'
 
+export const maxDuration = 300
+
 /**
  * POST /api/admin/content/schedule
  *

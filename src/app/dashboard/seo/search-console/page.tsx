@@ -108,6 +108,10 @@ export default async function SearchConsolePage({
 
   // Fetch current and comparison periods via direct DB queries — no Postgres function required.
   // Aggregation is done in JS (same approach as GSCSummaryCard on the main dashboard).
+  // Filter by the primary connection's ID to avoid double-counting when a client has had
+  // multiple GSC connections (e.g., after reconnecting — old rows keep the old connection_id).
+  const primaryConnectionId = gscConnections[0].id
+
   type GscRawRow = { clicks: number; impressions: number; ctr: number; position: number; query: string | null; page: string | null }
   const gscSelect = 'clicks,impressions,ctr,position,query,page'
 
@@ -115,12 +119,14 @@ export default async function SearchConsolePage({
     db.from('gsc_metrics')
       .select(gscSelect)
       .eq('client_id', client.id)
+      .eq('connection_id', primaryConnectionId)
       .gte('date', fmtDate(fromDate))
       .lte('date', fmtDate(toDate)),
     showCompare && compFrom && compTo
       ? db.from('gsc_metrics')
           .select(gscSelect)
           .eq('client_id', client.id)
+          .eq('connection_id', primaryConnectionId)
           .gte('date', fmtDate(compFrom))
           .lte('date', fmtDate(compTo))
       : Promise.resolve({ data: null }),

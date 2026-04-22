@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+
+export const maxDuration = 300
 import { sendEmail } from '@/lib/email'
 
 interface TopicIdea {

@@ -409,11 +409,16 @@ export default async function DashboardPage({
   }
   if (metaFreqImprTotal > 0) metaTotal.frequency = metaTotal.frequency / metaFreqImprTotal
 
-  // ─── Daily budget per platform (max per campaign, summed; AdFuel applied at display time) ─
+  // ─── Daily budget per platform (active campaigns only; max per campaign, summed) ─
+  // Paused campaigns still have a stored daily_budget — exclude them so the displayed
+  // budget only reflects what's actually running. Google uses 'ENABLED'; Meta uses 'ACTIVE'.
   function sumBudgetBySource(src: string): number {
     const maxPerCampaign = new Map<string, number>()
     for (const r of currentMetrics) {
       if (r._source !== src || r.daily_budget == null) continue
+      const st = (r.campaign_status ?? '').toUpperCase()
+      if (src === 'google_ads' && st !== 'ENABLED') continue
+      if (src === 'meta_ads'   && st !== 'ACTIVE')  continue
       const prev = maxPerCampaign.get(r.campaign_id)
       if (prev == null || r.daily_budget > prev) maxPerCampaign.set(r.campaign_id, r.daily_budget)
     }
@@ -473,6 +478,17 @@ export default async function DashboardPage({
     )
   }
 
+  // Ad-fuel-adjusted ROAS and CPA for KPI cards.
+  // summarizeMetrics() uses raw spend; we need to apply the agency markup so these match
+  // the values shown in the platform cards and campaign table (which already apply applyAdFuel).
+  const adjSpend = adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend
+  const adjRoas  = adjSpend > 0 ? current.conversionValue / adjSpend : 0
+  const adjCpa   = current.conversions > 0 ? adjSpend / current.conversions : 0
+  // Prior-period equivalents for delta calculation
+  const adjPriorSpend = adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend
+  const adjPriorRoas  = adjPriorSpend > 0 ? prior.conversionValue / adjPriorSpend : 0
+  const adjPriorCpa   = prior.conversions > 0 ? adjPriorSpend / prior.conversions : 0
+
   // Metric value map — drives layout-based KPI and top metric rendering
   type MetricCardDef = { value: string; sparkData?: {v:number}[]; delta?: number; invertDelta?: boolean; sparkColor?: string }
   const metricValMap: Record<string, MetricCardDef> = {
@@ -480,8 +496,8 @@ export default async function DashboardPage({
     leads:       { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     conversions: { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     revenue:     { value: fmt$(current.conversionValue), sparkData: convValueSpark, delta: showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined, sparkColor: '#10b981' },
-    roas:        { value: fmtRoas(current.roas), sparkData: roasSpark, delta: showCompare ? calcDelta(current.roas, prior.roas) : undefined, sparkColor: '#8b5cf6' },
-    cpa:         { value: current.cpl > 0 ? fmtCurrency(current.cpl) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(current.cpl, prior.cpl) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    roas:        { value: fmtRoas(adjRoas), sparkData: roasSpark, delta: showCompare ? calcDelta(adjRoas, adjPriorRoas) : undefined, sparkColor: '#8b5cf6' },
+    cpa:         { value: adjCpa > 0 ? fmtCurrency(adjCpa) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(adjCpa, adjPriorCpa) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
     ctr:         { value: fmtPct(current.ctr), sparkData: ctrSpark, delta: showCompare ? calcDelta(current.ctr, prior.ctr) : undefined, sparkColor: '#3b82f6' },
     conv_rate:   { value: fmtPct(convRate), sparkData: crSpark, delta: showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined, sparkColor: '#10b981' },
     cpm:         { value: fmtCurrency(current.cpm), sparkData: cpmSpark, delta: showCompare ? calcDelta(current.cpm, prior.cpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },

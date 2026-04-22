@@ -135,17 +135,24 @@ export default async function AhrefsSummaryCard({
       hasData={hasData}
     >
       {tileDefs.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-          {tileDefs.map(t => (
-            <div key={t.key}>
-              <p className="metric-label mb-1">{t.label}</p>
-              <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
-                {t.display}
-              </p>
-              {t.delta}
-            </div>
-          ))}
-        </div>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+            {tileDefs.map(t => (
+              <div key={t.key}>
+                <p className="metric-label mb-1">{t.label}</p>
+                <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
+                  {t.display}
+                </p>
+                {t.delta}
+              </div>
+            ))}
+          </div>
+          {latest?.date && (
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.75rem' }}>
+              Latest snapshot: {latest.date}
+            </p>
+          )}
+        </>
       ) : (
         <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
           No data for this period — trigger a sync to populate Ahrefs metrics.
