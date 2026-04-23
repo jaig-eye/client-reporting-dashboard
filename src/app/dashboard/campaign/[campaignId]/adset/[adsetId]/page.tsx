@@ -75,6 +75,8 @@ export default async function AdSetDetailPage({
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
+  const rawMode            = cookieStore.get('admin_raw_mode')?.value === '1'
+  const effectiveAdFuelCut = rawMode ? 0 : adFuelCut
   const isGoogleAds = source === 'google_ads'
   const groupLabel  = isGoogleAds ? 'Ad Group' : 'Ad Set'
 
@@ -138,7 +140,7 @@ export default async function AdSetDetailPage({
       ex.clicks          += ad.clicks
       ex.conversions     += ad.conversions
       ex.conversionValue += ad.conversionValue
-      ex.adFuelSpend      = applyAdFuel(ex.spend, adFuelCut)
+      ex.adFuelSpend      = applyAdFuel(ex.spend, effectiveAdFuelCut)
       ex.roas             = ex.adFuelSpend > 0 && ex.conversionValue > 0 ? ex.conversionValue / ex.adFuelSpend : 0
       ex.cpl              = ex.conversions > 0 ? ex.adFuelSpend / ex.conversions : 0
       ex.ctr              = ex.impressions > 0 ? ex.clicks / ex.impressions : 0
@@ -212,7 +214,7 @@ export default async function AdSetDetailPage({
       const cl = Number(r.clicks) || 0
       const im = Number(r.impressions) || 0
       const co = Number(r.conversions) || 0
-      const afs = applyAdFuel(sp, adFuelCut)
+      const afs = applyAdFuel(sp, effectiveAdFuelCut)
       upsertAd({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
@@ -288,7 +290,7 @@ export default async function AdSetDetailPage({
         co = resolved.conversions
         cv = resolved.conversionValue
       }
-      const afs = applyAdFuel(sp, adFuelCut)
+      const afs = applyAdFuel(sp, effectiveAdFuelCut)
       upsertAd({
         ad_id:           r.ad_id,
         ad_name:         r.ad_name,
@@ -379,7 +381,7 @@ export default async function AdSetDetailPage({
 
   const keywordRows: KeywordRow[] = Array.from(keywordMap.values())
     .map(k => {
-      const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+      const dSpend = effectiveAdFuelCut > 0 ? applyAdFuel(k.spend, effectiveAdFuelCut) : k.spend
       return {
         keyword_text:   k.text,
         match_type:     k.matchType,
@@ -402,7 +404,7 @@ export default async function AdSetDetailPage({
     .sort(([, a], [, b]) => b.conversions - a.conversions)
     .slice(0, 8)
     .map(([id, k]) => {
-      const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+      const dSpend = effectiveAdFuelCut > 0 ? applyAdFuel(k.spend, effectiveAdFuelCut) : k.spend
       const dailySorted = Array.from(k.daily.entries()).sort(([a], [b]) => a.localeCompare(b))
       return {
         id,
@@ -413,7 +415,7 @@ export default async function AdSetDetailPage({
         cpl:         k.conversions > 0 ? dSpend / k.conversions : 0,
         ctr:         k.impressions > 0 ? k.clicks / k.impressions : 0,
         sparkConv:   dailySorted.map(([, d]) => ({ v: d.conversions })),
-        sparkSpend:  dailySorted.map(([, d]) => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend })),
+        sparkSpend:  dailySorted.map(([, d]) => ({ v: effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend })),
       }
     })
   const totalKeywords      = keywordMap.size
@@ -467,14 +469,14 @@ export default async function AdSetDetailPage({
         impressions:  a.impressions,
         clicks:       a.clicks,
         conversions:  a.conversions,
-        displaySpend: adFuelCut > 0 ? a.adFuelSpend : a.spend,
+        displaySpend: effectiveAdFuelCut > 0 ? a.adFuelSpend : a.spend,
         ctr:          a.impressions > 0 ? a.clicks / a.impressions : 0,
       }))
     : []
 
   // Convert AdCardData → AdRow for the table
   const adRows: AdRow[] = adCardList.map(a => {
-    const cost = adFuelCut > 0 ? a.adFuelSpend : a.spend
+    const cost = effectiveAdFuelCut > 0 ? a.adFuelSpend : a.spend
     return {
       ad_id:           a.ad_id,
       ad_name:         a.ad_name,
@@ -507,7 +509,7 @@ export default async function AdSetDetailPage({
   const totImpr       = adCardList.reduce((t, a) => t + a.impressions, 0)
   const totConv       = adCardList.reduce((t, a) => t + a.conversions, 0)
   const totCv         = adCardList.reduce((t, a) => t + a.conversionValue, 0)
-  const totDisplaySpd = adFuelCut > 0 ? applyAdFuel(totSpend, adFuelCut) : totSpend
+  const totDisplaySpd = effectiveAdFuelCut > 0 ? applyAdFuel(totSpend, effectiveAdFuelCut) : totSpend
   const totRoas       = totDisplaySpd > 0 && totCv > 0 ? totCv / totDisplaySpd : 0
   const totCpl        = totConv > 0 ? totDisplaySpd / totConv : 0
   const totCtr        = totImpr > 0 ? totClicks / totImpr : 0
@@ -535,19 +537,19 @@ export default async function AdSetDetailPage({
   const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
 
   const prior           = showCompare ? priorTotals : null
-  const priorDisplaySpd = prior ? (adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend) : 0
+  const priorDisplaySpd = prior ? (effectiveAdFuelCut > 0 ? applyAdFuel(prior.spend, effectiveAdFuelCut) : prior.spend) : 0
   const priorRoas       = prior && priorDisplaySpd > 0 && prior.conversionValue > 0 ? prior.conversionValue / priorDisplaySpd : 0
   const priorCpl        = prior && prior.conversions > 0 ? priorDisplaySpd / prior.conversions : 0
   const priorCtr        = prior && prior.impressions > 0 ? prior.clicks / prior.impressions : 0
 
   // DailyMetric has: date, spend, conversions, clicks, roas (no impressions/conversionValue)
-  const spendSpark  = dailyTrend.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
+  const spendSpark  = dailyTrend.map(d => ({ v: effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend }))
   const convSpark   = dailyTrend.map(d => ({ v: d.conversions }))
-  const cvSpark     = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.roas > 0 ? d.roas * ds : 0 } })
+  const cvSpark     = dailyTrend.map(d => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.roas > 0 ? d.roas * ds : 0 } })
   const clicksSpark = dailyTrend.map(d => ({ v: d.clicks }))
-  const cplSpark    = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.conversions > 0 ? ds / d.conversions : 0 } })
+  const cplSpark    = dailyTrend.map(d => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.conversions > 0 ? ds / d.conversions : 0 } })
   const roasSpark   = dailyTrend.map(d => ({ v: d.roas }))
-  const cpcSpark    = dailyTrend.map(d => { const ds = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: d.clicks > 0 ? ds / d.clicks : 0 } })
+  const cpcSpark    = dailyTrend.map(d => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.clicks > 0 ? ds / d.clicks : 0 } })
   const crSpark     = dailyTrend.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
   const adsetValMap: Record<string, string> = {

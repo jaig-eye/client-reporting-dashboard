@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ShareNetwork } from '@phosphor-icons/react'
+import { setRawMode } from '@/app/actions/rawMode'
 
 interface Client {
   id: string
@@ -16,6 +17,7 @@ interface Props {
   dashboardToken: string
   clients: Client[]
   appUrl: string
+  rawMode: boolean
 }
 
 export default function AdminDashboardBar({
@@ -24,16 +26,24 @@ export default function AdminDashboardBar({
   dashboardToken,
   clients,
   appUrl,
+  rawMode,
 }: Props) {
   const router = useRouter()
-  const [switching, setSwitching] = useState(false)
-  const [copied,    setCopied]    = useState(false)
+  const [switching,   setSwitching]   = useState(false)
+  const [copied,      setCopied]      = useState(false)
+  const [togglingRaw, setTogglingRaw] = useState(false)
 
   async function handleClientSwitch(clientId: string) {
     if (clientId === currentClientId) return
     setSwitching(true)
-    // Use GET redirect via the preview route
     window.location.href = `/api/admin/preview/${clientId}`
+  }
+
+  async function handleToggleRaw() {
+    setTogglingRaw(true)
+    await setRawMode(!rawMode)
+    router.refresh()
+    setTogglingRaw(false)
   }
 
   function handleCopyLink() {
@@ -77,14 +87,16 @@ export default function AdminDashboardBar({
 
       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.875rem' }}>|</span>
 
-      {/* Admin badge */}
+      {/* Admin / raw mode badge */}
       <span style={{
-        background: 'rgba(255,255,255,0.15)', borderRadius: 4,
+        background: rawMode ? '#d97706' : 'rgba(255,255,255,0.15)',
+        border: rawMode ? '1px solid #f59e0b' : '1px solid transparent',
+        borderRadius: 4,
         padding: '0.125rem 0.4rem', fontSize: '0.6875rem', fontWeight: 700,
         color: '#fff', letterSpacing: '0.03em', textTransform: 'uppercase',
         whiteSpace: 'nowrap',
       }}>
-        Admin View
+        {rawMode ? 'RAW COST MODE' : 'Admin View'}
       </span>
 
       {/* Client switcher */}
@@ -111,6 +123,27 @@ export default function AdminDashboardBar({
 
       {/* Spacer */}
       <div style={{ flex: 1 }} />
+
+      {/* Raw cost toggle */}
+      <button
+        onClick={handleToggleRaw}
+        disabled={togglingRaw}
+        style={{
+          background: rawMode ? '#d97706' : 'rgba(255,255,255,0.15)',
+          border: `1px solid ${rawMode ? '#f59e0b' : 'rgba(255,255,255,0.2)'}`,
+          borderRadius: 6, color: '#fff',
+          fontSize: '0.75rem', fontWeight: rawMode ? 700 : 500,
+          padding: '0.25rem 0.65rem',
+          cursor: togglingRaw ? 'wait' : 'pointer',
+          whiteSpace: 'nowrap',
+          opacity: togglingRaw ? 0.7 : 1,
+          transition: 'background 0.15s, border-color 0.15s',
+        }}
+      >
+        {rawMode ? '⚠ RAW COST ON' : 'RAW COST'}
+      </button>
+
+      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.875rem' }}>|</span>
 
       {/* Settings link */}
       <a

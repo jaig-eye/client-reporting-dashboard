@@ -71,6 +71,9 @@ export default async function DashboardPage({
   })[]
 
   const adFuelCut        = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
+  // In raw cost mode (admin-only toggle) suppress the markup so admins see true spend.
+  const rawMode            = cookieStore.get('admin_raw_mode')?.value === '1'
+  const effectiveAdFuelCut = rawMode ? 0 : adFuelCut
   const availableSources = connections.map(c => c.connector.type)
   const hiddenMetrics    = new Set(client.hidden_metrics ?? [])
 
@@ -275,6 +278,13 @@ export default async function DashboardPage({
   const benchmarkRows: { key: string; label: string; actualLabel: string; targetLabel: string; pct: number; color: string }[] = []
   let efficiencyScore = 0
 
+  // Benchmark actuals must use markup-adjusted spend (same as all other cost displays).
+  const benchSpend = effectiveAdFuelCut > 0 ? applyAdFuel(current.spend, effectiveAdFuelCut) : current.spend
+  const benchCpc   = current.clicks      > 0 ? benchSpend / current.clicks : 0
+  const benchCpm   = current.impressions > 0 ? (benchSpend / current.impressions) * 1000 : 0
+  const benchRoas  = benchSpend > 0 && current.conversionValue > 0 ? current.conversionValue / benchSpend : 0
+  const benchCpl   = current.conversions > 0 ? benchSpend / current.conversions : 0
+
   if (showBenchmarkPanel) {
     if (isBenchmarkEnabled('ctr') && (effectiveBenchmarks.benchmark_ctr ?? 0) > 0) {
       benchmarkRows.push({ key: 'ctr', label: 'CTR', actualLabel: fmtPct(current.ctr), targetLabel: fmtPct(effectiveBenchmarks.benchmark_ctr), pct: pctOfBenchmark(current.ctr, effectiveBenchmarks.benchmark_ctr, false), color: '#3b82f6' })
@@ -282,22 +292,21 @@ export default async function DashboardPage({
     if (isBenchmarkEnabled('conv_rate') && (effectiveBenchmarks.benchmark_conv_rate ?? 0) > 0) {
       benchmarkRows.push({ key: 'conv_rate', label: 'Conv. Rate', actualLabel: fmtPct(convRate), targetLabel: fmtPct(effectiveBenchmarks.benchmark_conv_rate), pct: pctOfBenchmark(convRate, effectiveBenchmarks.benchmark_conv_rate, false), color: '#10b981' })
     }
-    if (isBenchmarkEnabled('cpc') && (effectiveBenchmarks.benchmark_cpc ?? 0) > 0 && current.cpc > 0) {
-      benchmarkRows.push({ key: 'cpc', label: 'Avg. CPC', actualLabel: fmtCurrency(current.cpc), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpc), pct: pctOfBenchmark(current.cpc, effectiveBenchmarks.benchmark_cpc, true), color: '#f59e0b' })
+    if (isBenchmarkEnabled('cpc') && (effectiveBenchmarks.benchmark_cpc ?? 0) > 0 && benchCpc > 0) {
+      benchmarkRows.push({ key: 'cpc', label: 'Avg. CPC', actualLabel: fmtCurrency(benchCpc), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpc), pct: pctOfBenchmark(benchCpc, effectiveBenchmarks.benchmark_cpc, true), color: '#f59e0b' })
     }
-    if (isBenchmarkEnabled('cpm') && (effectiveBenchmarks.benchmark_cpm ?? 0) > 0 && current.cpm > 0) {
-      benchmarkRows.push({ key: 'cpm', label: 'CPM', actualLabel: fmtCurrency(current.cpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), pct: pctOfBenchmark(current.cpm, effectiveBenchmarks.benchmark_cpm, true), color: '#f59e0b' })
+    if (isBenchmarkEnabled('cpm') && (effectiveBenchmarks.benchmark_cpm ?? 0) > 0 && benchCpm > 0) {
+      benchmarkRows.push({ key: 'cpm', label: 'CPM', actualLabel: fmtCurrency(benchCpm), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpm), pct: pctOfBenchmark(benchCpm, effectiveBenchmarks.benchmark_cpm, true), color: '#f59e0b' })
     }
     // ROAS: show when explicitly enabled, or fall back to isEcomDash when not yet configured
     const showRoas = enabledBenchmarks ? enabledBenchmarks.includes('roas') : isEcomDash
     if (showRoas && (effectiveBenchmarks.benchmark_roas ?? 0) > 0) {
-      benchmarkRows.push({ key: 'roas', label: 'ROAS', actualLabel: fmtRoas(current.roas), targetLabel: `${effectiveBenchmarks.benchmark_roas.toFixed(1)}x`, pct: pctOfBenchmark(current.roas, effectiveBenchmarks.benchmark_roas, false), color: '#8b5cf6' })
+      benchmarkRows.push({ key: 'roas', label: 'ROAS', actualLabel: fmtRoas(benchRoas), targetLabel: `${effectiveBenchmarks.benchmark_roas.toFixed(1)}x`, pct: pctOfBenchmark(benchRoas, effectiveBenchmarks.benchmark_roas, false), color: '#8b5cf6' })
     }
     // CPL: show when explicitly enabled, or fall back to !isEcomDash when not yet configured
-    const cpl = current.conversions > 0 ? current.spend / current.conversions : 0
     const showCpl = enabledBenchmarks ? enabledBenchmarks.includes('cpl') : !isEcomDash
-    if (showCpl && (effectiveBenchmarks.benchmark_cpl ?? 0) > 0 && cpl > 0) {
-      benchmarkRows.push({ key: 'cpl', label: 'CPA', actualLabel: fmtCurrency(cpl), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpl), pct: pctOfBenchmark(cpl, effectiveBenchmarks.benchmark_cpl, true), color: '#ec4899' })
+    if (showCpl && (effectiveBenchmarks.benchmark_cpl ?? 0) > 0 && benchCpl > 0) {
+      benchmarkRows.push({ key: 'cpl', label: 'CPA', actualLabel: fmtCurrency(benchCpl), targetLabel: fmtCurrency(effectiveBenchmarks.benchmark_cpl), pct: pctOfBenchmark(benchCpl, effectiveBenchmarks.benchmark_cpl, true), color: '#ec4899' })
     }
     if (benchmarkRows.length > 0) {
       efficiencyScore = Math.min(100, Math.round(benchmarkRows.reduce((s, r) => s + r.pct, 0) / benchmarkRows.length))
@@ -336,7 +345,7 @@ export default async function DashboardPage({
 
   const activeCampaigns = Array.from(campMap.entries())
     .map(([id, c]) => {
-      const cost = adFuelCut > 0 ? applyAdFuel(c.spend, adFuelCut) : c.spend
+      const cost = effectiveAdFuelCut > 0 ? applyAdFuel(c.spend, effectiveAdFuelCut) : c.spend
       return {
         campaign_id:     id,
         campaign_name:   c.name,
@@ -351,7 +360,7 @@ export default async function DashboardPage({
         convRate:        c.clicks > 0 ? c.conversions / c.clicks : 0,
         cpl:             c.conversions > 0 ? cost / c.conversions : 0,
         display_mode:    c.display_mode,
-        daily_budget:    c.daily_budget != null ? (adFuelCut > 0 ? applyAdFuel(c.daily_budget, adFuelCut) : c.daily_budget) : null,
+        daily_budget:    c.daily_budget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(c.daily_budget, effectiveAdFuelCut) : c.daily_budget) : null,
       }
     })
     .sort((a, b) => b.spend - a.spend)
@@ -374,13 +383,13 @@ export default async function DashboardPage({
     }
   }
   const ds = Array.from(dailyMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v)
-  const spendSpark     = ds.map(d => ({ v: adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend }))
+  const spendSpark     = ds.map(d => ({ v: effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend }))
   const convSpark      = ds.map(d => ({ v: d.conversions }))
   const convValueSpark = ds.map(d => ({ v: d.conversion_value }))
-  const cplSpark       = ds.map(d => ({ v: d.conversions > 0 ? (adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend) / d.conversions : 0 }))
-  const roasSpark      = ds.map(d => { const s = adFuelCut > 0 ? applyAdFuel(d.spend, adFuelCut) : d.spend; return { v: s > 0 ? d.conversion_value / s : 0 } })
+  const cplSpark       = ds.map(d => ({ v: d.conversions > 0 ? (effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend) / d.conversions : 0 }))
+  const roasSpark      = ds.map(d => { const s = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: s > 0 ? d.conversion_value / s : 0 } })
   const ctrSpark       = ds.map(d => ({ v: d.impressions > 0 ? d.clicks / d.impressions : 0 }))
-  const cpmSpark       = ds.map(d => ({ v: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0 }))
+  const cpmSpark       = ds.map(d => { const s = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.impressions > 0 ? (s / d.impressions) * 1000 : 0 } })
   const crSpark        = ds.map(d => ({ v: d.clicks > 0 ? d.conversions / d.clicks : 0 }))
 
   // ─── Per-source totals for platform cards (overview mode) ────────────────
@@ -426,12 +435,12 @@ export default async function DashboardPage({
   }
   const googleDailyBudgetRaw = sumBudgetBySource('google_ads')
   const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
-  const googleDailyBudget = adFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, adFuelCut) : googleDailyBudgetRaw
-  const metaDailyBudget   = adFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   adFuelCut) : metaDailyBudgetRaw
+  const googleDailyBudget = effectiveAdFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, effectiveAdFuelCut) : googleDailyBudgetRaw
+  const metaDailyBudget   = effectiveAdFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   effectiveAdFuelCut) : metaDailyBudgetRaw
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────
-  const gSpend = adFuelCut > 0 ? applyAdFuel(googleTotal.spend, adFuelCut) : googleTotal.spend
-  const mSpend = adFuelCut > 0 ? applyAdFuel(metaTotal.spend, adFuelCut) : metaTotal.spend
+  const gSpend = effectiveAdFuelCut > 0 ? applyAdFuel(googleTotal.spend, effectiveAdFuelCut) : googleTotal.spend
+  const mSpend = effectiveAdFuelCut > 0 ? applyAdFuel(metaTotal.spend, effectiveAdFuelCut) : metaTotal.spend
   const googleCardMap: Record<string, string> = {
     spend:       fmt$(gSpend),
     conversions: googleTotal.conversions > 0 ? fmtNum(googleTotal.conversions) : '—',
@@ -481,18 +490,22 @@ export default async function DashboardPage({
   // Ad-fuel-adjusted ROAS and CPA for KPI cards.
   // summarizeMetrics() uses raw spend; we need to apply the agency markup so these match
   // the values shown in the platform cards and campaign table (which already apply applyAdFuel).
-  const adjSpend = adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend
+  const adjSpend = effectiveAdFuelCut > 0 ? applyAdFuel(current.spend, effectiveAdFuelCut) : current.spend
   const adjRoas  = adjSpend > 0 ? current.conversionValue / adjSpend : 0
   const adjCpa   = current.conversions > 0 ? adjSpend / current.conversions : 0
+  const adjCpc   = current.clicks > 0 ? adjSpend / current.clicks : 0
+  const adjCpm   = current.impressions > 0 ? (adjSpend / current.impressions) * 1000 : 0
   // Prior-period equivalents for delta calculation
-  const adjPriorSpend = adFuelCut > 0 ? applyAdFuel(prior.spend, adFuelCut) : prior.spend
+  const adjPriorSpend = effectiveAdFuelCut > 0 ? applyAdFuel(prior.spend, effectiveAdFuelCut) : prior.spend
   const adjPriorRoas  = adjPriorSpend > 0 ? prior.conversionValue / adjPriorSpend : 0
   const adjPriorCpa   = prior.conversions > 0 ? adjPriorSpend / prior.conversions : 0
+  const adjPriorCpc   = prior.clicks > 0 ? adjPriorSpend / prior.clicks : 0
+  const adjPriorCpm   = prior.impressions > 0 ? (adjPriorSpend / prior.impressions) * 1000 : 0
 
   // Metric value map — drives layout-based KPI and top metric rendering
   type MetricCardDef = { value: string; sparkData?: {v:number}[]; delta?: number; invertDelta?: boolean; sparkColor?: string }
   const metricValMap: Record<string, MetricCardDef> = {
-    spend:       { value: fmt$(adFuelCut > 0 ? applyAdFuel(current.spend, adFuelCut) : current.spend), sparkData: spendSpark, delta: showCompare ? calcDelta(current.spend, prior.spend) : undefined, invertDelta: true, sparkColor: settings.chart_color_spend ?? '#93c5fd' },
+    spend:       { value: fmt$(adjSpend), sparkData: spendSpark, delta: showCompare ? calcDelta(adjSpend, adjPriorSpend) : undefined, invertDelta: true, sparkColor: settings.chart_color_spend ?? '#93c5fd' },
     leads:       { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     conversions: { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     revenue:     { value: fmt$(current.conversionValue), sparkData: convValueSpark, delta: showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined, sparkColor: '#10b981' },
@@ -500,8 +513,8 @@ export default async function DashboardPage({
     cpa:         { value: adjCpa > 0 ? fmtCurrency(adjCpa) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(adjCpa, adjPriorCpa) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
     ctr:         { value: fmtPct(current.ctr), sparkData: ctrSpark, delta: showCompare ? calcDelta(current.ctr, prior.ctr) : undefined, sparkColor: '#3b82f6' },
     conv_rate:   { value: fmtPct(convRate), sparkData: crSpark, delta: showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined, sparkColor: '#10b981' },
-    cpm:         { value: fmtCurrency(current.cpm), sparkData: cpmSpark, delta: showCompare ? calcDelta(current.cpm, prior.cpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
-    cpc:         { value: current.cpc > 0 ? fmtCurrency(current.cpc) : '—', sparkData: ds.map(d => ({ v: d.clicks > 0 ? d.spend / d.clicks : 0 })), delta: showCompare ? calcDelta(current.cpc, prior.cpc) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpm:         { value: adjCpm > 0 ? fmtCurrency(adjCpm) : '—', sparkData: cpmSpark, delta: showCompare ? calcDelta(adjCpm, adjPriorCpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpc:         { value: adjCpc > 0 ? fmtCurrency(adjCpc) : '—', sparkData: ds.map(d => { const s = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.clicks > 0 ? s / d.clicks : 0 } }), delta: showCompare ? calcDelta(adjCpc, adjPriorCpc) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
     impressions: { value: fmtNum(current.impressions), sparkData: ds.map(d => ({ v: d.impressions })), delta: showCompare ? calcDelta(current.impressions, prior.impressions) : undefined, sparkColor: '#6366f1' },
     clicks:      { value: fmtNum(current.clicks), sparkData: ds.map(d => ({ v: d.clicks })), delta: showCompare ? calcDelta(current.clicks, prior.clicks) : undefined, sparkColor: '#6366f1' },
     reach:       { value: fmtNum(current.reach ?? 0), sparkData: ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 })), delta: showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined, sparkColor: '#06b6d4' },

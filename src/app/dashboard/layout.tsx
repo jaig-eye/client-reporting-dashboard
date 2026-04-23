@@ -89,7 +89,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     adminClients = (data ?? []) as typeof adminClients
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const rawMode = isAdmin && cookieStore.get('admin_raw_mode')?.value === '1'
 
   return (
     <>
@@ -103,6 +104,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           dashboardToken={(client as unknown as Record<string, string>).dashboard_token ?? token ?? ''}
           clients={adminClients}
           appUrl={appUrl}
+          rawMode={rawMode}
         />
       )}
 

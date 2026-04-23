@@ -72,6 +72,8 @@ export default async function CampaignDetailPage({
 
   const settings  = await getAgencySettings()
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
+  const rawMode            = cookieStore.get('admin_raw_mode')?.value === '1'
+  const effectiveAdFuelCut = rawMode ? 0 : adFuelCut
 
   // Campaign display mode — set per-campaign in client settings
   const { data: assignmentData } = await db
@@ -325,7 +327,7 @@ export default async function CampaignDetailPage({
   }
 
   const keywordRows: KeywordRow[] = Array.from(kwMap.values()).map(k => {
-    const dSpend = adFuelCut > 0 ? applyAdFuel(k.spend, adFuelCut) : k.spend
+    const dSpend = effectiveAdFuelCut > 0 ? applyAdFuel(k.spend, effectiveAdFuelCut) : k.spend
     return { keyword_text: k.text, match_type: k.matchType, keyword_status: k.status, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
   }).sort((a, b) => b.impressions - a.impressions)
 
@@ -344,7 +346,7 @@ export default async function CampaignDetailPage({
       const adsetQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
       if (compare) adsetQsObj.compare = compare
       const adsetQs = new URLSearchParams(adsetQsObj)
-      const cost    = adFuelCut > 0 ? applyAdFuel(s.spend, adFuelCut) : s.spend
+      const cost    = effectiveAdFuelCut > 0 ? applyAdFuel(s.spend, effectiveAdFuelCut) : s.spend
       return {
         setId,
         setName:         s.setName,
@@ -371,7 +373,7 @@ export default async function CampaignDetailPage({
   let totSpend = 0, totImpressions = 0, totClicks = 0, totConversions = 0, totConversionValue = 0
   if (!isGoogleAds && dailyMap.size > 0) {
     for (const v of Array.from(dailyMap.values())) {
-      totSpend           += adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
+      totSpend           += effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend
       totImpressions     += v.impressions
       totClicks          += v.clicks
       totConversions     += v.conversions
@@ -390,18 +392,18 @@ export default async function CampaignDetailPage({
   const roas              = displaySpend > 0 && totConversionValue > 0 ? totConversionValue / displaySpend : 0
   const cpl               = totConversions > 0 ? displaySpend / totConversions : 0
   const ctr               = totImpressions > 0 ? totClicks / totImpressions : 0
-  const priorDisplaySpend = adFuelCut > 0 ? applyAdFuel(priorTotals.spend, adFuelCut) : priorTotals.spend
+  const priorDisplaySpend = effectiveAdFuelCut > 0 ? applyAdFuel(priorTotals.spend, effectiveAdFuelCut) : priorTotals.spend
   const priorRoas         = priorDisplaySpend > 0 && priorTotals.conversionValue > 0 ? priorTotals.conversionValue / priorDisplaySpend : 0
   const priorCpl          = priorTotals.conversions > 0 ? priorDisplaySpend / priorTotals.conversions : 0
   const priorCtr          = priorTotals.impressions > 0 ? priorTotals.clicks / priorTotals.impressions : 0
 
   // Sparkline series from daily aggregation
   const sortedDays = Array.from(dailyMap.entries()).sort(([a], [b]) => a.localeCompare(b))
-  const spendSeries = sortedDays.map(([, v]) => ({ v: adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend }))
+  const spendSeries = sortedDays.map(([, v]) => ({ v: effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend }))
   const convSeries  = sortedDays.map(([, v]) => ({ v: v.conversions }))
   const cvSeries    = sortedDays.map(([, v]) => ({ v: v.conversionValue }))
   const cplSeries   = sortedDays.map(([, v]) => {
-    const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend
+    const ds = effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend
     return { v: v.conversions > 0 ? ds / v.conversions : 0 }
   })
   const ctrSeries   = sortedDays.map(([, v]) => ({ v: v.impressions > 0 ? v.clicks / v.impressions : 0 }))
@@ -429,10 +431,10 @@ export default async function CampaignDetailPage({
   // ── Metric value / spark / delta maps ─────────────────────────────────────
   const invertDeltaKeys = new Set(['spend', 'cpa', 'cpl', 'cpm', 'cpc'])
 
-  const cpmSeries  = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: v.impressions > 0 ? (ds / v.impressions) * 1000 : 0 } })
-  const cpcSeries  = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: v.clicks > 0 ? ds / v.clicks : 0 } })
+  const cpmSeries  = sortedDays.map(([, v]) => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend; return { v: v.impressions > 0 ? (ds / v.impressions) * 1000 : 0 } })
+  const cpcSeries  = sortedDays.map(([, v]) => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend; return { v: v.clicks > 0 ? ds / v.clicks : 0 } })
   const crSeries   = sortedDays.map(([, v]) => ({ v: v.clicks > 0 ? v.conversions / v.clicks : 0 }))
-  const roasSeries = sortedDays.map(([, v]) => { const ds = adFuelCut > 0 ? applyAdFuel(v.spend, adFuelCut) : v.spend; return { v: ds > 0 && v.conversionValue > 0 ? v.conversionValue / ds : 0 } })
+  const roasSeries = sortedDays.map(([, v]) => { const ds = effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend; return { v: ds > 0 && v.conversionValue > 0 ? v.conversionValue / ds : 0 } })
 
   const campaignValMap: Record<string, string> = {
     spend:            fmt$(displaySpend),
