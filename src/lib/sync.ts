@@ -306,12 +306,14 @@ export async function syncClient(
 // GSC chunked sync helper
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GSC_CHUNK_DAYS = 30
+const GSC_CHUNK_DAYS        = 30
+const GSC_CHUNK_CONCURRENCY = 4
 
 /**
  * Fetches GSC data in 30-day windows and upserts each chunk immediately.
- * Prevents memory bloat and timeouts on large sites during backfills.
- * Incremental syncs use ignoreDuplicates=true — only net-new rows are written.
+ * Chunks are fetched in parallel batches (GSC_CHUNK_CONCURRENCY at a time) to
+ * keep 2-year backfills fast without hammering the GSC API or blowing memory.
+ * ignoreDuplicates=false so re-syncs always overwrite with finalized GSC values.
  */
 async function syncGSCInChunks(
   db:           ReturnType<typeof createAdminClient>,
@@ -323,36 +325,51 @@ async function syncGSCInChunks(
   clientId:     string,
   jobType:      SyncJobType = 'manual'
 ): Promise<number> {
-  // Always overwrite — GSC data finalizes over 3-7 days so we need to refresh existing rows.
-  // ignoreDuplicates=false ensures stale click/impression counts get updated on each resync.
   const ignoreDuplicates = false
-  let total      = 0
+
+  // Build the full list of date-range chunks upfront.
+  const chunks: Array<{ from: string; to: string }> = []
   let chunkStart = new Date(dateFrom)
   const end      = new Date(dateTo)
-
   while (chunkStart <= end) {
     const chunkEnd = new Date(chunkStart)
     chunkEnd.setDate(chunkEnd.getDate() + GSC_CHUNK_DAYS - 1)
     if (chunkEnd > end) chunkEnd.setTime(end.getTime())
-
-    const chunkFrom = chunkStart.toISOString().split('T')[0]
-    const chunkTo   = chunkEnd.toISOString().split('T')[0]
-
-    const chunkResult = await adapter.fetchMetrics(
-      connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo
-    )
-
-    if (chunkResult.rows.length > 0) {
-      total += await upsertGSCMetrics(
-        db, connection.id, clientId,
-        chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[],
-        ignoreDuplicates
-      )
-    }
-    console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows (ignoreDuplicates=${ignoreDuplicates})`)
-
+    chunks.push({
+      from: chunkStart.toISOString().split('T')[0],
+      to:   chunkEnd.toISOString().split('T')[0],
+    })
     chunkStart = new Date(chunkEnd)
     chunkStart.setDate(chunkStart.getDate() + 1)
+  }
+
+  let total = 0
+
+  // Process chunks in parallel batches to avoid sequential API latency.
+  // 4 concurrent chunks keeps a 2-year backfill (24 chunks) down to ~6 rounds.
+  for (let i = 0; i < chunks.length; i += GSC_CHUNK_CONCURRENCY) {
+    const batch = chunks.slice(i, i + GSC_CHUNK_CONCURRENCY)
+    const settled = await Promise.allSettled(
+      batch.map(async ({ from: chunkFrom, to: chunkTo }) => {
+        const chunkResult = await adapter.fetchMetrics(
+          connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo
+        )
+        let written = 0
+        if (chunkResult.rows.length > 0) {
+          written = await upsertGSCMetrics(
+            db, connection.id, clientId,
+            chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[],
+            ignoreDuplicates
+          )
+        }
+        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
+        return written
+      })
+    )
+    for (const r of settled) {
+      if (r.status === 'fulfilled') total += r.value
+      else console.error('[sync] GSC chunk failed:', r.reason)
+    }
   }
 
   return total
