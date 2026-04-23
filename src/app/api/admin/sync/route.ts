@@ -5,8 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncClient } from '@/lib/sync'
 
-// Allow up to 5 minutes for large syncs (Vercel Pro: up to 900s)
-export const maxDuration = 300
+// Allow up to ~13 minutes for large syncs (Vercel Pro: up to 900s)
+export const maxDuration = 800
 
 export async function POST(req: NextRequest) {
   // Auth check: must have admin_session cookie
