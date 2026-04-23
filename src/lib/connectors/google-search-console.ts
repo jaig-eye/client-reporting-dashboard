@@ -91,7 +91,7 @@ async function fetchSearchAnalytics(
     }
 
     const controller = new AbortController()
-    const timeoutId  = setTimeout(() => controller.abort(), 25_000)
+    const timeoutId  = setTimeout(() => controller.abort(), 60_000)
     let res: Response
     try {
       res = await fetch(endpoint, {
