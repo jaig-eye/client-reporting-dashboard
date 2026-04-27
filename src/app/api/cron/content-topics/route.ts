@@ -161,6 +161,12 @@ export async function GET(request: NextRequest) {
       for (const topic of approvedTopics ?? []) {
         try {
           const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+          // Mark as generating before firing so UI reflects in-progress state
+          await db
+            .from('content_topics')
+            .update({ status: 'generating' })
+            .eq('id', topic.id)
+          // Generate endpoint sets status → 'generated' on completion
           await fetch(`${appUrl}/api/admin/content/generate`, {
             method:  'POST',
             headers: {
@@ -169,11 +175,6 @@ export async function GET(request: NextRequest) {
             },
             body: JSON.stringify({ topic_id: topic.id }),
           })
-
-          await db
-            .from('content_topics')
-            .update({ status: 'scheduled' })
-            .eq('id', topic.id)
 
           postsTriggered.push(topic.id)
         } catch (e) {

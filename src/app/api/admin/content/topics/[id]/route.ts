@@ -82,6 +82,9 @@ export async function PATCH(
     new Date(topic.generate_by_date) <= new Date()
   ) {
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+    // Mark as generating synchronously before firing so the .then() from the
+    // generate endpoint (which sets 'generated') doesn't get overwritten.
+    await db.from('content_topics').update({ status: 'generating' }).eq('id', id)
     // Fire and forget — don't await so response returns immediately
     void fetch(`${appUrl}/api/admin/content/generate`, {
       method:  'POST',
@@ -90,9 +93,7 @@ export async function PATCH(
         'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
       },
       body: JSON.stringify({ topic_id: id }),
-    }).then(() =>
-      db.from('content_topics').update({ status: 'generating' }).eq('id', id)
-    ).catch(err => console.error(`[topics PATCH] late-approval post gen failed for ${id}:`, err))
+    }).catch(err => console.error(`[topics PATCH] late-approval post gen failed for ${id}:`, err))
   }
 
   return NextResponse.json(data)
