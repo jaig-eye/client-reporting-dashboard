@@ -578,6 +578,8 @@ export const metaAdsConnector: ConnectorAdapter = {
       }
     }
 
+    if (onProgress) onProgress(95, 'Fetching budgets & statuses…')
+
     // Fetch campaign daily budgets and effective_status from the Campaigns API
     // (neither field is available in the Insights API)
     const budgetMap = new Map<string, number>() // CBO: campaign-level budget
@@ -623,6 +625,8 @@ export const metaAdsConnector: ConnectorAdapter = {
       if (budget !== undefined) row.daily_budget    = budget
       if (status !== undefined) row.campaign_status = status
     }
+
+    if (onProgress) onProgress(100, 'Done')
 
     return {
       rows,
