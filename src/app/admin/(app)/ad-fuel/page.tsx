@@ -41,6 +41,36 @@ interface LedgerEntry {
   created_at:      string
 }
 
+interface ColConfig {
+  key:     string
+  label:   string
+  visible: boolean
+}
+
+// ─── Column definitions ───────────────────────────────────────────────────────
+
+const DEFAULT_COLS: ColConfig[] = [
+  { key: 'client',       label: 'Client',              visible: true  },
+  { key: 'googleAcct',   label: 'G Acct',              visible: false },
+  { key: 'fbAcct',       label: 'FB Acct',             visible: false },
+  { key: 'crmId',        label: 'CRM ID',              visible: false },
+  { key: 'afBalance',    label: 'Ad Fuel Balance',     visible: true  },
+  { key: 'rawBalance',   label: 'Raw Balance',         visible: true  },
+  { key: 'afPurchased',  label: 'Ad Fuel Purchased',   visible: true  },
+  { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
+  { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
+  { key: 'rawSpend',     label: 'Raw Spend',           visible: false },
+  { key: 'googleRaw',    label: 'Google Raw',          visible: true  },
+  { key: 'fbRaw',        label: 'Facebook Raw',        visible: true  },
+  { key: 'billDay',      label: 'Bill Day',            visible: true  },
+  { key: 'budget',       label: 'Budget',              visible: true  },
+  { key: 'afSinceBill',  label: 'Ad Fuel Since Bill',  visible: true  },
+  { key: 'avgDaily',     label: 'Avg Daily',           visible: true  },
+  { key: 'pace',         label: 'Pace',                visible: true  },
+]
+
+const LS_KEY = 'adfuel_col_config'
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt$(n: number | null | undefined, decimals = 2): string {
@@ -57,22 +87,63 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function billMonthStart(billDay: number): string {
-  const now = new Date()
-  const d   = now.getDate()
-  if (d >= billDay) {
-    return new Date(now.getFullYear(), now.getMonth(), billDay).toISOString().slice(0, 10)
-  }
-  return new Date(now.getFullYear(), now.getMonth() - 1, billDay).toISOString().slice(0, 10)
-}
-
 const PACE_STYLE: Record<string, { bg: string; color: string }> = {
-  'On Pace':      { bg: '#dcfce7', color: '#166534' },
-  'Underspending':{ bg: '#fef3c7', color: '#92400e' },
-  'Overspending': { bg: '#fee2e2', color: '#991b1b' },
+  'On Pace':       { bg: '#dcfce7', color: '#166534' },
+  'Underspending': { bg: '#fef3c7', color: '#92400e' },
+  'Overspending':  { bg: '#fee2e2', color: '#991b1b' },
 }
 
 const ENTRY_TYPES = ['MRR', 'Catch Up', 'Other']
+
+function loadCols(): ColConfig[] {
+  if (typeof window === 'undefined') return DEFAULT_COLS
+  try {
+    const stored = localStorage.getItem(LS_KEY)
+    if (!stored) return DEFAULT_COLS
+    const parsed: ColConfig[] = JSON.parse(stored)
+    // Merge: keep user labels/visibility, add any new keys from DEFAULT_COLS
+    const map = new Map(parsed.map(c => [c.key, c]))
+    return DEFAULT_COLS.map(d => map.get(d.key) ?? d)
+  } catch { return DEFAULT_COLS }
+}
+
+// ─── Cell renderer ────────────────────────────────────────────────────────────
+
+function renderCell(key: string, row: DashRow): React.ReactNode {
+  switch (key) {
+    case 'client':       return <td key={key} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>{row.clientName}</td>
+    case 'googleAcct':   return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
+    case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
+    case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
+    case 'afBalance':    return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
+    case 'rawBalance':   return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
+    case 'afPurchased':  return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
+    case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
+    case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
+    case 'rawSpend':     return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawSpend)}</td>
+    case 'googleRaw':    return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.googleRaw)}</td>
+    case 'fbRaw':        return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.facebookRaw)}</td>
+    case 'billDay':      return <td key={key} style={{ textAlign: 'center', color: row.billDay ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.billDay ?? '—'}</td>
+    case 'budget':       return <td key={key} style={{ textAlign: 'right', color: row.monthlyBudget ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : '—'}</td>
+    case 'afSinceBill':  return <td key={key} style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(row.afSinceBill)}</td>
+    case 'avgDaily':     return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
+    case 'pace': return (
+      <td key={key}>
+        {row.pace ? (
+          <span style={{
+            display: 'inline-block', padding: '2px 7px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700,
+            background: (PACE_STYLE[row.pace] ?? { bg: '#f3f4f6' }).bg,
+            color: (PACE_STYLE[row.pace] ?? { color: '#374151' }).color,
+          }}>
+            {row.pace}
+          </span>
+        ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+      </td>
+    )
+    default: return <td key={key} />
+  }
+}
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
@@ -80,7 +151,7 @@ export default function AdFuelPage() {
   const router       = useRouter()
   const searchParams = useSearchParams()
 
-  const [tab, setTab] = useState<'dashboard' | 'ledger'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'ledger' | 'settings'>('dashboard')
 
   // Dashboard state — seed from URL params if present
   const [dateFrom, setDateFrom] = useState(() => {
@@ -92,10 +163,48 @@ export default function AdFuelPage() {
     const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_to') : null
     return p ?? today()
   })
-  const [rows,     setRows]     = useState<DashRow[]>([])
-  const [loading,  setLoading]  = useState(false)
-  const [editCell, setEditCell] = useState<{ clientId: string; field: 'billDay' | 'monthlyBudget'; value: string } | null>(null)
-  const [saving,   setSaving]   = useState(false)
+  const [rows,    setRows]    = useState<DashRow[]>([])
+  const [loading, setLoading] = useState(false)
+
+  // Column config (persisted to localStorage)
+  const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
+  useEffect(() => { setCols(loadCols()) }, [])
+  function saveCols(next: ColConfig[]) {
+    setCols(next)
+    try { localStorage.setItem(LS_KEY, JSON.stringify(next)) } catch {}
+  }
+
+  // Client edit modal (bill day + budget)
+  const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
+  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', monthlyBudget: '' })
+  const [clientEditSaving, setClientEditSaving] = useState(false)
+  const [clientEditError,  setClientEditError]  = useState('')
+
+  function openClientEdit(row: DashRow) {
+    setClientEditModal(row)
+    setClientEditForm({
+      billDay:       String(row.billDay ?? ''),
+      monthlyBudget: String(row.monthlyBudget ?? ''),
+    })
+    setClientEditError('')
+  }
+
+  async function saveClientEdit() {
+    if (!clientEditModal) return
+    setClientEditSaving(true)
+    setClientEditError('')
+    const body: Record<string, unknown> = {
+      bill_day:       clientEditForm.billDay       === '' ? null : parseInt(clientEditForm.billDay),
+      monthly_budget: clientEditForm.monthlyBudget === '' ? null : parseFloat(clientEditForm.monthlyBudget),
+    }
+    const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    setClientEditSaving(false)
+    if (!res.ok) { setClientEditError((await res.json()).error || 'Save failed'); return }
+    setClientEditModal(null)
+    fetchDashboard()
+  }
 
   // Ledger state
   const [ledger,        setLedger]        = useState<LedgerEntry[]>([])
@@ -107,10 +216,16 @@ export default function AdFuelPage() {
 
   // Add entry form
   const emptyForm = { client_id: '', date_of_payment: today(), amount_af: '', split_override: '', invoice_id: '', type: 'MRR', note: '', created_by: '' }
-  const [addForm, setAddForm] = useState(emptyForm)
+  const [addForm,  setAddForm]  = useState(emptyForm)
   const [addError, setAddError] = useState('')
 
-  // Keep URL in sync with current date range
+  // Settings tab — client selector for manual values
+  const [settingsClientId,   setSettingsClientId]   = useState('')
+  const [settingsForm,       setSettingsForm]       = useState({ billDay: '', monthlyBudget: '' })
+  const [settingsSaving,     setSettingsSaving]     = useState(false)
+  const [settingsSaveMsg,    setSettingsSaveMsg]    = useState('')
+
+  // Sync URL with current date range
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString())
     params.set('date_from', dateFrom)
@@ -123,9 +238,7 @@ export default function AdFuelPage() {
     try {
       const res = await fetch(`/api/admin/ad-fuel?date_from=${dateFrom}&date_to=${dateTo}`)
       if (res.ok) setRows(await res.json())
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [dateFrom, dateTo])
 
   const fetchLedger = useCallback(async () => {
@@ -134,27 +247,38 @@ export default function AdFuelPage() {
       const url = filterClient ? `/api/admin/ad-fuel/ledger?client_id=${filterClient}` : '/api/admin/ad-fuel/ledger'
       const res = await fetch(url)
       if (res.ok) setLedger(await res.json())
-    } finally {
-      setLedgerLoading(false)
-    }
+    } finally { setLedgerLoading(false) }
   }, [filterClient])
 
   useEffect(() => { fetchDashboard() }, [fetchDashboard])
   useEffect(() => { if (tab === 'ledger') fetchLedger() }, [tab, fetchLedger])
 
-  // ── Inline-edit save ────────────────────────────────────────────────────────
-  async function saveCell() {
-    if (!editCell) return
-    setSaving(true)
-    const body: Record<string, unknown> = {}
-    if (editCell.field === 'billDay')       body.bill_day        = editCell.value === '' ? null : parseInt(editCell.value)
-    if (editCell.field === 'monthlyBudget') body.monthly_budget  = editCell.value === '' ? null : parseFloat(editCell.value)
-    await fetch(`/api/admin/clients/${editCell.clientId}`, {
+  // Populate settings form when a client is selected in settings tab
+  useEffect(() => {
+    if (!settingsClientId) { setSettingsForm({ billDay: '', monthlyBudget: '', adFuelCut: '' }); return }
+    const row = rows.find(r => r.clientId === settingsClientId)
+    if (row) setSettingsForm({
+      billDay:       String(row.billDay ?? ''),
+      monthlyBudget: String(row.monthlyBudget ?? ''),
+    })
+  }, [settingsClientId, rows])
+
+  async function saveSettingsClient() {
+    if (!settingsClientId) return
+    setSettingsSaving(true)
+    setSettingsSaveMsg('')
+    const body: Record<string, unknown> = {
+      bill_day:       settingsForm.billDay       === '' ? null : parseInt(settingsForm.billDay),
+      monthly_budget: settingsForm.monthlyBudget === '' ? null : parseFloat(settingsForm.monthlyBudget),
+    }
+    const res = await fetch(`/api/admin/clients/${settingsClientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
-    setSaving(false)
-    setEditCell(null)
+    setSettingsSaving(false)
+    if (!res.ok) { setSettingsSaveMsg('Save failed'); return }
+    setSettingsSaveMsg('Saved!')
     fetchDashboard()
+    setTimeout(() => setSettingsSaveMsg(''), 2000)
   }
 
   // ── Add ledger entry ────────────────────────────────────────────────────────
@@ -194,9 +318,8 @@ export default function AdFuelPage() {
     const file = e.target.files?.[0]
     if (!file) return
     const form = new FormData(); form.append('file', file)
-    const res = await fetch('/api/admin/ad-fuel/import', { method: 'POST', body: form })
-    const result = await res.json()
-    setImportStatus(result)
+    const res  = await fetch('/api/admin/ad-fuel/import', { method: 'POST', body: form })
+    setImportStatus(await res.json())
     fetchLedger()
     fetchDashboard()
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -204,17 +327,40 @@ export default function AdFuelPage() {
 
   // ── CSV export ──────────────────────────────────────────────────────────────
   function exportCSV() {
-    const headers = ['Client','G Acct','FB Acct','CRM ID','AF Balance','Raw Balance','AF Purchased','AF Spend','Raw Purchased','Raw Spend','G Raw','FB Raw','Bill Day','Budget','AF Since Bill','Avg Daily AF','Pace']
-    const csvRows = rows.map(r => [
-      r.clientName, r.googleAccountId ?? '', r.facebookAccountId ?? '', r.crmId ?? '',
-      r.afBalance.toFixed(2), r.rawBalance.toFixed(2), r.afPurchased.toFixed(2), r.afSpend.toFixed(2),
-      r.rawPurchased.toFixed(2), r.rawSpend.toFixed(2), r.googleRaw.toFixed(2), r.facebookRaw.toFixed(2),
-      r.billDay ?? '', r.monthlyBudget ?? '', r.afSinceBill?.toFixed(2) ?? '', r.avgDailyAf?.toFixed(2) ?? '', r.pace,
-    ])
+    const visibleCols = cols.filter(c => c.visible)
+    const headers = visibleCols.map(c => c.label)
+    const csvRows = rows.map(row =>
+      visibleCols.map(({ key }) => {
+        switch (key) {
+          case 'client':       return row.clientName
+          case 'googleAcct':   return row.googleAccountId ?? ''
+          case 'fbAcct':       return row.facebookAccountId ?? ''
+          case 'crmId':        return row.crmId ?? ''
+          case 'afBalance':    return row.afBalance.toFixed(2)
+          case 'rawBalance':   return row.rawBalance.toFixed(2)
+          case 'afPurchased':  return row.afPurchased.toFixed(2)
+          case 'afSpend':      return row.afSpend.toFixed(2)
+          case 'rawPurchased': return row.rawPurchased.toFixed(2)
+          case 'rawSpend':     return row.rawSpend.toFixed(2)
+          case 'googleRaw':    return row.googleRaw.toFixed(2)
+          case 'fbRaw':        return row.facebookRaw.toFixed(2)
+          case 'billDay':      return row.billDay ?? ''
+          case 'budget':       return row.monthlyBudget ?? ''
+          case 'afSinceBill':  return row.afSinceBill?.toFixed(2) ?? ''
+          case 'avgDaily':     return row.avgDailyAf?.toFixed(2) ?? ''
+          case 'pace':         return row.pace
+          default: return ''
+        }
+      })
+    )
     const csv = [headers, ...csvRows].map(r => r.join(',')).join('\n')
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    a.download = `ad-fuel-${dateFrom}-${dateTo}.csv`; a.click()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.download = `ad-fuel-${dateFrom}-${dateTo}.csv`
+    a.click()
   }
+
+  const visibleCols = cols.filter(c => c.visible)
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -243,12 +389,24 @@ export default function AdFuelPage() {
             {t === 'dashboard' ? 'Dashboard' : 'Ledger'}
           </button>
         ))}
+        {/* Settings gear tab */}
+        <button
+          onClick={() => setTab('settings')}
+          title="Column & client settings"
+          style={{
+            padding: '0.35rem 0.65rem', borderRadius: 6, border: 'none', cursor: 'pointer',
+            fontSize: '1rem', lineHeight: 1,
+            background: tab === 'settings' ? 'var(--blue)' : 'var(--bg-subtle)',
+            color: tab === 'settings' ? '#fff' : 'var(--text-muted)',
+          }}
+        >
+          ⚙
+        </button>
       </div>
 
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
         <>
-          {/* Date controls */}
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
             <div>
               <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>From</label>
@@ -256,7 +414,7 @@ export default function AdFuelPage() {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>To</label>
-              <input type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} />
             </div>
             <button onClick={fetchDashboard} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem' }}>Refresh</button>
             <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem', marginLeft: 'auto' }}>Export CSV</button>
@@ -266,103 +424,28 @@ export default function AdFuelPage() {
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table className="data-table" style={{ minWidth: 1400, fontSize: '0.8rem' }}>
+              <table className="data-table" style={{ minWidth: 800, fontSize: '0.8rem' }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: 'left' }}>Client</th>
-                    <th>G Acct</th>
-                    <th>FB Acct</th>
-                    <th>CRM ID</th>
-                    <th title="AF Balance = AF Purchased − AF Spend">AF Balance</th>
-                    <th title="Raw Balance = Raw Purchased − Raw Spend">Raw Balance</th>
-                    <th>AF Purch.</th>
-                    <th>AF Spend</th>
-                    <th>Raw Purch.</th>
-                    <th>Raw Spend</th>
-                    <th>G Raw</th>
-                    <th>FB Raw</th>
-                    <th title="Click to edit">Bill Day</th>
-                    <th title="Click to edit">Budget</th>
-                    <th>AF Since Bill</th>
-                    <th>Avg Daily</th>
-                    <th>Pace</th>
+                    {visibleCols.map(col => (
+                      <th key={col.key} style={{ textAlign: col.key === 'client' ? 'left' : undefined }}>
+                        {col.label}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
+                  {rows.length === 0 && (
+                    <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
+                  )}
                   {rows.map(row => (
-                    <tr key={row.clientId}>
-                      <td style={{ fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>{row.clientName}</td>
-                      <td style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
-                      <td style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
-                      <td style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
-                      <td style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmt$(row.rawSpend)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.googleRaw)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.facebookRaw)}</td>
-
-                      {/* Bill Day — inline editable */}
-                      <td style={{ textAlign: 'center' }}>
-                        {editCell?.clientId === row.clientId && editCell.field === 'billDay' ? (
-                          <span style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-                            <input
-                              type="number" min={1} max={31} value={editCell.value}
-                              onChange={e => setEditCell(c => c ? { ...c, value: e.target.value } : null)}
-                              className="input" style={{ width: 50, padding: '0.15rem 0.4rem', fontSize: '0.75rem' }}
-                              onKeyDown={e => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditCell(null) }}
-                              autoFocus
-                            />
-                            <button onClick={saveCell} disabled={saving} className="btn btn-primary" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}>✓</button>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setEditCell({ clientId: row.clientId, field: 'billDay', value: String(row.billDay ?? '') })}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: row.billDay ? 'var(--text-primary)' : 'var(--text-faint)', fontSize: '0.8rem' }}
-                          >
-                            {row.billDay ?? <span style={{ opacity: 0.4 }}>—</span>}
-                          </button>
-                        )}
-                      </td>
-
-                      {/* Budget — inline editable */}
-                      <td style={{ textAlign: 'right' }}>
-                        {editCell?.clientId === row.clientId && editCell.field === 'monthlyBudget' ? (
-                          <span style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                            <input
-                              type="number" min={0} value={editCell.value}
-                              onChange={e => setEditCell(c => c ? { ...c, value: e.target.value } : null)}
-                              className="input" style={{ width: 80, padding: '0.15rem 0.4rem', fontSize: '0.75rem' }}
-                              onKeyDown={e => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditCell(null) }}
-                              autoFocus
-                            />
-                            <button onClick={saveCell} disabled={saving} className="btn btn-primary" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}>✓</button>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setEditCell({ clientId: row.clientId, field: 'monthlyBudget', value: String(row.monthlyBudget ?? '') })}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: row.monthlyBudget ? 'var(--text-primary)' : 'var(--text-faint)', fontSize: '0.8rem', textAlign: 'right', width: '100%' }}
-                          >
-                            {row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : <span style={{ opacity: 0.4 }}>—</span>}
-                          </button>
-                        )}
-                      </td>
-
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(row.afSinceBill)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
-                      <td>
-                        {row.pace ? (
-                          <span style={{
-                            display: 'inline-block', padding: '2px 7px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
-                            ...(PACE_STYLE[row.pace] ?? { bg: '#f3f4f6', color: '#374151' }),
-                            background: (PACE_STYLE[row.pace] ?? { bg: '#f3f4f6' }).bg,
-                          }}>
-                            {row.pace}
-                          </span>
-                        ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                      </td>
+                    <tr
+                      key={row.clientId}
+                      onClick={() => openClientEdit(row)}
+                      style={{ cursor: 'pointer' }}
+                      title="Click to edit bill day, budget, and Ad Fuel cut"
+                    >
+                      {visibleCols.map(col => renderCell(col.key, row))}
                     </tr>
                   ))}
                 </tbody>
@@ -370,7 +453,7 @@ export default function AdFuelPage() {
             </div>
           )}
           <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.5rem' }}>
-            Click Bill Day or Budget cells to edit inline. AF Balance = AF Purchased − AF Spend. Split = {((1 - (rows[0]?.adFuelCut ?? 0.2)) * 100).toFixed(0)}% media (agency cut: {((rows[0]?.adFuelCut ?? 0.2) * 100).toFixed(0)}%).
+            Click any row to edit bill day, budget, and Ad Fuel cut. Ad Fuel Balance = Purchased − Spend.
           </p>
         </>
       )}
@@ -378,7 +461,6 @@ export default function AdFuelPage() {
       {/* ── LEDGER TAB ───────────────────────────────────────────────────────── */}
       {tab === 'ledger' && (
         <>
-          {/* Actions */}
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
             <button onClick={() => { setShowAddModal(true); setAddError('') }} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
               + Add Entry
@@ -411,7 +493,6 @@ export default function AdFuelPage() {
             )}
           </div>
 
-          {/* Ledger table */}
           {ledgerLoading ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
           ) : (
@@ -421,7 +502,7 @@ export default function AdFuelPage() {
                   <tr>
                     <th>Date</th>
                     <th style={{ textAlign: 'left' }}>Client</th>
-                    <th>Amount (AF)</th>
+                    <th>Amount (Ad Fuel)</th>
                     <th>Split Override</th>
                     <th>Invoice ID</th>
                     <th>Type</th>
@@ -440,10 +521,8 @@ export default function AdFuelPage() {
                       <tr key={e.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>{e.date_of_payment}</td>
                         <td style={{ fontWeight: 600 }}>{client?.clientName ?? e.client_id.slice(0, 8)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--green)' }}>{fmt$(e.amount_af)}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                          {e.split_override != null ? fmtPct(e.split_override) : '—'}
-                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: e.amount_af >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(e.amount_af)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{e.split_override != null ? fmtPct(e.split_override) : '—'}</td>
                         <td style={{ color: 'var(--text-muted)' }}>{e.invoice_id ?? '—'}</td>
                         <td>
                           {e.type && (
@@ -461,9 +540,7 @@ export default function AdFuelPage() {
                             onClick={() => deleteEntry(e.id)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.875rem', padding: '0.15rem 0.4rem' }}
                             title="Delete entry"
-                          >
-                            ✕
-                          </button>
+                          >✕</button>
                         </td>
                       </tr>
                     )
@@ -473,6 +550,170 @@ export default function AdFuelPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── SETTINGS TAB ─────────────────────────────────────────────────────── */}
+      {tab === 'settings' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', maxWidth: 900 }}>
+
+          {/* Column visibility + rename */}
+          <div className="card" style={{ padding: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Column Visibility</h3>
+              <button
+                onClick={() => saveCols(DEFAULT_COLS)}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.7rem', padding: '0.2rem 0.6rem' }}
+              >
+                Reset defaults
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {cols.map((col, i) => (
+                <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={col.visible}
+                    disabled={col.key === 'client'}
+                    onChange={e => {
+                      const next = cols.map((c, j) => j === i ? { ...c, visible: e.target.checked } : c)
+                      saveCols(next)
+                    }}
+                    style={{ flexShrink: 0 }}
+                  />
+                  <input
+                    type="text"
+                    value={col.label}
+                    onChange={e => {
+                      const next = cols.map((c, j) => j === i ? { ...c, label: e.target.value } : c)
+                      saveCols(next)
+                    }}
+                    className="input"
+                    style={{ flex: 1, fontSize: '0.8rem', padding: '0.2rem 0.5rem', opacity: col.visible ? 1 : 0.45 }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Client manual values editor */}
+          <div className="card" style={{ padding: '1.25rem' }}>
+            <h3 style={{ margin: '0 0 1rem', fontSize: '0.9375rem', fontWeight: 700 }}>Client Settings</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.875rem', marginTop: 0 }}>
+              Set billing cycle and Ad Fuel configuration per client.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Client</label>
+                <select
+                  value={settingsClientId}
+                  onChange={e => setSettingsClientId(e.target.value)}
+                  className="input"
+                  style={{ width: '100%' }}
+                >
+                  <option value="">Select a client…</option>
+                  {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
+                </select>
+              </div>
+
+              {settingsClientId && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
+                      <input
+                        type="number" min={1} max={31} placeholder="e.g. 1"
+                        value={settingsForm.billDay}
+                        onChange={e => setSettingsForm(f => ({ ...f, billDay: e.target.value }))}
+                        className="input" style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Monthly Budget ($)</label>
+                      <input
+                        type="number" min={0} placeholder="e.g. 5000"
+                        value={settingsForm.monthlyBudget}
+                        onChange={e => setSettingsForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                        className="input" style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <button
+                      onClick={saveSettingsClient}
+                      disabled={settingsSaving}
+                      className="btn btn-primary"
+                      style={{ fontSize: '0.8125rem' }}
+                    >
+                      {settingsSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    {settingsSaveMsg && (
+                      <span style={{ fontSize: '0.8rem', color: settingsSaveMsg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
+                        {settingsSaveMsg}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CLIENT EDIT MODAL (click row on dashboard) ───────────────────────── */}
+      {clientEditModal && (
+        <div
+          onClick={() => setClientEditModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--bg-surface)', borderRadius: 12, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}
+          >
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>{clientEditModal.clientName}</h2>
+                <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ad Fuel billing settings</p>
+              </div>
+              <button onClick={() => setClientEditModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-faint)' }}>×</button>
+            </div>
+
+            <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
+                  <input
+                    type="number" min={1} max={31} placeholder="e.g. 1"
+                    value={clientEditForm.billDay}
+                    onChange={e => setClientEditForm(f => ({ ...f, billDay: e.target.value }))}
+                    className="input" style={{ width: '100%' }}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
+                  <input
+                    type="number" min={0} placeholder="e.g. 5000"
+                    value={clientEditForm.monthlyBudget}
+                    onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                    className="input" style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              {clientEditError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{clientEditError}</p>}
+            </div>
+
+            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setClientEditModal(null)} className="btn btn-secondary">Cancel</button>
+              <button onClick={saveClientEdit} disabled={clientEditSaving} className="btn btn-primary">
+                {clientEditSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── ADD ENTRY MODAL ───────────────────────────────────────────────────── */}
@@ -491,7 +732,6 @@ export default function AdFuelPage() {
             </div>
 
             <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              {/* Client */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Client *</label>
                 <select value={addForm.client_id} onChange={e => setAddForm(f => ({ ...f, client_id: e.target.value }))} className="input" style={{ width: '100%' }}>
@@ -500,7 +740,6 @@ export default function AdFuelPage() {
                 </select>
               </div>
 
-              {/* Date + Amount side by side */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Date of Payment *</label>
@@ -512,7 +751,6 @@ export default function AdFuelPage() {
                 </div>
               </div>
 
-              {/* Type + Split side by side */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Type</label>
@@ -526,19 +764,16 @@ export default function AdFuelPage() {
                 </div>
               </div>
 
-              {/* Invoice ID */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Invoice ID <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional)</span></label>
                 <input type="text" placeholder="INV-001" value={addForm.invoice_id} onChange={e => setAddForm(f => ({ ...f, invoice_id: e.target.value }))} className="input" style={{ width: '100%' }} />
               </div>
 
-              {/* Notes */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Notes <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional)</span></label>
                 <input type="text" placeholder="e.g. 2025 Catchup Ad Fuel Submission" value={addForm.note} onChange={e => setAddForm(f => ({ ...f, note: e.target.value }))} className="input" style={{ width: '100%' }} />
               </div>
 
-              {/* Added by */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Added By</label>
                 <input type="text" placeholder="Your name" value={addForm.created_by} onChange={e => setAddForm(f => ({ ...f, created_by: e.target.value }))} className="input" style={{ width: '100%' }} />
