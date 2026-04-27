@@ -106,6 +106,28 @@ export interface MetaAdRawRow {
   conversion_value: number
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+/** Fetch a Meta Insights URL with up to maxRetries retries on rate-limit errors (codes 17, 32, 613). */
+async function metaFetchWithRetry(url: string, maxRetries = 4): Promise<Record<string, unknown>> {
+  let delay = 10_000 // 10 s initial back-off
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url)
+    if (res.ok) return res.json() as Promise<Record<string, unknown>>
+    const text = await res.text()
+    // Meta rate-limit codes: 17 (user request limit), 32 (page throttle), 613 (insights limit)
+    const isRateLimit = res.status === 400 || res.status === 429
+    const hasRateLimitCode = /\"code\":\s*(17|32|613)\b/.test(text)
+    if ((isRateLimit || hasRateLimitCode) && attempt < maxRetries) {
+      await sleep(delay)
+      delay = Math.min(delay * 2, 60_000) // cap at 60 s
+      continue
+    }
+    throw new Error(`Meta API error ${res.status}: ${text}`)
+  }
+  throw new Error('Meta API: max retries exceeded')
+}
+
 /** Split a date range into chunks of at most maxDays each. */
 function chunkDateRange(from: string, to: string, maxDays: number): { from: string; to: string }[] {
   const chunks: { from: string; to: string }[] = []
@@ -149,7 +171,9 @@ export async function fetchMetaAdMetrics(
   // Split into 30-day chunks — Meta API errors on large date ranges at ad level
   const chunks = chunkDateRange(dateFrom, dateTo, 30)
 
-  for (const chunk of chunks) {
+  for (let ci = 0; ci < chunks.length; ci++) {
+    if (ci > 0) await sleep(1_000)
+    const chunk = chunks[ci]
     const base = new URL(`${BASE_URL}/${externalId}/insights`)
     base.searchParams.set('access_token', accessToken)
     base.searchParams.set('level', 'ad')
@@ -177,13 +201,7 @@ export async function fetchMetaAdMetrics(
     let nextUrl: string | null = base.toString()
 
     while (nextUrl) {
-      const res = await fetch(nextUrl)
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`Meta API error ${res.status}: ${text}`)
-      }
-
-      const data = (await res.json()) as Record<string, unknown>
+      const data = await metaFetchWithRetry(nextUrl)
       const dayRows = (data.data || []) as Record<string, unknown>[]
 
       for (const day of dayRows) {
@@ -476,11 +494,16 @@ export const metaAdsConnector: ConnectorAdapter = {
     const rows: MetaAdsRawRow[] = []
     const discoveredActions = new Set<string>()
 
-    // Split into 30-day chunks — same reason as ad-level: Meta rate-limits large
-    // paginated requests and silently drops remaining pages mid-pagination.
+    // Split into 30-day chunks — Meta BUC rate-limits large paginated requests.
+    // A 2-year backfill in one request silently truncates mid-pagination;
+    // chunking + retry keeps each call within the per-token usage budget.
     const campaignChunks = chunkDateRange(dateFrom, dateTo, 30)
 
-    for (const chunk of campaignChunks) {
+    for (let ci = 0; ci < campaignChunks.length; ci++) {
+      // Small inter-chunk pause to stay within Meta BUC rate limits
+      if (ci > 0) await sleep(1_000)
+
+      const chunk = campaignChunks[ci]
       let nextUrl: string | null = (() => {
         const base = new URL(`${BASE_URL}/${externalId}/insights`)
         base.searchParams.set('access_token', accessToken)
@@ -507,13 +530,7 @@ export const metaAdsConnector: ConnectorAdapter = {
       })()
 
       while (nextUrl) {
-        const res = await fetch(nextUrl)
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(`Meta API error ${res.status}: ${text}`)
-        }
-
-        const data = (await res.json()) as Record<string, unknown>
+        const data = await metaFetchWithRetry(nextUrl)
         const dayRows = (data.data || []) as Record<string, unknown>[]
 
         for (const day of dayRows) {
