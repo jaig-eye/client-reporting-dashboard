@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
   ] = await Promise.all([
     db.from('clients').select('*').order('name'),
     db.from('agency_settings').select('ad_fuel_cut').single(),
-    db.from('ad_fuel_ledger').select('client_id, amount_af, split_override').then(r => r.error ? { data: [] } : r),
+    db.from('ad_fuel_ledger').select('client_id, date_of_payment, amount_af, split_override').then(r => r.error ? { data: [] } : r),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
 
   type ConnRow    = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
   type SpendRow   = { client_id: string; date: string; spend: number }
-  type LedgerRow  = { client_id: string; amount_af: number; split_override: number | null }
+  type LedgerRow  = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ClientRow  = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
 
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
@@ -199,19 +199,32 @@ export async function GET(request: NextRequest) {
     // Lifetime raw spend (all-time, for the lifetime raw balance column)
     const lifetimeRawSpend = (gAllTime[client.id] ?? 0) + (mAllTime[client.id] ?? 0)
 
-    // ── Ledger (always all-time) ───────────────────────────────────────────────
+    // ── Ledger ────────────────────────────────────────────────────────────────
+    // Cycle/range totals: entries within the balance window (same window as spend)
+    // Lifetime totals: all-time, used only for the Lifetime Raw Balance column
     const ledgerEntries = ledgerByClient[client.id] ?? []
-    let afPurchased  = 0
-    let rawPurchased = 0
+    let afPurchased          = 0
+    let rawPurchased         = 0
+    let rawPurchasedLifetime = 0
+
     for (const e of ledgerEntries) {
-      afPurchased  += Number(e.amount_af)
-      const s = e.split_override != null ? Number(e.split_override) : split
-      rawPurchased += Number(e.amount_af) * s
+      const s  = e.split_override != null ? Number(e.split_override) : split
+      const af = Number(e.amount_af)
+
+      rawPurchasedLifetime += af * s
+
+      if (hasWindow && balStartMs !== null && balEndMs !== null) {
+        const eMs = new Date(e.date_of_payment + 'T00:00:00Z').getTime()
+        if (eMs >= balStartMs && eMs <= balEndMs) {
+          afPurchased  += af
+          rawPurchased += af * s
+        }
+      }
     }
 
     const afBalance          = afPurchased - afSpend
     const rawBalance         = rawPurchased - rawSpend
-    const lifetimeRawBalance = rawPurchased - lifetimeRawSpend
+    const lifetimeRawBalance = rawPurchasedLifetime - lifetimeRawSpend
 
     // ── Billing cycle (M, N, O) — always current cycle, never date-filtered ───
     let afSinceBill: number | null = null
