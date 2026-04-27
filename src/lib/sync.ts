@@ -135,12 +135,16 @@ export async function syncClient(
       }
 
       // Fetch source-specific metrics
+      const onProgress = (pct: number, note: string) => {
+        db.from('sync_jobs').update({ progress_pct: pct, progress_note: note }).eq('id', jobId).then(() => {})
+      }
       const result = await adapter.fetchMetrics(
         connection.external_id,
         auth,
         connection.connector.config,
         resolvedFrom,
-        resolvedTo
+        resolvedTo,
+        onProgress
       )
 
       if (result.error) {

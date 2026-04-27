@@ -21,6 +21,8 @@ type JobStatus = {
   started_at: string
   completed_at: string | null
   error_message: string | null
+  progress_pct: number
+  progress_note: string | null
 }
 
 export default function ClientManualSync({ clientId }: { clientId: string }) {
@@ -146,15 +148,6 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
       {/* Progress bar + per-source status */}
       {isSyncing && (
         <div>
-          <div style={{
-            height: 4, borderRadius: 2, background: 'var(--bg-subtle)', overflow: 'hidden', position: 'relative',
-          }}>
-            <div style={{
-              position: 'absolute', top: 0, left: 0, height: '100%', width: '40%',
-              background: 'var(--blue)', borderRadius: 2,
-              animation: 'syncSlide 1.4s ease-in-out infinite',
-            }} />
-          </div>
           <style>{`
             @keyframes syncSlide {
               0%   { transform: translateX(-150%); }
@@ -162,29 +155,66 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
             }
           `}</style>
 
-          {/* Per-source rows */}
           {jobStatuses.length > 0 ? (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {jobStatuses.map(j => (
-                <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}>
-                  {statusIcon(j.status)}
-                  <span style={{ color: 'var(--text-primary)', minWidth: 130 }}>{j.source_label}</span>
-                  {j.status === 'success' && (
-                    <span style={{ color: 'var(--text-muted)' }}>{(j.records_synced ?? 0).toLocaleString()} records</span>
-                  )}
-                  {j.status === 'running' && (
-                    <span style={{ color: 'var(--text-muted)' }}>running…</span>
-                  )}
-                  {j.status === 'error' && j.error_message && (
-                    <span style={{ color: 'var(--red)' }} title={j.error_message}>error</span>
-                  )}
-                </div>
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {jobStatuses.map(j => {
+                const pct        = j.progress_pct ?? 0
+                const isDeterminate = j.status === 'running' && pct > 0
+                const isSuccess  = j.status === 'success'
+                const isError    = j.status === 'error'
+                const barPct     = isSuccess ? 100 : isError ? pct : pct
+                return (
+                  <div key={j.id}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', marginBottom: 3 }}>
+                      {statusIcon(j.status)}
+                      <span style={{ color: 'var(--text-primary)', minWidth: 110 }}>{j.source_label}</span>
+                      {isSuccess && <span style={{ color: 'var(--text-muted)' }}>{(j.records_synced ?? 0).toLocaleString()} records</span>}
+                      {isError   && j.error_message && <span style={{ color: 'var(--red)' }} title={j.error_message}>error</span>}
+                      {j.status === 'running' && isDeterminate && (
+                        <span style={{ color: 'var(--text-muted)' }}>{pct}%</span>
+                      )}
+                      {j.status === 'running' && !isDeterminate && (
+                        <span style={{ color: 'var(--text-muted)' }}>starting…</span>
+                      )}
+                    </div>
+                    {/* Progress bar: determinate if pct > 0, indeterminate otherwise */}
+                    <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-subtle)', overflow: 'hidden', position: 'relative' }}>
+                      {isDeterminate || isSuccess ? (
+                        <div style={{
+                          height: '100%', borderRadius: 2,
+                          width: `${barPct}%`,
+                          background: isError ? 'var(--red)' : 'var(--blue)',
+                          transition: 'width 0.4s ease',
+                        }} />
+                      ) : j.status === 'running' ? (
+                        <div style={{
+                          position: 'absolute', top: 0, left: 0, height: '100%', width: '40%',
+                          background: 'var(--blue)', borderRadius: 2,
+                          animation: 'syncSlide 1.4s ease-in-out infinite',
+                        }} />
+                      ) : null}
+                    </div>
+                    {/* Chunk note for running Meta jobs */}
+                    {j.status === 'running' && j.progress_note && (
+                      <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 2 }}>{j.progress_note}</p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           ) : (
-            <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
-              Syncing <strong>{activeLabel}</strong>… {elapsed}s elapsed. Do not close or refresh.
-            </p>
+            <div>
+              <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-subtle)', overflow: 'hidden', position: 'relative' }}>
+                <div style={{
+                  position: 'absolute', top: 0, left: 0, height: '100%', width: '40%',
+                  background: 'var(--blue)', borderRadius: 2,
+                  animation: 'syncSlide 1.4s ease-in-out infinite',
+                }} />
+              </div>
+              <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                Syncing <strong>{activeLabel}</strong>… {elapsed}s elapsed. Do not close or refresh.
+              </p>
+            </div>
           )}
         </div>
       )}

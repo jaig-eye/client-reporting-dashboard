@@ -99,7 +99,8 @@ export interface ConnectorAdapter {
     auth: Record<string, unknown>,
     config: Record<string, unknown>,
     dateFrom: string,
-    dateTo: string
+    dateTo: string,
+    onProgress?: (pct: number, note: string) => void
   ): Promise<SyncResult>
 
   /**

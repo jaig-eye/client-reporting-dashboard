@@ -485,7 +485,8 @@ export const metaAdsConnector: ConnectorAdapter = {
     auth: Record<string, unknown>,
     _config: Record<string, unknown>,
     dateFrom: string,
-    dateTo: string
+    dateTo: string,
+    onProgress?: (pct: number, note: string) => void
   ): Promise<SyncResult> {
     const accessToken = resolveToken(auth)
 
@@ -568,6 +569,12 @@ export const metaAdsConnector: ConnectorAdapter = {
 
         const paging = data.paging as Record<string, unknown> | undefined
         nextUrl = (paging?.next as string) || null
+      }
+
+      if (onProgress) {
+        const pct  = Math.round(((ci + 1) / campaignChunks.length) * 90) // reserve last 10% for budget/status fetch
+        const note = `Chunk ${ci + 1}/${campaignChunks.length} · ${chunk.from} – ${chunk.to}`
+        onProgress(pct, note)
       }
     }
 

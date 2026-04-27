@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const { data: jobs, error } = await db
     .from('sync_jobs')
-    .select('id, connection_id, status, records_synced, started_at, completed_at, error_message, client_connections(connectors(type))')
+    .select('id, connection_id, status, records_synced, started_at, completed_at, error_message, progress_pct, progress_note, client_connections(connectors(type))')
     .eq('client_id', clientId)
     .gte('started_at', cutoff)
     .order('started_at', { ascending: true })
@@ -50,6 +50,8 @@ export async function GET(req: NextRequest) {
       started_at:    j.started_at,
       completed_at:  j.completed_at,
       error_message: j.error_message ?? null,
+      progress_pct:  (j.progress_pct as number) ?? 0,
+      progress_note: (j.progress_note as string) ?? null,
     }
   })
 
