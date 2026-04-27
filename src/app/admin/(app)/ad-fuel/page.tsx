@@ -154,6 +154,11 @@ export default function AdFuelPage() {
   const [tab, setTab] = useState<'dashboard' | 'ledger' | 'settings'>('dashboard')
 
   // Dashboard state — seed from URL params if present
+  const [dateFilterEnabled, setDateFilterEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const p = new URLSearchParams(window.location.search)
+    return p.has('date_from') && p.has('date_to')
+  })
   const [dateFrom, setDateFrom] = useState(() => {
     const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_from') : null
     if (p) return p
@@ -225,21 +230,29 @@ export default function AdFuelPage() {
   const [settingsSaving,     setSettingsSaving]     = useState(false)
   const [settingsSaveMsg,    setSettingsSaveMsg]    = useState('')
 
-  // Sync URL with current date range
+  // Sync URL with current date range (only when filter is enabled)
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString())
-    params.set('date_from', dateFrom)
-    params.set('date_to', dateTo)
+    if (dateFilterEnabled) {
+      params.set('date_from', dateFrom)
+      params.set('date_to', dateTo)
+    } else {
+      params.delete('date_from')
+      params.delete('date_to')
+    }
     router.replace(`?${params.toString()}`, { scroll: false })
-  }, [dateFrom, dateTo]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo, dateFilterEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/ad-fuel?date_from=${dateFrom}&date_to=${dateTo}`)
+      const url = dateFilterEnabled
+        ? `/api/admin/ad-fuel?date_from=${dateFrom}&date_to=${dateTo}`
+        : '/api/admin/ad-fuel'
+      const res = await fetch(url)
       if (res.ok) setRows(await res.json())
     } finally { setLoading(false) }
-  }, [dateFrom, dateTo])
+  }, [dateFrom, dateTo, dateFilterEnabled])
 
   const fetchLedger = useCallback(async () => {
     setLedgerLoading(true)
@@ -408,15 +421,34 @@ export default function AdFuelPage() {
       {tab === 'dashboard' && (
         <>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
-            <div>
+            {/* Date filter toggle */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', userSelect: 'none', paddingBottom: 2 }}>
+              <input
+                type="checkbox"
+                checked={dateFilterEnabled}
+                onChange={e => setDateFilterEnabled(e.target.checked)}
+              />
+              <span style={{ fontSize: '0.8rem', color: dateFilterEnabled ? 'var(--text-primary)' : 'var(--text-faint)', fontWeight: 500 }}>
+                Filter by date
+              </span>
+            </label>
+
+            <div style={{ opacity: dateFilterEnabled ? 1 : 0.4, pointerEvents: dateFilterEnabled ? 'auto' : 'none' }}>
               <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>From</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} />
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} disabled={!dateFilterEnabled} />
             </div>
-            <div>
+            <div style={{ opacity: dateFilterEnabled ? 1 : 0.4, pointerEvents: dateFilterEnabled ? 'auto' : 'none' }}>
               <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>To</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} disabled={!dateFilterEnabled} />
             </div>
             <button onClick={fetchDashboard} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem' }}>Refresh</button>
+
+            {!dateFilterEnabled && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', paddingBottom: 4 }}>
+                Showing all-time balance
+              </span>
+            )}
+
             <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem', marginLeft: 'auto' }}>Export CSV</button>
           </div>
 
@@ -453,7 +485,7 @@ export default function AdFuelPage() {
             </div>
           )}
           <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.5rem' }}>
-            Click any row to edit bill day, budget, and Ad Fuel cut. Ad Fuel Balance = Purchased − Spend.
+            Click any row to edit bill day and budget. Balance = all-time purchased − spend (date filter optional). Since Bill uses current billing cycle only.
           </p>
         </>
       )}

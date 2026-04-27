@@ -1,5 +1,13 @@
 // GET /api/admin/ad-fuel?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
-// Returns per-client Ad Fuel dashboard rows with all computed columns.
+//
+// date_from / date_to are OPTIONAL.
+//   • Omitted → balance = all-time purchased minus all-time spend (no cutoff)
+//   • Provided → balance uses spend within the range; first-month billing cutoff
+//     is applied per client (skips days before bill_day in the opening month of
+//     the range, matching the Google Apps Script behaviour)
+//
+// AF Since Bill / Avg Daily / Pace always use the current billing cycle
+// regardless of whether a date range is set.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -13,8 +21,7 @@ function startOfDay(d: Date) {
 function getCycleStart(today: Date, billDay: number): Date {
   const d = today.getDate()
   if (d >= billDay) return new Date(today.getFullYear(), today.getMonth(), billDay)
-  const prev = new Date(today.getFullYear(), today.getMonth() - 1, billDay)
-  return prev
+  return new Date(today.getFullYear(), today.getMonth() - 1, billDay)
 }
 
 function getCycleEnd(cycleStart: Date): Date {
@@ -31,29 +38,27 @@ export async function GET(request: NextRequest) {
   const dateFrom = searchParams.get('date_from')
   const dateTo   = searchParams.get('date_to')
 
-  const db = createAdminClient()
+  const db    = createAdminClient()
   const today = startOfDay(new Date())
 
+  // Single spend fetch — all historical data, no DB-level date filter.
+  // We apply the optional range + billing cutoff in JS below.
   const [
     clientsRes,
     agencyRes,
-    gadsRes,
-    metaRes,
     ledgerRes,
     connectionsRes,
+    gAllRes,
+    mAllRes,
   ] = await Promise.all([
     db.from('clients').select('*').order('name'),
     db.from('agency_settings').select('ad_fuel_cut').single(),
-    dateFrom && dateTo
-      ? db.from('google_ads_metrics').select('client_id, spend').gte('date', dateFrom).lte('date', dateTo)
-      : Promise.resolve({ data: [] as { client_id: string; spend: number }[] }),
-    dateFrom && dateTo
-      ? db.from('meta_ads_metrics').select('client_id, spend').gte('date', dateFrom).lte('date', dateTo)
-      : Promise.resolve({ data: [] as { client_id: string; spend: number }[] }),
     db.from('ad_fuel_ledger').select('client_id, amount_af, split_override').then(r => r.error ? { data: [] } : r),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
+    db.from('google_ads_metrics').select('client_id, date, spend'),
+    db.from('meta_ads_metrics').select('client_id, date, spend'),
   ])
 
   const agencyCut = (agencyRes.data as { ad_fuel_cut: number } | null)?.ad_fuel_cut ?? 0.20
@@ -61,58 +66,82 @@ export async function GET(request: NextRequest) {
   type ConnRow = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
 
-  // Build per-client account ID maps
   const googleAcctByClient: Record<string, string> = {}
   const fbAcctByClient:     Record<string, string> = {}
   const crmIdByClient:      Record<string, string> = {}
   for (const c of connections) {
     if (!c.connector) continue
-    if (c.connector.type === 'google_ads')  googleAcctByClient[c.client_id] = c.connector.external_id
-    if (c.connector.type === 'meta_ads')    fbAcctByClient[c.client_id]     = c.connector.external_id
-    if (c.connector.type === 'ghl')         crmIdByClient[c.client_id]      = (c.config?.location_id as string) ?? ''
+    if (c.connector.type === 'google_ads') googleAcctByClient[c.client_id] = c.connector.external_id
+    if (c.connector.type === 'meta_ads')   fbAcctByClient[c.client_id]     = c.connector.external_id
+    if (c.connector.type === 'ghl')        crmIdByClient[c.client_id]      = (c.config?.location_id as string) ?? ''
   }
 
-  // Aggregate spend by client for the selected range
+  type SpendRow  = { client_id: string; date: string; spend: number }
+  type LedgerRow = { client_id: string; amount_af: number; split_override: number | null }
+  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
+
+  const allGRows = (gAllRes.data ?? []) as SpendRow[]
+  const allMRows = (mAllRes.data ?? []) as SpendRow[]
+  const clients  = (clientsRes.data ?? []) as ClientRow[]
+
+  // Build bill_day lookup (needed for first-month cutoff)
+  const billDayById: Record<string, number | null> = {}
+  for (const c of clients) billDayById[c.id] = c.bill_day ?? null
+
+  // Optional date range bounds (UTC midnight)
+  const filterMs0 = dateFrom ? new Date(dateFrom + 'T00:00:00Z').getTime() : null
+  const filterMs1 = dateTo   ? new Date(dateTo   + 'T00:00:00Z').getTime() : null
+  const filterStartY = dateFrom ? parseInt(dateFrom.slice(0, 4), 10)  : -1
+  const filterStartM = dateFrom ? parseInt(dateFrom.slice(5, 7), 10) - 1 : -1
+
+  // Determines whether a spend row contributes to the balance calculation.
+  // When no date range is set every row is included (all-time balance).
+  // When a date range is set, applies the range + first-month billing cutoff
+  // (matching the Google Apps Script: skip days before bill_day in the first
+  // calendar month of the range to avoid double-counting the prior cycle).
+  function inBalanceRange(dateStr: string, clientId: string): boolean {
+    const d = new Date(dateStr + 'T00:00:00Z')
+    const t = d.getTime()
+    if (filterMs0 !== null && t < filterMs0) return false
+    if (filterMs1 !== null && t > filterMs1) return false
+    if (filterMs0 !== null) {
+      const billDay = billDayById[clientId]
+      if (billDay &&
+          d.getUTCFullYear() === filterStartY &&
+          d.getUTCMonth()    === filterStartM &&
+          d.getUTCDate()     < billDay) return false
+    }
+    return true
+  }
+
+  // Balance-period spend aggregation
   const gSpend: Record<string, number> = {}
   const mSpend: Record<string, number> = {}
-  for (const r of (gadsRes.data ?? []) as { client_id: string; spend: number }[]) {
+  for (const r of allGRows) {
+    if (!inBalanceRange(r.date, r.client_id)) continue
     gSpend[r.client_id] = (gSpend[r.client_id] ?? 0) + Number(r.spend ?? 0)
   }
-  for (const r of (metaRes.data ?? []) as { client_id: string; spend: number }[]) {
+  for (const r of allMRows) {
+    if (!inBalanceRange(r.date, r.client_id)) continue
     mSpend[r.client_id] = (mSpend[r.client_id] ?? 0) + Number(r.spend ?? 0)
   }
 
-  // Aggregate ledger by client
-  type LedgerRow = { client_id: string; amount_af: number; split_override: number | null }
+  // Aggregate ledger by client — always all-time (never date-filtered)
   const ledgerByClient: Record<string, LedgerRow[]> = {}
   for (const r of (ledgerRes.data ?? []) as LedgerRow[]) {
     if (!ledgerByClient[r.client_id]) ledgerByClient[r.client_id] = []
     ledgerByClient[r.client_id].push(r)
   }
 
-  // For billing-cycle spend, query current cycle date range per client
-  // We compute this server-side from the spend data we already have (gSpend/mSpend cover full history)
-  // For "since bill day" we need unbounded spend — fetch all spend for billing cycle computation
-  const [gcycleRes, mcycleRes] = await Promise.all([
-    db.from('google_ads_metrics').select('client_id, date, spend'),
-    db.from('meta_ads_metrics').select('client_id, date, spend'),
-  ])
-
-  type SpendRow = { client_id: string; date: string; spend: number }
-  const gcycleRows = (gcycleRes.data ?? []) as SpendRow[]
-  const mcycleRows = (mcycleRes.data ?? []) as SpendRow[]
-
-  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
-  const clients = (clientsRes.data ?? []) as ClientRow[]
-
   const rows = clients.map(client => {
     const cut   = client.ad_fuel_cut ?? agencyCut
-    const split = 1 - cut  // portion that goes to raw ads
+    const split = 1 - cut  // client portion: e.g. 0.8 if agency keeps 20%
 
-    const googleRaw  = gSpend[client.id] ?? 0
+    const googleRaw   = gSpend[client.id] ?? 0
     const facebookRaw = mSpend[client.id] ?? 0
-    const rawSpend   = googleRaw + facebookRaw
-    const afSpend    = split > 0 ? rawSpend / split : 0
+    const rawSpend    = googleRaw + facebookRaw
+    // AF Spend = raw / split  (same as script: actualAF = raw / clientPortion)
+    const afSpend = split > 0 ? rawSpend / split : 0
 
     const ledgerEntries = ledgerByClient[client.id] ?? []
     let afPurchased  = 0
@@ -126,10 +155,10 @@ export async function GET(request: NextRequest) {
     const afBalance  = afPurchased - afSpend
     const rawBalance = rawPurchased - rawSpend
 
-    // Billing cycle calculations
-    let afSinceBill: number | null   = null
-    let avgDailyAf: number | null    = null
-    let pace: string                 = ''
+    // ── Billing cycle (always current cycle, independent of date filter) ──────
+    let afSinceBill: number | null = null
+    let avgDailyAf:  number | null = null
+    let pace:        string        = ''
 
     if (client.bill_day) {
       const cycleStart = getCycleStart(today, client.bill_day)
@@ -142,12 +171,12 @@ export async function GET(request: NextRequest) {
         const ctMs = cutoff.getTime()
 
         let cycleRaw = 0
-        for (const r of gcycleRows) {
+        for (const r of allGRows) {
           if (r.client_id !== client.id) continue
           const t = new Date(r.date + 'T00:00:00Z').getTime()
           if (t >= csMs && t <= ctMs) cycleRaw += Number(r.spend ?? 0)
         }
-        for (const r of mcycleRows) {
+        for (const r of allMRows) {
           if (r.client_id !== client.id) continue
           const t = new Date(r.date + 'T00:00:00Z').getTime()
           if (t >= csMs && t <= ctMs) cycleRaw += Number(r.spend ?? 0)
