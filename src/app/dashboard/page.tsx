@@ -70,6 +70,7 @@ export default async function DashboardPage({
     connector: Pick<Connector, 'id' | 'type' | 'label'>
   })[]
 
+  const hiddenTypes      = new Set<string>(settings.hidden_connector_types ?? [])
   const adFuelCut        = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
   // In raw cost mode (admin-only toggle) suppress the markup so admins see true spend.
   const rawMode            = cookieStore.get('admin_raw_mode')?.value === '1'
@@ -810,7 +811,7 @@ export default async function DashboardPage({
         {!isFiltered && (
           <>
             {/* Analytics — GA4 */}
-            {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && (
+            {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && !hiddenTypes.has('google_analytics') && (
               <>
                 <div>
                   <h2 className="section-title">Analytics</h2>
@@ -829,16 +830,16 @@ export default async function DashboardPage({
 
             {/* SEO — Search Console, Business Profile, Ahrefs (grouped together) */}
             {(
-              (availableSources.includes('google_search_console') && connectionsBySource['google_search_console']) ||
+              (availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && !hiddenTypes.has('google_search_console')) ||
               (availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile']) ||
-              (availableSources as string[]).includes('ahrefs')
+              ((availableSources as string[]).includes('ahrefs') && !hiddenTypes.has('ahrefs'))
             ) && (
               <div>
                 <h2 className="section-title">SEO</h2>
                 <p className="section-desc">Organic search, local visibility, and domain authority</p>
               </div>
             )}
-            {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && (
+            {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && !hiddenTypes.has('google_search_console') && (
               <GSCSummaryCard
                 clientId={client.id}
                 connectionId={connectionsBySource['google_search_console']}
@@ -856,7 +857,7 @@ export default async function DashboardPage({
                 dateTo={fmtDate(toDate)}
               />
             )}
-            {(availableSources as string[]).includes('ahrefs') && (
+            {(availableSources as string[]).includes('ahrefs') && !hiddenTypes.has('ahrefs') && (
               <AhrefsSummaryCard
                 clientId={client.id}
                 dateFrom={fmtDate(fromDate)}
