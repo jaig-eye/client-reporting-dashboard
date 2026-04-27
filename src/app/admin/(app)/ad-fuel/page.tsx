@@ -341,7 +341,7 @@ export default function AdFuelPage() {
     await fetch('/api/admin/ad-fuel/ledger', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [...selectedIds] }),
+      body: JSON.stringify({ ids: Array.from(selectedIds) }),
     })
     setSelectedIds(new Set())
     setBulkDeleting(false)
