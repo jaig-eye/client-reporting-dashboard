@@ -88,6 +88,7 @@ export default async function ContentPage({
     topicsRes,
     autoSettingsRes,
     lastPublishedRes,
+    scheduledTopicsRes,
   ] = await Promise.all([
     // Clients with WP connections
     wpClientIds.length > 0
@@ -100,7 +101,7 @@ export default async function ContentPage({
       .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url')
       .order('generated_at', { ascending: false })
       .limit(200),
-    // All non-rejected topics (for queue)
+    // All non-rejected topics (for queue / cycle cards)
     db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, created_at')
       .not('status', 'eq', 'rejected')
@@ -117,6 +118,12 @@ export default async function ContentPage({
       .in('status', ['published', 'approved'])
       .order('generated_at', { ascending: false })
       .limit(500),
+    // Topics in the generation pipeline (approved / generating / scheduled) — shown in Posts to Review
+    db.from('content_topics')
+      .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, created_at')
+      .in('status', ['approved', 'generating', 'scheduled'])
+      .order('target_publish_date', { ascending: true, nullsFirst: false })
+      .limit(200),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
@@ -209,20 +216,47 @@ export default async function ContentPage({
     clientName:   clientMap.get(c.client_id) ?? 'Unknown',
   }))
 
-  const posts = (postsRes.data ?? []).map(p => ({
-    id:            String(p.id),
-    clientId:      String(p.client_id),
-    clientName:    clientMap.get(String(p.client_id)) ?? 'Unknown',
-    status:        String(p.status),
-    targetKeyword: p.target_keyword ? String(p.target_keyword) : null,
-    title:         p.title ? String(p.title) : null,
-    wordCount:     (p.word_count as number) ?? null,
-    headingCount:  (p.heading_count as number) ?? null,
-    internalLinks: (p.internal_links as number) ?? null,
-    generatedAt:   String(p.generated_at),
-    generatedBy:   String(p.generated_by),
-    publishedUrl:  p.published_url ? String(p.published_url) : null,
+  const postItems = (postsRes.data ?? []).map(p => ({
+    type:              'post' as const,
+    id:                String(p.id),
+    clientId:          String(p.client_id),
+    clientName:        allClientsMap.get(String(p.client_id)) ?? 'Unknown',
+    status:            String(p.status),
+    targetKeyword:     p.target_keyword ? String(p.target_keyword) : null,
+    title:             p.title ? String(p.title) : null,
+    topicText:         null,
+    wordCount:         (p.word_count as number) ?? null,
+    headingCount:      (p.heading_count as number) ?? null,
+    internalLinks:     (p.internal_links as number) ?? null,
+    generatedAt:       String(p.generated_at),
+    generatedBy:       String(p.generated_by),
+    publishedUrl:      p.published_url ? String(p.published_url) : null,
+    generateByDate:    null,
+    targetPublishDate: null,
+    rationale:         null,
   }))
+
+  const scheduledTopicItems = (scheduledTopicsRes.data ?? []).map(t => ({
+    type:              'topic' as const,
+    id:                String(t.id),
+    clientId:          String(t.client_id),
+    clientName:        allClientsMap.get(String(t.client_id)) ?? 'Unknown',
+    status:            String(t.status),
+    targetKeyword:     t.target_keyword ? String(t.target_keyword) : null,
+    title:             null,
+    topicText:         String(t.topic),
+    wordCount:         null,
+    headingCount:      null,
+    internalLinks:     null,
+    generatedAt:       String(t.created_at),
+    generatedBy:       'scheduled',
+    publishedUrl:      null,
+    generateByDate:    t.generate_by_date ? String(t.generate_by_date) : null,
+    targetPublishDate: t.target_publish_date ? String(t.target_publish_date) : null,
+    rationale:         t.rationale ? String(t.rationale) : null,
+  }))
+
+  const posts = [...scheduledTopicItems, ...postItems]
 
   const tabs = [
     { id: 'queue',    label: 'Queue'    },

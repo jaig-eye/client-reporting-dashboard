@@ -99,6 +99,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
+  // Apply agency-level connector visibility overrides
+  if (settings?.hidden_connector_types?.length) {
+    const hidden = new Set(settings.hidden_connector_types)
+    activeConnectorTypes = activeConnectorTypes.filter(t => !hidden.has(t))
+  }
+
   // Load admin bar data when admin session is active
   let adminClients: { id: string; name: string; dashboard_token: string }[] = []
   if (isAdmin) {

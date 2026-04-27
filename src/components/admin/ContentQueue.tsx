@@ -3,19 +3,24 @@
 import { useState } from 'react'
 import ContentPostEditor from './ContentPostEditor'
 
-interface Post {
-  id:            string
-  clientId:      string
-  clientName:    string
-  status:        string
-  targetKeyword: string | null
-  title:         string | null
-  wordCount:     number | null
-  headingCount:  number | null
-  internalLinks: number | null
-  generatedAt:   string
-  generatedBy:   string
-  publishedUrl:  string | null
+interface QueueItem {
+  type:              'post' | 'topic'
+  id:                string
+  clientId:          string
+  clientName:        string
+  status:            string
+  targetKeyword:     string | null
+  title:             string | null
+  topicText:         string | null
+  wordCount:         number | null
+  headingCount:      number | null
+  internalLinks:     number | null
+  generatedAt:       string
+  generatedBy:       string
+  publishedUrl:      string | null
+  generateByDate:    string | null
+  targetPublishDate: string | null
+  rationale:         string | null
 }
 
 interface Site {
@@ -27,83 +32,345 @@ interface Site {
 }
 
 interface Props {
-  posts: Post[]
+  posts: QueueItem[]
   sites: Site[]
 }
 
-const STATUS_TABS = ['all', 'pending', 'approved', 'published', 'rejected'] as const
+const STATUS_TABS = ['all', 'scheduled', 'pending', 'approved', 'published', 'rejected'] as const
 type StatusFilter = typeof STATUS_TABS[number]
 
-const STATUS_LABELS: Record<string, string> = {
-  pending:    'Pending',
-  approved:   'Approved',
-  published:  'Published',
-  draft_saved: 'Draft',
-  rejected:   'Rejected',
+const POST_STATUS_LABELS: Record<string, string> = {
+  pending:     'Pending',
+  approved:    'Approved',
+  published:   'Published',
+  draft_saved: 'WP Draft',
+  rejected:    'Rejected',
 }
 
-const STATUS_CLASSES: Record<string, string> = {
-  pending:    'badge-amber',
-  approved:   'badge-blue',
-  published:  'badge-green',
-  draft_saved: 'badge-gray',
-  rejected:   'badge-red',
+const TOPIC_STATUS_LABELS: Record<string, string> = {
+  approved:   'Scheduled',
+  scheduled:  'Scheduled',
+  generating: 'Generating…',
+}
+
+const STATUS_BADGE: Record<string, { bg: string; color: string }> = {
+  pending:    { bg: '#fef3c7', color: '#92400e' },
+  approved:   { bg: '#dbeafe', color: '#1e40af' },
+  published:  { bg: '#dcfce7', color: '#166534' },
+  draft_saved:{ bg: '#f3f4f6', color: '#374151' },
+  rejected:   { bg: '#fee2e2', color: '#991b1b' },
+  generating: { bg: '#ede9fe', color: '#5b21b6' },
+  scheduled:  { bg: '#ede9fe', color: '#5b21b6' },
+}
+
+function statusLabel(item: QueueItem): string {
+  if (item.type === 'topic') return TOPIC_STATUS_LABELS[item.status] ?? item.status
+  return POST_STATUS_LABELS[item.status] ?? item.status
+}
+
+function statusBadgeStyle(item: QueueItem) {
+  const key = item.type === 'topic'
+    ? (item.status === 'generating' ? 'generating' : 'scheduled')
+    : item.status
+  return STATUS_BADGE[key] ?? STATUS_BADGE.pending
+}
+
+function fmtDate(iso: string): string {
+  return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+  })
 }
 
 function timeSince(iso: string): string {
   const h = (Date.now() - new Date(iso).getTime()) / 3_600_000
-  if (h < 1)   return 'Just now'
-  if (h < 24)  return `${Math.floor(h)}h ago`
+  if (h < 1)  return 'Just now'
+  if (h < 24) return `${Math.floor(h)}h ago`
   const d = h / 24
-  if (d < 7)   return `${Math.floor(d)}d ago`
+  if (d < 7)  return `${Math.floor(d)}d ago`
   return `${Math.floor(d / 7)}w ago`
 }
 
-export default function ContentQueue({ posts: initialPosts, sites }: Props) {
-  const [posts,         setPosts]         = useState<Post[]>(initialPosts)
+function ItemCard({
+  item,
+  onOpenEditor,
+  onReject,
+  onForceGenerate,
+  loading,
+}: {
+  item:             QueueItem
+  onOpenEditor:     (id: string) => void
+  onReject:         (item: QueueItem) => void
+  onForceGenerate:  (id: string) => void
+  loading:          string | null
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const badge = statusBadgeStyle(item)
+  const isLoading = loading === item.id
+  const isTopic = item.type === 'topic'
+  const isGenerating = item.status === 'generating'
+
+  return (
+    <div style={{
+      border:       '1px solid var(--border, #e5e7eb)',
+      borderRadius: 10,
+      background:   'var(--bg-surface, #fff)',
+      display:      'flex',
+      flexDirection: 'column',
+      overflow:     'hidden',
+      transition:   'box-shadow 0.15s',
+    }}>
+      {/* Card body */}
+      <div style={{ padding: '0.875rem 1rem', flex: 1 }}>
+        {/* Top row: status badge + company */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+            fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.02em',
+            background: badge.bg, color: badge.color,
+          }}>
+            {statusLabel(item)}
+          </span>
+          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
+            {item.clientName}
+          </span>
+        </div>
+
+        {/* Title / topic text */}
+        {isTopic ? (
+          <p style={{
+            fontSize: '0.875rem', fontStyle: 'italic', color: 'var(--text-primary)',
+            margin: 0, marginBottom: '0.625rem',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}>
+            {item.topicText}
+          </p>
+        ) : (
+          <p style={{
+            fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)',
+            margin: 0, marginBottom: '0.625rem',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}>
+            {item.title ?? <span style={{ color: 'var(--text-faint)', fontWeight: 400, fontStyle: 'italic' }}>Untitled</span>}
+          </p>
+        )}
+
+        <div style={{ height: 1, background: 'var(--border, #e5e7eb)', marginBottom: '0.625rem' }} />
+
+        {/* Meta row */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.625rem', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          {item.targetKeyword && (
+            <span style={{ background: 'var(--bg-subtle, #f8f9fa)', padding: '1px 6px', borderRadius: 4 }}>
+              {item.targetKeyword}
+            </span>
+          )}
+          {!isTopic && item.wordCount != null && (
+            <span>{item.wordCount.toLocaleString()} words</span>
+          )}
+          {!isTopic && item.headingCount != null && (
+            <span>{item.headingCount} H2s</span>
+          )}
+        </div>
+
+        {/* Scheduled dates */}
+        {isTopic && (item.generateByDate || item.targetPublishDate) && (
+          <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {item.generateByDate && (
+              <span>Generates: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(item.generateByDate)}</strong></span>
+            )}
+            {item.targetPublishDate && (
+              <span>Publishes: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(item.targetPublishDate)}</strong></span>
+            )}
+          </div>
+        )}
+
+        {/* Rationale expand (topics) */}
+        {isTopic && item.rationale && (
+          <div style={{ marginTop: '0.375rem' }}>
+            <button
+              onClick={() => setExpanded(e => !e)}
+              style={{ fontSize: '0.7rem', color: 'var(--blue)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+            >
+              {expanded ? '▲ hide rationale' : '▼ rationale'}
+            </button>
+            {expanded && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem', lineHeight: 1.5 }}>
+                {item.rationale}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Generated time (posts) */}
+        {!isTopic && (
+          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.5rem 0 0' }}>
+            {timeSince(item.generatedAt)}
+            {item.generatedBy === 'scheduled' && <span style={{ marginLeft: 4, opacity: 0.6 }}>auto</span>}
+          </p>
+        )}
+      </div>
+
+      {/* Action footer */}
+      <div style={{
+        padding: '0.5rem 1rem',
+        borderTop: '1px solid var(--border, #e5e7eb)',
+        display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem',
+        background: 'var(--bg-subtle, #f8f9fa)',
+      }}>
+        {/* Post actions */}
+        {!isTopic && (
+          <>
+            <button
+              type="button"
+              onClick={() => onOpenEditor(item.id)}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+            >
+              Review
+            </button>
+            {item.status === 'pending' && (
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={() => onReject(item)}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', color: 'var(--red)' }}
+              >
+                Reject
+              </button>
+            )}
+            {item.publishedUrl && (
+              <a
+                href={item.publishedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+              >
+                View ↗
+              </a>
+            )}
+          </>
+        )}
+
+        {/* Topic actions */}
+        {isTopic && !isGenerating && (
+          <>
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={() => onForceGenerate(item.id)}
+              className="btn btn-primary"
+              style={{ fontSize: '0.75rem', padding: '0.2rem 0.75rem' }}
+            >
+              {isLoading ? 'Queuing…' : '▶ Generate Now'}
+            </button>
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={() => onReject(item)}
+              style={{
+                fontSize: '0.75rem', padding: '0.2rem 0.5rem',
+                background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+          </>
+        )}
+
+        {isTopic && isGenerating && (
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>
+            Generating post…
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function ContentQueue({ posts: initialItems, sites }: Props) {
+  const [items,         setItems]         = useState<QueueItem[]>(initialItems)
   const [statusFilter,  setStatusFilter]  = useState<StatusFilter>('pending')
   const [editingPostId, setEditingPostId] = useState<string | null>(null)
   const [loading,       setLoading]       = useState<string | null>(null)
   const [error,         setError]         = useState('')
 
-  const filtered = statusFilter === 'all'
-    ? posts
-    : posts.filter(p => p.status === statusFilter)
-
   const counts: Record<StatusFilter, number> = {
-    all:       posts.length,
-    pending:   posts.filter(p => p.status === 'pending').length,
-    approved:  posts.filter(p => p.status === 'approved').length,
-    published: posts.filter(p => p.status === 'published').length,
-    rejected:  posts.filter(p => p.status === 'rejected').length,
+    all:       items.length,
+    scheduled: items.filter(i => i.type === 'topic').length,
+    pending:   items.filter(i => i.type === 'post' && i.status === 'pending').length,
+    approved:  items.filter(i => i.type === 'post' && i.status === 'approved').length,
+    published: items.filter(i => i.type === 'post' && i.status === 'published').length,
+    rejected:  items.filter(i => i.type === 'post' && i.status === 'rejected').length,
   }
 
-  async function updateStatus(postId: string, status: string) {
-    setLoading(postId)
+  const filtered = (() => {
+    if (statusFilter === 'all')       return items
+    if (statusFilter === 'scheduled') return items.filter(i => i.type === 'topic')
+    return items.filter(i => i.type === 'post' && i.status === statusFilter)
+  })()
+
+  async function rejectItem(item: QueueItem) {
+    setLoading(item.id)
     setError('')
     try {
-      const res = await fetch('/api/admin/content/status', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ post_id: postId, status }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      setPosts(prev => prev.map(p => p.id === postId ? { ...p, status } : p))
+      if (item.type === 'topic') {
+        const res = await fetch(`/api/admin/content/topics/${item.id}`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status: 'rejected' }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+        setItems(prev => prev.filter(i => i.id !== item.id))
+      } else {
+        const res = await fetch('/api/admin/content/status', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ post_id: item.id, status: 'rejected' }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+        setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'rejected' } : i))
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update status')
+      setError(err instanceof Error ? err.message : 'Failed')
     } finally {
       setLoading(null)
     }
   }
 
-  const editingPost = editingPostId ? posts.find(p => p.id === editingPostId) ?? null : null
-  const siteForPost = editingPost
-    ? sites.find(s => s.clientId === editingPost.clientId) ?? null
-    : null
+  async function forceGenerate(topicId: string) {
+    setLoading(topicId)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/content/generate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ topic_id: topicId }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to trigger generation')
+      setItems(prev => prev.map(i => i.id === topicId ? { ...i, status: 'generating' } : i))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to trigger generation')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const editingItem = editingPostId ? items.find(i => i.id === editingPostId) ?? null : null
+  const siteForPost = editingItem ? sites.find(s => s.clientId === editingItem.clientId) ?? null : null
+
+  const TAB_LABELS: Record<StatusFilter, string> = {
+    all:       'All',
+    scheduled: 'Scheduled',
+    pending:   'Pending',
+    approved:  'Approved',
+    published: 'Published',
+    rejected:  'Rejected',
+  }
 
   return (
     <>
-      {/* Status filter tabs */}
+      {/* Filter tabs */}
       <div className="flex gap-1 mb-4" style={{ flexWrap: 'wrap' }}>
         {STATUS_TABS.map(s => (
           <button
@@ -122,7 +389,7 @@ export default function ContentQueue({ posts: initialPosts, sites }: Props) {
               transition: 'background 0.15s, color 0.15s',
             }}
           >
-            {s === 'all' ? 'All' : STATUS_LABELS[s] ?? s} ({counts[s]})
+            {TAB_LABELS[s]} ({counts[s]})
           </button>
         ))}
       </div>
@@ -132,111 +399,39 @@ export default function ContentQueue({ posts: initialPosts, sites }: Props) {
       {filtered.length === 0 ? (
         <div className="card p-8 text-center">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            {statusFilter === 'pending' ? 'No posts pending review.' : `No ${statusFilter} posts.`}
+            {statusFilter === 'pending'   ? 'No posts pending review.'
+            : statusFilter === 'scheduled' ? 'No posts scheduled for generation.'
+            : `No ${statusFilter} posts.`}
           </p>
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Client</th>
-                <th>Keyword / Topic</th>
-                <th>Title</th>
-                <th style={{ textAlign: 'right' }}>Words</th>
-                <th style={{ textAlign: 'right' }}>H2s</th>
-                <th>Status</th>
-                <th>Generated</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(post => (
-                <tr key={post.id}>
-                  <td>
-                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {post.clientName}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                      {post.targetKeyword ?? '—'}
-                    </span>
-                  </td>
-                  <td style={{ maxWidth: 260 }}>
-                    <span className="text-sm" style={{ color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {post.title ?? <span style={{ color: 'var(--text-faint)' }}>Untitled</span>}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '0.875rem' }}>
-                    {post.wordCount?.toLocaleString() ?? '—'}
-                  </td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '0.875rem' }}>
-                    {post.headingCount ?? '—'}
-                  </td>
-                  <td>
-                    <span className={`badge ${STATUS_CLASSES[post.status] ?? 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
-                      {STATUS_LABELS[post.status] ?? post.status}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                      {timeSince(post.generatedAt)}
-                      {post.generatedBy === 'scheduled' && (
-                        <span style={{ marginLeft: 4, color: 'var(--text-faint)', opacity: 0.6 }}>auto</span>
-                      )}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setEditingPostId(post.id)}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
-                      >
-                        View / Edit
-                      </button>
-                      {post.status === 'pending' && (
-                        <button
-                          type="button"
-                          disabled={loading === post.id}
-                          onClick={() => updateStatus(post.id, 'rejected')}
-                          className="btn btn-secondary"
-                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', color: 'var(--red)' }}
-                        >
-                          Reject
-                        </button>
-                      )}
-                      {post.publishedUrl && (
-                        <a
-                          href={post.publishedUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
-                        >
-                          View ↗
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+          gap: '0.75rem',
+        }}>
+          {filtered.map(item => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              onOpenEditor={id => setEditingPostId(id)}
+              onReject={rejectItem}
+              onForceGenerate={forceGenerate}
+              loading={loading}
+            />
+          ))}
         </div>
       )}
 
       {/* Post editor drawer */}
-      {editingPostId && (
+      {editingPostId && editingItem?.type === 'post' && (
         <ContentPostEditor
           postId={editingPostId}
           defaultConnectionId={siteForPost?.connectionId ?? null}
           sites={sites}
           onClose={() => setEditingPostId(null)}
           onUpdate={updatedPost => {
-            setPosts(prev => prev.map(p => p.id === updatedPost.id ? { ...p, ...updatedPost } : p))
+            setItems(prev => prev.map(i => i.id === updatedPost.id ? { ...i, ...updatedPost } : i))
           }}
         />
       )}

@@ -47,6 +47,7 @@ interface Settings {
   notify_schedule_generated:      boolean
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
+  hidden_connector_types:         string[]
 }
 
 const DEFAULT: Settings = {
@@ -77,6 +78,7 @@ const DEFAULT: Settings = {
   notify_schedule_generated:      true,
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
+  hidden_connector_types:         [],
 }
 
 const TABS = [
@@ -86,8 +88,15 @@ const TABS = [
   { id: 'ai',            label: 'AI'           },
   { id: 'sync',          label: 'Sync'         },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'dashboard',     label: 'Dashboard'    },
   { id: 'overview',      label: 'Overview'     },
   { id: 'layouts',       label: 'Layouts'      },
+]
+
+const HIDEABLE_CONNECTORS = [
+  { type: 'google_analytics',      label: 'GA4 Analytics',        hint: 'Users, sessions, conversions — Google Analytics 4 tab' },
+  { type: 'google_search_console', label: 'Search Console (GSC)',  hint: 'Keyword positions, impressions, click-through rates'    },
+  { type: 'ahrefs',                label: 'Ahrefs Authority',      hint: 'Domain rating, backlinks, and keyword rankings'         },
 ]
 
 export default function AgencySettingsPage() {
@@ -502,6 +511,37 @@ export default function AgencySettingsPage() {
                 checked={form.notify_schedule_generated}
                 onChange={v => field('notify_schedule_generated', v)}
               />
+            </div>
+          </div>
+        )}
+
+        {/* ─── Dashboard ─────────────────────────────────────────── */}
+        {activeTab === 'dashboard' && (
+          <div className="card p-6 space-y-5">
+            <div>
+              <h2 className="section-title">Client Dashboard Visibility</h2>
+              <p className="section-desc">
+                Hide specific data tabs from all client dashboards globally. Connections remain active and data still syncs — tabs are just not shown to clients.
+              </p>
+            </div>
+            <div className="space-y-3">
+              {HIDEABLE_CONNECTORS.map(({ type, label, hint }) => (
+                <Toggle
+                  key={type}
+                  label={`Show ${label}`}
+                  hint={hint}
+                  checked={!form.hidden_connector_types.includes(type)}
+                  onChange={visible => {
+                    const current = form.hidden_connector_types
+                    field(
+                      'hidden_connector_types',
+                      visible
+                        ? current.filter(t => t !== type)
+                        : [...current.filter(t => t !== type), type]
+                    )
+                  }}
+                />
+              ))}
             </div>
           </div>
         )}

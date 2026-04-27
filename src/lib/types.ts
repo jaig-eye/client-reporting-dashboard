@@ -219,6 +219,8 @@ export interface AgencySettings {
    * Shape: { lead_gen: MetricLayout, ecom: MetricLayout }
    */
   metric_layouts?: Record<string, unknown> | null
+  /** Connector types globally hidden from all client dashboards (e.g. 'google_analytics', 'google_search_console', 'ahrefs'). */
+  hidden_connector_types?: string[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

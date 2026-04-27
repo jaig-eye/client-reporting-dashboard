@@ -39,13 +39,43 @@ export async function PATCH(
     .from('content_topics')
     .update(patch)
     .eq('id', id)
-    .select('id, status, generate_by_date, client_id')
+    .select('id, status, generate_by_date, client_id, target_publish_date')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // Auto-reject remaining pending topics once the required approval count is reached
+  const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
+  if (patch.status === 'approved' && topic.target_publish_date) {
+    // Resolve posts_per_run: client-specific setting falls back to global
+    const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
+      db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),
+      db.from('content_settings').select('posts_per_run').is('client_id', null).maybeSingle(),
+    ])
+    const postsNeeded = (clientCfg as { posts_per_run: number } | null)?.posts_per_run
+      ?? (globalCfg as { posts_per_run: number } | null)?.posts_per_run
+      ?? 1
+
+    // Count how many topics are now approved (including the one just approved)
+    const { count: approvedCount } = await db
+      .from('content_topics')
+      .select('id', { count: 'exact', head: true })
+      .eq('client_id', topic.client_id)
+      .eq('target_publish_date', topic.target_publish_date)
+      .in('status', ['approved', 'generating', 'generated', 'scheduled'])
+
+    if ((approvedCount ?? 0) >= postsNeeded) {
+      await db
+        .from('content_topics')
+        .update({ status: 'rejected' })
+        .eq('client_id', topic.client_id)
+        .eq('target_publish_date', topic.target_publish_date)
+        .eq('status', 'pending')
+        .neq('id', id)
+    }
+  }
+
   // Late-approval: if topic just approved and past generate_by_date, trigger post gen immediately
-  const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string }
   if (
     patch.status === 'approved' &&
     topic.generate_by_date &&
