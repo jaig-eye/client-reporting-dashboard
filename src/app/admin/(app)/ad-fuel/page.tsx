@@ -255,7 +255,7 @@ export default function AdFuelPage() {
 
   // Populate settings form when a client is selected in settings tab
   useEffect(() => {
-    if (!settingsClientId) { setSettingsForm({ billDay: '', monthlyBudget: '', adFuelCut: '' }); return }
+    if (!settingsClientId) { setSettingsForm({ billDay: '', monthlyBudget: '' }); return }
     const row = rows.find(r => r.clientId === settingsClientId)
     if (row) setSettingsForm({
       billDay:       String(row.billDay ?? ''),
