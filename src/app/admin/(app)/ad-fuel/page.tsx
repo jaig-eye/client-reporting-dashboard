@@ -17,6 +17,7 @@ interface DashRow {
   adFuelCut:           number
   afBalance:           number
   rawBalance:          number
+  lifetimeRawBalance:  number
   afPurchased:         number
   afSpend:             number
   rawPurchased:        number
@@ -54,9 +55,10 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'googleAcct',   label: 'G Acct',              visible: false },
   { key: 'fbAcct',       label: 'FB Acct',             visible: false },
   { key: 'crmId',        label: 'CRM ID',              visible: false },
-  { key: 'afBalance',    label: 'Ad Fuel Balance',     visible: true  },
-  { key: 'rawBalance',   label: 'Raw Balance',          visible: true  },
-  { key: 'afPurchased',  label: 'Ad Fuel Purchased',   visible: true  },
+  { key: 'afBalance',         label: 'Ad Fuel Balance',     visible: true  },
+  { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
+  { key: 'lifetimeRawBalance', label: 'Lifetime Raw Bal',   visible: false },
+  { key: 'afPurchased',       label: 'Ad Fuel Purchased',   visible: true  },
   { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
   { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
   { key: 'rawSpend',     label: 'Raw Spend',           visible: false },
@@ -115,9 +117,10 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'googleAcct':   return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
-    case 'afBalance':    return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
-    case 'rawBalance':   return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
-    case 'afPurchased':  return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
+    case 'afBalance':         return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
+    case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
+    case 'lifetimeRawBalance': return <td key={key} style={{ textAlign: 'right', color: row.lifetimeRawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.lifetimeRawBalance)}</td>
+    case 'afPurchased':       return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
     case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
     case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
     case 'rawSpend':     return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawSpend)}</td>
@@ -385,9 +388,10 @@ export default function AdFuelPage() {
           case 'googleAcct':   return row.googleAccountId ?? ''
           case 'fbAcct':       return row.facebookAccountId ?? ''
           case 'crmId':        return row.crmId ?? ''
-          case 'afBalance':    return row.afBalance.toFixed(2)
-          case 'rawBalance':   return row.rawBalance.toFixed(2)
-          case 'afPurchased':  return row.afPurchased.toFixed(2)
+          case 'afBalance':         return row.afBalance.toFixed(2)
+          case 'rawBalance':        return row.rawBalance.toFixed(2)
+          case 'lifetimeRawBalance': return row.lifetimeRawBalance.toFixed(2)
+          case 'afPurchased':       return row.afPurchased.toFixed(2)
           case 'afSpend':      return row.afSpend.toFixed(2)
           case 'rawPurchased': return row.rawPurchased.toFixed(2)
           case 'rawSpend':     return row.rawSpend.toFixed(2)
