@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,13 +77,21 @@ const ENTRY_TYPES = ['MRR', 'Catch Up', 'Other']
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function AdFuelPage() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()
+
   const [tab, setTab] = useState<'dashboard' | 'ledger'>('dashboard')
 
-  // Dashboard state
+  // Dashboard state — seed from URL params if present
   const [dateFrom, setDateFrom] = useState(() => {
+    const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_from') : null
+    if (p) return p
     const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10)
   })
-  const [dateTo,   setDateTo]   = useState(today)
+  const [dateTo, setDateTo] = useState(() => {
+    const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_to') : null
+    return p ?? today()
+  })
   const [rows,     setRows]     = useState<DashRow[]>([])
   const [loading,  setLoading]  = useState(false)
   const [editCell, setEditCell] = useState<{ clientId: string; field: 'billDay' | 'monthlyBudget'; value: string } | null>(null)
@@ -100,6 +109,14 @@ export default function AdFuelPage() {
   const emptyForm = { client_id: '', date_of_payment: today(), amount_af: '', split_override: '', invoice_id: '', type: 'MRR', note: '', created_by: '' }
   const [addForm, setAddForm] = useState(emptyForm)
   const [addError, setAddError] = useState('')
+
+  // Keep URL in sync with current date range
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('date_from', dateFrom)
+    params.set('date_to', dateTo)
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }, [dateFrom, dateTo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true)
