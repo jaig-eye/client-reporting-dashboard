@@ -10,17 +10,17 @@ RETURNS TABLE(
   days_with_data BIGINT
 ) LANGUAGE SQL STABLE AS $$
   SELECT 'google_ads'::TEXT, MIN(date), MAX(date), COUNT(DISTINCT date)
-    FROM google_ads_metrics WHERE client_id = p_client_id
+    FROM google_ads_metrics WHERE client_id = $1
   UNION ALL
   SELECT 'meta_ads', MIN(date), MAX(date), COUNT(DISTINCT date)
-    FROM meta_ads_metrics WHERE client_id = p_client_id
+    FROM meta_ads_metrics WHERE client_id = $1
   UNION ALL
   SELECT 'ga4', MIN(date), MAX(date), COUNT(DISTINCT date)
-    FROM ga4_metrics WHERE client_id = p_client_id
+    FROM ga4_metrics WHERE client_id = $1
   UNION ALL
   SELECT 'gsc', MIN(date), MAX(date), COUNT(DISTINCT date)
-    FROM gsc_metrics WHERE client_id = p_client_id
+    FROM gsc_metrics WHERE client_id = $1
   UNION ALL
   SELECT 'ahrefs', MIN(date), MAX(date), COUNT(DISTINCT date)
-    FROM ahrefs_metrics WHERE client_id = p_client_id
+    FROM ahrefs_metrics WHERE client_id = $1
 $$;
