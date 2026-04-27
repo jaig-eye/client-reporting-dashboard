@@ -1,6 +1,7 @@
 // GET    /api/admin/ad-fuel/ledger?client_id=...  — list entries
 // POST   /api/admin/ad-fuel/ledger                — add entry
-// DELETE handled by [id]/route.ts
+// DELETE /api/admin/ad-fuel/ledger  body: { ids: string[] } — bulk delete
+// Single-entry delete is handled by [id]/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -26,6 +27,23 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
+}
+
+export async function DELETE(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { ids } = await request.json() as { ids: string[] }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return NextResponse.json({ error: 'ids array is required' }, { status: 400 })
+  }
+
+  const db = createAdminClient()
+  const { error } = await db.from('ad_fuel_ledger').delete().in('id', ids)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ deleted: ids.length })
 }
 
 export async function POST(request: NextRequest) {

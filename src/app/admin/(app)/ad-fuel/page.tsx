@@ -6,26 +6,27 @@ import { useRouter, useSearchParams } from 'next/navigation'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface DashRow {
-  clientId:          string
-  clientName:        string
-  googleAccountId:   string | null
-  facebookAccountId: string | null
-  crmId:             string | null
-  discordChannelId:  string | null
-  billDay:           number | null
-  monthlyBudget:     number | null
-  adFuelCut:         number
-  afBalance:         number
-  rawBalance:        number
-  afPurchased:       number
-  afSpend:           number
-  rawPurchased:      number
-  rawSpend:          number
-  googleRaw:         number
-  facebookRaw:       number
-  afSinceBill:       number | null
-  avgDailyAf:        number | null
-  pace:              string
+  clientId:            string
+  clientName:          string
+  googleAccountId:     string | null
+  facebookAccountId:   string | null
+  crmId:               string | null
+  discordChannelId:    string | null
+  billDay:             number | null
+  monthlyBudget:       number | null
+  adFuelCut:           number
+  afBalance:           number
+  rawBalance:          number
+  lifetimeRawBalance:  number
+  afPurchased:         number
+  afSpend:             number
+  rawPurchased:        number
+  rawSpend:            number
+  googleRaw:           number
+  facebookRaw:         number
+  afSinceBill:         number | null
+  avgDailyAf:          number | null
+  pace:                string
 }
 
 interface LedgerEntry {
@@ -55,7 +56,8 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'fbAcct',       label: 'FB Acct',             visible: false },
   { key: 'crmId',        label: 'CRM ID',              visible: false },
   { key: 'afBalance',    label: 'Ad Fuel Balance',     visible: true  },
-  { key: 'rawBalance',   label: 'Raw Balance',         visible: true  },
+  { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
+  { key: 'lifetimeRawBalance', label: 'Lifetime Raw Bal',   visible: true  },
   { key: 'afPurchased',  label: 'Ad Fuel Purchased',   visible: true  },
   { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
   { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
@@ -116,7 +118,8 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
     case 'afBalance':    return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
-    case 'rawBalance':   return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
+    case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
+    case 'lifetimeRawBalance': return <td key={key} style={{ textAlign: 'right', color: row.lifetimeRawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.lifetimeRawBalance)}</td>
     case 'afPurchased':  return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
     case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
     case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
@@ -217,6 +220,9 @@ export default function AdFuelPage() {
   const [filterClient,  setFilterClient]  = useState('')
   const [showAddModal,  setShowAddModal]  = useState(false)
   const [importStatus,  setImportStatus]  = useState<{ inserted: number; skipped: number; errors: string[] } | null>(null)
+  const [importErrorsExpanded, setImportErrorsExpanded] = useState(false)
+  const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
+  const [bulkDeleting,  setBulkDeleting]  = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Add entry form
@@ -322,8 +328,41 @@ export default function AdFuelPage() {
   async function deleteEntry(id: string) {
     if (!confirm('Delete this ledger entry?')) return
     await fetch(`/api/admin/ad-fuel/ledger/${id}`, { method: 'DELETE' })
+    setSelectedIds(s => { const n = new Set(s); n.delete(id); return n })
     fetchLedger()
     fetchDashboard()
+  }
+
+  // ── Bulk delete ─────────────────────────────────────────────────────────────
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return
+    if (!confirm(`Delete ${selectedIds.size} selected entr${selectedIds.size === 1 ? 'y' : 'ies'}?`)) return
+    setBulkDeleting(true)
+    await fetch('/api/admin/ad-fuel/ledger', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selectedIds] }),
+    })
+    setSelectedIds(new Set())
+    setBulkDeleting(false)
+    fetchLedger()
+    fetchDashboard()
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === ledger.length && ledger.length > 0) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(ledger.map(e => e.id)))
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(s => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
   }
 
   // ── CSV import ──────────────────────────────────────────────────────────────
@@ -350,7 +389,8 @@ export default function AdFuelPage() {
           case 'fbAcct':       return row.facebookAccountId ?? ''
           case 'crmId':        return row.crmId ?? ''
           case 'afBalance':    return row.afBalance.toFixed(2)
-          case 'rawBalance':   return row.rawBalance.toFixed(2)
+          case 'rawBalance':        return row.rawBalance.toFixed(2)
+          case 'lifetimeRawBalance': return row.lifetimeRawBalance.toFixed(2)
           case 'afPurchased':  return row.afPurchased.toFixed(2)
           case 'afSpend':      return row.afSpend.toFixed(2)
           case 'rawPurchased': return row.rawPurchased.toFixed(2)
@@ -514,16 +554,54 @@ export default function AdFuelPage() {
 
             {importStatus && (
               <div style={{
-                padding: '0.4rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
+                padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
                 background: importStatus.errors.length ? '#fee2e2' : '#dcfce7',
                 color: importStatus.errors.length ? '#991b1b' : '#166534',
+                maxWidth: 600,
               }}>
-                Imported {importStatus.inserted} entries{importStatus.skipped > 0 ? `, skipped ${importStatus.skipped}` : ''}.
-                {importStatus.errors.length > 0 && ` ${importStatus.errors.length} error(s).`}
-                <button onClick={() => setImportStatus(null)} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>
+                    Imported {importStatus.inserted} entr{importStatus.inserted === 1 ? 'y' : 'ies'}
+                    {importStatus.skipped > 0 ? `, skipped ${importStatus.skipped}` : ''}
+                    {importStatus.errors.length > 0 && (
+                      <>
+                        {' — '}
+                        <button
+                          onClick={() => setImportErrorsExpanded(v => !v)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700, fontSize: '0.75rem', padding: 0, textDecoration: 'underline' }}
+                        >
+                          {importStatus.errors.length} error{importStatus.errors.length === 1 ? '' : 's'} {importErrorsExpanded ? '▲' : '▼'}
+                        </button>
+                      </>
+                    )}
+                  </span>
+                  <button onClick={() => { setImportStatus(null); setImportErrorsExpanded(false) }} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: 'inherit' }}>✕</button>
+                </div>
+                {importErrorsExpanded && importStatus.errors.length > 0 && (
+                  <ul style={{ margin: '0.5rem 0 0', padding: '0 0 0 1.25rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
+                    {importStatus.errors.map((e, i) => <li key={i} style={{ fontSize: '0.7rem' }}>{e}</li>)}
+                  </ul>
+                )}
               </div>
             )}
           </div>
+
+          {selectedIds.size > 0 && (
+            <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
+              <button
+                onClick={bulkDelete}
+                disabled={bulkDeleting}
+                className="btn btn-danger"
+                style={{ fontSize: '0.8125rem' }}
+              >
+                {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
+              </button>
+              <button onClick={() => setSelectedIds(new Set())} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                Clear selection
+              </button>
+            </div>
+          )}
 
           {ledgerLoading ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
@@ -532,6 +610,14 @@ export default function AdFuelPage() {
               <table className="data-table" style={{ minWidth: 900 }}>
                 <thead>
                   <tr>
+                    <th style={{ width: 32, textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={ledger.length > 0 && selectedIds.size === ledger.length}
+                        ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < ledger.length }}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
                     <th>Date</th>
                     <th style={{ textAlign: 'left' }}>Client</th>
                     <th>Amount (Ad Fuel)</th>
@@ -545,12 +631,16 @@ export default function AdFuelPage() {
                 </thead>
                 <tbody>
                   {ledger.length === 0 && (
-                    <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No ledger entries yet.</td></tr>
+                    <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No ledger entries yet.</td></tr>
                   )}
                   {ledger.map(e => {
-                    const client = rows.find(r => r.clientId === e.client_id)
+                    const client  = rows.find(r => r.clientId === e.client_id)
+                    const checked = selectedIds.has(e.id)
                     return (
-                      <tr key={e.id}>
+                      <tr key={e.id} style={{ background: checked ? 'var(--bg-subtle)' : undefined }}>
+                        <td style={{ textAlign: 'center' }}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
+                        </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{e.date_of_payment}</td>
                         <td style={{ fontWeight: 600 }}>{client?.clientName ?? e.client_id.slice(0, 8)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600, color: e.amount_af >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(e.amount_af)}</td>
