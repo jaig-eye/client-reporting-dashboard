@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     ledgerRes,
     connectionsRes,
   ] = await Promise.all([
-    db.from('clients').select('id, name, ad_fuel_cut, bill_day, monthly_budget, discord_channel_id').order('name'),
+    db.from('clients').select('*').order('name'),
     db.from('agency_settings').select('ad_fuel_cut').single(),
     dateFrom && dateTo
       ? db.from('google_ads_metrics').select('client_id, spend').gte('date', dateFrom).lte('date', dateTo)
@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     dateFrom && dateTo
       ? db.from('meta_ads_metrics').select('client_id, spend').gte('date', dateFrom).lte('date', dateTo)
       : Promise.resolve({ data: [] as { client_id: string; spend: number }[] }),
-    db.from('ad_fuel_ledger').select('client_id, amount_af, split_override'),
+    db.from('ad_fuel_ledger').select('client_id, amount_af, split_override').then(r => r.error ? { data: [] } : r),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),

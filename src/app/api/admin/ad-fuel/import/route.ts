@@ -11,14 +11,42 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 
+// RFC 4180-compliant CSV parser — handles quoted fields with embedded commas/newlines
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let i = 0
+  while (i <= line.length) {
+    if (i === line.length) { fields.push(''); break }
+    if (line[i] === '"') {
+      i++
+      let field = ''
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2 }
+        else if (line[i] === '"') { i++; break }
+        else field += line[i++]
+      }
+      fields.push(field)
+      if (line[i] === ',') i++
+    } else {
+      const end = line.indexOf(',', i)
+      if (end === -1) { fields.push(line.slice(i).trim()); break }
+      fields.push(line.slice(i, end).trim())
+      i = end + 1
+    }
+  }
+  return fields
+}
+
 function parseCSV(text: string): Record<string, string>[] {
-  const lines  = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
   if (lines.length < 2) return []
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''))
+  const headers = parseCsvLine(lines[0]).map(h =>
+    h.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+  )
   return lines.slice(1).map(line => {
-    const vals = line.split(',')
+    const vals = parseCsvLine(line)
     const row: Record<string, string> = {}
-    headers.forEach((h, i) => { row[h] = (vals[i] ?? '').trim().replace(/^"|"$/g, '') })
+    headers.forEach((h, i) => { row[h] = (vals[i] ?? '').trim() })
     return row
   })
 }
@@ -73,7 +101,7 @@ export async function POST(request: NextRequest) {
     if (!date) { errors.push(`Row ${rowNum}: invalid date_of_payment "${row.date_of_payment}"`); skipped++; continue }
 
     const amount = parseNum(row.amount_af ?? row.ad_fuel_amount ?? row.amount ?? '')
-    if (amount == null || amount <= 0) { errors.push(`Row ${rowNum}: invalid amount_af "${row.amount_af}"`); skipped++; continue }
+    if (amount == null) { errors.push(`Row ${rowNum}: invalid amount_af "${row.amount_af}"`); skipped++; continue }
 
     // Resolve client UUID
     let clientId: string | null = null
