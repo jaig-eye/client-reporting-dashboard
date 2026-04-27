@@ -476,86 +476,82 @@ export const metaAdsConnector: ConnectorAdapter = {
     const rows: MetaAdsRawRow[] = []
     const discoveredActions = new Set<string>()
 
-    // Paginate through all campaign-level daily rows
-    let nextUrl: string | null = (() => {
-      const base = new URL(`${BASE_URL}/${externalId}/insights`)
-      base.searchParams.set('access_token', accessToken)
-      base.searchParams.set('level', 'campaign')
-      // Request all fields needed to store source-faithful data.
-      // `actions` and `action_values` are always fetched regardless of campaign goal
-      // so admins can remap conversions without a re-sync.
-      base.searchParams.set(
-        'fields',
-        [
-          'campaign_id',
-          'campaign_name',
-          'objective',
-          'spend',
-          'impressions',
-          'clicks',
-          'reach',
-          'frequency',
-          'actions',
-          'action_values',
-        ].join(',')
-      )
-      base.searchParams.set(
-        'time_range',
-        JSON.stringify({ since: dateFrom, until: dateTo })
-      )
-      base.searchParams.set('time_increment', '1') // one row per day
-      base.searchParams.set('limit', '500')
-      return base.toString()
-    })()
+    // Split into 30-day chunks — same reason as ad-level: Meta rate-limits large
+    // paginated requests and silently drops remaining pages mid-pagination.
+    const campaignChunks = chunkDateRange(dateFrom, dateTo, 30)
 
-    while (nextUrl) {
-      const res = await fetch(nextUrl)
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`Meta API error ${res.status}: ${text}`)
-      }
+    for (const chunk of campaignChunks) {
+      let nextUrl: string | null = (() => {
+        const base = new URL(`${BASE_URL}/${externalId}/insights`)
+        base.searchParams.set('access_token', accessToken)
+        base.searchParams.set('level', 'campaign')
+        base.searchParams.set(
+          'fields',
+          [
+            'campaign_id',
+            'campaign_name',
+            'objective',
+            'spend',
+            'impressions',
+            'clicks',
+            'reach',
+            'frequency',
+            'actions',
+            'action_values',
+          ].join(',')
+        )
+        base.searchParams.set('time_range', JSON.stringify({ since: chunk.from, until: chunk.to }))
+        base.searchParams.set('time_increment', '1') // one row per day
+        base.searchParams.set('limit', '500')
+        return base.toString()
+      })()
 
-      const data = (await res.json()) as Record<string, unknown>
-      const dayRows = (data.data || []) as Record<string, unknown>[]
-
-      for (const day of dayRows) {
-        const rawActions      = (day.actions       || []) as Record<string, unknown>[]
-        const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
-
-        // Accumulate all action types encountered for this sync
-        for (const a of rawActions) {
-          const t = String(a.action_type || '')
-          if (t) discoveredActions.add(t)
+      while (nextUrl) {
+        const res = await fetch(nextUrl)
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(`Meta API error ${res.status}: ${text}`)
         }
 
-        // Store actions and action_values in source-faithful shape.
-        // Conversion remapping happens at query time — we don't pick a winner here.
-        const actions = rawActions.map(a => ({
-          action_type: String(a.action_type || ''),
-          value:       String(a.value       || '0'),
-        }))
-        const actionValues = rawActionValues.map(a => ({
-          action_type: String(a.action_type || ''),
-          value:       String(a.value       || '0'),
-        }))
+        const data = (await res.json()) as Record<string, unknown>
+        const dayRows = (data.data || []) as Record<string, unknown>[]
 
-        rows.push({
-          campaign_id:     String(day.campaign_id   || ''),
-          campaign_name:   String(day.campaign_name || ''),
-          objective:       String(day.objective     || ''),
-          date:            String(day.date_start      || ''),
-          spend:           parseFloat(String(day.spend       || '0')),
-          impressions:     parseInt(  String(day.impressions || '0'), 10),
-          clicks:          parseInt(  String(day.clicks      || '0'), 10),
-          reach:           parseInt(  String(day.reach       || '0'), 10),
-          frequency:       parseFloat(String(day.frequency   || '0')),
-          actions,
-          action_values: actionValues,
-        })
+        for (const day of dayRows) {
+          const rawActions      = (day.actions       || []) as Record<string, unknown>[]
+          const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
+
+          for (const a of rawActions) {
+            const t = String(a.action_type || '')
+            if (t) discoveredActions.add(t)
+          }
+
+          const actions = rawActions.map(a => ({
+            action_type: String(a.action_type || ''),
+            value:       String(a.value       || '0'),
+          }))
+          const actionValues = rawActionValues.map(a => ({
+            action_type: String(a.action_type || ''),
+            value:       String(a.value       || '0'),
+          }))
+
+          rows.push({
+            campaign_id:   String(day.campaign_id   || ''),
+            campaign_name: String(day.campaign_name || ''),
+            objective:     String(day.objective     || ''),
+            date:          String(day.date_start    || ''),
+            spend:         parseFloat(String(day.spend       || '0')),
+            impressions:   parseInt(  String(day.impressions || '0'), 10),
+            clicks:        parseInt(  String(day.clicks      || '0'), 10),
+            reach:         parseInt(  String(day.reach       || '0'), 10),
+            frequency:     parseFloat(String(day.frequency   || '0')),
+            actions,
+            action_values: actionValues,
+          })
+        }
+
+        const paging = data.paging as Record<string, unknown> | undefined
+        nextUrl = (paging?.next as string) || null
       }
-
-      const paging = data.paging as Record<string, unknown> | undefined
-      nextUrl = (paging?.next as string) || null
     }
 
     // Fetch campaign daily budgets and effective_status from the Campaigns API
