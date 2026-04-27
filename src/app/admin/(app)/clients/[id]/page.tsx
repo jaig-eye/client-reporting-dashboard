@@ -57,7 +57,7 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes] = await Promise.all([
+  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes, coverageRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('client_connections')
       .select('*, connector:connectors(*)')
@@ -68,21 +68,33 @@ export default async function ClientDetailPage({
       .select('*')
       .eq('client_id', id)
       .order('started_at', { ascending: false })
-      .limit(10),
+      .limit(20),
     db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts').single(),
     db.from('meta_ads_metrics')
       .select('discovered_actions')
       .eq('client_id', id)
       .not('discovered_actions', 'is', null)
       .limit(200),
+    db.rpc('get_client_data_coverage', { p_client_id: id }).then(r => r.error ? { data: [] } : r),
   ])
 
   const client = clientRes.data as Client | null
   if (!client) notFound()
 
+  type CoverageRow = { source: string; min_date: string | null; max_date: string | null; days_with_data: number }
+  const SOURCE_LABELS: Record<string, string> = {
+    // Coverage RPC source names (match metric table names in the RPC)
+    google_ads: 'Google Ads', meta_ads: 'Meta Ads', ga4: 'GA4', gsc: 'Search Console', ahrefs: 'Ahrefs',
+    // Connector type names (used in Recent Syncs lookup)
+    google_analytics: 'GA4', google_search_console: 'Search Console',
+    google_business_profile: 'Google Business', ghl: 'GoHighLevel', wordpress: 'WordPress',
+  }
+
   const connections  = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
   const connectors   = (connectorsRes.data  ?? []) as Connector[]
   const recentJobs   = (recentJobsRes.data  ?? []) as SyncJob[]
+  const coverageRows = ((coverageRes as { data: CoverageRow[] }).data ?? []).filter(r => r.min_date !== null)
+  const connTypeByConnectionId = new Map(connections.map(c => [c.id, c.connector.type]))
   const agencySettings = settingsRes.data as {
     ad_fuel_cut?: number
     default_lead_action?: string
@@ -478,20 +490,89 @@ export default async function ClientDetailPage({
       {/* ── ADVANCED ─────────────────────────────────────────────── */}
       {activeTab === 'advanced' && (
         <div className="space-y-6 max-w-3xl">
+          {/* Data Coverage */}
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Data Coverage</h2>
+            <p className="section-desc mb-4">Earliest and latest synced dates per source. Gap days = expected calendar days minus days with data.</p>
+            {coverageRows.length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No synced data yet.</p>
+            ) : (
+              <table className="data-table w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="text-left">Source</th>
+                    <th className="text-left">Earliest</th>
+                    <th className="text-left">Latest</th>
+                    <th className="text-right">Days w/ Data</th>
+                    <th className="text-right">Gap Days</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverageRows.map(row => {
+                    const fmtDate = (d: string | null) => d
+                      ? new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      : '—'
+                    const expectedDays = row.min_date && row.max_date
+                      ? Math.round((new Date(row.max_date + 'T00:00:00Z').getTime() - new Date(row.min_date + 'T00:00:00Z').getTime()) / 86_400_000) + 1
+                      : null
+                    const gapDays = expectedDays !== null ? expectedDays - row.days_with_data : null
+                    return (
+                      <tr key={row.source}>
+                        <td style={{ fontWeight: 500 }}>{SOURCE_LABELS[row.source] ?? row.source}</td>
+                        <td>{fmtDate(row.min_date)}</td>
+                        <td>{fmtDate(row.max_date)}</td>
+                        <td className="text-right">{row.days_with_data.toLocaleString()}</td>
+                        <td className="text-right">
+                          {gapDays !== null ? (
+                            <span className={`badge ${gapDays === 0 ? 'badge-green' : 'badge-amber'}`}>{gapDays}</span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Recent Syncs */}
           {recentJobs.length > 0 && (
             <div className="card p-5">
               <h2 className="section-title mb-3">Recent Syncs</h2>
-              <div className="space-y-2">
-                {recentJobs.slice(0, 10).map(job => (
-                  <div key={job.id} className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {new Date(job.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    </span>
-                    <span className={`badge ${job.status === 'success' ? 'badge-green' : job.status === 'error' ? 'badge-red' : 'badge-amber'}`}>
-                      {job.status}
-                    </span>
-                  </div>
-                ))}
+              <div className="space-y-3">
+                {recentJobs.map(job => {
+                  const connType = connTypeByConnectionId.get(job.connection_id)
+                  const sourceLabel = connType ? (SOURCE_LABELS[connType] ?? connType.replace(/_/g, ' ')) : null
+                  const dateRange = job.date_from && job.date_to
+                    ? `${new Date(job.date_from + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(job.date_to + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                    : null
+                  return (
+                    <div key={job.id}>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-xs" style={{ color: 'var(--text-muted)', minWidth: 120 }}>
+                          {new Date(job.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                        {sourceLabel && (
+                          <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{sourceLabel}</span>
+                        )}
+                        {dateRange && (
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{dateRange}</span>
+                        )}
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {job.records_synced.toLocaleString()} records
+                        </span>
+                        <span className={`badge ${job.status === 'success' ? 'badge-green' : job.status === 'error' ? 'badge-red' : 'badge-amber'}`}>
+                          {job.status}
+                        </span>
+                      </div>
+                      {job.status === 'error' && job.error_message && (
+                        <p className="text-xs mt-1 pl-1" style={{ color: 'var(--red, #dc2626)' }}>
+                          ↳ {job.error_message.slice(0, 120)}{job.error_message.length > 120 ? '…' : ''}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
