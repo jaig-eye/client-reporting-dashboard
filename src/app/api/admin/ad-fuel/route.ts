@@ -1,25 +1,21 @@
 // GET /api/admin/ad-fuel?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
 //
-// All values are scoped to the current billing cycle (bill_day → yesterday)
-// unless an explicit date range is provided.
+// All financial columns are LIFETIME values from the agency cutoff date
+// (configurable in agency_settings.ad_fuel_cutoff_date, default 2025-01-01).
+// The optional date filter overrides the window for those columns when active.
 //
-// AF Purchased (E)  = ledger entries whose date_of_payment is in the cycle
-// Raw Purchased (G) = cycle ledger × split
-// AF Spend (F)      = cycle raw spend / split
-// Raw Spend (H)     = cycle google + meta raw
-// G Raw (I)         = cycle google raw
-// FB Raw (J)        = cycle meta raw
-// AF Balance (C)    = AF Purchased − AF Spend  (both cycle-scoped)
-// Raw Balance (D)   = Raw Purchased − Raw Spend  (both cycle-scoped)
-// Lifetime Raw Bal  = all-time raw purchased (2025-01-01+) − all-time raw spend
-// AF Since Bill (M) = current billing-cycle raw / split
-// Avg Daily (N)     = Since Bill / days elapsed in cycle
-// Pace (O)          = Since Bill vs expected budget pace
+// G Raw / FB Raw / Raw Spend / AF Spend   = total spend from cutoff (or filter range)
+// AF Purchased / Raw Purchased            = total ledger entries from cutoff (or filter range)
+// AF Balance                              = AF Purchased − AF Spend
+// Raw Balance                             = Raw Purchased − Raw Spend
+// Lifetime Raw Bal                        = always from cutoff, never date-filtered
+// AF Since Bill (M)                       = current billing-cycle raw / split (always)
+// Avg Daily (N)                           = Since Bill / days elapsed in cycle
+// Pace (O)                                = Since Bill vs expected budget pace
 //
-// Spend data comes via RPC functions that GROUP BY client_id+date before
-// returning results, collapsing campaign-level rows into per-client daily totals.
-// This means the result set is at most n_clients × n_days regardless of how
-// many campaigns each client runs, sidestepping any row-cap issues entirely.
+// Spend data uses RPC functions that GROUP BY client_id+date, collapsing campaign
+// rows into per-client daily totals — result size = n_clients × n_days, zero risk
+// of hitting any row cap regardless of campaign count.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -59,53 +55,43 @@ export async function GET(request: NextRequest) {
   const filterStartY = usingGlobalFilter ? parseInt(dateFrom!.slice(0, 4), 10)          : -1
   const filterStartM = usingGlobalFilter ? parseInt(dateFrom!.slice(5, 7), 10) - 1      : -1
 
-  // Billing cycles are at most ~31 days old. 65-day floor covers every bill_day.
-  const spendFloor = usingGlobalFilter
-    ? dateFrom!
-    : new Date(today.getTime() - 65 * 86_400_000).toISOString().slice(0, 10)
+  // Round 1: fetch agency settings to get the cutoff date before we can build the RPC floor.
+  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single()
+  type AgencyRow  = { ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null }
+  const agencyData  = agencyRes.data as AgencyRow | null
+  const agencyCut   = agencyData?.ad_fuel_cut   ?? 0.20
+  const cutoffDate  = agencyData?.ad_fuel_cutoff_date ?? '2025-01-01'
+  const CUTOFF_MS   = new Date(cutoffDate + 'T00:00:00Z').getTime()
 
-  // Lifetime cutoff — data before this date is excluded to avoid skewed history.
-  const LIFETIME_CUTOFF     = '2025-01-01'
-  const LIFETIME_CUTOFF_MS  = new Date(LIFETIME_CUTOFF + 'T00:00:00Z').getTime()
-
+  // Round 2: fire everything else in parallel, now that we know the cutoff date.
   const [
     clientsRes,
-    agencyRes,
     ledgerRes,
     connectionsRes,
-    gCycleRes,
-    mCycleRes,
-    gLifeRes,
-    mLifeRes,
+    gSpend,
+    mSpend,
   ] = await Promise.all([
     db.from('clients').select('*').order('name'),
-    db.from('agency_settings').select('ad_fuel_cut').single(),
     db.from('ad_fuel_ledger')
       .select('client_id, date_of_payment, amount_af, split_override')
       .then(r => r.error ? { data: [] } : r),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
-    // RPCs aggregate campaign-level rows to per-client-day totals at the DB layer,
-    // so result size = n_clients × n_days regardless of campaign count.
-    db.rpc('daily_google_spend_by_client', { floor_date: spendFloor }),
-    db.rpc('daily_meta_spend_by_client',   { floor_date: spendFloor }),
-    // Lifetime totals (2025-01-01+) for the Lifetime Raw Balance column only.
-    db.rpc('lifetime_google_spend_by_client', { cutoff_date: LIFETIME_CUTOFF }),
-    db.rpc('lifetime_meta_spend_by_client',   { cutoff_date: LIFETIME_CUTOFF }),
+    // RPCs aggregate campaign rows → per-client-day totals.
+    // Always fetch from cutoff so we have lifetime data; date-filter slicing is in JS.
+    db.rpc('daily_google_spend_by_client', { floor_date: cutoffDate }),
+    db.rpc('daily_meta_spend_by_client',   { floor_date: cutoffDate }),
   ])
-
-  const agencyCut = (agencyRes.data as { ad_fuel_cut: number } | null)?.ad_fuel_cut ?? 0.20
 
   type ConnRow   = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
   type SpendRow  = { client_id: string; date: string; spend: number }
-  type LifeRow   = { client_id: string; spend: number }
   type LedgerRow = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
 
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
-  const allGRows    = (gCycleRes.data  ?? []) as SpendRow[]
-  const allMRows    = (mCycleRes.data  ?? []) as SpendRow[]
+  const allGRows    = (gSpend.data   ?? []) as SpendRow[]
+  const allMRows    = (mSpend.data   ?? []) as SpendRow[]
   const clients     = (clientsRes.data ?? []) as ClientRow[]
 
   const googleAcctByClient: Record<string, string> = {}
@@ -118,17 +104,6 @@ export async function GET(request: NextRequest) {
     if (c.connector.type === 'ghl')        crmIdByClient[c.client_id]      = (c.config?.location_id as string) ?? ''
   }
 
-  // All-time spend per client from the lifetime RPCs (2025-01-01+)
-  const gAllTime: Record<string, number> = {}
-  const mAllTime: Record<string, number> = {}
-  for (const r of (gLifeRes.data ?? []) as LifeRow[]) {
-    gAllTime[r.client_id] = (gAllTime[r.client_id] ?? 0) + Number(r.spend ?? 0)
-  }
-  for (const r of (mLifeRes.data ?? []) as LifeRow[]) {
-    mAllTime[r.client_id] = (mAllTime[r.client_id] ?? 0) + Number(r.spend ?? 0)
-  }
-
-  // Aggregate ledger by client
   const ledgerByClient: Record<string, LedgerRow[]> = {}
   for (const r of (ledgerRes.data ?? []) as LedgerRow[]) {
     if (!ledgerByClient[r.client_id]) ledgerByClient[r.client_id] = []
@@ -141,60 +116,50 @@ export async function GET(request: NextRequest) {
     const cut   = client.ad_fuel_cut ?? agencyCut
     const split = 1 - cut
 
-    // ── Billing cycle window ──────────────────────────────────────────────────
-    const effectiveBillDay = client.bill_day ?? 1
-    const cycleStart = getCycleStart(today, effectiveBillDay)
+    // ── Spend ─────────────────────────────────────────────────────────────────
+    // allGRows / allMRows are pre-aggregated per-client-per-day since cutoffDate.
+    // Main columns: apply date filter in JS if active, else sum everything (= lifetime).
+    // Lifetime totals: always the full sum — never filtered.
+    let googleRaw          = 0
+    let facebookRaw        = 0
+    let lifetimeGoogleRaw  = 0
+    let lifetimeMetaRaw    = 0
 
-    let balStartMs: number | null
-    let balEndMs:   number | null
-    let hasWindow:  boolean
-
-    if (usingGlobalFilter) {
-      balStartMs = filterMs0
-      balEndMs   = filterMs1
-      hasWindow  = true
-    } else {
-      balStartMs = cycleStart.getTime()
-      balEndMs   = yesterday.getTime()
-      hasWindow  = balEndMs >= balStartMs
-    }
-
-    // ── Spend aggregation (billing cycle window) ──────────────────────────────
-    let googleRaw   = 0
-    let facebookRaw = 0
-
-    if (hasWindow) {
-      for (const r of allGRows) {
-        if (r.client_id !== client.id) continue
-        const d = new Date(r.date + 'T00:00:00Z')
-        const t = d.getTime()
-        if (balStartMs !== null && t < balStartMs) continue
-        if (balEndMs   !== null && t > balEndMs)   continue
-        if (usingGlobalFilter && client.bill_day &&
+    for (const r of allGRows) {
+      if (r.client_id !== client.id) continue
+      const d = new Date(r.date + 'T00:00:00Z')
+      const t = d.getTime()
+      lifetimeGoogleRaw += Number(r.spend ?? 0)
+      if (usingGlobalFilter) {
+        if (filterMs0 !== null && t < filterMs0) continue
+        if (filterMs1 !== null && t > filterMs1) continue
+        if (client.bill_day &&
             d.getUTCFullYear() === filterStartY &&
             d.getUTCMonth()    === filterStartM &&
             d.getUTCDate()     <  client.bill_day) continue
-        googleRaw += Number(r.spend ?? 0)
       }
-      for (const r of allMRows) {
-        if (r.client_id !== client.id) continue
-        const d = new Date(r.date + 'T00:00:00Z')
-        const t = d.getTime()
-        if (balStartMs !== null && t < balStartMs) continue
-        if (balEndMs   !== null && t > balEndMs)   continue
-        if (usingGlobalFilter && client.bill_day &&
+      googleRaw += Number(r.spend ?? 0)
+    }
+
+    for (const r of allMRows) {
+      if (r.client_id !== client.id) continue
+      const d = new Date(r.date + 'T00:00:00Z')
+      const t = d.getTime()
+      lifetimeMetaRaw += Number(r.spend ?? 0)
+      if (usingGlobalFilter) {
+        if (filterMs0 !== null && t < filterMs0) continue
+        if (filterMs1 !== null && t > filterMs1) continue
+        if (client.bill_day &&
             d.getUTCFullYear() === filterStartY &&
             d.getUTCMonth()    === filterStartM &&
             d.getUTCDate()     <  client.bill_day) continue
-        facebookRaw += Number(r.spend ?? 0)
       }
+      facebookRaw += Number(r.spend ?? 0)
     }
 
-    const rawSpend = googleRaw + facebookRaw
-    const afSpend  = split > 0 ? rawSpend / split : 0
-
-    // Lifetime raw spend (for lifetime raw balance column only)
-    const lifetimeRawSpend = (gAllTime[client.id] ?? 0) + (mAllTime[client.id] ?? 0)
+    const rawSpend         = googleRaw + facebookRaw
+    const afSpend          = split > 0 ? rawSpend / split : 0
+    const lifetimeRawSpend = lifetimeGoogleRaw + lifetimeMetaRaw
 
     // ── Ledger ────────────────────────────────────────────────────────────────
     const ledgerEntries      = ledgerByClient[client.id] ?? []
@@ -203,21 +168,22 @@ export async function GET(request: NextRequest) {
     let rawPurchasedLifetime = 0
 
     for (const e of ledgerEntries) {
-      const s  = e.split_override != null ? Number(e.split_override) : split
-      const af = Number(e.amount_af)
+      const s   = e.split_override != null ? Number(e.split_override) : split
+      const af  = Number(e.amount_af)
       const eMs = new Date(e.date_of_payment + 'T00:00:00Z').getTime()
 
-      // Lifetime raw balance: all entries since the lifetime cutoff
-      if (eMs >= LIFETIME_CUTOFF_MS) {
+      // Lifetime: all entries at or after the cutoff (never filtered)
+      if (eMs >= CUTOFF_MS) {
         rawPurchasedLifetime += af * s
       }
 
-      // Billing cycle balance: entries within the current window only
-      if (hasWindow && balStartMs !== null && balEndMs !== null) {
-        if (eMs >= balStartMs && eMs <= balEndMs) {
-          afPurchased  += af
-          rawPurchased += af * s
-        }
+      // Main window: all since cutoff (default) or within filter range
+      const inWindow = usingGlobalFilter
+        ? (filterMs0 === null || eMs >= filterMs0) && (filterMs1 === null || eMs <= filterMs1)
+        : eMs >= CUTOFF_MS
+      if (inWindow) {
+        afPurchased  += af
+        rawPurchased += af * s
       }
     }
 
@@ -225,7 +191,9 @@ export async function GET(request: NextRequest) {
     const rawBalance         = rawPurchased - rawSpend
     const lifetimeRawBalance = rawPurchasedLifetime - lifetimeRawSpend
 
-    // ── Billing cycle pace columns (M, N, O) — always current cycle ───────────
+    // ── Billing cycle pace columns — always current cycle, never date-filtered ─
+    const effectiveBillDay = client.bill_day ?? 1
+    const cycleStart = getCycleStart(today, effectiveBillDay)
     let afSinceBill: number | null = null
     let avgDailyAf:  number | null = null
     let pace:        string        = ''
@@ -292,5 +260,5 @@ export async function GET(request: NextRequest) {
     }
   })
 
-  return NextResponse.json(rows)
+  return NextResponse.json({ rows, cutoffDate })
 }

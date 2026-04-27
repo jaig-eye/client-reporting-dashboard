@@ -171,8 +171,9 @@ export default function AdFuelPage() {
     const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_to') : null
     return p ?? today()
   })
-  const [rows,    setRows]    = useState<DashRow[]>([])
-  const [loading, setLoading] = useState(false)
+  const [rows,       setRows]       = useState<DashRow[]>([])
+  const [cutoffDate, setCutoffDate] = useState('2025-01-01')
+  const [loading,    setLoading]    = useState(false)
 
   // Column config (persisted to localStorage)
   const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
@@ -236,6 +237,11 @@ export default function AdFuelPage() {
   const [settingsSaving,     setSettingsSaving]     = useState(false)
   const [settingsSaveMsg,    setSettingsSaveMsg]    = useState('')
 
+  // Settings tab — Ad Fuel cutoff date (agency-level)
+  const [cutoffInput,   setCutoffInput]   = useState(cutoffDate)
+  const [cutoffSaving,  setCutoffSaving]  = useState(false)
+  const [cutoffMsg,     setCutoffMsg]     = useState('')
+
   // Sync URL with current date range (only when filter is enabled)
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString())
@@ -256,7 +262,11 @@ export default function AdFuelPage() {
         ? `/api/admin/ad-fuel?date_from=${dateFrom}&date_to=${dateTo}`
         : '/api/admin/ad-fuel'
       const res = await fetch(url)
-      if (res.ok) setRows(await res.json())
+      if (res.ok) {
+        const json = await res.json()
+        setRows(json.rows ?? [])
+        if (json.cutoffDate) { setCutoffDate(json.cutoffDate); setCutoffInput(json.cutoffDate) }
+      }
     } finally { setLoading(false) }
   }, [dateFrom, dateTo, dateFilterEnabled])
 
@@ -298,6 +308,21 @@ export default function AdFuelPage() {
     setSettingsSaveMsg('Saved!')
     fetchDashboard()
     setTimeout(() => setSettingsSaveMsg(''), 2000)
+  }
+
+  async function saveCutoffDate() {
+    setCutoffSaving(true)
+    setCutoffMsg('')
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ad_fuel_cutoff_date: cutoffInput }),
+    })
+    setCutoffSaving(false)
+    if (!res.ok) { setCutoffMsg('Save failed'); return }
+    setCutoffDate(cutoffInput)
+    setCutoffMsg('Saved!')
+    fetchDashboard()
+    setTimeout(() => setCutoffMsg(''), 2000)
   }
 
   // ── Add ledger entry ────────────────────────────────────────────────────────
@@ -422,7 +447,7 @@ export default function AdFuelPage() {
       <div className="page-header" style={{ marginBottom: '1.25rem' }}>
         <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>Ad Fuel</h1>
         <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-          Month-to-date tracking from each client&apos;s bill day. All values reflect the current billing cycle.
+          Lifetime totals from {cutoffDate}. Balance, purchased, and raw spend are all-time figures. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle.
         </p>
       </div>
 
@@ -485,7 +510,7 @@ export default function AdFuelPage() {
 
             {!dateFilterEnabled && (
               <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', paddingBottom: 4 }}>
-                Month-to-date from each client&apos;s bill day
+                All-time from {cutoffDate}
               </span>
             )}
 
@@ -525,7 +550,7 @@ export default function AdFuelPage() {
             </div>
           )}
           <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.5rem' }}>
-            Click any row to edit bill day and budget. All values are month-to-date from each client&apos;s bill day. Use the date filter to override the window.
+            Click any row to edit bill day and budget. Balance and spend are lifetime from {cutoffDate}. Since Bill / Avg Daily / Pace always reflect the current billing cycle.
           </p>
         </>
       )}
@@ -778,6 +803,44 @@ export default function AdFuelPage() {
                     )}
                   </div>
                 </>
+              )}
+            </div>
+          </div>
+
+          {/* Ad Fuel global settings */}
+          <div className="card" style={{ padding: '1.25rem', gridColumn: '1 / -1' }}>
+            <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9375rem', fontWeight: 700 }}>Ad Fuel Settings</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.875rem', marginTop: 0 }}>
+              Agency-wide settings for Ad Fuel calculations.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                  Data Cutoff Date
+                  <span style={{ fontWeight: 400, color: 'var(--text-faint)', marginLeft: 6 }}>
+                    Spend and purchased totals exclude data before this date
+                  </span>
+                </label>
+                <input
+                  type="date"
+                  value={cutoffInput}
+                  onChange={e => setCutoffInput(e.target.value)}
+                  className="input"
+                  style={{ fontSize: '0.875rem' }}
+                />
+              </div>
+              <button
+                onClick={saveCutoffDate}
+                disabled={cutoffSaving}
+                className="btn btn-primary"
+                style={{ fontSize: '0.8125rem' }}
+              >
+                {cutoffSaving ? 'Saving…' : 'Save'}
+              </button>
+              {cutoffMsg && (
+                <span style={{ fontSize: '0.8rem', color: cutoffMsg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
+                  {cutoffMsg}
+                </span>
               )}
             </div>
           </div>
