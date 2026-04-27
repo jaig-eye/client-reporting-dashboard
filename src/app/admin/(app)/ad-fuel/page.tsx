@@ -17,7 +17,6 @@ interface DashRow {
   adFuelCut:           number
   afBalance:           number
   rawBalance:          number
-  lifetimeRawBalance:  number
   afPurchased:         number
   afSpend:             number
   rawPurchased:        number
@@ -56,8 +55,7 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'fbAcct',       label: 'FB Acct',             visible: false },
   { key: 'crmId',        label: 'CRM ID',              visible: false },
   { key: 'afBalance',    label: 'Ad Fuel Balance',     visible: true  },
-  { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
-  { key: 'lifetimeRawBalance', label: 'Lifetime Raw Bal',   visible: true  },
+  { key: 'rawBalance',   label: 'Raw Balance',          visible: true  },
   { key: 'afPurchased',  label: 'Ad Fuel Purchased',   visible: true  },
   { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
   { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
@@ -118,8 +116,7 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
     case 'afBalance':    return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
-    case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
-    case 'lifetimeRawBalance': return <td key={key} style={{ textAlign: 'right', color: row.lifetimeRawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.lifetimeRawBalance)}</td>
+    case 'rawBalance':   return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
     case 'afPurchased':  return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
     case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
     case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
@@ -389,8 +386,7 @@ export default function AdFuelPage() {
           case 'fbAcct':       return row.facebookAccountId ?? ''
           case 'crmId':        return row.crmId ?? ''
           case 'afBalance':    return row.afBalance.toFixed(2)
-          case 'rawBalance':        return row.rawBalance.toFixed(2)
-          case 'lifetimeRawBalance': return row.lifetimeRawBalance.toFixed(2)
+          case 'rawBalance':   return row.rawBalance.toFixed(2)
           case 'afPurchased':  return row.afPurchased.toFixed(2)
           case 'afSpend':      return row.afSpend.toFixed(2)
           case 'rawPurchased': return row.rawPurchased.toFixed(2)
@@ -422,7 +418,7 @@ export default function AdFuelPage() {
       <div className="page-header" style={{ marginBottom: '1.25rem' }}>
         <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>Ad Fuel</h1>
         <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-          Track ad spend, purchased fuel, billing cycles, and pace for all clients.
+          Month-to-date tracking from each client&apos;s bill day. All values reflect the current billing cycle.
         </p>
       </div>
 
@@ -485,7 +481,7 @@ export default function AdFuelPage() {
 
             {!dateFilterEnabled && (
               <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', paddingBottom: 4 }}>
-                Showing all-time balance
+                Month-to-date from each client&apos;s bill day
               </span>
             )}
 
@@ -525,7 +521,7 @@ export default function AdFuelPage() {
             </div>
           )}
           <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.5rem' }}>
-            Click any row to edit bill day and budget. Balance = all-time purchased − spend (date filter optional). Since Bill uses current billing cycle only.
+            Click any row to edit bill day and budget. All values are month-to-date from each client&apos;s bill day. Use the date filter to override the window.
           </p>
         </>
       )}
