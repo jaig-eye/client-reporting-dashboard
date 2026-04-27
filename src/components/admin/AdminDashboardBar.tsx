@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ShareNetwork } from '@phosphor-icons/react'
+import { ShareNetwork, Receipt } from '@phosphor-icons/react'
 import { setRawMode } from '@/app/actions/rawMode'
 
 interface Client {
@@ -96,7 +96,7 @@ export default function AdminDashboardBar({
         color: '#fff', letterSpacing: '0.03em', textTransform: 'uppercase',
         whiteSpace: 'nowrap',
       }}>
-        {rawMode ? 'RAW COST MODE' : 'Admin View'}
+        {rawMode ? 'Raw Cost' : 'Admin View'}
       </span>
 
       {/* Client switcher */}
@@ -124,23 +124,24 @@ export default function AdminDashboardBar({
       {/* Spacer */}
       <div style={{ flex: 1 }} />
 
-      {/* Raw cost toggle */}
+      {/* Raw cost toggle — icon only, tooltip on hover */}
       <button
         onClick={handleToggleRaw}
         disabled={togglingRaw}
+        title={rawMode ? 'Raw cost ON — click to restore markup' : 'Toggle raw cost view'}
         style={{
           background: rawMode ? '#d97706' : 'rgba(255,255,255,0.15)',
           border: `1px solid ${rawMode ? '#f59e0b' : 'rgba(255,255,255,0.2)'}`,
           borderRadius: 6, color: '#fff',
-          fontSize: '0.75rem', fontWeight: rawMode ? 700 : 500,
-          padding: '0.25rem 0.65rem',
+          padding: '0.3rem',
           cursor: togglingRaw ? 'wait' : 'pointer',
-          whiteSpace: 'nowrap',
           opacity: togglingRaw ? 0.7 : 1,
           transition: 'background 0.15s, border-color 0.15s',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          lineHeight: 0,
         }}
       >
-        {rawMode ? '⚠ RAW COST ON' : 'RAW COST'}
+        <Receipt size={14} weight={rawMode ? 'fill' : 'regular'} />
       </button>
 
       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.875rem' }}>|</span>

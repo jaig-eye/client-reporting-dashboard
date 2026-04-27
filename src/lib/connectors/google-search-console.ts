@@ -66,8 +66,8 @@ export interface GSCRawRow {
 /**
  * Fetch Search Analytics data for a site over a date range.
  * GSC limits to 25,000 rows per request; paginates automatically.
- * Capped at MAX_ROWS per chunk — enough for any dashboard view; prevents
- * runaway pagination on very high-traffic sites during backfills.
+ * Pagination stops when GSC returns a partial page (<PAGE_SIZE rows).
+ * A 500K safety cap prevents runaway pagination on extremely high-traffic sites.
  */
 async function fetchSearchAnalytics(
   siteUrl: string,
@@ -78,12 +78,11 @@ async function fetchSearchAnalytics(
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
   const PAGE_SIZE   = 25000
-  const MAX_ROWS    = 50000   // 2 pages max per chunk — sufficient for dashboard use
   const rows: GSCRawRow[] = []
 
   let startRow = 0
 
-  while (rows.length < MAX_ROWS) {
+  while (true) {
     const body = {
       startDate:    dateFrom,
       endDate:      dateTo,
@@ -141,6 +140,11 @@ async function fetchSearchAnalytics(
 
     if (data.rows.length < PAGE_SIZE) break
     startRow += PAGE_SIZE
+
+    if (rows.length >= 500_000) {
+      console.warn(`[gsc] ${siteUrl}: reached 500K row safety cap for ${dateFrom}→${dateTo}, stopping pagination`)
+      break
+    }
   }
 
   return rows

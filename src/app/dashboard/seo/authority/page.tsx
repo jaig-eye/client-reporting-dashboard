@@ -13,14 +13,9 @@ import { LinkSimple }        from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
-export default async function AuthorityPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ from?: string; to?: string }>
-}) {
+export default async function AuthorityPage() {
   const cookieStore = await cookies()
   const db          = createAdminClient()
-  const params      = await searchParams
 
   const token = cookieStore.get('client_token')?.value
   if (!token) redirect('/access')
@@ -29,14 +24,11 @@ export default async function AuthorityPage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
-  const today    = new Date()
-  const toDate   = params.to   ? new Date(params.to)   : today
-  const fromDate = params.from ? new Date(params.from) : new Date(today.getFullYear(), today.getMonth(), 1)
-  const dateFrom = fromDate.toISOString().split('T')[0]
-  const dateTo   = toDate.toISOString().split('T')[0]
-
-  // Fetch connection status and metrics in parallel
-  const [{ data: connData }, { data: metricsRows }] = await Promise.all([
+  // Phase 1: fetch connections, metrics (no date filter — snapshots are weekly, not date-range),
+  // and the two most recent keyword snapshot dates (for correct date alignment).
+  // Keywords/pages are stored with date=resolvedTo (sync end date), which differs from the
+  // weekly snapshot dates in ahrefs_metrics, so we resolve the keyword date independently.
+  const [{ data: connData }, { data: metricsRows }, { data: kwDates }] = await Promise.all([
     db.from('client_connections')
       .select('id, connector:connectors(type)')
       .eq('client_id', client.id)
@@ -44,34 +36,41 @@ export default async function AuthorityPage({
     db.from('ahrefs_metrics')
       .select('date, domain_rating, ahrefs_rank, backlinks, referring_domains, organic_keywords, organic_traffic, traffic_value, paid_keywords, paid_traffic, new_backlinks, lost_backlinks, new_referring_domains, lost_referring_domains')
       .eq('client_id', client.id)
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
       .order('date', { ascending: false })
       .limit(10),
+    db.from('ahrefs_keywords')
+      .select('date')
+      .eq('client_id', client.id)
+      .order('date', { ascending: false })
+      .limit(2),
   ])
 
-  const latestDate = metricsRows?.[0]?.date ?? dateTo
-  const prevDate   = metricsRows?.[1]?.date ?? null
+  const latestKwDate = kwDates?.[0]?.date ?? null
+  const prevKwDate   = kwDates?.[1]?.date ?? null
 
-  // Fetch keyword rankings + top pages for latest snapshot, and previous snapshot keywords for comparison
+  // Phase 2: fetch keywords and pages using the actual keyword snapshot dates
   const [{ data: keywordRows }, { data: pageRows }, { data: prevKeywordRows }] = await Promise.all([
-    db.from('ahrefs_keywords')
-      .select('keyword, position, volume, traffic, difficulty')
-      .eq('client_id', client.id)
-      .eq('date', latestDate)
-      .order('traffic', { ascending: false })
-      .limit(25),
-    db.from('ahrefs_pages')
-      .select('url, organic_traffic, organic_keywords')
-      .eq('client_id', client.id)
-      .eq('date', latestDate)
-      .order('organic_traffic', { ascending: false })
-      .limit(15),
-    prevDate
+    latestKwDate
+      ? db.from('ahrefs_keywords')
+          .select('keyword, position, volume, traffic, difficulty')
+          .eq('client_id', client.id)
+          .eq('date', latestKwDate)
+          .order('traffic', { ascending: false })
+          .limit(25)
+      : Promise.resolve({ data: null as null }),
+    latestKwDate
+      ? db.from('ahrefs_pages')
+          .select('url, organic_traffic, organic_keywords')
+          .eq('client_id', client.id)
+          .eq('date', latestKwDate)
+          .order('organic_traffic', { ascending: false })
+          .limit(15)
+      : Promise.resolve({ data: null as null }),
+    prevKwDate
       ? db.from('ahrefs_keywords')
           .select('keyword, position')
           .eq('client_id', client.id)
-          .eq('date', prevDate)
+          .eq('date', prevKwDate)
       : Promise.resolve({ data: null as null }),
   ])
 
@@ -255,7 +254,7 @@ export default async function AuthorityPage({
                     Keyword Rankings
                   </h2>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Top keywords by estimated traffic · snapshot {latestDate}
+                    Top keywords by estimated traffic · snapshot {latestKwDate}
                   </p>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
@@ -322,9 +321,9 @@ export default async function AuthorityPage({
                     </tbody>
                   </table>
                 </div>
-                {prevDate && (
+                {prevKwDate && (
                   <p className="text-xs px-4 pb-3 pt-2" style={{ color: 'var(--text-faint)' }}>
-                    Change vs snapshot {prevDate}
+                    Change vs snapshot {prevKwDate}
                   </p>
                 )}
               </div>
@@ -338,7 +337,7 @@ export default async function AuthorityPage({
                     Top Organic Pages
                   </h2>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Top pages by organic traffic · snapshot {latestDate}
+                    Top pages by organic traffic · snapshot {latestKwDate}
                   </p>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
