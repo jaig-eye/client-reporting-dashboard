@@ -78,16 +78,20 @@ export async function GET(request: NextRequest) {
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
-    // RPCs aggregate campaign rows → per-client-day totals.
-    // Always fetch from cutoff so we have lifetime data; date-filter slicing is in JS.
-    db.rpc('daily_google_spend_by_client', { floor_date: cutoffDate }),
-    db.rpc('daily_meta_spend_by_client',   { floor_date: cutoffDate }),
+    // RPCs aggregate campaign rows → per-client-day totals (migration 071 required).
+    // .limit() overrides PostgREST's default 1 000-row cap; 50k covers any agency.
+    db.rpc('daily_google_spend_by_client', { floor_date: cutoffDate }).limit(50000),
+    db.rpc('daily_meta_spend_by_client',   { floor_date: cutoffDate }).limit(50000),
   ])
 
   type ConnRow   = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
   type SpendRow  = { client_id: string; date: string; spend: number }
   type LedgerRow = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
+
+  // Surface RPC errors so missing migrations are immediately visible in the response.
+  if (gSpend.error) console.error('[ad-fuel] daily_google_spend_by_client RPC error:', gSpend.error)
+  if (mSpend.error) console.error('[ad-fuel] daily_meta_spend_by_client RPC error:', mSpend.error)
 
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
   const allGRows    = (gSpend.data   ?? []) as SpendRow[]
@@ -260,5 +264,9 @@ export async function GET(request: NextRequest) {
     }
   })
 
-  return NextResponse.json({ rows, cutoffDate })
+  return NextResponse.json({
+    rows,
+    cutoffDate,
+    _debug: { gRows: allGRows.length, mRows: allMRows.length },
+  })
 }
