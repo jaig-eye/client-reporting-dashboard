@@ -67,8 +67,10 @@ export async function GET(request: NextRequest) {
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
-    db.from('google_ads_metrics').select('client_id, date, spend'),
-    db.from('meta_ads_metrics').select('client_id, date, spend'),
+    // Limit to lifetime cutoff date to avoid PostgREST's default 1000-row cap
+    // truncating recent data. All pre-2025 rows are excluded from calculations anyway.
+    db.from('google_ads_metrics').select('client_id, date, spend').gte('date', '2025-01-01'),
+    db.from('meta_ads_metrics').select('client_id, date, spend').gte('date', '2025-01-01'),
   ])
 
   const agencyCut = (agencyRes.data as { ad_fuel_cut: number } | null)?.ad_fuel_cut ?? 0.20
@@ -132,7 +134,11 @@ export async function GET(request: NextRequest) {
     // ── Determine balance spend window ────────────────────────────────────────
     // Default: per-client current billing cycle (cycleStart → yesterday)
     // With global filter: global date range (+ first-month billing cutoff below)
-    const cycleStart = client.bill_day ? getCycleStart(today, client.bill_day) : null
+    // Fall back to bill day = 1 (first of month) when not configured so the
+    // balance always reflects current-period spend rather than showing purchased
+    // with zero spend deducted (which looks like "lifetime" to the user).
+    const effectiveBillDay = client.bill_day ?? 1
+    const cycleStart = getCycleStart(today, effectiveBillDay)
 
     let balStartMs: number | null
     let balEndMs:   number | null
