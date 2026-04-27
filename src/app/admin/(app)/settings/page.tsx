@@ -48,6 +48,7 @@ interface Settings {
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
+  discord_bot_token:              string
 }
 
 const DEFAULT: Settings = {
@@ -79,6 +80,7 @@ const DEFAULT: Settings = {
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
+  discord_bot_token:              '',
 }
 
 const TABS = [
@@ -479,6 +481,7 @@ export default function AgencySettingsPage() {
 
         {/* ─── Notifications ─────────────────────────────────────── */}
         {activeTab === 'notifications' && (
+          <>
           <div className="card p-6 space-y-5">
             <div>
               <h2 className="section-title">Email Notifications</h2>
@@ -540,6 +543,23 @@ export default function AgencySettingsPage() {
               />
             </div>
           </div>
+
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Discord Notifications</h2>
+              <p className="section-desc">Bot token used to post Ad Fuel low-balance alerts to per-client Discord channels.</p>
+            </div>
+            <FormField label="Discord Bot Token" hint="shared bot for all client channels">
+              <input
+                className="input"
+                type="password"
+                value={form.discord_bot_token}
+                onChange={e => field('discord_bot_token', e.target.value)}
+                placeholder={form.discord_bot_token ? '••••••••••' : 'Bot token from Discord Developer Portal…'}
+              />
+            </FormField>
+          </div>
+          </>
         )}
 
         {/* ─── Overview ─────────────────────────────────────────── */}

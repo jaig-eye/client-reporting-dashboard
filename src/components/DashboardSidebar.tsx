@@ -10,6 +10,7 @@ import {
   CaretDown,
   Gauge,
   Circle,
+  UsersThree,
 } from '@phosphor-icons/react'
 import type { ConnectorType } from '@/lib/types'
 
@@ -68,6 +69,14 @@ const NAV: NavItem[] = [
       { key: 'ahrefs', label: 'Authority (Ahrefs)',      requiredConnector: 'ahrefs',                 href: '/dashboard/seo/authority'      },
     ],
   },
+  {
+    key: 'crm',
+    label: 'CRM',
+    icon: <UsersThree size={13} aria-hidden />,
+    children: [
+      { key: 'ghl', label: 'GoHighLevel', requiredConnector: 'ghl', href: '/dashboard/crm/ghl' },
+    ],
+  },
 ]
 
 export default function DashboardSidebar({
@@ -91,6 +100,7 @@ export default function DashboardSidebar({
     paid_ads:  true,
     analytics: true,
     seo:       true,
+    crm:       true,
   })
 
   function toggle(key: string) {

@@ -179,7 +179,7 @@ export default async function ClientDetailPage({
           <div className="space-y-4">
             <div className="card p-5">
               <h2 className="section-title mb-3">Client Info</h2>
-              <EditClientInfo clientId={id} name={client.name} slug={client.slug ?? ''} />
+              <EditClientInfo clientId={id} name={client.name} slug={client.slug ?? ''} discordChannelId={client.discord_channel_id} />
             </div>
 
             <div className="card p-5">

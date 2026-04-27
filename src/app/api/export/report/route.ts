@@ -472,17 +472,28 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
             </table>
           </td>`).join('')
 
-  // Secondary metrics row
-  const secondary: string[] = []
-  if (!hidden.has('conv_rate')) secondary.push(`Conv. Rate: <strong>${fmtPct(d.convRate)}</strong>`)
-  if (!hidden.has('cpm'))       secondary.push(`CPM: <strong>${fmtCurrency(d.current.cpm)}</strong>`)
-  if (!hidden.has('impressions')) secondary.push(`Impressions: <strong>${fmtNum(d.current.impressions)}</strong>`)
-  if (!hidden.has('cpc') && d.current.cpc > 0) secondary.push(`Avg. CPC: <strong>${fmtCurrency(d.current.cpc)}</strong>`)
+  // Secondary metrics as mini-cards (same style as primary KPIs)
+  const secondaryKpis: { label: string; value: string; color: string }[] = []
+  if (!hidden.has('conv_rate')) secondaryKpis.push({ label: 'Conv. Rate',  value: fmtPct(d.convRate),                                          color: '#06b6d4' })
+  if (!hidden.has('cpm'))       secondaryKpis.push({ label: 'CPM',         value: fmtCurrency(d.current.cpm),                                  color: '#f59e0b' })
+  if (!hidden.has('impressions')) secondaryKpis.push({ label: 'Impressions', value: fmtNum(d.current.impressions),                             color: '#6366f1' })
+  if (!hidden.has('cpc') && d.current.cpc > 0) secondaryKpis.push({ label: 'Avg. CPC', value: fmtCurrency(d.current.cpc),                    color: '#f97316' })
 
-  const secondaryHtml = secondary.length > 0 ? `
-      <tr><td style="padding:0 0 24px 0;">
-        <p style="font-family:Arial,sans-serif;font-size:12px;color:${MUTED};margin:0;line-height:2;">${secondary.join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</p>
-      </td></tr>` : ''
+  const secCellWidth = secondaryKpis.length > 0 ? Math.floor(560 / Math.min(secondaryKpis.length, 4)) : 140
+  const secondaryHtml = secondaryKpis.length > 0 ? `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            ${secondaryKpis.slice(0, 4).map(k => `
+            <td width="${secCellWidth}" valign="top" style="padding:0 6px 0 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
+                  <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
+                  <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                </td></tr>
+              </table>
+            </td>`).join('')}
+          </tr>
+        </table>` : ''
 
   // Campaign rows (top 20)
   const campRows = d.campaigns.slice(0, 20).map((c, i) => {
@@ -536,7 +547,7 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
               <tr>
                 <td valign="middle">
                   ${d.agencyLogoUrl
-                    ? `<img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="28" style="display:block;max-height:28px;max-width:140px;object-fit:contain;" />`
+                    ? `<div style="display:inline-block;background:#fff;border-radius:6px;padding:4px 8px;"><img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="24" style="display:block;max-height:24px;max-width:120px;object-fit:contain;" /></div>`
                     : `<span style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:#fff;">${escHtml(d.agencyName)}</span>`}
                 </td>
                 <td valign="middle" align="right">
@@ -571,7 +582,7 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
         </tr>
 
         <!-- ── Secondary metrics ──────────────────────── -->
-        ${secondaryHtml ? `<tr><td style="background-color:${WHITE};padding:4px 28px 0;">${secondaryHtml.trim()}</td></tr>` : ''}
+        ${secondaryHtml ? `<tr><td style="background-color:${WHITE};padding:4px 28px 16px;">${secondaryHtml.trim()}</td></tr>` : ''}
 
         <!-- ── Divider ────────────────────────────────── -->
         <tr>

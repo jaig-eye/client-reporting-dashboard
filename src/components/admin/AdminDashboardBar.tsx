@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { ShareNetwork, Receipt } from '@phosphor-icons/react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ShareNetwork, Receipt, Printer } from '@phosphor-icons/react'
 import { setRawMode } from '@/app/actions/rawMode'
 
 interface Client {
@@ -28,10 +28,23 @@ export default function AdminDashboardBar({
   appUrl,
   rawMode,
 }: Props) {
-  const router = useRouter()
+  const router       = useRouter()
+  const searchParams = useSearchParams()
   const [switching,   setSwitching]   = useState(false)
   const [copied,      setCopied]      = useState(false)
   const [togglingRaw, setTogglingRaw] = useState(false)
+
+  function openReport() {
+    const from    = searchParams.get('from')
+    const to      = searchParams.get('to')
+    const compare = searchParams.get('compare')
+    const qs = [
+      from    ? `from=${from}`       : '',
+      to      ? `to=${to}`           : '',
+      compare && compare !== 'none' ? `compare=${compare}` : '',
+    ].filter(Boolean).join('&')
+    window.open(`/api/export/report?format=pdf${qs ? '&' + qs : ''}`, '_blank')
+  }
 
   async function handleClientSwitch(clientId: string) {
     if (clientId === currentClientId) return
@@ -159,6 +172,26 @@ export default function AdminDashboardBar({
       >
         Client Settings
       </a>
+
+      {/* Report button */}
+      <button
+        onClick={openReport}
+        title="Print / Save as PDF"
+        style={{
+          background: 'rgba(255,255,255,0.15)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          borderRadius: 6, color: '#fff',
+          fontSize: '0.75rem', fontWeight: 500,
+          padding: '0.25rem 0.65rem',
+          cursor: 'pointer', whiteSpace: 'nowrap',
+          display: 'flex', alignItems: 'center', gap: 4,
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
+        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
+      >
+        <Printer size={13} weight="bold" />Report
+      </button>
 
       {/* Share link */}
       <button

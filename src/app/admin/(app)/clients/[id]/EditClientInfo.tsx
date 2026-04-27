@@ -7,18 +7,23 @@ interface Props {
   clientId: string
   name: string
   slug: string
+  discordChannelId?: string | null
 }
 
-export default function EditClientInfo({ clientId, name, slug }: Props) {
+export default function EditClientInfo({ clientId, name, slug, discordChannelId }: Props) {
   const router = useRouter()
   const [editing, setEditing] = useState(false)
-  const [values,  setValues]  = useState({ name, slug })
+  const [values,  setValues]  = useState({ name, slug, discord_channel_id: discordChannelId ?? '' })
   const [status,  setStatus]  = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
   function field<K extends keyof typeof values>(key: K, val: string) {
     setValues(v => ({ ...v, [key]: val }))
     setStatus('idle')
+  }
+
+  function resetValues() {
+    setValues({ name, slug, discord_channel_id: discordChannelId ?? '' })
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -47,6 +52,9 @@ export default function EditClientInfo({ clientId, name, slug }: Props) {
       <div className="space-y-2 text-sm">
         <Row label="Name"  value={values.name} />
         <Row label="Slug"  value={values.slug} mono />
+        {values.discord_channel_id && (
+          <Row label="Discord Channel ID" value={values.discord_channel_id} mono />
+        )}
         <button
           onClick={() => setEditing(true)}
           className="btn btn-secondary mt-1"
@@ -76,12 +84,23 @@ export default function EditClientInfo({ clientId, name, slug }: Props) {
           />
         </div>
       ))}
+      <div>
+        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+          Discord Channel ID <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— optional, for low-balance alerts</span>
+        </label>
+        <input
+          className="input"
+          value={values.discord_channel_id}
+          onChange={e => field('discord_channel_id', e.target.value)}
+          placeholder="e.g. 123456789012345678"
+        />
+      </div>
       <div className="flex items-center gap-2">
         <button type="submit" className="btn btn-primary" disabled={status === 'saving'}
           style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}>
           {status === 'saving' ? 'Saving…' : 'Save'}
         </button>
-        <button type="button" className="btn btn-secondary" onClick={() => { setEditing(false); setValues({ name, slug }) }}
+        <button type="button" className="btn btn-secondary" onClick={() => { setEditing(false); resetValues() }}
           style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}>
           Cancel
         </button>

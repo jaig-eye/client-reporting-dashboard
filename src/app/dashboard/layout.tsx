@@ -24,13 +24,14 @@ import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 const getConnectorDataFlags = unstable_cache(
   async (clientId: string) => {
     const db = createAdminClient()
-    const [ga4Check, gscCheck, ahrefsCheck, gadsCheck, metaCheck, gbpCheck] = await Promise.all([
+    const [ga4Check, gscCheck, ahrefsCheck, gadsCheck, metaCheck, gbpCheck, ghlCheck] = await Promise.all([
       db.from('ga4_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
       db.from('gsc_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
       db.from('ahrefs_metrics').select('id',         { count: 'exact', head: true }).eq('client_id', clientId),
       db.from('google_ads_metrics').select('id',     { count: 'exact', head: true }).eq('client_id', clientId),
       db.from('meta_ads_metrics').select('id',       { count: 'exact', head: true }).eq('client_id', clientId),
       db.from('gbp_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
+      db.from('ghl_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
     ])
     return {
       ga4:    (ga4Check.count    ?? 0) > 0,
@@ -39,6 +40,7 @@ const getConnectorDataFlags = unstable_cache(
       gads:   (gadsCheck.count   ?? 0) > 0,
       meta:   (metaCheck.count   ?? 0) > 0,
       gbp:    (gbpCheck.count    ?? 0) > 0,
+      ghl:    (ghlCheck.count    ?? 0) > 0,
     }
   },
   ['dashboard-connector-data-flags'],
@@ -88,11 +90,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
         ...(dataFlags.gads   ? ['google_ads']              : []),
         ...(dataFlags.meta   ? ['meta_ads']                : []),
         ...(dataFlags.gbp    ? ['google_business_profile'] : []),
+        ...(dataFlags.ghl    ? ['ghl']                     : []),
       ])
 
       // Keep only connected types that also have data; always pass through types
-      // without a dedicated metrics table (ghl, wordpress) so they don't vanish.
-      const metricsGatedTypes = new Set(['google_analytics', 'google_search_console', 'ahrefs', 'google_ads', 'meta_ads', 'google_business_profile'])
+      // without a dedicated metrics table (wordpress) so they don't vanish.
+      const metricsGatedTypes = new Set(['google_analytics', 'google_search_console', 'ahrefs', 'google_ads', 'meta_ads', 'google_business_profile', 'ghl'])
       activeConnectorTypes = connectedTypes.filter(
         t => !metricsGatedTypes.has(t) || typesWithData.has(t)
       )
@@ -124,14 +127,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       {/* Admin overlay bar — only visible to admins */}
       {isAdmin && client && (
-        <AdminDashboardBar
-          currentClientId={client.id}
-          currentClientName={client.name}
-          dashboardToken={(client as unknown as Record<string, string>).dashboard_token ?? token ?? ''}
-          clients={adminClients}
-          appUrl={appUrl}
-          rawMode={rawMode}
-        />
+        <Suspense fallback={null}>
+          <AdminDashboardBar
+            currentClientId={client.id}
+            currentClientName={client.name}
+            dashboardToken={(client as unknown as Record<string, string>).dashboard_token ?? token ?? ''}
+            clients={adminClients}
+            appUrl={appUrl}
+            rawMode={rawMode}
+          />
+        </Suspense>
       )}
 
       <div style={{

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import ContentPostEditor from './ContentPostEditor'
 
 interface QueueItem {
@@ -96,18 +97,20 @@ function ItemCard({
   onReject,
   onForceGenerate,
   loading,
+  cardError,
 }: {
   item:             QueueItem
   onOpenEditor:     (id: string) => void
   onReject:         (item: QueueItem) => void
   onForceGenerate:  (id: string) => void
   loading:          string | null
+  cardError:        string | undefined
 }) {
   const [expanded, setExpanded] = useState(false)
   const badge = statusBadgeStyle(item)
   const isLoading = loading === item.id
   const isTopic = item.type === 'topic'
-  const isGenerating = item.status === 'generating'
+  const isGenerating = item.status === 'generating' && !isLoading
 
   return (
     <div style={{
@@ -262,19 +265,20 @@ function ItemCard({
               className="btn btn-primary"
               style={{ fontSize: '0.75rem', padding: '0.2rem 0.75rem' }}
             >
-              {isLoading ? 'Queuing…' : '▶ Generate Now'}
+              {isLoading ? 'Generating…' : '▶ Generate Now'}
             </button>
-            <button
-              type="button"
-              disabled={isLoading}
-              onClick={() => onReject(item)}
-              style={{
-                fontSize: '0.75rem', padding: '0.2rem 0.5rem',
-                background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
-              }}
-            >
-              ✕
-            </button>
+            {!isLoading && (
+              <button
+                type="button"
+                onClick={() => onReject(item)}
+                style={{
+                  fontSize: '0.75rem', padding: '0.2rem 0.5rem',
+                  background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            )}
           </>
         )}
 
@@ -284,16 +288,30 @@ function ItemCard({
           </span>
         )}
       </div>
+
+      {/* Per-card inline messages */}
+      {isTopic && isLoading && (
+        <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', padding: '0.4rem 1rem 0', margin: 0 }}>
+          This may take 1–2 minutes…
+        </p>
+      )}
+      {cardError && (
+        <p style={{ fontSize: '0.7rem', color: 'var(--red, #dc2626)', padding: '0.4rem 1rem', margin: 0 }}>
+          {cardError}
+        </p>
+      )}
     </div>
   )
 }
 
 export default function ContentQueue({ posts: initialItems, sites }: Props) {
+  const router = useRouter()
   const [items,         setItems]         = useState<QueueItem[]>(initialItems)
   const [statusFilter,  setStatusFilter]  = useState<StatusFilter>('pending')
   const [editingPostId, setEditingPostId] = useState<string | null>(null)
   const [loading,       setLoading]       = useState<string | null>(null)
   const [error,         setError]         = useState('')
+  const [errorById,     setErrorById]     = useState<Record<string, string>>({})
 
   const counts: Record<StatusFilter, number> = {
     all:       items.length,
@@ -340,17 +358,23 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
 
   async function forceGenerate(topicId: string) {
     setLoading(topicId)
-    setError('')
+    setErrorById(prev => { const n = { ...prev }; delete n[topicId]; return n })
     try {
       const res = await fetch('/api/admin/content/generate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ topic_id: topicId }),
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to trigger generation')
-      setItems(prev => prev.map(i => i.id === topicId ? { ...i, status: 'generating' } : i))
+      if (!res.ok) {
+        const msg = (await res.json().catch(() => ({}))).error || 'Generation failed'
+        setErrorById(prev => ({ ...prev, [topicId]: msg }))
+        return
+      }
+      // Refresh server data: topic moves to 'generated', new post appears in Pending
+      router.refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to trigger generation')
+      const msg = err instanceof Error ? err.message : 'Failed to trigger generation'
+      setErrorById(prev => ({ ...prev, [topicId]: msg }))
     } finally {
       setLoading(null)
     }
@@ -418,6 +442,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               onReject={rejectItem}
               onForceGenerate={forceGenerate}
               loading={loading}
+              cardError={errorById[item.id]}
             />
           ))}
         </div>

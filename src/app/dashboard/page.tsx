@@ -14,7 +14,6 @@ import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtP
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import SpendChart from '@/components/SpendChart'
 import CampaignTable from '@/components/CampaignTable'
-import ExportButtons from '@/components/ExportButtons'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
@@ -545,12 +544,6 @@ export default async function DashboardPage({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <ExportButtons
-                clientId={client.id}
-                from={fromDate.toISOString().split('T')[0]}
-                to={toDate.toISOString().split('T')[0]}
-                compare={compare}
-              />
             <Suspense fallback={null}>
               <DateRangePicker
                 from={fromDate.toISOString().split('T')[0]}

@@ -165,6 +165,12 @@ export interface Client {
    * 'lead_gen' | 'ecom' | null (null = auto-detect from campaign assignments)
    */
   layout_type?: string | null
+  /** Billing cycle start day (1–31). Used for Ad Fuel cycle calculations. */
+  bill_day?: number | null
+  /** Monthly ad spend budget in dollars. Used for Ad Fuel pace calculation. */
+  monthly_budget?: number | null
+  /** Discord channel ID for per-client notifications (requires agency discord_bot_token). */
+  discord_channel_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -221,6 +227,8 @@ export interface AgencySettings {
   metric_layouts?: Record<string, unknown> | null
   /** Connector types globally hidden from all client dashboards (e.g. 'google_analytics', 'google_search_console', 'ahrefs'). */
   hidden_connector_types?: string[]
+  /** Discord bot token for sending per-client notifications to Discord channels. */
+  discord_bot_token?: string | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

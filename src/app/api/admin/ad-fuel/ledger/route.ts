@@ -1,0 +1,70 @@
+// GET    /api/admin/ad-fuel/ledger?client_id=...  — list entries
+// POST   /api/admin/ad-fuel/ledger                — add entry
+// DELETE handled by [id]/route.ts
+
+import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { createAdminClient } from '@/lib/supabase/server'
+import { isAdminAuthed } from '@/lib/auth'
+
+export async function GET(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const clientId = new URL(request.url).searchParams.get('client_id')
+  const db = createAdminClient()
+
+  let query = db
+    .from('ad_fuel_ledger')
+    .select('id, client_id, date_of_payment, amount_af, split_override, invoice_id, type, note, created_by, created_at')
+    .order('date_of_payment', { ascending: false })
+
+  if (clientId) query = query.eq('client_id', clientId)
+
+  const { data, error } = await query
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+export async function POST(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const body = await request.json() as {
+    client_id:       string
+    date_of_payment: string
+    amount_af:       number
+    split_override?: number | null
+    invoice_id?:     string | null
+    type?:           string | null
+    note?:           string | null
+    created_by?:     string | null
+  }
+
+  if (!body.client_id || !body.date_of_payment || body.amount_af == null) {
+    return NextResponse.json({ error: 'client_id, date_of_payment, and amount_af are required' }, { status: 400 })
+  }
+
+  const db = createAdminClient()
+  const { data, error } = await db
+    .from('ad_fuel_ledger')
+    .insert({
+      client_id:       body.client_id,
+      date_of_payment: body.date_of_payment,
+      amount_af:       body.amount_af,
+      split_override:  body.split_override ?? null,
+      invoice_id:      body.invoice_id ?? null,
+      type:            body.type ?? null,
+      note:            body.note ?? null,
+      created_by:      body.created_by ?? null,
+    })
+    .select()
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}

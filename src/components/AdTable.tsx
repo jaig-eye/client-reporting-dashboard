@@ -302,13 +302,34 @@ export function AdRowTable({
                   transition: 'box-shadow 0.15s, transform 0.1s',
                 }}
               >
-                {/* Image */}
+                {/* Image / video thumbnail */}
                 {previewImg ? (
-                  <img
-                    src={previewImg}
-                    alt={row.ad_name}
-                    style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }}
-                  />
+                  <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', overflow: 'hidden' }}>
+                    <img
+                      src={previewImg.includes('fbcdn.net') && !previewImg.includes('?') ? `${previewImg}?width=600` : previewImg}
+                      alt={row.ad_name}
+                      loading="lazy"
+                      decoding="async"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                    {row.video_id && (
+                      <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(0,0,0,0.25)',
+                      }}>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: '50%',
+                          background: 'rgba(255,255,255,0.9)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="#111">
+                            <path d="M4 3l10 5-10 5V3z"/>
+                          </svg>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div style={{
                     width: '100%', aspectRatio: '1/1', background: 'var(--bg-subtle)',
@@ -547,19 +568,34 @@ export function AdRowTable({
               </p>
             )}
 
-            {/* Image */}
-            {(previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) && (
+            {/* Video or image */}
+            {previewAd.video_id ? (
               <>
-                <img
-                  src={previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!}
-                  alt="ad creative"
-                  style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }}
+                <iframe
+                  src={`https://www.youtube.com/embed/${previewAd.video_id}?autoplay=1&rel=0`}
+                  allow="autoplay; fullscreen"
+                  allowFullScreen
+                  style={{ width: '100%', aspectRatio: '16/9', border: 'none', display: 'block' }}
                 />
                 <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', margin: '5px 1rem 0', lineHeight: 1.4 }}>
-                  Preview is for reference only. Actual ad appearance and image quality may differ from how the platform serves it.
+                  Video preview via YouTube. Actual ad delivery may differ.
                 </p>
               </>
-            )}
+            ) : (previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) ? (
+              <>
+                <img
+                  src={(() => {
+                    const src = previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!
+                    return src.includes('fbcdn.net') && !src.includes('?') ? `${src}?width=1200` : src
+                  })()}
+                  alt="ad creative"
+                  style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block', background: '#f0f2f5' }}
+                />
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', margin: '5px 1rem 0', lineHeight: 1.4 }}>
+                  Preview is for reference only. Actual ad appearance and image quality may differ.
+                </p>
+              </>
+            ) : null}
 
             {/* Headline + CTA strip — fall back to ad_name when creative has no title */}
             <div style={{
