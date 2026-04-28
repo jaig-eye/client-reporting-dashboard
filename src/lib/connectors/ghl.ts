@@ -28,7 +28,7 @@ const SMS_TYPES   = new Set([
 export interface FormBreakdownItem {
   id:    string
   name:  string
-  type:  'form' | 'survey'
+  type:  'form' | 'survey' | 'booking'
   count: number
 }
 
@@ -277,15 +277,15 @@ type FormsResult = {
   totalBreakdown: FormBreakdownItem[]
 }
 
-/** Fetches both forms and surveys, returning per-day counts + per-form/survey breakdown. */
+/** Fetches forms, surveys, and bookings — returning per-day counts + per-item breakdown. */
 async function fetchFormsAndSurveys(
   apiKey: string,
   locationId: string,
   dateFrom: string,
   dateTo: string
 ): Promise<FormsResult> {
-  // ── 1. Collect all form/survey items ────────────────────────────────────────
-  type Item = { id: string; name: string; type: 'form' | 'survey' }
+  // ── 1. Collect all form/survey/booking items ─────────────────────────────────
+  type Item = { id: string; name: string; type: 'form' | 'survey' | 'booking' }
   const items: Item[] = []
 
   // Forms
@@ -298,7 +298,7 @@ async function fetchFormsAndSurveys(
       if (batch.length < 50) break
       skip += 50
     }
-  } catch { /* continue with surveys */ }
+  } catch { /* continue */ }
 
   // Surveys
   try {
@@ -310,7 +310,9 @@ async function fetchFormsAndSurveys(
       if (batch.length < 50) break
       skip += 50
     }
-  } catch { /* surveys endpoint not available on all plans */ }
+  } catch (e) {
+    if (String(e).includes('401')) console.log('[ghl] surveys: missing scope — add "surveys.readonly" to your private integration')
+  }
 
   console.log(`[ghl] forms/surveys: ${items.filter(i => i.type === 'form').length} forms, ${items.filter(i => i.type === 'survey').length} surveys`)
 
@@ -353,7 +355,64 @@ async function fetchFormsAndSurveys(
     await sleep(200)
   }
 
-  // ── 3. Build output ──────────────────────────────────────────────────────────
+  // ── 3. Bookings (calendar appointments) ─────────────────────────────────────
+  // Appointments are counted per calendar. We fetch all calendars first, then
+  // query events for each. startTime/endTime use epoch ms.
+  try {
+    const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+    const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+
+    // List all calendars for location
+    const calData  = await ghlGet('/calendars/', apiKey, { locationId })
+    const calendars = (calData.calendars as Record<string, unknown>[]) ?? []
+
+    for (const cal of calendars) {
+      const calId   = String(cal.id   || '')
+      const calName = String(cal.name || cal.id || '')
+      if (!calId) continue
+
+      const bookingKey = `booking:${calId}`
+      items.push({ id: bookingKey, name: calName, type: 'booking' })
+
+      // Fetch appointments for this calendar in the date range
+      let skip = 0
+      for (;;) {
+        const data = await ghlGet('/calendars/events', apiKey, {
+          locationId,
+          calendarId: calId,
+          startTime:  String(fromMs),
+          endTime:    String(toMs),
+          limit:      '100',
+          skip:       String(skip),
+        })
+        const events = (data.events as Record<string, unknown>[]) ?? []
+
+        for (const ev of events) {
+          // Count by when the appointment was booked (createdAt), not when it occurs
+          const parsed = parseGhlDate(ev.dateAdded ?? ev.createdAt ?? ev.startTime)
+          if (!parsed) continue
+          const day = byDate.get(parsed.date) ?? { total: 0, perItem: new Map() }
+          day.total++
+          day.perItem.set(bookingKey, (day.perItem.get(bookingKey) ?? 0) + 1)
+          byDate.set(parsed.date, day)
+        }
+
+        if (events.length < 100) break
+        skip += 100
+        await sleep(200)
+      }
+      await sleep(200)
+    }
+    console.log(`[ghl] bookings: ${calendars.length} calendars queried`)
+  } catch (e) {
+    if (String(e).includes('401')) {
+      console.log('[ghl] bookings: missing scope — add "calendars.readonly" to your private integration')
+    } else {
+      console.log(`[ghl] bookings fetch failed: ${String(e)}`)
+    }
+  }
+
+  // ── 4. Build output ──────────────────────────────────────────────────────────
   // Build item name+type map for quick lookup
   const itemMeta = new Map(items.map(i => [i.id, { name: i.name, type: i.type }]))
 
@@ -366,14 +425,14 @@ async function fetchFormsAndSurveys(
   }
 
   const totalBreakdown: FormBreakdownItem[] = Array.from(totalPerItem.entries())
-    .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: itemMeta.get(id)?.type ?? 'form', count }))
+    .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: (itemMeta.get(id)?.type ?? 'form') as 'form' | 'survey' | 'booking', count }))
     .sort((a, b) => b.count - a.count)
 
   const rows = Array.from(byDate.entries()).map(([date, { total, perItem }]) => ({
     date,
     count: total,
     breakdown: Array.from(perItem.entries())
-      .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: itemMeta.get(id)?.type ?? 'form' as const, count }))
+      .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: (itemMeta.get(id)?.type ?? 'form') as 'form' | 'survey' | 'booking', count }))
       .sort((a, b) => b.count - a.count),
   }))
 
