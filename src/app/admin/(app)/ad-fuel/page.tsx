@@ -158,6 +158,12 @@ export default function AdFuelPage() {
   const [tab, setTab] = useState<'dashboard' | 'ledger' | 'settings'>('dashboard')
 
   // Dashboard state — seed from URL params if present
+  type DatePreset = 'all' | 'mtd' | 'last30' | 'last90' | 'last_month' | 'last_year' | 'custom'
+  const [datePreset, setDatePreset] = useState<DatePreset>(() => {
+    if (typeof window === 'undefined') return 'all'
+    const p = new URLSearchParams(window.location.search)
+    return (p.has('date_from') && p.has('date_to')) ? 'custom' : 'all'
+  })
   const [dateFilterEnabled, setDateFilterEnabled] = useState(() => {
     if (typeof window === 'undefined') return false
     const p = new URLSearchParams(window.location.search)
@@ -182,6 +188,28 @@ export default function AdFuelPage() {
   function saveCols(next: ColConfig[]) {
     setCols(next)
     try { localStorage.setItem(LS_KEY, JSON.stringify(next)) } catch {}
+  }
+
+  function applyPreset(preset: DatePreset) {
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const now = new Date()
+    setDatePreset(preset)
+    if (preset === 'all') { setDateFilterEnabled(false); return }
+    setDateFilterEnabled(true)
+    if (preset === 'mtd') {
+      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(fmt(now))
+    } else if (preset === 'last30') {
+      setDateFrom(fmt(new Date(now.getTime() - 29 * 86_400_000))); setDateTo(fmt(now))
+    } else if (preset === 'last90') {
+      setDateFrom(fmt(new Date(now.getTime() - 89 * 86_400_000))); setDateTo(fmt(now))
+    } else if (preset === 'last_month') {
+      const m = now.getMonth(), y = now.getFullYear()
+      setDateFrom(fmt(new Date(y, m - 1, 1))); setDateTo(fmt(new Date(y, m, 0)))
+    } else if (preset === 'last_year') {
+      const y = now.getFullYear() - 1
+      setDateFrom(fmt(new Date(y, 0, 1))); setDateTo(fmt(new Date(y, 11, 31)))
+    }
+    // 'custom' — keep current dates, let user adjust
   }
 
   // Client edit modal (bill day + budget)
@@ -448,115 +476,99 @@ export default function AdFuelPage() {
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ padding: '1.5rem 2rem', maxWidth: 1600 }}>
-      <div className="page-header" style={{ marginBottom: '1.25rem' }}>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>Ad Fuel</h1>
-        <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-          Lifetime totals from {cutoffDate}. Balance, purchased, and raw spend are all-time figures. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle.
-        </p>
+    <div style={{ maxWidth: 1600 }}>
+      <div className="page-header">
+        <h1 className="page-title">Ad Fuel</h1>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.625rem' }}>
-        {(['dashboard', 'ledger'] as const).map(t => (
+      <div style={{
+        display: 'flex', gap: 2, marginBottom: '1.5rem',
+        borderBottom: '1px solid var(--border-subtle)',
+        overflowX: 'auto', scrollbarWidth: 'none',
+      }}>
+        {(['dashboard', 'ledger', 'settings'] as const).map(t => (
           <button
             key={t}
+            type="button"
             onClick={() => setTab(t)}
             style={{
-              padding: '0.35rem 1rem', borderRadius: 6, border: 'none', cursor: 'pointer',
-              fontWeight: tab === t ? 600 : 400, fontSize: '0.875rem',
-              background: tab === t ? 'var(--blue)' : 'var(--bg-subtle)',
-              color: tab === t ? '#fff' : 'var(--text-muted)',
+              padding: '0.5rem 1rem', border: 'none', background: 'transparent',
+              fontSize: '0.8125rem', fontWeight: tab === t ? 600 : 400,
+              color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
+              borderBottom: tab === t ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
+              cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: -1,
+              transition: 'color 0.15s',
             }}
           >
-            {t === 'dashboard' ? 'Dashboard' : 'Ledger'}
+            {t === 'dashboard' ? 'Dashboard' : t === 'ledger' ? 'Ledger' : 'Settings'}
           </button>
         ))}
-        {/* Settings gear tab */}
-        <button
-          onClick={() => setTab('settings')}
-          title="Column & client settings"
-          style={{
-            padding: '0.35rem 0.65rem', borderRadius: 6, border: 'none', cursor: 'pointer',
-            fontSize: '1rem', lineHeight: 1,
-            background: tab === 'settings' ? 'var(--blue)' : 'var(--bg-subtle)',
-            color: tab === 'settings' ? '#fff' : 'var(--text-muted)',
-          }}
-        >
-          ⚙
-        </button>
       </div>
 
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
         <>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
-            {/* Date filter toggle */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', userSelect: 'none', paddingBottom: 2 }}>
-              <input
-                type="checkbox"
-                checked={dateFilterEnabled}
-                onChange={e => setDateFilterEnabled(e.target.checked)}
-              />
-              <span style={{ fontSize: '0.8rem', color: dateFilterEnabled ? 'var(--text-primary)' : 'var(--text-faint)', fontWeight: 500 }}>
-                Filter by date
-              </span>
-            </label>
-
-            <div style={{ opacity: dateFilterEnabled ? 1 : 0.4, pointerEvents: dateFilterEnabled ? 'auto' : 'none' }}>
-              <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>From</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} disabled={!dateFilterEnabled} />
-            </div>
-            <div style={{ opacity: dateFilterEnabled ? 1 : 0.4, pointerEvents: dateFilterEnabled ? 'auto' : 'none' }}>
-              <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)', marginBottom: 3 }}>To</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem' }} disabled={!dateFilterEnabled} />
-            </div>
-            <button onClick={fetchDashboard} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem' }}>Refresh</button>
-
-            {!dateFilterEnabled && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', paddingBottom: 4 }}>
-                All-time from {cutoffDate}
-              </span>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <select
+              value={datePreset}
+              onChange={e => applyPreset(e.target.value as DatePreset)}
+              className="input"
+              style={{ fontSize: '0.8125rem' }}
+            >
+              <option value="all">All time (from {cutoffDate})</option>
+              <option value="mtd">Month to Date</option>
+              <option value="last30">Last 30 days</option>
+              <option value="last90">Last 90 days</option>
+              <option value="last_month">Last Month</option>
+              <option value="last_year">Last Year</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            {datePreset === 'custom' && (
+              <>
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem' }} />
+                <span style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>to</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem' }} />
+              </>
             )}
-
-            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.35rem 1rem', marginLeft: 'auto' }}>Export CSV</button>
+            <button onClick={fetchDashboard} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>Refresh</button>
+            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem', marginLeft: 'auto' }}>Export CSV</button>
           </div>
 
           {loading ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table" style={{ minWidth: 800, fontSize: '0.8rem' }}>
-                <thead>
-                  <tr>
-                    {visibleCols.map(col => (
-                      <th key={col.key} style={{ textAlign: col.key === 'client' ? 'left' : undefined }}>
-                        {col.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.length === 0 && (
-                    <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
-                  )}
-                  {rows.map(row => (
-                    <tr
-                      key={row.clientId}
-                      onClick={() => openClientEdit(row)}
-                      style={{ cursor: 'pointer' }}
-                      title="Click to edit bill day, budget, and Ad Fuel cut"
-                    >
-                      {visibleCols.map(col => renderCell(col.key, row))}
+            <div className="card overflow-hidden" style={{ padding: 0 }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table" style={{ minWidth: 800 }}>
+                  <thead>
+                    <tr>
+                      {visibleCols.map(col => (
+                        <th key={col.key} style={{ textAlign: col.key === 'client' ? 'left' : undefined }}>
+                          {col.label}
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 && (
+                      <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
+                    )}
+                    {rows.map(row => (
+                      <tr
+                        key={row.clientId}
+                        onClick={() => openClientEdit(row)}
+                        style={{ cursor: 'pointer' }}
+                        title="Click to edit bill day, budget, and Ad Fuel cut"
+                      >
+                        {visibleCols.map(col => renderCell(col.key, row))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '0.5rem' }}>
-            Click any row to edit bill day and budget. Balance and spend are lifetime from {cutoffDate}. Since Bill / Avg Daily / Pace always reflect the current billing cycle.
-          </p>
         </>
       )}
 
@@ -636,7 +648,8 @@ export default function AdFuelPage() {
           {ledgerLoading ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div className="card overflow-hidden" style={{ padding: 0 }}>
+              <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ minWidth: 900 }}>
                 <thead>
                   <tr>
@@ -699,6 +712,7 @@ export default function AdFuelPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </>
@@ -706,7 +720,11 @@ export default function AdFuelPage() {
 
       {/* ── SETTINGS TAB ─────────────────────────────────────────────────────── */}
       {tab === 'settings' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', maxWidth: 900 }}>
+        <div style={{ maxWidth: 900 }}>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+            Lifetime totals run from the data cutoff date. Balance, purchased, and raw spend are all-time figures. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle. Click any row on the Dashboard tab to edit a client&apos;s settings.
+          </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
 
           {/* Column visibility + rename */}
           <div className="card" style={{ padding: '1.25rem' }}>
@@ -859,6 +877,7 @@ export default function AdFuelPage() {
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* ── CLIENT EDIT MODAL (click row on dashboard) ───────────────────────── */}
