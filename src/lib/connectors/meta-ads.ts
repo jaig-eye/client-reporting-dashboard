@@ -516,10 +516,6 @@ export const metaAdsConnector: ConnectorAdapter = {
       base.searchParams.set('time_range',     JSON.stringify({ since: chunk.from, until: chunk.to }))
       base.searchParams.set('time_increment', '1')
       base.searchParams.set('limit',          '500')
-      base.searchParams.set('filtering', JSON.stringify([{
-        field: 'campaign.effective_status', operator: 'IN',
-        value: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED'],
-      }]))
       let pageNum = 0
       let nextUrl: string | null = base.toString()
       while (nextUrl) {
@@ -617,6 +613,9 @@ export const metaAdsConnector: ConnectorAdapter = {
     }
 
     if (onProgress) onProgress(100, 'Done')
+
+    const totalSpend = rows.reduce((s, r) => s + (r.spend ?? 0), 0)
+    console.log(`[meta] fetchMetrics returning ${rows.length} rows, total spend=$${totalSpend.toFixed(2)}`)
 
     return {
       rows,

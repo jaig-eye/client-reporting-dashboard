@@ -515,13 +515,21 @@ export async function upsertMetaAdsMetrics(
     }
   })
 
+  const dates = mapped.map(r => r.date).sort()
+  const totalSpend = mapped.reduce((s, r) => s + (r.spend as number), 0)
+  console.log(`[upsertMetaAdsMetrics] ${mapped.length} rows, dates ${dates[0]}–${dates[dates.length-1]}, spend=$${totalSpend.toFixed(2)}`)
+
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('meta_ads_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,campaign_id,date',
         ignoreDuplicates: false,
       })
+    if (error) {
+      console.error(`[upsertMetaAdsMetrics] batch ${i}–${i+200} FAILED:`, error.message, error.details ?? '')
+      throw new Error(`meta_ads_metrics upsert failed: ${error.message}`)
+    }
   }
 
   await upsertCampaignAssignments(db, clientId, 'meta_ads', mapped)
