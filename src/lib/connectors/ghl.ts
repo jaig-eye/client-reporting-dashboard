@@ -1,37 +1,35 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // GoHighLevel CRM Connector
 //
-// Implements ConnectorAdapter for the GoHighLevel API v2.
-// Auth: Private integration key (API key) + Location ID.
-//
-// Auth object shape:
-//   { api_key: string }
-//
-// Config object shape:
-//   { location_id: string }
-//
+// Auth: { api_key: string }   Config: { location_id: string }
 // External ID: the GHL location ID
 //
-// Fetches: contacts, calls, form submissions, reviews per day
+// Fetches: contacts created, calls, form submissions, emails, SMS per day
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
+// GHL type-prefix constants for conversations
+const CALL_TYPES  = new Set(['TYPE_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL'])
+const EMAIL_TYPES = new Set(['TYPE_EMAIL', 'TYPE_CUSTOM_EMAIL', 'TYPE_CAMPAIGN_EMAIL', 'TYPE_CUSTOM_PROVIDER_EMAIL'])
+const SMS_TYPES   = new Set(['TYPE_SMS', 'TYPE_CUSTOM_SMS', 'TYPE_CAMPAIGN_SMS', 'TYPE_CUSTOM_PROVIDER_SMS',
+                              'TYPE_SMS_REVIEW_REQUEST', 'TYPE_SMS_NO_SHOW_REQUEST'])
+
 /** Raw GHL metric row — one per day. */
 export interface GhlRawRow {
   date: string
   contacts_created: number
-  total_calls: number
-  missed_calls: number
-  forms_submitted: number
-  reviews_sent: number
+  total_calls:      number
+  missed_calls:     number
+  forms_submitted:  number
+  reviews_sent:     number
   reviews_received: number
-  spam_leads: number
-  emails_sent: number
-  sms_sent: number
-  raw_data: Record<string, unknown>
+  spam_leads:       number
+  emails_sent:      number
+  sms_sent:         number
+  raw_data:         Record<string, unknown>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +42,8 @@ async function ghlGet(
   path: string,
   apiKey: string,
   params: Record<string, string> = {},
-  maxRetries = 4
+  maxRetries = 4,
+  version = '2021-07-28'
 ): Promise<Record<string, unknown>> {
   const url = new URL(`${BASE_URL}${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
@@ -55,17 +54,16 @@ async function ghlGet(
       headers: {
         Authorization:  `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        Version:        '2021-07-28',
+        Version:        version,
       },
     })
     if (res.ok) return res.json() as Promise<Record<string, unknown>>
 
     const text = await res.text()
     if (res.status === 429 && attempt < maxRetries) {
-      // Respect Retry-After header if present, otherwise exponential backoff
       const retryAfter = res.headers.get('Retry-After')
       const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : delay
-      console.log(`[ghl] 429 rate limit — waiting ${waitMs}ms before retry ${attempt + 1}/${maxRetries}`)
+      console.log(`[ghl] 429 — waiting ${waitMs}ms (attempt ${attempt + 1}/${maxRetries})`)
       await sleep(waitMs)
       delay = Math.min(delay * 2, 60_000)
       continue
@@ -75,55 +73,40 @@ async function ghlGet(
   throw new Error('GHL API: max retries exceeded')
 }
 
-/** Paginate through all results from a GHL list endpoint. */
-async function ghlPaginate<T>(
-  path: string,
+/**
+ * Paginate GET /contacts/ using meta.startAfter + meta.startAfterId cursors.
+ * The contacts endpoint has no server-side date filter, so we fetch all and
+ * filter client-side by dateAdded.
+ */
+async function paginateContacts(
   apiKey: string,
-  params: Record<string, string>,
-  dataKey: string
-): Promise<T[]> {
-  const all: T[] = []
+  locationId: string
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  let startAfter:   string | undefined
   let startAfterId: string | undefined
 
-  for (let page = 0; page < 50; page++) {
-    const p = { ...params }
+  for (let page = 0; page < 100; page++) {
+    const p: Record<string, string> = { locationId, limit: '100' }
+    if (startAfter)   p.startAfter   = startAfter
     if (startAfterId) p.startAfterId = startAfterId
 
-    const data = await ghlGet(path, apiKey, p)
-    const items = (data[dataKey] as T[]) ?? []
+    const data  = await ghlGet('/contacts/', apiKey, p)
+    const items = (data.contacts as Record<string, unknown>[]) ?? []
     all.push(...items)
 
-    // GHL pagination: if fewer items than limit, we're done
+    // Use meta cursors for next page
+    const meta = data.meta as Record<string, unknown> | undefined
+    const nextStartAfter   = meta?.startAfter   != null ? String(meta.startAfter)   : undefined
+    const nextStartAfterId = meta?.startAfterId != null ? String(meta.startAfterId) : undefined
+
+    if (!nextStartAfter && !nextStartAfterId) break
     if (items.length < 100) break
-    const lastItem = items[items.length - 1] as Record<string, unknown>
-    startAfterId = lastItem?.id as string
-    if (!startAfterId) break
+    startAfter   = nextStartAfter
+    startAfterId = nextStartAfterId
   }
 
   return all
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Date helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function dateRange(from: string, to: string): string[] {
-  const dates: string[] = []
-  const d = new Date(from)
-  const end = new Date(to)
-  while (d <= end) {
-    dates.push(d.toISOString().split('T')[0])
-    d.setDate(d.getDate() + 1)
-  }
-  return dates
-}
-
-function startOfDay(dateStr: string): string {
-  return `${dateStr}T00:00:00Z`
-}
-
-function endOfDay(dateStr: string): string {
-  return `${dateStr}T23:59:59Z`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,27 +119,23 @@ async function fetchContacts(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; count: number; spam: number }[]> {
-  const contacts = await ghlPaginate<Record<string, unknown>>(
-    '/contacts/',
-    apiKey,
-    {
-      locationId,
-      limit: '100',
-      startDate: startOfDay(dateFrom),
-      endDate: endOfDay(dateTo),
-    },
-    'contacts'
-  )
+  // No server-side date filter on GET /contacts/ — fetch all, group client-side
+  const contacts = await paginateContacts(apiKey, locationId)
 
-  // Group by date
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+
   const byDate = new Map<string, { count: number; spam: number }>()
   for (const c of contacts) {
     const created = String(c.dateAdded || c.createdAt || '')
+    if (!created) continue
+    const ts = new Date(created).getTime()
+    if (ts < fromMs || ts > toMs) continue   // outside requested range
+
     const date = created.split('T')[0]
     if (!date) continue
     const ex = byDate.get(date) ?? { count: 0, spam: 0 }
     ex.count++
-    // Check for spam tags
     const tags = (c.tags as string[]) ?? []
     if (tags.some(t => t.toLowerCase().includes('spam'))) ex.spam++
     byDate.set(date, ex)
@@ -171,39 +150,63 @@ async function fetchConversations(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
-  // GHL conversations endpoint — get all conversations in date range
-  let conversations: Record<string, unknown>[]
+  // Conversations API uses version 2021-04-15 and startAfterDate cursor pagination
+  const all: Record<string, unknown>[] = []
+  let startAfterDate: string | undefined
+
   try {
-    conversations = await ghlPaginate<Record<string, unknown>>(
-      '/conversations/search',
-      apiKey,
-      {
+    for (let page = 0; page < 50; page++) {
+      const p: Record<string, string> = {
         locationId,
-        limit: '100',
-        startDate: startOfDay(dateFrom),
-        endDate: endOfDay(dateTo),
-      },
-      'conversations'
-    )
+        limit:   '100',
+        sortBy:  'last_message_date',
+        sort:    'desc',
+        // No date range filter available — fetch recent and filter client-side
+      }
+      if (startAfterDate) p.startAfterDate = startAfterDate
+
+      const data  = await ghlGet('/conversations/search', apiKey, p, 4, '2021-04-15')
+      const items = (data.conversations as Record<string, unknown>[]) ?? []
+      all.push(...items)
+
+      // Stop if we've gone past the start of our date range
+      const oldest = items[items.length - 1] as Record<string, unknown> | undefined
+      const oldestDate = String(oldest?.dateUpdated || oldest?.dateAdded || oldest?.createdAt || '')
+      if (oldestDate && new Date(oldestDate).getTime() < new Date(dateFrom + 'T00:00:00Z').getTime()) break
+      if (items.length < 100) break
+
+      // next page cursor = sortBy value of last item
+      startAfterDate = String(oldest?.dateUpdated || oldest?.lastMessageDate || '')
+      if (!startAfterDate) break
+    }
   } catch {
-    // Fallback: conversations/search may not exist on all plans
-    conversations = []
+    // Fallback gracefully if conversations/search unavailable on plan
+    return []
   }
 
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+
   const byDate = new Map<string, { totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
-  for (const conv of conversations) {
-    const created = String(conv.dateAdded || conv.createdAt || '')
+  for (const conv of all) {
+    const created = String(conv.dateAdded || conv.createdAt || conv.dateUpdated || '')
+    if (!created) continue
+    const ts = new Date(created).getTime()
+    if (ts < fromMs || ts > toMs) continue
+
     const date = created.split('T')[0]
     if (!date) continue
-    const ex = byDate.get(date) ?? { totalCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
-    const type = String(conv.type || '').toLowerCase()
-    if (type === 'call' || type === 'phone') {
+    const ex  = byDate.get(date) ?? { totalCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
+    const typ = String(conv.type || '').toUpperCase()
+
+    if (CALL_TYPES.has(typ)) {
       ex.totalCalls++
-      const status = String(conv.status || conv.callStatus || '').toLowerCase()
-      if (status === 'missed' || status === 'no-answer' || status === 'voicemail') ex.missedCalls++
-    } else if (type === 'email') {
+      // Missed call: conversation has no inbound reply / unread status
+      const unread = conv.unreadCount as number ?? 0
+      if (unread > 0) ex.missedCalls++
+    } else if (EMAIL_TYPES.has(typ)) {
       ex.emailsSent++
-    } else if (type === 'sms') {
+    } else if (SMS_TYPES.has(typ)) {
       ex.smsSent++
     }
     byDate.set(date, ex)
@@ -218,11 +221,17 @@ async function fetchFormSubmissions(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; count: number }[]> {
-  // Get all forms first, then submissions for each
+  // List all forms first (offset-based, max 50 per page)
   let forms: Record<string, unknown>[] = []
   try {
-    const data = await ghlGet('/forms/', apiKey, { locationId, limit: '100' })
-    forms = (data.forms as Record<string, unknown>[]) ?? []
+    let skip = 0
+    for (;;) {
+      const data = await ghlGet('/forms/', apiKey, { locationId, limit: '50', skip: String(skip) })
+      const batch = (data.forms as Record<string, unknown>[]) ?? []
+      forms.push(...batch)
+      if (batch.length < 50) break
+      skip += 50
+    }
   } catch {
     return []
   }
@@ -233,25 +242,32 @@ async function fetchFormSubmissions(
     const formId = String(form.id || '')
     if (!formId) continue
 
+    // Submissions use page-based pagination and startAt/endAt (YYYY-MM-DD)
     try {
-      const data = await ghlGet(`/forms/submissions`, apiKey, {
-        locationId,
-        formId,
-        limit: '100',
-        startDate: startOfDay(dateFrom),
-        endDate: endOfDay(dateTo),
-      })
-      const subs = (data.submissions as Record<string, unknown>[]) ?? []
-      for (const sub of subs) {
-        const created = String(sub.createdAt || '')
-        const date = created.split('T')[0]
-        if (!date) continue
-        byDate.set(date, (byDate.get(date) ?? 0) + 1)
+      let pg = 1
+      for (;;) {
+        const data = await ghlGet('/forms/submissions', apiKey, {
+          locationId,
+          formId,
+          limit:   '100',
+          page:    String(pg),
+          startAt: dateFrom,
+          endAt:   dateTo,
+        })
+        const subs = (data.submissions as Record<string, unknown>[]) ?? []
+        for (const sub of subs) {
+          const created = String(sub.createdAt || '')
+          const date = created.split('T')[0]
+          if (!date) continue
+          byDate.set(date, (byDate.get(date) ?? 0) + 1)
+        }
+        if (subs.length < 100) break
+        pg++
+        await sleep(200)
       }
     } catch {
-      // Individual form submission fetch failure — skip
+      // Skip this form on error
     }
-    // Small delay between per-form calls to avoid bursting the rate limit
     await sleep(300)
   }
 
@@ -280,15 +296,12 @@ export const ghlConnector: ConnectorAdapter = {
     }
 
     try {
-      // Fetch all data sources in parallel
-      const [contactData, convData, formData] = await Promise.all([
-        fetchContacts(apiKey, locationId, dateFrom, dateTo),
-        fetchConversations(apiKey, locationId, dateFrom, dateTo),
-        fetchFormSubmissions(apiKey, locationId, dateFrom, dateTo),
-      ])
+      // Run all fetches sequentially to avoid burst rate limits
+      const contactData = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
+      const convData    = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
+      const formData    = await fetchFormSubmissions(apiKey, locationId, dateFrom, dateTo)
 
-      // Merge into daily buckets
-      const allDates = dateRange(dateFrom, dateTo)
+      const allDates   = dateRange(dateFrom, dateTo)
       const contactMap = new Map(contactData.map(d => [d.date, d]))
       const convMap    = new Map(convData.map(d => [d.date, d]))
       const formMap    = new Map(formData.map(d => [d.date, d]))
@@ -303,7 +316,7 @@ export const ghlConnector: ConnectorAdapter = {
           total_calls:      v?.totalCalls ?? 0,
           missed_calls:     v?.missedCalls ?? 0,
           forms_submitted:  f?.count ?? 0,
-          reviews_sent:     0,  // TODO: add review endpoint when available
+          reviews_sent:     0,
           reviews_received: 0,
           spam_leads:       c?.spam ?? 0,
           emails_sent:      v?.emailsSent ?? 0,
@@ -312,8 +325,6 @@ export const ghlConnector: ConnectorAdapter = {
         }
       })
 
-      // Return as SyncResult — rows won't match RawMetricRow union,
-      // so the sync engine handles GHL separately
       return { rows: rows as never[] }
     } catch (err) {
       return { rows: [], error: `GHL sync failed: ${String(err)}` }
@@ -326,12 +337,10 @@ export const ghlConnector: ConnectorAdapter = {
   ): Promise<DiscoveredAccount[]> {
     const apiKey     = String(auth.api_key || '')
     const locationId = String(config.location_id || '')
-
     if (!apiKey || !locationId) return []
-
     try {
       const data = await ghlGet(`/locations/${locationId}`, apiKey)
-      const loc = (data.location ?? data) as Record<string, unknown>
+      const loc  = (data.location ?? data) as Record<string, unknown>
       return [{
         external_id:   locationId,
         external_name: String(loc.name || loc.businessName || locationId),
@@ -348,9 +357,7 @@ export const ghlConnector: ConnectorAdapter = {
   ): Promise<boolean> {
     const apiKey     = String(auth.api_key || '')
     const locationId = String(config.location_id || '')
-
     if (!apiKey || !locationId) return false
-
     try {
       await ghlGet(`/locations/${locationId}`, apiKey)
       return true
@@ -358,4 +365,19 @@ export const ghlConnector: ConnectorAdapter = {
       return false
     }
   },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function dateRange(from: string, to: string): string[] {
+  const dates: string[] = []
+  const d = new Date(from)
+  const end = new Date(to)
+  while (d <= end) {
+    dates.push(d.toISOString().split('T')[0])
+    d.setDate(d.getDate() + 1)
+  }
+  return dates
 }
