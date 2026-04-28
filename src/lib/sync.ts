@@ -848,9 +848,13 @@ export async function upsertGhlMetrics(
     reviews_sent:     r.reviews_sent,
     reviews_received: r.reviews_received,
     spam_leads:       r.spam_leads,
-    emails_sent:      r.emails_sent,
-    sms_sent:         r.sms_sent,
-    raw_data:         r.raw_data ?? {},
+    emails_sent:        r.emails_sent,
+    sms_sent:           r.sms_sent,
+    new_opportunities:  r.new_opportunities,
+    won_opportunities:  r.won_opportunities,
+    lost_opportunities: r.lost_opportunities,
+    won_value:          r.won_value,
+    raw_data:           r.raw_data ?? {},
     synced_at:        new Date().toISOString(),
   }))
 

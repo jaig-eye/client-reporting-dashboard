@@ -11,22 +11,30 @@ export const dynamic = 'force-dynamic'
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function fmtNum(n: number) { return n.toLocaleString() }
+function fmt$(n: number)   { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) }
 function pct(missed: number, total: number) {
   if (total === 0) return '—'
   return `${((missed / total) * 100).toFixed(0)}% missed`
 }
 
+type FormBreakdownItem = { id: string; name: string; type: string; count: number }
+
 type GhlRow = {
-  date: string
-  contacts_created: number
-  total_calls: number
-  missed_calls: number
-  forms_submitted: number
-  reviews_sent: number
-  reviews_received: number
-  spam_leads: number
-  emails_sent: number
-  sms_sent: number
+  date:               string
+  contacts_created:   number
+  total_calls:        number
+  missed_calls:       number
+  forms_submitted:    number
+  reviews_sent:       number
+  reviews_received:   number
+  spam_leads:         number
+  emails_sent:        number
+  sms_sent:           number
+  new_opportunities:  number
+  won_opportunities:  number
+  lost_opportunities: number
+  won_value:          number
+  raw_data:           { form_breakdown?: FormBreakdownItem[] } | null
 }
 
 export default async function GhlCrmPage({
@@ -62,12 +70,14 @@ export default async function GhlCrmPage({
   }
 
   const [{ data: rows }, { data: priorRows }] = await Promise.all([
-    db.from('ghl_metrics').select('*')
+    db.from('ghl_metrics')
+      .select('date,contacts_created,total_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
       .eq('client_id', client.id)
       .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       .order('date', { ascending: true }),
     showCompare
-      ? db.from('ghl_metrics').select('*')
+      ? db.from('ghl_metrics')
+          .select('date,contacts_created,total_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
           .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
           .order('date', { ascending: true })
@@ -79,15 +89,19 @@ export default async function GhlCrmPage({
 
   function sumRows(arr: GhlRow[]) {
     return arr.reduce((acc, r) => ({
-      contacts:     acc.contacts     + (Number(r.contacts_created)  || 0),
-      calls:        acc.calls        + (Number(r.total_calls)        || 0),
-      missed:       acc.missed       + (Number(r.missed_calls)       || 0),
-      forms:        acc.forms        + (Number(r.forms_submitted)    || 0),
-      reviews:      acc.reviews      + (Number(r.reviews_received)   || 0),
-      spam:         acc.spam         + (Number(r.spam_leads)         || 0),
-      emails:       acc.emails       + (Number(r.emails_sent)        || 0),
-      sms:          acc.sms          + (Number(r.sms_sent)           || 0),
-    }), { contacts: 0, calls: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0 })
+      contacts:  acc.contacts  + (Number(r.contacts_created)   || 0),
+      calls:     acc.calls     + (Number(r.total_calls)         || 0),
+      missed:    acc.missed    + (Number(r.missed_calls)        || 0),
+      forms:     acc.forms     + (Number(r.forms_submitted)     || 0),
+      reviews:   acc.reviews   + (Number(r.reviews_received)    || 0),
+      spam:      acc.spam      + (Number(r.spam_leads)          || 0),
+      emails:    acc.emails    + (Number(r.emails_sent)         || 0),
+      sms:       acc.sms       + (Number(r.sms_sent)            || 0),
+      newOpps:   acc.newOpps   + (Number(r.new_opportunities)   || 0),
+      wonOpps:   acc.wonOpps   + (Number(r.won_opportunities)   || 0),
+      lostOpps:  acc.lostOpps  + (Number(r.lost_opportunities)  || 0),
+      wonValue:  acc.wonValue  + (Number(r.won_value)           || 0),
+    }), { contacts: 0, calls: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0, newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 })
   }
 
   const totals      = sumRows(data)
@@ -98,8 +112,20 @@ export default async function GhlCrmPage({
     return ((curr - prev) / prev) * 100
   }
 
-  // Daily trend data for contacts created chart
-  const contactsSpark = data.map(r => ({ v: Number(r.contacts_created) || 0 }))
+  // Aggregate form/survey breakdown across all days
+  const formAgg = new Map<string, { name: string; type: string; count: number }>()
+  for (const row of data) {
+    const breakdown = row.raw_data?.form_breakdown ?? []
+    for (const f of breakdown) {
+      if (!f.id) continue
+      const ex = formAgg.get(f.id) ?? { name: f.name, type: f.type, count: 0 }
+      ex.count += f.count
+      formAgg.set(f.id, ex)
+    }
+  }
+  const formList = Array.from(formAgg.entries())
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => b.count - a.count)
 
   const noData = data.length === 0
 
@@ -117,11 +143,7 @@ export default async function GhlCrmPage({
               {fmtDate(fromDate)} – {fmtDate(toDate)}
             </p>
           </div>
-          <DateRangePicker
-            from={fmtDate(fromDate)}
-            to={fmtDate(toDate)}
-            compare={compare}
-          />
+          <DateRangePicker from={fmtDate(fromDate)} to={fmtDate(toDate)} compare={compare} />
         </div>
 
         {noData ? (
@@ -132,14 +154,12 @@ export default async function GhlCrmPage({
         ) : (
           <>
             {/* Primary KPIs */}
-            <div>
-              <h2 className="section-title">Leads &amp; Engagement</h2>
-            </div>
+            <div><h2 className="section-title">Leads &amp; Pipeline</h2></div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <SparkMetricCard
                 label="New Contacts"
                 value={fmtNum(totals.contacts)}
-                sparkData={contactsSpark}
+                sparkData={data.map(r => ({ v: Number(r.contacts_created) || 0 }))}
                 delta={calcDelta(totals.contacts, priorTotals.contacts)}
                 sparkColor="#10b981"
                 delay={0}
@@ -153,20 +173,20 @@ export default async function GhlCrmPage({
                 delay={1}
               />
               <SparkMetricCard
-                label="Missed Calls"
-                value={fmtNum(totals.missed)}
-                sparkData={data.map(r => ({ v: Number(r.missed_calls) || 0 }))}
-                delta={calcDelta(totals.missed, priorTotals.missed)}
-                invertDelta
-                sparkColor="#f59e0b"
+                label="New Opportunities"
+                value={fmtNum(totals.newOpps)}
+                sparkData={data.map(r => ({ v: Number(r.new_opportunities) || 0 }))}
+                delta={calcDelta(totals.newOpps, priorTotals.newOpps)}
+                sparkColor="#8b5cf6"
                 delay={2}
               />
               <SparkMetricCard
-                label="Forms Submitted"
-                value={fmtNum(totals.forms)}
-                sparkData={data.map(r => ({ v: Number(r.forms_submitted) || 0 }))}
-                delta={calcDelta(totals.forms, priorTotals.forms)}
-                sparkColor="#6366f1"
+                label="Won"
+                value={fmtNum(totals.wonOpps)}
+                sparkData={data.map(r => ({ v: Number(r.won_opportunities) || 0 }))}
+                delta={calcDelta(totals.wonOpps, priorTotals.wonOpps)}
+                sparkColor="#f59e0b"
+                sub={totals.wonValue > 0 ? fmt$(totals.wonValue) : undefined}
                 delay={3}
               />
             </div>
@@ -174,32 +194,59 @@ export default async function GhlCrmPage({
             {/* Secondary metrics */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: 'Reviews Received', value: fmtNum(totals.reviews), hint: undefined },
-                { label: 'Spam Leads',        value: fmtNum(totals.spam),    hint: undefined },
-                { label: 'Emails Sent',        value: fmtNum(totals.emails),  hint: undefined },
-                { label: 'SMS Sent',           value: fmtNum(totals.sms),     hint: undefined },
-              ].map(({ label, value, hint }) => (
+                { label: 'Forms Submitted',  value: fmtNum(totals.forms)   },
+                { label: 'Missed Calls',     value: fmtNum(totals.missed),  sub: pct(totals.missed, totals.calls) },
+                { label: 'Reviews Received', value: fmtNum(totals.reviews) },
+                { label: 'Lost Opps',        value: fmtNum(totals.lostOpps) },
+              ].map(({ label, value, sub }) => (
                 <div key={label} className="card" style={{ padding: '1rem 1.25rem' }}>
                   <p className="metric-label" style={{ marginBottom: '0.25rem' }}>{label}</p>
                   <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{value}</p>
-                  {hint && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{hint}</p>}
+                  {sub && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{sub}</p>}
                 </div>
               ))}
             </div>
 
-            {/* Call answer rate */}
+            {/* Call performance */}
             {totals.calls > 0 && (
               <div className="card p-6">
                 <h2 className="section-title mb-4">Call Performance</h2>
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                  <Stat label="Total Calls"   value={fmtNum(totals.calls)} />
-                  <Stat label="Answered"      value={fmtNum(totals.calls - totals.missed)} />
-                  <Stat label="Missed"        value={fmtNum(totals.missed)} sub={pct(totals.missed, totals.calls)} />
+                  <Stat label="Total Calls" value={fmtNum(totals.calls)} />
+                  <Stat label="Answered"    value={fmtNum(totals.calls - totals.missed)} />
+                  <Stat label="Missed"      value={fmtNum(totals.missed)} sub={pct(totals.missed, totals.calls)} />
                 </div>
               </div>
             )}
 
-            {/* Daily trend table */}
+            {/* Forms & Surveys breakdown */}
+            {formList.length > 0 && (
+              <div className="card p-6">
+                <h2 className="section-title mb-4">Forms &amp; Surveys</h2>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="data-table" style={{ width: '100%', fontSize: '0.8125rem' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left' }}>Name</th>
+                        <th style={{ textAlign: 'left' }}>Type</th>
+                        <th style={{ textAlign: 'right' }}>Submissions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {formList.map(f => (
+                        <tr key={f.id}>
+                          <td style={{ color: 'var(--text-primary)' }}>{f.name}</td>
+                          <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{f.type}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtNum(f.count)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Daily breakdown */}
             {data.length > 0 && (
               <div className="card p-6">
                 <h2 className="section-title mb-4">Daily Breakdown</h2>
@@ -212,8 +259,9 @@ export default async function GhlCrmPage({
                         <th style={{ textAlign: 'right' }}>Calls</th>
                         <th style={{ textAlign: 'right' }}>Missed</th>
                         <th style={{ textAlign: 'right' }}>Forms</th>
-                        <th style={{ textAlign: 'right' }}>Emails</th>
-                        <th style={{ textAlign: 'right' }}>SMS</th>
+                        <th style={{ textAlign: 'right' }}>New Opps</th>
+                        <th style={{ textAlign: 'right' }}>Won</th>
+                        <th style={{ textAlign: 'right' }}>Won Value</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -221,13 +269,16 @@ export default async function GhlCrmPage({
                         <tr key={r.date}>
                           <td style={{ color: 'var(--text-secondary)' }}>{r.date}</td>
                           <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.contacts_created) || 0)}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.total_calls)      || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.total_calls) || 0)}</td>
                           <td style={{ textAlign: 'right', color: r.missed_calls > 0 ? 'var(--amber, #f59e0b)' : undefined }}>
                             {fmtNum(Number(r.missed_calls) || 0)}
                           </td>
                           <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.forms_submitted) || 0)}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.emails_sent)    || 0)}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.sms_sent)       || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.new_opportunities) || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.won_opportunities) || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            {Number(r.won_value) > 0 ? fmt$(Number(r.won_value)) : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

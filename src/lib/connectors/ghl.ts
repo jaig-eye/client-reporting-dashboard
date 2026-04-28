@@ -4,15 +4,15 @@
 // Auth: { api_key: string }   Config: { location_id: string }
 // External ID: the GHL location ID
 //
-// Fetches: contacts created, calls, form submissions, emails, SMS, reviews per day
+// Fetches per day: contacts created, calls, forms+surveys submitted,
+//                  opportunities (new/won/lost + won value), reviews
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
-// Conversation channel types (thread-level, used on /conversations/search objects)
-// TYPE_PHONE covers inbound/outbound calls; others cover the channel.
+// Conversation channel types (thread-level) + message action types (message-level)
 const CALL_TYPES  = new Set([
   'TYPE_PHONE',                                                              // conversation channel
   'TYPE_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL',  // message action types
@@ -25,19 +25,30 @@ const SMS_TYPES   = new Set([
   'TYPE_SMS_REVIEW_REQUEST', 'TYPE_SMS_NO_SHOW_REQUEST',
 ])
 
+export interface FormBreakdownItem {
+  id:    string
+  name:  string
+  type:  'form' | 'survey'
+  count: number
+}
+
 /** Raw GHL metric row — one per day. */
 export interface GhlRawRow {
-  date: string
-  contacts_created: number
-  total_calls:      number
-  missed_calls:     number
-  forms_submitted:  number
-  reviews_sent:     number
-  reviews_received: number
-  spam_leads:       number
-  emails_sent:      number
-  sms_sent:         number
-  raw_data:         Record<string, unknown>
+  date:               string
+  contacts_created:   number
+  total_calls:        number
+  missed_calls:       number
+  forms_submitted:    number
+  reviews_sent:       number
+  reviews_received:   number
+  spam_leads:         number
+  emails_sent:        number
+  sms_sent:           number
+  new_opportunities:  number
+  won_opportunities:  number
+  lost_opportunities: number
+  won_value:          number
+  raw_data:           Record<string, unknown>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +59,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 /**
  * GHL date fields can be ISO strings OR Unix timestamps (number or numeric string).
- * Handles all three: ISO string, 13-digit ms number, 10-digit second number.
  */
 function parseGhlDate(val: unknown): { ts: number; iso: string; date: string } | null {
   if (val == null) return null
@@ -118,10 +128,6 @@ async function ghlGet(
   throw new Error('GHL API: max retries exceeded')
 }
 
-/**
- * Paginate GET /contacts/ using meta.startAfter + meta.startAfterId cursors.
- * No server-side date filter — fetch all, filter client-side by dateAdded.
- */
 async function paginateContacts(
   apiKey: string,
   locationId: string
@@ -187,8 +193,6 @@ async function fetchConversations(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
-  // Conversations API uses version 2021-04-15 and startAfterDate cursor pagination.
-  // lastMessageDate is often a Unix ms timestamp (not ISO string) — use parseGhlDate everywhere.
   const all: Record<string, unknown>[] = []
   let startAfterDate: string | undefined
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
@@ -209,7 +213,6 @@ async function fetchConversations(
 
       console.log(`[ghl] conversations page ${page + 1}: ${items.length} items (total ${all.length})`)
       if (page === 0 && items.length > 0) {
-        // Log raw sample to verify date format and type field
         const sample = items[0] as Record<string, unknown>
         console.log('[ghl] sample conversation fields:', {
           type: sample.type,
@@ -221,16 +224,13 @@ async function fetchConversations(
 
       if (items.length === 0) break
 
-      // Stop when oldest conversation's lastMessageDate is before our range
-      const oldest      = items[items.length - 1] as Record<string, unknown>
+      const oldest       = items[items.length - 1] as Record<string, unknown>
       const oldestParsed = parseGhlDate(oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded)
       if (oldestParsed && oldestParsed.ts < fromMs) break
       if (items.length < 100) break
 
-      // Cursor must be the raw lastMessageDate value (Unix ms number as string).
-      // Sending an ISO string causes a 400 "failed to parse search_after" error.
       const rawCursor = oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded
-      startAfterDate = rawCursor != null ? String(rawCursor) : ''
+      startAfterDate  = rawCursor != null ? String(rawCursor) : ''
       if (!startAfterDate) break
     }
   } catch (e) {
@@ -248,7 +248,6 @@ async function fetchConversations(
     const typ = String(conv.type || '').toUpperCase()
     allTypeCounts[typ] = (allTypeCounts[typ] ?? 0) + 1
 
-    // Use lastMessageDate for when the activity happened, not dateAdded (thread creation)
     const parsed = parseGhlDate(conv.lastMessageDate ?? conv.dateUpdated ?? conv.dateAdded ?? conv.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
 
@@ -257,8 +256,7 @@ async function fetchConversations(
 
     if (CALL_TYPES.has(typ)) {
       ex.totalCalls++
-      const unread = Number(conv.unreadCount ?? 0)
-      if (unread > 0) ex.missedCalls++
+      if (Number(conv.unreadCount ?? 0) > 0) ex.missedCalls++
     } else if (EMAIL_TYPES.has(typ)) {
       ex.emailsSent++
     } else if (SMS_TYPES.has(typ)) {
@@ -273,60 +271,176 @@ async function fetchConversations(
   return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
 }
 
-async function fetchFormSubmissions(
+type FormsResult = {
+  rows:     { date: string; count: number; breakdown: FormBreakdownItem[] }[]
+  // totalBreakdown is the aggregate across all days — identical to summing rows[*].breakdown by id
+  totalBreakdown: FormBreakdownItem[]
+}
+
+/** Fetches both forms and surveys, returning per-day counts + per-form/survey breakdown. */
+async function fetchFormsAndSurveys(
   apiKey: string,
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; count: number }[]> {
-  let forms: Record<string, unknown>[] = []
+): Promise<FormsResult> {
+  // ── 1. Collect all form/survey items ────────────────────────────────────────
+  type Item = { id: string; name: string; type: 'form' | 'survey' }
+  const items: Item[] = []
+
+  // Forms
   try {
     let skip = 0
     for (;;) {
       const data  = await ghlGet('/forms/', apiKey, { locationId, limit: '50', skip: String(skip) })
       const batch = (data.forms as Record<string, unknown>[]) ?? []
-      forms.push(...batch)
+      for (const f of batch) items.push({ id: String(f.id || ''), name: String(f.name || f.title || f.id || ''), type: 'form' })
       if (batch.length < 50) break
       skip += 50
     }
-  } catch {
-    return []
-  }
+  } catch { /* continue with surveys */ }
 
-  const byDate = new Map<string, number>()
+  // Surveys
+  try {
+    let skip = 0
+    for (;;) {
+      const data  = await ghlGet('/surveys/', apiKey, { locationId, limit: '50', skip: String(skip) })
+      const batch = (data.surveys as Record<string, unknown>[]) ?? []
+      for (const s of batch) items.push({ id: String(s.id || ''), name: String(s.name || s.title || s.id || ''), type: 'survey' })
+      if (batch.length < 50) break
+      skip += 50
+    }
+  } catch { /* surveys endpoint not available on all plans */ }
 
-  for (const form of forms) {
-    const formId = String(form.id || '')
-    if (!formId) continue
+  console.log(`[ghl] forms/surveys: ${items.filter(i => i.type === 'form').length} forms, ${items.filter(i => i.type === 'survey').length} surveys`)
+
+  // ── 2. Fetch submissions per item ────────────────────────────────────────────
+  // byDate: date → { total, perItem: itemId → count }
+  const byDate = new Map<string, { total: number; perItem: Map<string, number> }>()
+
+  for (const item of items) {
+    if (!item.id) continue
+    const submissionKey = item.type === 'form' ? 'formId' : 'surveyId'
+    const subPath       = item.type === 'form' ? '/forms/submissions' : '/surveys/submissions'
 
     try {
       let pg = 1
       for (;;) {
-        const data = await ghlGet('/forms/submissions', apiKey, {
+        const data = await ghlGet(subPath, apiKey, {
           locationId,
-          formId,
+          [submissionKey]: item.id,
           limit:   '100',
           page:    String(pg),
           startAt: dateFrom,
           endAt:   dateTo,
         })
         const subs = (data.submissions as Record<string, unknown>[]) ?? []
+
         for (const sub of subs) {
-          const parsed = parseGhlDate(sub.createdAt ?? sub.dateAdded)
+          const parsed = parseGhlDate(sub.createdAt ?? sub.dateAdded ?? sub.submittedAt)
           if (!parsed) continue
-          byDate.set(parsed.date, (byDate.get(parsed.date) ?? 0) + 1)
+          const day = byDate.get(parsed.date) ?? { total: 0, perItem: new Map() }
+          day.total++
+          day.perItem.set(item.id, (day.perItem.get(item.id) ?? 0) + 1)
+          byDate.set(parsed.date, day)
         }
+
         if (subs.length < 100) break
         pg++
         await sleep(200)
       }
-    } catch {
-      // Skip this form on error
-    }
-    await sleep(300)
+    } catch { /* skip this item on error */ }
+    await sleep(200)
   }
 
-  return Array.from(byDate.entries()).map(([date, count]) => ({ date, count }))
+  // ── 3. Build output ──────────────────────────────────────────────────────────
+  // Build item name+type map for quick lookup
+  const itemMeta = new Map(items.map(i => [i.id, { name: i.name, type: i.type }]))
+
+  // Aggregate breakdown across all days
+  const totalPerItem = new Map<string, number>()
+  for (const day of Array.from(byDate.values())) {
+    for (const [id, count] of Array.from(day.perItem.entries())) {
+      totalPerItem.set(id, (totalPerItem.get(id) ?? 0) + count)
+    }
+  }
+
+  const totalBreakdown: FormBreakdownItem[] = Array.from(totalPerItem.entries())
+    .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: itemMeta.get(id)?.type ?? 'form', count }))
+    .sort((a, b) => b.count - a.count)
+
+  const rows = Array.from(byDate.entries()).map(([date, { total, perItem }]) => ({
+    date,
+    count: total,
+    breakdown: Array.from(perItem.entries())
+      .map(([id, count]) => ({ id, name: itemMeta.get(id)?.name ?? id, type: itemMeta.get(id)?.type ?? 'form' as const, count }))
+      .sort((a, b) => b.count - a.count),
+  }))
+
+  console.log(`[ghl] form/survey total submissions: ${totalBreakdown.reduce((s, i) => s + i.count, 0)}`)
+  return { rows, totalBreakdown }
+}
+
+async function fetchOpportunities(
+  apiKey: string,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<{ date: string; newOpps: number; wonOpps: number; lostOpps: number; wonValue: number }[]> {
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+  const all: Record<string, unknown>[] = []
+
+  try {
+    let page = 1
+    for (let attempts = 0; attempts < 100; attempts++) {
+      const data  = await ghlGet('/opportunities/search', apiKey, {
+        location_id: locationId,
+        startDate:   dateFrom,
+        endDate:     dateTo,
+        limit:       '100',
+        page:        String(page),
+      })
+      const opps = (data.opportunities as Record<string, unknown>[]) ?? []
+      all.push(...opps)
+
+      // Cursor-based pagination fallback
+      const meta = data.meta as Record<string, unknown> | undefined
+      if (meta?.startAfter != null && opps.length === 100) {
+        page++
+        continue
+      }
+      if (opps.length < 100) break
+      page++
+    }
+  } catch (e) {
+    console.log(`[ghl] opportunities/search failed: ${String(e)}`)
+    return []
+  }
+
+  console.log(`[ghl] opportunities fetched: ${all.length}`)
+
+  const byDate = new Map<string, { newOpps: number; wonOpps: number; lostOpps: number; wonValue: number }>()
+
+  for (const opp of all) {
+    const parsed = parseGhlDate(opp.dateAdded ?? opp.createdAt)
+    if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
+
+    const ex     = byDate.get(parsed.date) ?? { newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 }
+    const status = String(opp.status || '').toLowerCase()
+    const value  = Number(opp.monetaryValue ?? opp.value ?? 0)
+
+    ex.newOpps++
+    if (status === 'won') {
+      ex.wonOpps++
+      ex.wonValue += value
+    } else if (status === 'lost') {
+      ex.lostOpps++
+    }
+    byDate.set(parsed.date, ex)
+  }
+
+  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
 }
 
 async function fetchReviews(
@@ -361,9 +475,7 @@ async function fetchReviews(
       page++
       await sleep(200)
     }
-  } catch {
-    // Reviews endpoint may not be available on all plans
-  }
+  } catch { /* reviews endpoint may not be available on all plans */ }
 
   return Array.from(byDate.entries()).map(([date, received]) => ({ date, received }))
 }
@@ -391,37 +503,46 @@ export const ghlConnector: ConnectorAdapter = {
 
     try {
       // Sequential to avoid burst rate limits
-      const contactData = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
+      const contactData  = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
 
-      const convData  = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
-      const formData  = await fetchFormSubmissions(apiKey, locationId, dateFrom, dateTo)
-      const reviewData = await fetchReviews(apiKey, locationId, dateFrom, dateTo)
-      console.log(`[ghl] forms: ${formData.reduce((s, d) => s + d.count, 0)}, reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
+      const convData     = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
+      const formsResult  = await fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo)
+      const oppData      = await fetchOpportunities(apiKey, locationId, dateFrom, dateTo)
+      const reviewData   = await fetchReviews(apiKey, locationId, dateFrom, dateTo)
+      console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
 
-      const allDates    = dateRange(dateFrom, dateTo)
-      const contactMap  = new Map(contactData.map(d  => [d.date, d]))
-      const convMap     = new Map(convData.map(d     => [d.date, d]))
-      const formMap     = new Map(formData.map(d     => [d.date, d]))
-      const reviewMap   = new Map(reviewData.map(d   => [d.date, d]))
+      const allDates   = dateRange(dateFrom, dateTo)
+      const contactMap = new Map(contactData.map(d  => [d.date, d]))
+      const convMap    = new Map(convData.map(d      => [d.date, d]))
+      const formMap    = new Map(formsResult.rows.map(d => [d.date, d]))
+      const oppMap     = new Map(oppData.map(d       => [d.date, d]))
+      const reviewMap  = new Map(reviewData.map(d    => [d.date, d]))
 
       const rows: GhlRawRow[] = allDates.map(date => {
-        const c = contactMap.get(date)
-        const v = convMap.get(date)
-        const f = formMap.get(date)
+        const c  = contactMap.get(date)
+        const v  = convMap.get(date)
+        const f  = formMap.get(date)
+        const o  = oppMap.get(date)
         const rv = reviewMap.get(date)
         return {
           date,
-          contacts_created: c?.count           ?? 0,
-          total_calls:      v?.totalCalls       ?? 0,
-          missed_calls:     v?.missedCalls      ?? 0,
-          forms_submitted:  f?.count            ?? 0,
-          reviews_sent:     0,
-          reviews_received: rv?.received        ?? 0,
-          spam_leads:       c?.spam             ?? 0,
-          emails_sent:      v?.emailsSent       ?? 0,
-          sms_sent:         v?.smsSent          ?? 0,
-          raw_data:         {},
+          contacts_created:   c?.count            ?? 0,
+          total_calls:        v?.totalCalls        ?? 0,
+          missed_calls:       v?.missedCalls       ?? 0,
+          forms_submitted:    f?.count             ?? 0,
+          reviews_sent:       0,
+          reviews_received:   rv?.received         ?? 0,
+          spam_leads:         c?.spam              ?? 0,
+          emails_sent:        v?.emailsSent        ?? 0,
+          sms_sent:           v?.smsSent           ?? 0,
+          new_opportunities:  o?.newOpps           ?? 0,
+          won_opportunities:  o?.wonOpps           ?? 0,
+          lost_opportunities: o?.lostOpps          ?? 0,
+          won_value:          o?.wonValue          ?? 0,
+          raw_data: {
+            form_breakdown: f?.breakdown ?? [],
+          },
         }
       })
 

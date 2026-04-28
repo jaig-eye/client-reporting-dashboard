@@ -164,21 +164,24 @@ export default async function DashboardPage({
   )
 
   // ─── CRM (GHL) data ───────────────────────────────────────────────────────
-  let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0 }
+  let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0, newOpps: 0, wonOpps: 0, wonValue: 0 }
   if (hasGhl) {
     const { data: ghlRows } = await db.from('ghl_metrics')
-      .select('contacts_created,total_calls,missed_calls,forms_submitted,spam_leads,emails_sent,sms_sent')
+      .select('contacts_created,total_calls,missed_calls,forms_submitted,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,won_value')
       .eq('client_id', client.id)
       .gte('date', fmtDate(fromDate))
       .lte('date', fmtDate(toDate))
-    for (const r of (ghlRows ?? []) as { contacts_created: number; total_calls: number; missed_calls: number; forms_submitted: number; spam_leads: number; emails_sent: number; sms_sent: number }[]) {
-      ghlTotals.contacts    += Number(r.contacts_created) || 0
-      ghlTotals.calls       += Number(r.total_calls)      || 0
-      ghlTotals.missedCalls += Number(r.missed_calls)     || 0
-      ghlTotals.forms       += Number(r.forms_submitted)  || 0
-      ghlTotals.spam        += Number(r.spam_leads)       || 0
-      ghlTotals.emailsSent  += Number(r.emails_sent)      || 0
-      ghlTotals.smsSent     += Number(r.sms_sent)         || 0
+    for (const r of (ghlRows ?? []) as { contacts_created: number; total_calls: number; missed_calls: number; forms_submitted: number; spam_leads: number; emails_sent: number; sms_sent: number; new_opportunities: number; won_opportunities: number; won_value: number }[]) {
+      ghlTotals.contacts    += Number(r.contacts_created)  || 0
+      ghlTotals.calls       += Number(r.total_calls)        || 0
+      ghlTotals.missedCalls += Number(r.missed_calls)       || 0
+      ghlTotals.forms       += Number(r.forms_submitted)    || 0
+      ghlTotals.spam        += Number(r.spam_leads)         || 0
+      ghlTotals.emailsSent  += Number(r.emails_sent)        || 0
+      ghlTotals.smsSent     += Number(r.sms_sent)           || 0
+      ghlTotals.newOpps     += Number(r.new_opportunities)  || 0
+      ghlTotals.wonOpps     += Number(r.won_opportunities)  || 0
+      ghlTotals.wonValue    += Number(r.won_value)          || 0
     }
   }
 
@@ -785,14 +788,15 @@ export default async function DashboardPage({
                     {ghlTotals.missedCalls > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--amber, #f59e0b)' }}>{ghlTotals.missedCalls} missed</p>}
                   </div>
                   <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Forms Submitted</p>
-                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.forms)}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Opportunities</p>
+                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.newOpps)}</p>
+                    {ghlTotals.forms > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{fmtNum(ghlTotals.forms)} forms</p>}
                   </div>
-                  {(ghlTotals.emailsSent > 0 || ghlTotals.smsSent > 0) && (
+                  {ghlTotals.wonOpps > 0 && (
                     <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                      <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Outreach</p>
-                      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.emailsSent + ghlTotals.smsSent)}</p>
-                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{ghlTotals.emailsSent} emails · {ghlTotals.smsSent} SMS</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Won</p>
+                      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.wonOpps)}</p>
+                      {ghlTotals.wonValue > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{fmt$(ghlTotals.wonValue)}</p>}
                     </div>
                   )}
                 </div>
