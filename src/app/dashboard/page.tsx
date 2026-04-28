@@ -866,6 +866,22 @@ export default async function DashboardPage({
           </>
         )}
 
+        {/* ── Local Dominator ──────────────────────────────────── */}
+        {client.local_dominator_url && (
+          <div>
+            <h2 className="section-title">Local Dominator</h2>
+            <div className="card" style={{ overflow: 'hidden', padding: 0, marginTop: '0.75rem' }}>
+              <iframe
+                src={client.local_dominator_url}
+                style={{ display: 'block', width: '100%', height: 520, border: 'none' }}
+                title="Local Dominator"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   )

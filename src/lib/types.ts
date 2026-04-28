@@ -173,6 +173,8 @@ export interface Client {
   monthly_budget?: number | null
   /** Discord channel ID for per-client notifications (requires agency discord_bot_token). */
   discord_channel_id?: string | null
+  /** Local Dominator share link — embedded full-width on the client dashboard summary page. */
+  local_dominator_url?: string | null
   created_at: string
   updated_at: string
 }

@@ -8,12 +8,13 @@ interface Props {
   name: string
   slug: string
   discordChannelId?: string | null
+  localDominatorUrl?: string | null
 }
 
-export default function EditClientInfo({ clientId, name, slug, discordChannelId }: Props) {
+export default function EditClientInfo({ clientId, name, slug, discordChannelId, localDominatorUrl }: Props) {
   const router = useRouter()
   const [editing, setEditing] = useState(false)
-  const [values,  setValues]  = useState({ name, slug, discord_channel_id: discordChannelId ?? '' })
+  const [values,  setValues]  = useState({ name, slug, discord_channel_id: discordChannelId ?? '', local_dominator_url: localDominatorUrl ?? '' })
   const [status,  setStatus]  = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -23,7 +24,7 @@ export default function EditClientInfo({ clientId, name, slug, discordChannelId 
   }
 
   function resetValues() {
-    setValues({ name, slug, discord_channel_id: discordChannelId ?? '' })
+    setValues({ name, slug, discord_channel_id: discordChannelId ?? '', local_dominator_url: localDominatorUrl ?? '' })
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -54,6 +55,9 @@ export default function EditClientInfo({ clientId, name, slug, discordChannelId 
         <Row label="Slug"  value={values.slug} mono />
         {values.discord_channel_id && (
           <Row label="Discord Channel ID" value={values.discord_channel_id} mono />
+        )}
+        {values.local_dominator_url && (
+          <Row label="Local Dominator URL" value={values.local_dominator_url} mono />
         )}
         <button
           onClick={() => setEditing(true)}
@@ -93,6 +97,17 @@ export default function EditClientInfo({ clientId, name, slug, discordChannelId 
           value={values.discord_channel_id}
           onChange={e => field('discord_channel_id', e.target.value)}
           placeholder="e.g. 123456789012345678"
+        />
+      </div>
+      <div>
+        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+          Local Dominator URL <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— optional, embeds share link on client dashboard</span>
+        </label>
+        <input
+          className="input"
+          value={values.local_dominator_url}
+          onChange={e => field('local_dominator_url', e.target.value)}
+          placeholder="https://…"
         />
       </div>
       <div className="flex items-center gap-2">
