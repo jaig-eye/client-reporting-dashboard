@@ -208,7 +208,8 @@ export async function syncClient(
           result.rows as MetaAdsRawRow[],
           result.discoveredActions ?? []
         )
-        // Ad-level sync (best-effort)
+        // Ad-level sync (best-effort) — rows counted separately so the UI shows
+        // the true total (campaign rows + ad rows) instead of just campaign rows.
         try {
           const adRows = await fetchMetaAdMetrics(
             connection.external_id,
@@ -218,7 +219,8 @@ export async function syncClient(
           )
           console.log(`[sync] Meta ad-level: ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
-            await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
+            const adCount = await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
+            recordCount += adCount
           }
         } catch (adErr) {
           adLevelError = `Ad-level sync failed: ${String(adErr)}`
