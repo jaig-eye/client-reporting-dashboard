@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   chart_color_prior_spend:       '#94a3b8',
   chart_color_conversions:       '#059669',
   chart_color_prior_conversions: '#34d399',
+  crm_name:                      'CRM',
 }
 
 export async function getAgencySettings(): Promise<AgencySettings> {

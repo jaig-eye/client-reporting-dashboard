@@ -49,6 +49,7 @@ interface Settings {
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
   discord_bot_token:              string
+  crm_name:                       string
 }
 
 const DEFAULT: Settings = {
@@ -81,6 +82,7 @@ const DEFAULT: Settings = {
   metric_layouts:                 null,
   hidden_connector_types:         [],
   discord_bot_token:              '',
+  crm_name:                       'CRM',
 }
 
 const TABS = [
@@ -258,6 +260,14 @@ export default function AgencySettingsPage() {
                   placeholder="Or paste image URL…"
                 />
               </div>
+            </FormField>
+            <FormField label="CRM Integration Name" hint="White-label name shown to clients (e.g. 'CRM', 'Pipeline', 'GoHighLevel')">
+              <input
+                className="input"
+                value={form.crm_name}
+                onChange={e => field('crm_name', e.target.value)}
+                placeholder="CRM"
+              />
             </FormField>
           </div>
         )}

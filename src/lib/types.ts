@@ -185,6 +185,8 @@ export interface AgencySettings {
   id: string
   agency_name: string
   agency_logo_url?: string
+  /** White-label name for the CRM integration shown to clients (default: 'CRM'). */
+  crm_name?: string
   /** Performance benchmark targets used in the Efficiency Score calculation. */
   benchmark_roas: number
   benchmark_ctr: number

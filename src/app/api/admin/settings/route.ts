@@ -47,6 +47,7 @@ export async function PUT(request: NextRequest) {
     'hidden_connector_types',
     'discord_bot_token',
     'ad_fuel_cutoff_date',
+    'crm_name',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

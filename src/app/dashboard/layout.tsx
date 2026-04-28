@@ -153,6 +153,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
               agencyName={settings?.agency_name}
               clientLogoUrl={client.logo_url}
               clientName={client.name}
+              crmName={settings?.crm_name ?? 'CRM'}
             />
           </Suspense>
         )}

@@ -769,12 +769,12 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* ── CRM Activity (GoHighLevel) ───────────────────────── */}
+            {/* ── CRM Activity ─────────────────────────────────────── */}
             {hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
               <div className="card p-6">
                 <div className="mb-4">
                   <h2 className="section-title">CRM Activity</h2>
-                  <p className="section-desc">GoHighLevel data for {fmtDate(fromDate)} – {fmtDate(toDate)}</p>
+                  <p className="section-desc">{settings.crm_name ?? 'CRM'} data for {fmtDate(fromDate)} – {fmtDate(toDate)}</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   <div className="card p-4" style={{ background: 'var(--bg-base)' }}>

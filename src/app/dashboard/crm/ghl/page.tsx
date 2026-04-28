@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
+import { getAgencySettings } from '@/lib/agency-settings'
 import type { Client } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
@@ -49,9 +50,14 @@ export default async function GhlCrmPage({
   const token = cookieStore.get('client_token')?.value
   if (!token) redirect('/access')
 
-  const { data: clientData } = await db.from('clients').select('*').eq('dashboard_token', token).single()
+  const [{ data: clientData }, settings] = await Promise.all([
+    db.from('clients').select('*').eq('dashboard_token', token).single(),
+    getAgencySettings(),
+  ])
   const client = clientData as Client | null
   if (!client) redirect('/access')
+
+  const crmName = settings.crm_name ?? 'CRM'
 
   const toDate   = params.to   ? new Date(params.to)   : new Date()
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -137,7 +143,7 @@ export default async function GhlCrmPage({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              CRM — GoHighLevel
+              {crmName}
             </h1>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 3 }}>
               {fmtDate(fromDate)} – {fmtDate(toDate)}
@@ -149,7 +155,7 @@ export default async function GhlCrmPage({
         {noData ? (
           <div className="card p-12 text-center">
             <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>No CRM data for this period</p>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Data syncs daily from GoHighLevel. Try a wider date range.</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Data syncs daily from {crmName}. Try a wider date range.</p>
           </div>
         ) : (
           <>
@@ -165,10 +171,10 @@ export default async function GhlCrmPage({
                 delay={0}
               />
               <SparkMetricCard
-                label="Total Calls"
-                value={fmtNum(totals.calls)}
-                sparkData={data.map(r => ({ v: Number(r.total_calls) || 0 }))}
-                delta={calcDelta(totals.calls, priorTotals.calls)}
+                label="Forms Submitted"
+                value={fmtNum(totals.forms)}
+                sparkData={data.map(r => ({ v: Number(r.forms_submitted) || 0 }))}
+                delta={calcDelta(totals.forms, priorTotals.forms)}
                 sparkColor="#3b82f6"
                 delay={1}
               />
@@ -189,22 +195,6 @@ export default async function GhlCrmPage({
                 sub={totals.wonValue > 0 ? fmt$(totals.wonValue) : undefined}
                 delay={3}
               />
-            </div>
-
-            {/* Secondary metrics */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                { label: 'Forms Submitted',  value: fmtNum(totals.forms)   },
-                { label: 'Missed Calls',     value: fmtNum(totals.missed),  sub: pct(totals.missed, totals.calls) },
-                { label: 'Reviews Received', value: fmtNum(totals.reviews) },
-                { label: 'Lost Opps',        value: fmtNum(totals.lostOpps) },
-              ].map(({ label, value, sub }) => (
-                <div key={label} className="card" style={{ padding: '1rem 1.25rem' }}>
-                  <p className="metric-label" style={{ marginBottom: '0.25rem' }}>{label}</p>
-                  <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{value}</p>
-                  {sub && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{sub}</p>}
-                </div>
-              ))}
             </div>
 
             {/* Call performance */}

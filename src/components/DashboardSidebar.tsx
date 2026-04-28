@@ -22,6 +22,7 @@ interface SidebarProps {
   clientName?: string
   basePath?: string
   isAdminPreview?: boolean
+  crmName?: string
 }
 
 interface NavItem {
@@ -87,6 +88,7 @@ export default function DashboardSidebar({
   clientName,
   basePath = '',
   isAdminPreview = false,
+  crmName = 'CRM',
 }: SidebarProps) {
   const pathname     = usePathname()
   const searchParams = useSearchParams()
@@ -304,7 +306,7 @@ export default function DashboardSidebar({
                           />
 
                           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {child.label}
+                            {child.key === 'ghl' ? crmName : child.label}
                           </span>
 
                           {child.badge && (
