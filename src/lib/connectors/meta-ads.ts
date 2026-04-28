@@ -144,124 +144,6 @@ async function metaFetchWithRetry(url: string, maxRetries = 4): Promise<Record<s
   throw new Error('Meta API: max retries exceeded')
 }
 
-/** Split a date range into chunks of at most maxDays each. */
-function chunkDateRange(from: string, to: string, maxDays: number): { from: string; to: string }[] {
-  const chunks: { from: string; to: string }[] = []
-  let cur = new Date(from)
-  const end = new Date(to)
-  while (cur <= end) {
-    const chunkEnd = new Date(cur)
-    chunkEnd.setDate(chunkEnd.getDate() + maxDays - 1)
-    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
-    chunks.push({
-      from: cur.toISOString().split('T')[0],
-      to:   chunkEnd.toISOString().split('T')[0],
-    })
-    cur = new Date(chunkEnd)
-    cur.setDate(cur.getDate() + 1)
-  }
-  return chunks
-}
-
-/**
- * Create a Meta Insights async report job and return all rows once complete.
- *
- * Meta recommends async jobs for date ranges > 30 days.  A single POST
- * creates one server-side report (one BUC charge), avoiding the rate-limit
- * explosion that happens when 25 sequential GET /insights calls are made for
- * a 2-year backfill.
- *
- * Progress is reported from 2 % (job created) to 88 % (results ready).
- * The caller is responsible for everything above 88 %.
- */
-async function fetchMetaInsightsAsync(
-  adAccountId: string,
-  accessToken: string,
-  params: {
-    fields:        string
-    timeRange:     { since: string; until: string }
-    level:         string
-    timeIncrement: string
-    limit:         number
-  },
-  onProgress?: (pct: number, note: string) => void
-): Promise<Record<string, unknown>[]> {
-  // ── Step 1: Submit async job ──────────────────────────────────────────────
-  if (onProgress) onProgress(2, 'Creating report job…')
-
-  const createUrl = new URL(`${BASE_URL}/${adAccountId}/insights`)
-  createUrl.searchParams.set('access_token',   accessToken)
-  createUrl.searchParams.set('level',          params.level)
-  createUrl.searchParams.set('fields',         params.fields)
-  createUrl.searchParams.set('time_range',     JSON.stringify(params.timeRange))
-  createUrl.searchParams.set('time_increment', params.timeIncrement)
-  // NOTE: do NOT pass 'limit' here — it caps total job output rows.
-  //       Pagination limit is set separately on the results endpoint below.
-
-  const createRes  = await fetch(createUrl.toString(), { method: 'POST' })
-  const createData = await createRes.json() as Record<string, unknown>
-
-  if (!createRes.ok || createData.error) {
-    const e = createData.error as Record<string, unknown> | undefined
-    throw new Error(e
-      ? `Meta API error (code ${e.code}): ${e.message}`
-      : `Meta async job creation failed (HTTP ${createRes.status})`
-    )
-  }
-
-  const reportRunId = String(createData.report_run_id ?? '')
-  if (!reportRunId) throw new Error('Meta did not return a report_run_id — async job rejected')
-
-  // ── Step 2: Poll until complete ───────────────────────────────────────────
-  // Schedule: fast at first (5 s × 6), then 10 s × 18, then 20 s × 20
-  // Covers up to ~8 minutes — well inside Vercel's 13-min function timeout.
-  const POLL_MS = [
-    ...Array<number>(6).fill(5_000),
-    ...Array<number>(18).fill(10_000),
-    ...Array<number>(20).fill(20_000),
-  ]
-
-  for (let i = 0; i < POLL_MS.length; i++) {
-    await sleep(POLL_MS[i])
-
-    const statusData = await metaGet(`/${reportRunId}`, accessToken)
-    const status     = String(statusData.async_status              ?? '')
-    const jobPct     = Number(statusData.async_percent_completion  ?? 0)
-
-    // Map job 0–100 % → overall 2–88 %
-    if (onProgress) onProgress(Math.round(2 + jobPct * 0.86), `Processing report… ${jobPct}%`)
-
-    // Meta returns 'Job Complete' in docs but 'Job Completed' in practice
-    if (status === 'Job Complete' || status === 'Job Completed') break
-
-    if (status === 'Job Failed' || status === 'Job Skipped') {
-      throw new Error(`Meta async job ${status} (id: ${reportRunId})`)
-    }
-
-    if (i === POLL_MS.length - 1) {
-      throw new Error(`Meta async job timed out (last status: ${status} ${jobPct}%)`)
-    }
-  }
-
-  // ── Step 3: Paginate through results ─────────────────────────────────────
-  if (onProgress) onProgress(89, 'Fetching results…')
-
-  const rows: Record<string, unknown>[] = []
-  const firstUrl = new URL(`${BASE_URL}/${reportRunId}/insights`)
-  firstUrl.searchParams.set('access_token', accessToken)
-  firstUrl.searchParams.set('limit',        String(params.limit))
-  let nextUrl: string | null = firstUrl.toString()
-
-  while (nextUrl) {
-    const data = await metaFetchWithRetry(nextUrl)
-    rows.push(...((data.data || []) as Record<string, unknown>[]))
-    const paging = data.paging as Record<string, unknown> | undefined
-    nextUrl = (paging?.next as string) || null
-  }
-
-  return rows
-}
-
 /**
  * Fetch ad-level metrics for a Meta ad account over a date range.
  * Includes thumbnail_url fetched from the creative API in a batch request.
@@ -283,42 +165,28 @@ export async function fetchMetaAdMetrics(
   const adIdSet = new Set<string>()
   const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url' | 'image_url' | 'video_id' | 'video_thumb_url' | 'creative_body' | 'creative_title' | 'creative_link_url' | 'ad_status'>)[] = []
 
-  // Same async-vs-sync strategy as campaign-level: long ranges use a single
-  // async job (one BUC charge) to avoid the rate-limit explosion from 25
-  // sequential GET calls during a 2-year backfill.
   const adFields = [
     'campaign_id', 'campaign_name', 'adset_id', 'adset_name',
     'ad_id', 'ad_name', 'spend', 'impressions', 'clicks',
     'reach', 'actions', 'action_values',
   ].join(',')
 
-  const rangeDays = Math.ceil(
-    (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000
-  ) + 1
-
-  const rawApiRows: Record<string, unknown>[] = rangeDays > 30
-    ? await fetchMetaInsightsAsync(
-        externalId, accessToken,
-        { fields: adFields, timeRange: { since: dateFrom, until: dateTo }, level: 'ad', timeIncrement: '1', limit: 500 }
-      )
-    : await (async () => {
-        const buf: Record<string, unknown>[] = []
-        const base = new URL(`${BASE_URL}/${externalId}/insights`)
-        base.searchParams.set('access_token',   accessToken)
-        base.searchParams.set('level',          'ad')
-        base.searchParams.set('fields',         adFields)
-        base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
-        base.searchParams.set('time_increment', '1')
-        base.searchParams.set('limit',          '500')
-        let nextUrl: string | null = base.toString()
-        while (nextUrl) {
-          const data = await metaFetchWithRetry(nextUrl)
-          buf.push(...((data.data || []) as Record<string, unknown>[]))
-          const paging = data.paging as Record<string, unknown> | undefined
-          nextUrl = (paging?.next as string) || null
-        }
-        return buf
-      })()
+  // Single paginated GET — same pattern as campaign-level fetchMetrics.
+  const rawApiRows: Record<string, unknown>[] = []
+  const adBase = new URL(`${BASE_URL}/${externalId}/insights`)
+  adBase.searchParams.set('access_token',   accessToken)
+  adBase.searchParams.set('level',          'ad')
+  adBase.searchParams.set('fields',         adFields)
+  adBase.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
+  adBase.searchParams.set('time_increment', '1')
+  adBase.searchParams.set('limit',          '500')
+  let adNextUrl: string | null = adBase.toString()
+  while (adNextUrl) {
+    const data = await metaFetchWithRetry(adNextUrl)
+    rawApiRows.push(...((data.data || []) as Record<string, unknown>[]))
+    const paging = data.paging as Record<string, unknown> | undefined
+    adNextUrl = (paging?.next as string) || null
+  }
 
   for (const day of rawApiRows) {
     const rawActions      = (day.actions       || []) as Record<string, unknown>[]
@@ -596,51 +464,35 @@ export const metaAdsConnector: ConnectorAdapter = {
     const rows: MetaAdsRawRow[] = []
     const discoveredActions = new Set<string>()
 
-    // For date ranges > 30 days use Meta's async jobs API: one POST creates a
-    // server-side report (single BUC charge), avoiding the rate-limit storm
-    // that 25 sequential GET /insights calls produce during a 2-year backfill.
-    // Short ranges use a direct GET — faster with no job-polling overhead.
-    const rangeDays = Math.ceil(
-      (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000
-    ) + 1
-
     const campaignFields = [
       'campaign_id', 'campaign_name', 'objective',
       'spend', 'impressions', 'clicks', 'reach', 'frequency',
       'actions', 'action_values',
     ].join(',')
 
-    const rawDayRows: Record<string, unknown>[] = rangeDays > 30
-      ? await fetchMetaInsightsAsync(
-          externalId, accessToken,
-          {
-            fields:        campaignFields,
-            timeRange:     { since: dateFrom, until: dateTo },
-            level:         'campaign',
-            timeIncrement: '1',
-            limit:         500,
-          },
-          onProgress
-        )
-      : await (async () => {
-          if (onProgress) onProgress(5, 'Fetching insights…')
-          const buf: Record<string, unknown>[] = []
-          const base = new URL(`${BASE_URL}/${externalId}/insights`)
-          base.searchParams.set('access_token',   accessToken)
-          base.searchParams.set('level',          'campaign')
-          base.searchParams.set('fields',         campaignFields)
-          base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
-          base.searchParams.set('time_increment', '1')
-          base.searchParams.set('limit',          '500')
-          let nextUrl: string | null = base.toString()
-          while (nextUrl) {
-            const data = await metaFetchWithRetry(nextUrl)
-            buf.push(...((data.data || []) as Record<string, unknown>[]))
-            const paging = data.paging as Record<string, unknown> | undefined
-            nextUrl = (paging?.next as string) || null
-          }
-          return buf
-        })()
+    // Single paginated GET for the full date range. metaFetchWithRetry handles
+    // BUC rate-limit codes (17/32/613) that appear in HTTP 200 response bodies,
+    // so we don't need async jobs or chunking — one large request paginates cleanly.
+    if (onProgress) onProgress(5, 'Fetching insights…')
+    const rawDayRows: Record<string, unknown>[] = []
+    const base = new URL(`${BASE_URL}/${externalId}/insights`)
+    base.searchParams.set('access_token',   accessToken)
+    base.searchParams.set('level',          'campaign')
+    base.searchParams.set('fields',         campaignFields)
+    base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
+    base.searchParams.set('time_increment', '1')
+    base.searchParams.set('limit',          '500')
+    let nextUrl: string | null = base.toString()
+    while (nextUrl) {
+      const data = await metaFetchWithRetry(nextUrl)
+      const page = (data.data || []) as Record<string, unknown>[]
+      rawDayRows.push(...page)
+      if (onProgress && rawDayRows.length > 0) {
+        onProgress(Math.min(85, 10 + Math.floor(rawDayRows.length / 15)), `Fetching insights… ${rawDayRows.length} rows`)
+      }
+      const paging = data.paging as Record<string, unknown> | undefined
+      nextUrl = (paging?.next as string) || null
+    }
 
     for (const day of rawDayRows) {
       const rawActions      = (day.actions       || []) as Record<string, unknown>[]
