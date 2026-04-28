@@ -144,11 +144,25 @@ async function metaFetchWithRetry(url: string, maxRetries = 4): Promise<Record<s
   throw new Error('Meta API: max retries exceeded')
 }
 
+/** Split a date range into chunks of at most maxDays each. */
+function chunkDateRange(from: string, to: string, maxDays: number): { from: string; to: string }[] {
+  const chunks: { from: string; to: string }[] = []
+  let cur = new Date(from)
+  const end = new Date(to)
+  while (cur <= end) {
+    const chunkEnd = new Date(cur)
+    chunkEnd.setDate(chunkEnd.getDate() + maxDays - 1)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+    chunks.push({ from: cur.toISOString().split('T')[0], to: chunkEnd.toISOString().split('T')[0] })
+    cur = new Date(chunkEnd)
+    cur.setDate(cur.getDate() + 1)
+  }
+  return chunks
+}
+
 /**
  * Fetch ad-level metrics for a Meta ad account over a date range.
  * Includes thumbnail_url fetched from the creative API in a batch request.
- * Long date ranges are automatically split into 30-day chunks to avoid the
- * Meta API "Please reduce the amount of data" error on large backfills.
  */
 export async function fetchMetaAdMetrics(
   externalId: string,
@@ -171,21 +185,36 @@ export async function fetchMetaAdMetrics(
     'reach', 'actions', 'action_values',
   ].join(',')
 
-  // Single paginated GET — same pattern as campaign-level fetchMetrics.
+  // Chunk into 365-day windows — Meta silently truncates single GET requests
+  // that span more than ~1 year, which produces the "missing recent year" symptom.
   const rawApiRows: Record<string, unknown>[] = []
-  const adBase = new URL(`${BASE_URL}/${externalId}/insights`)
-  adBase.searchParams.set('access_token',   accessToken)
-  adBase.searchParams.set('level',          'ad')
-  adBase.searchParams.set('fields',         adFields)
-  adBase.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
-  adBase.searchParams.set('time_increment', '1')
-  adBase.searchParams.set('limit',          '500')
-  let adNextUrl: string | null = adBase.toString()
-  while (adNextUrl) {
-    const data = await metaFetchWithRetry(adNextUrl)
-    rawApiRows.push(...((data.data || []) as Record<string, unknown>[]))
-    const paging = data.paging as Record<string, unknown> | undefined
-    adNextUrl = (paging?.next as string) || null
+  const adChunks = chunkDateRange(dateFrom, dateTo, 365)
+  for (let ci = 0; ci < adChunks.length; ci++) {
+    const chunk = adChunks[ci]
+    const adBase = new URL(`${BASE_URL}/${externalId}/insights`)
+    adBase.searchParams.set('access_token',   accessToken)
+    adBase.searchParams.set('level',          'ad')
+    adBase.searchParams.set('fields',         adFields)
+    adBase.searchParams.set('time_range',     JSON.stringify({ since: chunk.from, until: chunk.to }))
+    adBase.searchParams.set('time_increment', '1')
+    adBase.searchParams.set('limit',          '500')
+    adBase.searchParams.set('filtering', JSON.stringify([{
+      field: 'campaign.effective_status', operator: 'IN',
+      value: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED'],
+    }]))
+    let pageNum = 0
+    let adNextUrl: string | null = adBase.toString()
+    while (adNextUrl) {
+      const data = await metaFetchWithRetry(adNextUrl)
+      const page = (data.data || []) as Record<string, unknown>[]
+      pageNum++
+      const d = page.map(r => String(r.date_start || '')).filter(Boolean)
+      console.log(`[meta] fetchMetaAdMetrics chunk ${ci+1}/${adChunks.length} (${chunk.from}–${chunk.to}) page ${pageNum}: ${page.length} rows, dates ${d[0]??'-'}→${d[d.length-1]??'-'}, has_next=${!!(data.paging as Record<string,unknown>|undefined)?.next}`)
+      rawApiRows.push(...page)
+      const paging = data.paging as Record<string, unknown> | undefined
+      adNextUrl = (typeof paging?.next === 'string' && paging.next) ? paging.next : null
+    }
+    console.log(`[meta] fetchMetaAdMetrics chunk ${ci+1} done: ${rawApiRows.length} total rows so far`)
   }
 
   for (const day of rawApiRows) {
@@ -470,28 +499,41 @@ export const metaAdsConnector: ConnectorAdapter = {
       'actions', 'action_values',
     ].join(',')
 
-    // Single paginated GET for the full date range. metaFetchWithRetry handles
-    // BUC rate-limit codes (17/32/613) that appear in HTTP 200 response bodies,
-    // so we don't need async jobs or chunking — one large request paginates cleanly.
+    // Chunk into 365-day windows — Meta silently truncates single GET requests
+    // spanning > ~1 year, causing the "missing recent year" symptom (1,019 rows
+    // for a 730-day backfill). Two chunks = 2 BUC charges, no rate-limit storm.
     if (onProgress) onProgress(5, 'Fetching insights…')
     const rawDayRows: Record<string, unknown>[] = []
-    const base = new URL(`${BASE_URL}/${externalId}/insights`)
-    base.searchParams.set('access_token',   accessToken)
-    base.searchParams.set('level',          'campaign')
-    base.searchParams.set('fields',         campaignFields)
-    base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
-    base.searchParams.set('time_increment', '1')
-    base.searchParams.set('limit',          '500')
-    let nextUrl: string | null = base.toString()
-    while (nextUrl) {
-      const data = await metaFetchWithRetry(nextUrl)
-      const page = (data.data || []) as Record<string, unknown>[]
-      rawDayRows.push(...page)
-      if (onProgress && rawDayRows.length > 0) {
-        onProgress(Math.min(85, 10 + Math.floor(rawDayRows.length / 15)), `Fetching insights… ${rawDayRows.length} rows`)
+    const camChunks = chunkDateRange(dateFrom, dateTo, 365)
+    for (let ci = 0; ci < camChunks.length; ci++) {
+      const chunk = camChunks[ci]
+      const base = new URL(`${BASE_URL}/${externalId}/insights`)
+      base.searchParams.set('access_token',   accessToken)
+      base.searchParams.set('level',          'campaign')
+      base.searchParams.set('fields',         campaignFields)
+      base.searchParams.set('time_range',     JSON.stringify({ since: chunk.from, until: chunk.to }))
+      base.searchParams.set('time_increment', '1')
+      base.searchParams.set('limit',          '500')
+      base.searchParams.set('filtering', JSON.stringify([{
+        field: 'campaign.effective_status', operator: 'IN',
+        value: ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED'],
+      }]))
+      let pageNum = 0
+      let nextUrl: string | null = base.toString()
+      while (nextUrl) {
+        const data = await metaFetchWithRetry(nextUrl)
+        const page = (data.data || []) as Record<string, unknown>[]
+        pageNum++
+        const d = page.map(r => String(r.date_start || '')).filter(Boolean)
+        console.log(`[meta] fetchMetrics chunk ${ci+1}/${camChunks.length} (${chunk.from}–${chunk.to}) page ${pageNum}: ${page.length} rows, dates ${d[0]??'-'}→${d[d.length-1]??'-'}, has_next=${!!(data.paging as Record<string,unknown>|undefined)?.next}`)
+        rawDayRows.push(...page)
+        if (onProgress && rawDayRows.length > 0) {
+          onProgress(Math.min(85, 10 + Math.floor(rawDayRows.length / 15)), `Fetching insights… ${rawDayRows.length} rows`)
+        }
+        const paging = data.paging as Record<string, unknown> | undefined
+        nextUrl = (typeof paging?.next === 'string' && paging.next) ? paging.next : null
       }
-      const paging = data.paging as Record<string, unknown> | undefined
-      nextUrl = (paging?.next as string) || null
+      console.log(`[meta] fetchMetrics chunk ${ci+1} done: ${rawDayRows.length} total rows so far`)
     }
 
     for (const day of rawDayRows) {
