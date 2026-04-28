@@ -45,12 +45,12 @@ async function ghlGet(
 ): Promise<Record<string, unknown>> {
   const url = new URL(`${BASE_URL}${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-  url.searchParams.set('version', '2021-07-28')
 
   const res = await fetch(url.toString(), {
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization:  `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      Version:        '2021-07-28',
     },
   })
   if (!res.ok) {
