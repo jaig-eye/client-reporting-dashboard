@@ -113,7 +113,23 @@ async function metaFetchWithRetry(url: string, maxRetries = 4): Promise<Record<s
   let delay = 10_000 // 10 s initial back-off
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url)
-    if (res.ok) return res.json() as Promise<Record<string, unknown>>
+    if (res.ok) {
+      const json = await res.json() as Record<string, unknown>
+      if (json.error) {
+        const e    = json.error as Record<string, unknown>
+        const code = Number(e.code ?? 0)
+        const msg  = String(e.message ?? 'Unknown Meta API error')
+        // BUC rate-limit codes can arrive inside HTTP 200 responses
+        const isRateLimit = code === 17 || code === 32 || code === 613
+        if (isRateLimit && attempt < maxRetries) {
+          await sleep(delay)
+          delay = Math.min(delay * 2, 60_000)
+          continue
+        }
+        throw new Error(`Meta API error (code ${code}): ${msg}`)
+      }
+      return json
+    }
     const text = await res.text()
     // Meta rate-limit codes: 17 (user request limit), 32 (page throttle), 613 (insights limit)
     const isRateLimit = res.status === 400 || res.status === 429
@@ -148,6 +164,103 @@ function chunkDateRange(from: string, to: string, maxDays: number): { from: stri
 }
 
 /**
+ * Create a Meta Insights async report job and return all rows once complete.
+ *
+ * Meta recommends async jobs for date ranges > 30 days.  A single POST
+ * creates one server-side report (one BUC charge), avoiding the rate-limit
+ * explosion that happens when 25 sequential GET /insights calls are made for
+ * a 2-year backfill.
+ *
+ * Progress is reported from 2 % (job created) to 88 % (results ready).
+ * The caller is responsible for everything above 88 %.
+ */
+async function fetchMetaInsightsAsync(
+  adAccountId: string,
+  accessToken: string,
+  params: {
+    fields:        string
+    timeRange:     { since: string; until: string }
+    level:         string
+    timeIncrement: string
+    limit:         number
+  },
+  onProgress?: (pct: number, note: string) => void
+): Promise<Record<string, unknown>[]> {
+  // ── Step 1: Submit async job ──────────────────────────────────────────────
+  if (onProgress) onProgress(2, 'Creating report job…')
+
+  const createUrl = new URL(`${BASE_URL}/${adAccountId}/insights`)
+  createUrl.searchParams.set('access_token',   accessToken)
+  createUrl.searchParams.set('level',          params.level)
+  createUrl.searchParams.set('fields',         params.fields)
+  createUrl.searchParams.set('time_range',     JSON.stringify(params.timeRange))
+  createUrl.searchParams.set('time_increment', params.timeIncrement)
+  createUrl.searchParams.set('limit',          String(params.limit))
+
+  const createRes  = await fetch(createUrl.toString(), { method: 'POST' })
+  const createData = await createRes.json() as Record<string, unknown>
+
+  if (!createRes.ok || createData.error) {
+    const e = createData.error as Record<string, unknown> | undefined
+    throw new Error(e
+      ? `Meta API error (code ${e.code}): ${e.message}`
+      : `Meta async job creation failed (HTTP ${createRes.status})`
+    )
+  }
+
+  const reportRunId = String(createData.report_run_id ?? '')
+  if (!reportRunId) throw new Error('Meta did not return a report_run_id — async job rejected')
+
+  // ── Step 2: Poll until complete ───────────────────────────────────────────
+  // Schedule: fast at first (5 s × 6), then 10 s × 18, then 20 s × 20
+  // Covers up to ~8 minutes — well inside Vercel's 13-min function timeout.
+  const POLL_MS = [
+    ...Array<number>(6).fill(5_000),
+    ...Array<number>(18).fill(10_000),
+    ...Array<number>(20).fill(20_000),
+  ]
+
+  for (let i = 0; i < POLL_MS.length; i++) {
+    await sleep(POLL_MS[i])
+
+    const statusData = await metaGet(`/${reportRunId}`, accessToken)
+    const status     = String(statusData.async_status              ?? '')
+    const jobPct     = Number(statusData.async_percent_completion  ?? 0)
+
+    // Map job 0–100 % → overall 2–88 %
+    if (onProgress) onProgress(Math.round(2 + jobPct * 0.86), `Processing report… ${jobPct}%`)
+
+    if (status === 'Job Complete') break
+
+    if (status === 'Job Failed' || status === 'Job Skipped') {
+      throw new Error(`Meta async job ${status} (id: ${reportRunId})`)
+    }
+
+    if (i === POLL_MS.length - 1) {
+      throw new Error(`Meta async job timed out after 8 min (last: ${status} ${jobPct}%)`)
+    }
+  }
+
+  // ── Step 3: Paginate through results ─────────────────────────────────────
+  if (onProgress) onProgress(89, 'Fetching results…')
+
+  const rows: Record<string, unknown>[] = []
+  const firstUrl = new URL(`${BASE_URL}/${reportRunId}/insights`)
+  firstUrl.searchParams.set('access_token', accessToken)
+  firstUrl.searchParams.set('limit',        String(params.limit))
+  let nextUrl: string | null = firstUrl.toString()
+
+  while (nextUrl) {
+    const data = await metaFetchWithRetry(nextUrl)
+    rows.push(...((data.data || []) as Record<string, unknown>[]))
+    const paging = data.paging as Record<string, unknown> | undefined
+    nextUrl = (paging?.next as string) || null
+  }
+
+  return rows
+}
+
+/**
  * Fetch ad-level metrics for a Meta ad account over a date range.
  * Includes thumbnail_url fetched from the creative API in a batch request.
  * Long date ranges are automatically split into 30-day chunks to avoid the
@@ -168,83 +281,67 @@ export async function fetchMetaAdMetrics(
   const adIdSet = new Set<string>()
   const rawRows: (Omit<MetaAdRawRow, 'thumbnail_url' | 'image_url' | 'video_id' | 'video_thumb_url' | 'creative_body' | 'creative_title' | 'creative_link_url' | 'ad_status'>)[] = []
 
-  // Split into 30-day chunks — Meta API errors on large date ranges at ad level
-  const chunks = chunkDateRange(dateFrom, dateTo, 30)
+  // Same async-vs-sync strategy as campaign-level: long ranges use a single
+  // async job (one BUC charge) to avoid the rate-limit explosion from 25
+  // sequential GET calls during a 2-year backfill.
+  const adFields = [
+    'campaign_id', 'campaign_name', 'adset_id', 'adset_name',
+    'ad_id', 'ad_name', 'spend', 'impressions', 'clicks',
+    'reach', 'actions', 'action_values',
+  ].join(',')
 
-  for (let ci = 0; ci < chunks.length; ci++) {
-    if (ci > 0) await sleep(1_000)
-    const chunk = chunks[ci]
-    const base = new URL(`${BASE_URL}/${externalId}/insights`)
-    base.searchParams.set('access_token', accessToken)
-    base.searchParams.set('level', 'ad')
-    base.searchParams.set(
-      'fields',
-      [
-        'campaign_id',
-        'campaign_name',
-        'adset_id',
-        'adset_name',
-        'ad_id',
-        'ad_name',
-        'spend',
-        'impressions',
-        'clicks',
-        'reach',
-        'actions',
-        'action_values',
-      ].join(',')
-    )
-    base.searchParams.set('time_range', JSON.stringify({ since: chunk.from, until: chunk.to }))
-    base.searchParams.set('time_increment', '1')
-    base.searchParams.set('limit', '500')
+  const rangeDays = Math.ceil(
+    (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000
+  ) + 1
 
-    let nextUrl: string | null = base.toString()
+  const rawApiRows: Record<string, unknown>[] = rangeDays > 30
+    ? await fetchMetaInsightsAsync(
+        externalId, accessToken,
+        { fields: adFields, timeRange: { since: dateFrom, until: dateTo }, level: 'ad', timeIncrement: '1', limit: 500 }
+      )
+    : await (async () => {
+        const buf: Record<string, unknown>[] = []
+        const base = new URL(`${BASE_URL}/${externalId}/insights`)
+        base.searchParams.set('access_token',   accessToken)
+        base.searchParams.set('level',          'ad')
+        base.searchParams.set('fields',         adFields)
+        base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
+        base.searchParams.set('time_increment', '1')
+        base.searchParams.set('limit',          '500')
+        let nextUrl: string | null = base.toString()
+        while (nextUrl) {
+          const data = await metaFetchWithRetry(nextUrl)
+          buf.push(...((data.data || []) as Record<string, unknown>[]))
+          const paging = data.paging as Record<string, unknown> | undefined
+          nextUrl = (paging?.next as string) || null
+        }
+        return buf
+      })()
 
-    while (nextUrl) {
-      const data = await metaFetchWithRetry(nextUrl)
-      const dayRows = (data.data || []) as Record<string, unknown>[]
-
-      for (const day of dayRows) {
-        const rawActions      = (day.actions       || []) as Record<string, unknown>[]
-        const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
-
-        const actions = rawActions.map(a => ({
-          action_type: String(a.action_type || ''),
-          value:       String(a.value       || '0'),
-        }))
-        const actionValues = rawActionValues.map(a => ({
-          action_type: String(a.action_type || ''),
-          value:       String(a.value       || '0'),
-        }))
-
-        const conversions     = actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-        const conversionValue = actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0)
-
-        const adId = String(day.ad_id || '')
-        if (adId) adIdSet.add(adId)
-
-        rawRows.push({
-          campaign_id:      String(day.campaign_id   || ''),
-          campaign_name:    String(day.campaign_name || ''),
-          adset_id:         String(day.adset_id      || ''),
-          adset_name:       String(day.adset_name    || ''),
-          ad_id:            adId,
-          ad_name:          String(day.ad_name       || ''),
-          date:             String(day.date_start     || ''),
-          spend:            parseFloat(String(day.spend       || '0')),
-          impressions:      parseInt(  String(day.impressions || '0'), 10),
-          clicks:           parseInt(  String(day.clicks      || '0'), 10),
-          reach:            parseInt(  String(day.reach       || '0'), 10),
-          actions,
-          action_values:    actionValues,
-          conversions,
-          conversion_value: conversionValue,
-        })
-      }
-
-      const paging = data.paging as Record<string, unknown> | undefined
-      nextUrl = (paging?.next as string) || null
-    }
+  for (const day of rawApiRows) {
+    const rawActions      = (day.actions       || []) as Record<string, unknown>[]
+    const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
+    const actions      = rawActions.map(a => ({ action_type: String(a.action_type || ''), value: String(a.value || '0') }))
+    const actionValues = rawActionValues.map(a => ({ action_type: String(a.action_type || ''), value: String(a.value || '0') }))
+    const adId = String(day.ad_id || '')
+    if (adId) adIdSet.add(adId)
+    rawRows.push({
+      campaign_id:      String(day.campaign_id   || ''),
+      campaign_name:    String(day.campaign_name || ''),
+      adset_id:         String(day.adset_id      || ''),
+      adset_name:       String(day.adset_name    || ''),
+      ad_id:            adId,
+      ad_name:          String(day.ad_name       || ''),
+      date:             String(day.date_start    || ''),
+      spend:            parseFloat(String(day.spend       || '0')),
+      impressions:      parseInt(  String(day.impressions || '0'), 10),
+      clicks:           parseInt(  String(day.clicks      || '0'), 10),
+      reach:            parseInt(  String(day.reach       || '0'), 10),
+      actions,
+      action_values:    actionValues,
+      conversions:      actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
+      conversion_value: actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
+    })
   }
 
   // Batch-fetch creative assets for all unique ad_ids (once across all chunks)
@@ -490,92 +587,87 @@ export const metaAdsConnector: ConnectorAdapter = {
   ): Promise<SyncResult> {
     const accessToken = resolveToken(auth)
 
-    if (!accessToken) return { rows: [] }
+    if (!accessToken) {
+      return { rows: [], error: 'No Meta access token — check connector credentials.' }
+    }
 
     const rows: MetaAdsRawRow[] = []
     const discoveredActions = new Set<string>()
 
-    // Split into 30-day chunks — Meta BUC rate-limits large paginated requests.
-    // A 2-year backfill in one request silently truncates mid-pagination;
-    // chunking + retry keeps each call within the per-token usage budget.
-    const campaignChunks = chunkDateRange(dateFrom, dateTo, 30)
+    // For date ranges > 30 days use Meta's async jobs API: one POST creates a
+    // server-side report (single BUC charge), avoiding the rate-limit storm
+    // that 25 sequential GET /insights calls produce during a 2-year backfill.
+    // Short ranges use a direct GET — faster with no job-polling overhead.
+    const rangeDays = Math.ceil(
+      (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000
+    ) + 1
 
-    for (let ci = 0; ci < campaignChunks.length; ci++) {
-      // Small inter-chunk pause to stay within Meta BUC rate limits
-      if (ci > 0) await sleep(1_000)
+    const campaignFields = [
+      'campaign_id', 'campaign_name', 'objective',
+      'spend', 'impressions', 'clicks', 'reach', 'frequency',
+      'actions', 'action_values',
+    ].join(',')
 
-      const chunk = campaignChunks[ci]
-      let nextUrl: string | null = (() => {
-        const base = new URL(`${BASE_URL}/${externalId}/insights`)
-        base.searchParams.set('access_token', accessToken)
-        base.searchParams.set('level', 'campaign')
-        base.searchParams.set(
-          'fields',
-          [
-            'campaign_id',
-            'campaign_name',
-            'objective',
-            'spend',
-            'impressions',
-            'clicks',
-            'reach',
-            'frequency',
-            'actions',
-            'action_values',
-          ].join(',')
+    const rawDayRows: Record<string, unknown>[] = rangeDays > 30
+      ? await fetchMetaInsightsAsync(
+          externalId, accessToken,
+          {
+            fields:        campaignFields,
+            timeRange:     { since: dateFrom, until: dateTo },
+            level:         'campaign',
+            timeIncrement: '1',
+            limit:         500,
+          },
+          onProgress
         )
-        base.searchParams.set('time_range', JSON.stringify({ since: chunk.from, until: chunk.to }))
-        base.searchParams.set('time_increment', '1') // one row per day
-        base.searchParams.set('limit', '500')
-        return base.toString()
-      })()
-
-      while (nextUrl) {
-        const data = await metaFetchWithRetry(nextUrl)
-        const dayRows = (data.data || []) as Record<string, unknown>[]
-
-        for (const day of dayRows) {
-          const rawActions      = (day.actions       || []) as Record<string, unknown>[]
-          const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
-
-          for (const a of rawActions) {
-            const t = String(a.action_type || '')
-            if (t) discoveredActions.add(t)
+      : await (async () => {
+          if (onProgress) onProgress(5, 'Fetching insights…')
+          const buf: Record<string, unknown>[] = []
+          const base = new URL(`${BASE_URL}/${externalId}/insights`)
+          base.searchParams.set('access_token',   accessToken)
+          base.searchParams.set('level',          'campaign')
+          base.searchParams.set('fields',         campaignFields)
+          base.searchParams.set('time_range',     JSON.stringify({ since: dateFrom, until: dateTo }))
+          base.searchParams.set('time_increment', '1')
+          base.searchParams.set('limit',          '500')
+          let nextUrl: string | null = base.toString()
+          while (nextUrl) {
+            const data = await metaFetchWithRetry(nextUrl)
+            buf.push(...((data.data || []) as Record<string, unknown>[]))
+            const paging = data.paging as Record<string, unknown> | undefined
+            nextUrl = (paging?.next as string) || null
           }
+          return buf
+        })()
 
-          const actions = rawActions.map(a => ({
-            action_type: String(a.action_type || ''),
-            value:       String(a.value       || '0'),
-          }))
-          const actionValues = rawActionValues.map(a => ({
-            action_type: String(a.action_type || ''),
-            value:       String(a.value       || '0'),
-          }))
+    for (const day of rawDayRows) {
+      const rawActions      = (day.actions       || []) as Record<string, unknown>[]
+      const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
 
-          rows.push({
-            campaign_id:   String(day.campaign_id   || ''),
-            campaign_name: String(day.campaign_name || ''),
-            objective:     String(day.objective     || ''),
-            date:          String(day.date_start    || ''),
-            spend:         parseFloat(String(day.spend       || '0')),
-            impressions:   parseInt(  String(day.impressions || '0'), 10),
-            clicks:        parseInt(  String(day.clicks      || '0'), 10),
-            reach:         parseInt(  String(day.reach       || '0'), 10),
-            frequency:     parseFloat(String(day.frequency   || '0')),
-            actions,
-            action_values: actionValues,
-          })
-        }
-
-        const paging = data.paging as Record<string, unknown> | undefined
-        nextUrl = (paging?.next as string) || null
+      for (const a of rawActions) {
+        const t = String(a.action_type || '')
+        if (t) discoveredActions.add(t)
       }
 
-      if (onProgress) {
-        const pct  = Math.round(((ci + 1) / campaignChunks.length) * 90) // reserve last 10% for budget/status fetch
-        const note = `Chunk ${ci + 1}/${campaignChunks.length} · ${chunk.from} – ${chunk.to}`
-        onProgress(pct, note)
-      }
+      rows.push({
+        campaign_id:   String(day.campaign_id   || ''),
+        campaign_name: String(day.campaign_name || ''),
+        objective:     String(day.objective     || ''),
+        date:          String(day.date_start    || ''),
+        spend:         parseFloat(String(day.spend       || '0')),
+        impressions:   parseInt(  String(day.impressions || '0'), 10),
+        clicks:        parseInt(  String(day.clicks      || '0'), 10),
+        reach:         parseInt(  String(day.reach       || '0'), 10),
+        frequency:     parseFloat(String(day.frequency   || '0')),
+        actions: rawActions.map(a => ({
+          action_type: String(a.action_type || ''),
+          value:       String(a.value       || '0'),
+        })),
+        action_values: rawActionValues.map(a => ({
+          action_type: String(a.action_type || ''),
+          value:       String(a.value       || '0'),
+        })),
+      })
     }
 
     if (onProgress) onProgress(95, 'Fetching budgets & statuses…')
