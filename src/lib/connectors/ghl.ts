@@ -38,26 +38,41 @@ export interface GhlRawRow {
 // API helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 async function ghlGet(
   path: string,
   apiKey: string,
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  maxRetries = 4
 ): Promise<Record<string, unknown>> {
   const url = new URL(`${BASE_URL}${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      Authorization:  `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      Version:        '2021-07-28',
-    },
-  })
-  if (!res.ok) {
+  let delay = 5_000
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url.toString(), {
+      headers: {
+        Authorization:  `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Version:        '2021-07-28',
+      },
+    })
+    if (res.ok) return res.json() as Promise<Record<string, unknown>>
+
     const text = await res.text()
+    if (res.status === 429 && attempt < maxRetries) {
+      // Respect Retry-After header if present, otherwise exponential backoff
+      const retryAfter = res.headers.get('Retry-After')
+      const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : delay
+      console.log(`[ghl] 429 rate limit — waiting ${waitMs}ms before retry ${attempt + 1}/${maxRetries}`)
+      await sleep(waitMs)
+      delay = Math.min(delay * 2, 60_000)
+      continue
+    }
     throw new Error(`GHL API error ${res.status}: ${text}`)
   }
-  return res.json() as Promise<Record<string, unknown>>
+  throw new Error('GHL API: max retries exceeded')
 }
 
 /** Paginate through all results from a GHL list endpoint. */
@@ -236,6 +251,8 @@ async function fetchFormSubmissions(
     } catch {
       // Individual form submission fetch failure — skip
     }
+    // Small delay between per-form calls to avoid bursting the rate limit
+    await sleep(300)
   }
 
   return Array.from(byDate.entries()).map(([date, count]) => ({ date, count }))
