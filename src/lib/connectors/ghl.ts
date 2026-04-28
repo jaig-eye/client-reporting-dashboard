@@ -414,7 +414,12 @@ async function fetchOpportunities(
       page++
     }
   } catch (e) {
-    console.log(`[ghl] opportunities/search failed: ${String(e)}`)
+    const msg = String(e)
+    if (msg.includes('401') || msg.includes('not authorized')) {
+      console.log('[ghl] opportunities/search: missing scope — add "opportunities.readonly" to your private integration')
+    } else {
+      console.log(`[ghl] opportunities/search failed: ${msg}`)
+    }
     return []
   }
 
