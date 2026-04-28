@@ -227,8 +227,10 @@ async function fetchConversations(
       if (oldestParsed && oldestParsed.ts < fromMs) break
       if (items.length < 100) break
 
-      // startAfterDate cursor must be an ISO string for the API
-      startAfterDate = oldestParsed?.iso ?? ''
+      // Cursor must be the raw lastMessageDate value (Unix ms number as string).
+      // Sending an ISO string causes a 400 "failed to parse search_after" error.
+      const rawCursor = oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded
+      startAfterDate = rawCursor != null ? String(rawCursor) : ''
       if (!startAfterDate) break
     }
   } catch (e) {
