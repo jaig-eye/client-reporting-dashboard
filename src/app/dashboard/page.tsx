@@ -770,7 +770,7 @@ export default async function DashboardPage({
             )}
 
             {/* ── CRM Activity ─────────────────────────────────────── */}
-            {hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
+            {!isFiltered && hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
               <div className="card p-6">
                 <div className="mb-4">
                   <h2 className="section-title">CRM Activity</h2>
@@ -867,7 +867,7 @@ export default async function DashboardPage({
         )}
 
         {/* ── Local Dominator ──────────────────────────────────── */}
-        {client.local_dominator_url && (
+        {!isFiltered && client.local_dominator_url && (
           <div>
             <h2 className="section-title">Local Dominator</h2>
             <div className="card" style={{ overflow: 'hidden', padding: 0, marginTop: '0.75rem' }}>
