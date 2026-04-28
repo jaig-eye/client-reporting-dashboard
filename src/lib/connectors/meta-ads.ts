@@ -185,10 +185,12 @@ export async function fetchMetaAdMetrics(
     'reach', 'actions', 'action_values',
   ].join(',')
 
-  // Chunk into 365-day windows — Meta silently truncates single GET requests
-  // that span more than ~1 year, which produces the "missing recent year" symptom.
+  // Ad-level data is much denser than campaign-level (N ads × N days).
+  // 365-day chunks trigger Meta's HTTP 500 "please reduce data" error.
+  // 60-day chunks (12 per 730-day backfill) stay within Meta's tolerance;
+  // metaFetchWithRetry handles BUC rate limits (17/32/613) per chunk.
   const rawApiRows: Record<string, unknown>[] = []
-  const adChunks = chunkDateRange(dateFrom, dateTo, 365)
+  const adChunks = chunkDateRange(dateFrom, dateTo, 60)
   for (let ci = 0; ci < adChunks.length; ci++) {
     const chunk = adChunks[ci]
     const adBase = new URL(`${BASE_URL}/${externalId}/insights`)
