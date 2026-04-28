@@ -195,7 +195,8 @@ async function fetchMetaInsightsAsync(
   createUrl.searchParams.set('fields',         params.fields)
   createUrl.searchParams.set('time_range',     JSON.stringify(params.timeRange))
   createUrl.searchParams.set('time_increment', params.timeIncrement)
-  createUrl.searchParams.set('limit',          String(params.limit))
+  // NOTE: do NOT pass 'limit' here — it caps total job output rows.
+  //       Pagination limit is set separately on the results endpoint below.
 
   const createRes  = await fetch(createUrl.toString(), { method: 'POST' })
   const createData = await createRes.json() as Record<string, unknown>
@@ -230,14 +231,15 @@ async function fetchMetaInsightsAsync(
     // Map job 0–100 % → overall 2–88 %
     if (onProgress) onProgress(Math.round(2 + jobPct * 0.86), `Processing report… ${jobPct}%`)
 
-    if (status === 'Job Complete') break
+    // Meta returns 'Job Complete' in docs but 'Job Completed' in practice
+    if (status === 'Job Complete' || status === 'Job Completed') break
 
     if (status === 'Job Failed' || status === 'Job Skipped') {
       throw new Error(`Meta async job ${status} (id: ${reportRunId})`)
     }
 
     if (i === POLL_MS.length - 1) {
-      throw new Error(`Meta async job timed out after 8 min (last: ${status} ${jobPct}%)`)
+      throw new Error(`Meta async job timed out (last status: ${status} ${jobPct}%)`)
     }
   }
 
