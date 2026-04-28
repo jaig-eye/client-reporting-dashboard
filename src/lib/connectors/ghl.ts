@@ -392,26 +392,36 @@ async function fetchOpportunities(
   const all: Record<string, unknown>[] = []
 
   try {
-    let page = 1
-    for (let attempts = 0; attempts < 100; attempts++) {
-      const data  = await ghlGet('/opportunities/search', apiKey, {
+    // No server-side date filter on /opportunities/search — paginate desc and stop
+    // when we pass the start of our range.
+    let startAfter:   string | undefined
+    let startAfterId: string | undefined
+
+    for (let page = 0; page < 200; page++) {
+      const p: Record<string, string> = {
         location_id: locationId,
-        startDate:   dateFrom,
-        endDate:     dateTo,
         limit:       '100',
-        page:        String(page),
-      })
-      const opps = (data.opportunities as Record<string, unknown>[]) ?? []
+        order:       'dateAdded_desc',
+      }
+      if (startAfter)   p.startAfter   = startAfter
+      if (startAfterId) p.startAfterId = startAfterId
+
+      const data  = await ghlGet('/opportunities/search', apiKey, p)
+      const opps  = (data.opportunities as Record<string, unknown>[]) ?? []
       all.push(...opps)
 
-      // Cursor-based pagination fallback
-      const meta = data.meta as Record<string, unknown> | undefined
-      if (meta?.startAfter != null && opps.length === 100) {
-        page++
-        continue
-      }
+      if (opps.length === 0) break
+
+      // Stop when oldest opp in this page is before our date range
+      const oldest       = opps[opps.length - 1] as Record<string, unknown>
+      const oldestParsed = parseGhlDate(oldest.dateAdded ?? oldest.createdAt)
+      if (oldestParsed && oldestParsed.ts < fromMs) break
       if (opps.length < 100) break
-      page++
+
+      const meta = data.meta as Record<string, unknown> | undefined
+      startAfter   = meta?.startAfter   != null ? String(meta.startAfter)   : undefined
+      startAfterId = meta?.startAfterId != null ? String(meta.startAfterId) : undefined
+      if (!startAfter && !startAfterId) break
     }
   } catch (e) {
     const msg = String(e)
