@@ -501,13 +501,15 @@ export async function upsertMetaAdsMetrics(
       frequency:         Number(r.frequency)  || 0,
       actions:           r.actions,
       action_values:     r.action_values,
-      // Derived (approximate — will be remapped at query time)
-      conversions:       conversionTotal,
+      // Derived (approximate — will be remapped at query time).
+      // Clamped to DECIMAL(10,4) safe range (<1,000,000) to prevent overflow
+      // when spend is near-zero (roas explosion) or action counts are huge.
+      conversions:       Math.min(conversionTotal, 999_999),
       conversion_value:  revenueTotal,
-      roas:              spend > 0 && revenueTotal > 0 ? revenueTotal / spend : 0,
+      roas:              Math.min(spend > 0 && revenueTotal > 0 ? revenueTotal / spend : 0, 999_999),
       ctr:               impressions > 0 ? clicks / impressions : 0,
-      cpc:               clicks > 0 ? spend / clicks : 0,
-      cpm:               impressions > 0 ? (spend / impressions) * 1000 : 0,
+      cpc:               Math.min(clicks > 0 ? spend / clicks : 0, 999_999),
+      cpm:               Math.min(impressions > 0 ? (spend / impressions) * 1000 : 0, 999_999),
       daily_budget:      r.daily_budget != null ? r.daily_budget : null,
       // Accumulated action types for the conversion selector UI.
       // Merged with existing discovered_actions on upsert.
