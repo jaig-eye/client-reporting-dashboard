@@ -32,14 +32,17 @@ export async function POST(
     const { apiKey, locationId } = body as { apiKey: string; locationId: string }
     if (!apiKey || !locationId) return NextResponse.json({ error: 'apiKey and locationId are required' }, { status: 400 })
 
-    // Upsert a connector row for this client's GHL
+    // Upsert a connector row for this client's GHL.
+    // api_key goes in auth (read by sync engine via connection.connector.auth.api_key).
+    // location_id goes in config (used by discoverAccounts and for upsert conflict key).
     const { data: connector, error: connErr } = await db
       .from('connectors')
       .upsert({
         type:   'ghl',
         label:  'GoHighLevel',
         status: 'active',
-        config: { api_key: apiKey, location_id: locationId },
+        auth:   { api_key: apiKey },
+        config: { location_id: locationId },
       }, { onConflict: 'type,config->location_id' })
       .select()
       .single()
@@ -47,7 +50,7 @@ export async function POST(
       // If upsert fails, try insert
       const { data: newConn, error: insertErr } = await db
         .from('connectors')
-        .insert({ type: 'ghl', label: 'GoHighLevel', status: 'active', config: { api_key: apiKey, location_id: locationId } })
+        .insert({ type: 'ghl', label: 'GoHighLevel', status: 'active', auth: { api_key: apiKey }, config: { location_id: locationId } })
         .select()
         .single()
       if (insertErr || !newConn) return NextResponse.json({ error: insertErr?.message ?? 'Failed to create connector' }, { status: 400 })
