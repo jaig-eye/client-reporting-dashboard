@@ -150,18 +150,18 @@ async function fetchConversations(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
-  // Conversations API uses version 2021-04-15 and startAfterDate cursor pagination
+  // Conversations API uses version 2021-04-15 and startAfterDate cursor pagination.
+  // Sorted by last_message_date desc — use that field (not dateAdded) for date attribution.
   const all: Record<string, unknown>[] = []
   let startAfterDate: string | undefined
 
   try {
-    for (let page = 0; page < 50; page++) {
+    for (let page = 0; page < 100; page++) {
       const p: Record<string, string> = {
         locationId,
         limit:   '100',
         sortBy:  'last_message_date',
         sort:    'desc',
-        // No date range filter available — fetch recent and filter client-side
       }
       if (startAfterDate) p.startAfterDate = startAfterDate
 
@@ -169,39 +169,45 @@ async function fetchConversations(
       const items = (data.conversations as Record<string, unknown>[]) ?? []
       all.push(...items)
 
-      // Stop if we've gone past the start of our date range
+      console.log(`[ghl] conversations page ${page + 1}: ${items.length} items, total so far: ${all.length}`)
+
+      // Stop when oldest item's lastMessageDate is before our range
       const oldest = items[items.length - 1] as Record<string, unknown> | undefined
-      const oldestDate = String(oldest?.dateUpdated || oldest?.dateAdded || oldest?.createdAt || '')
-      if (oldestDate && new Date(oldestDate).getTime() < new Date(dateFrom + 'T00:00:00Z').getTime()) break
+      const oldestMsgDate = String(oldest?.lastMessageDate || oldest?.dateUpdated || oldest?.dateAdded || '')
+      if (oldestMsgDate && new Date(oldestMsgDate).getTime() < new Date(dateFrom + 'T00:00:00Z').getTime()) break
       if (items.length < 100) break
 
-      // next page cursor = sortBy value of last item
-      startAfterDate = String(oldest?.dateUpdated || oldest?.lastMessageDate || '')
+      // Cursor = lastMessageDate of last item (matches sortBy: last_message_date)
+      startAfterDate = oldestMsgDate || ''
       if (!startAfterDate) break
     }
-  } catch {
-    // Fallback gracefully if conversations/search unavailable on plan
+  } catch (e) {
+    console.log(`[ghl] conversations/search failed: ${String(e)}`)
     return []
   }
 
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
 
+  const typeCounts: Record<string, number> = {}
   const byDate = new Map<string, { totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
   for (const conv of all) {
-    const created = String(conv.dateAdded || conv.createdAt || conv.dateUpdated || '')
-    if (!created) continue
-    const ts = new Date(created).getTime()
+    // Use lastMessageDate for date attribution — conversations can be old threads with recent activity.
+    // dateAdded is when the thread was created (often years ago), not when the call/SMS happened.
+    const activityDate = String(conv.lastMessageDate || conv.dateUpdated || conv.dateAdded || conv.createdAt || '')
+    if (!activityDate) continue
+    const ts = new Date(activityDate).getTime()
     if (ts < fromMs || ts > toMs) continue
 
-    const date = created.split('T')[0]
+    const date = activityDate.split('T')[0]
     if (!date) continue
     const ex  = byDate.get(date) ?? { totalCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
     const typ = String(conv.type || '').toUpperCase()
 
+    typeCounts[typ] = (typeCounts[typ] ?? 0) + 1
+
     if (CALL_TYPES.has(typ)) {
       ex.totalCalls++
-      // Missed call: conversation has no inbound reply / unread status
       const unread = conv.unreadCount as number ?? 0
       if (unread > 0) ex.missedCalls++
     } else if (EMAIL_TYPES.has(typ)) {
@@ -212,6 +218,77 @@ async function fetchConversations(
     byDate.set(date, ex)
   }
 
+  console.log(`[ghl] conversations in range (${dateFrom}–${dateTo}): type breakdown:`, typeCounts)
+
+  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
+}
+
+async function fetchConversationMessages(
+  apiKey: string,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<{ date: string; totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
+  // Attempts to get individual message records (not just conversation threads) for accurate daily counts.
+  // Each call in a single phone conversation is a separate message — this fixes undercounting.
+  const all: Record<string, unknown>[] = []
+  let lastMessageId: string | undefined
+
+  try {
+    for (let page = 0; page < 200; page++) {
+      const p: Record<string, string> = {
+        locationId,
+        limit: '100',
+        sort:  'desc',
+      }
+      if (lastMessageId) p.lastMessageId = lastMessageId
+
+      const data  = await ghlGet('/conversations/messages/search', apiKey, p, 4, '2021-04-15')
+      const items = (data.messages as Record<string, unknown>[]) ?? []
+      all.push(...items)
+
+      if (items.length === 0) break
+
+      const oldest = items[items.length - 1] as Record<string, unknown> | undefined
+      const oldestDate = String(oldest?.dateAdded || oldest?.createdAt || '')
+      if (oldestDate && new Date(oldestDate).getTime() < new Date(dateFrom + 'T00:00:00Z').getTime()) break
+      if (items.length < 100) break
+
+      lastMessageId = String(oldest?.id || '')
+      if (!lastMessageId) break
+    }
+  } catch {
+    // This endpoint may not be available — caller falls back to conversation-level counting
+    return []
+  }
+
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+
+  const byDate = new Map<string, { totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
+  for (const msg of all) {
+    const created = String(msg.dateAdded || msg.createdAt || '')
+    if (!created) continue
+    const ts = new Date(created).getTime()
+    if (ts < fromMs || ts > toMs) continue
+
+    const date = created.split('T')[0]
+    if (!date) continue
+    const ex  = byDate.get(date) ?? { totalCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
+    const typ = String(msg.messageType || msg.type || '').toUpperCase()
+
+    if (CALL_TYPES.has(typ)) {
+      ex.totalCalls++
+      if (String(msg.callStatus || msg.status || '') === 'missed') ex.missedCalls++
+    } else if (EMAIL_TYPES.has(typ)) {
+      ex.emailsSent++
+    } else if (SMS_TYPES.has(typ)) {
+      ex.smsSent++
+    }
+    byDate.set(date, ex)
+  }
+
+  console.log(`[ghl] messages endpoint: ${all.length} messages fetched`)
   return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
 }
 
@@ -298,8 +375,18 @@ export const ghlConnector: ConnectorAdapter = {
     try {
       // Run all fetches sequentially to avoid burst rate limits
       const contactData = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
-      const convData    = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
-      const formData    = await fetchFormSubmissions(apiKey, locationId, dateFrom, dateTo)
+      console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
+
+      // Try message-level endpoint first (accurate per-call/SMS/email counts).
+      // If it returns empty or fails, fall back to conversation-thread counting.
+      let convData = await fetchConversationMessages(apiKey, locationId, dateFrom, dateTo)
+      if (convData.length === 0) {
+        console.log('[ghl] messages endpoint returned nothing — falling back to conversation threads')
+        convData = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
+      }
+
+      const formData = await fetchFormSubmissions(apiKey, locationId, dateFrom, dateTo)
+      console.log(`[ghl] forms in range: ${formData.reduce((s, d) => s + d.count, 0)} across ${formData.length} days`)
 
       const allDates   = dateRange(dateFrom, dateTo)
       const contactMap = new Map(contactData.map(d => [d.date, d]))
