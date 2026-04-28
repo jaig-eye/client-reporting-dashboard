@@ -32,6 +32,20 @@ function getCycleStart(today: Date, billDay: number): Date {
   return new Date(today.getFullYear(), today.getMonth() - 1, billDay)
 }
 
+/** Returns the first occurrence of historicBillDay on or after cutoffDate (YYYY-MM-DD). */
+function getEffectiveCutoff(cutoffDate: string, historicBillDay: number): string {
+  const c = new Date(cutoffDate + 'T00:00:00Z')
+  const year = c.getUTCFullYear(), month = c.getUTCMonth(), day = c.getUTCDate()
+  if (day <= historicBillDay) return new Date(Date.UTC(year, month, historicBillDay)).toISOString().slice(0, 10)
+  return new Date(Date.UTC(year, month + 1, historicBillDay)).toISOString().slice(0, 10)
+}
+
+function subtractOneDay(date: string): string {
+  const d = new Date(date + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
 function getCycleEnd(cycleStart: Date): Date {
   return new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, cycleStart.getDate())
 }
@@ -94,7 +108,7 @@ export async function GET(request: NextRequest) {
   type DayRow   = { client_id: string; date: string; spend: number }
   type LedgerRow = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ConnRow  = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
-  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
+  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; historic_bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
 
   let gFilterMap: Record<string, number> = {}
   let mFilterMap: Record<string, number> = {}
@@ -112,6 +126,31 @@ export async function GET(request: NextRequest) {
   const mLifeMap: Record<string, number> = {}
   for (const r of (gLifeRes.data ?? []) as SumRow[]) gLifeMap[r.client_id] = Number(r.spend ?? 0)
   for (const r of (mLifeRes.data ?? []) as SumRow[]) mLifeMap[r.client_id] = Number(r.spend ?? 0)
+
+  // For clients with historic_bill_day, subtract gap spend (cutoffDate → effectiveCutoff-1).
+  // Groups by unique gap-end date to minimize extra RPC calls.
+  const historicClients = (clientsRes.data ?? []).filter((c: Record<string, unknown>) => c.historic_bill_day != null) as ClientRow[]
+  const gapAdjustGoogle: Record<string, number> = {}
+  const gapAdjustMeta:   Record<string, number> = {}
+  if (historicClients.length > 0) {
+    const gapGroups: Record<string, string[]> = {}
+    for (const c of historicClients) {
+      const eff = getEffectiveCutoff(cutoffDate, c.historic_bill_day!)
+      if (eff > cutoffDate) {
+        const gapEnd = subtractOneDay(eff)
+        if (!gapGroups[gapEnd]) gapGroups[gapEnd] = []
+        gapGroups[gapEnd].push(c.id)
+      }
+    }
+    await Promise.all(Object.entries(gapGroups).map(async ([gapEnd, ids]) => {
+      const [gGap, mGap] = await Promise.all([
+        db.rpc('sum_google_spend_by_client', { from_date: cutoffDate, to_date: gapEnd }),
+        db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate, to_date: gapEnd }),
+      ])
+      for (const r of (gGap.data ?? []) as SumRow[]) if (ids.includes(r.client_id)) gapAdjustGoogle[r.client_id] = Number(r.spend ?? 0)
+      for (const r of (mGap.data ?? []) as SumRow[]) if (ids.includes(r.client_id)) gapAdjustMeta[r.client_id]   = Number(r.spend ?? 0)
+    }))
+  }
 
   const gCycleRows = (gCycleRes.data ?? []) as DayRow[]
   const mCycleRows = (mCycleRes.data ?? []) as DayRow[]
@@ -142,12 +181,14 @@ export async function GET(request: NextRequest) {
     const split = 1 - cut
 
     // ── Main spend columns ────────────────────────────────────────────────────
-    // Lifetime: from the SUM aggregate (one value per client, no cap risk)
-    // With filter: use filter-range aggregate
-    const googleRaw          = usingGlobalFilter ? (gFilterMap[client.id] ?? 0) : (gLifeMap[client.id] ?? 0)
-    const facebookRaw        = usingGlobalFilter ? (mFilterMap[client.id] ?? 0) : (mLifeMap[client.id] ?? 0)
-    const lifetimeGoogleRaw  = gLifeMap[client.id] ?? 0
-    const lifetimeMetaRaw    = mLifeMap[client.id] ?? 0
+    // Lifetime: from the SUM aggregate (one value per client, no cap risk).
+    // For clients with historic_bill_day, gap spend (cutoff → effectiveCutoff-1) is subtracted.
+    const gAdj = gapAdjustGoogle[client.id] ?? 0
+    const mAdj = gapAdjustMeta[client.id]   ?? 0
+    const googleRaw          = usingGlobalFilter ? (gFilterMap[client.id] ?? 0) : Math.max(0, (gLifeMap[client.id] ?? 0) - gAdj)
+    const facebookRaw        = usingGlobalFilter ? (mFilterMap[client.id] ?? 0) : Math.max(0, (mLifeMap[client.id] ?? 0) - mAdj)
+    const lifetimeGoogleRaw  = Math.max(0, (gLifeMap[client.id] ?? 0) - gAdj)
+    const lifetimeMetaRaw    = Math.max(0, (mLifeMap[client.id] ?? 0) - mAdj)
 
     const rawSpend         = googleRaw + facebookRaw
     const afSpend          = split > 0 ? rawSpend / split : 0
@@ -231,6 +272,7 @@ export async function GET(request: NextRequest) {
       crmId:             crmIdByClient[client.id]       ?? null,
       discordChannelId:  client.discord_channel_id,
       billDay:           client.bill_day,
+      historicBillDay:   client.historic_bill_day,
       monthlyBudget:     client.monthly_budget,
       adFuelCut:         cut,
       afBalance,

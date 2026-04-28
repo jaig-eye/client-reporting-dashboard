@@ -916,12 +916,10 @@ async function completeSyncJob(
 // Date range helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns [dateFrom, dateTo] as YYYY-MM-DD strings for a trailing window ending yesterday. */
+/** Returns [dateFrom, dateTo] as YYYY-MM-DD strings for a trailing window ending today. */
 function computeDateRange(days: number): [string, string] {
   const fmt = (d: Date) => d.toISOString().split('T')[0]
-  // Sync up to yesterday — today's data is incomplete mid-day
   const to = new Date()
-  to.setDate(to.getDate() - 1)
   const from = new Date(to)
   from.setDate(from.getDate() - (days - 1))
   return [fmt(from), fmt(to)]

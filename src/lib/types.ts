@@ -167,6 +167,8 @@ export interface Client {
   layout_type?: string | null
   /** Billing cycle start day (1–31). Used for Ad Fuel cycle calculations. */
   bill_day?: number | null
+  /** Historic billing day (1–31) before current bill_day was set. Adjusts lifetime spend start date to skip partial first period at agency cutoff. */
+  historic_bill_day?: number | null
   /** Monthly ad spend budget in dollars. Used for Ad Fuel pace calculation. */
   monthly_budget?: number | null
   /** Discord channel ID for per-client notifications (requires agency discord_bot_token). */

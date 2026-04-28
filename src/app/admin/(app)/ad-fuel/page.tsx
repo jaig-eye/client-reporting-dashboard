@@ -13,6 +13,7 @@ interface DashRow {
   crmId:               string | null
   discordChannelId:    string | null
   billDay:             number | null
+  historicBillDay:     number | null
   monthlyBudget:       number | null
   adFuelCut:           number
   afBalance:           number
@@ -185,15 +186,16 @@ export default function AdFuelPage() {
 
   // Client edit modal (bill day + budget)
   const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
-  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', monthlyBudget: '' })
+  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '' })
   const [clientEditSaving, setClientEditSaving] = useState(false)
   const [clientEditError,  setClientEditError]  = useState('')
 
   function openClientEdit(row: DashRow) {
     setClientEditModal(row)
     setClientEditForm({
-      billDay:       String(row.billDay ?? ''),
-      monthlyBudget: String(row.monthlyBudget ?? ''),
+      billDay:         String(row.billDay ?? ''),
+      historicBillDay: String(row.historicBillDay ?? ''),
+      monthlyBudget:   String(row.monthlyBudget ?? ''),
     })
     setClientEditError('')
   }
@@ -203,8 +205,9 @@ export default function AdFuelPage() {
     setClientEditSaving(true)
     setClientEditError('')
     const body: Record<string, unknown> = {
-      bill_day:       clientEditForm.billDay       === '' ? null : parseInt(clientEditForm.billDay),
-      monthly_budget: clientEditForm.monthlyBudget === '' ? null : parseFloat(clientEditForm.monthlyBudget),
+      bill_day:          clientEditForm.billDay         === '' ? null : parseInt(clientEditForm.billDay),
+      historic_bill_day: clientEditForm.historicBillDay === '' ? null : parseInt(clientEditForm.historicBillDay),
+      monthly_budget:    clientEditForm.monthlyBudget   === '' ? null : parseFloat(clientEditForm.monthlyBudget),
     }
     const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -233,7 +236,7 @@ export default function AdFuelPage() {
 
   // Settings tab — client selector for manual values
   const [settingsClientId,   setSettingsClientId]   = useState('')
-  const [settingsForm,       setSettingsForm]       = useState({ billDay: '', monthlyBudget: '' })
+  const [settingsForm,       setSettingsForm]       = useState({ billDay: '', historicBillDay: '', monthlyBudget: '' })
   const [settingsSaving,     setSettingsSaving]     = useState(false)
   const [settingsSaveMsg,    setSettingsSaveMsg]    = useState('')
 
@@ -284,11 +287,12 @@ export default function AdFuelPage() {
 
   // Populate settings form when a client is selected in settings tab
   useEffect(() => {
-    if (!settingsClientId) { setSettingsForm({ billDay: '', monthlyBudget: '' }); return }
+    if (!settingsClientId) { setSettingsForm({ billDay: '', historicBillDay: '', monthlyBudget: '' }); return }
     const row = rows.find(r => r.clientId === settingsClientId)
     if (row) setSettingsForm({
-      billDay:       String(row.billDay ?? ''),
-      monthlyBudget: String(row.monthlyBudget ?? ''),
+      billDay:         String(row.billDay ?? ''),
+      historicBillDay: String(row.historicBillDay ?? ''),
+      monthlyBudget:   String(row.monthlyBudget ?? ''),
     })
   }, [settingsClientId, rows])
 
@@ -297,8 +301,9 @@ export default function AdFuelPage() {
     setSettingsSaving(true)
     setSettingsSaveMsg('')
     const body: Record<string, unknown> = {
-      bill_day:       settingsForm.billDay       === '' ? null : parseInt(settingsForm.billDay),
-      monthly_budget: settingsForm.monthlyBudget === '' ? null : parseFloat(settingsForm.monthlyBudget),
+      bill_day:          settingsForm.billDay         === '' ? null : parseInt(settingsForm.billDay),
+      historic_bill_day: settingsForm.historicBillDay === '' ? null : parseInt(settingsForm.historicBillDay),
+      monthly_budget:    settingsForm.monthlyBudget   === '' ? null : parseFloat(settingsForm.monthlyBudget),
     }
     const res = await fetch(`/api/admin/clients/${settingsClientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -766,13 +771,22 @@ export default function AdFuelPage() {
 
               {settingsClientId && (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
                       <input
                         type="number" min={1} max={31} placeholder="e.g. 1"
                         value={settingsForm.billDay}
                         onChange={e => setSettingsForm(f => ({ ...f, billDay: e.target.value }))}
+                        className="input" style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Historic Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
+                      <input
+                        type="number" min={1} max={31} placeholder="e.g. 21"
+                        value={settingsForm.historicBillDay}
+                        onChange={e => setSettingsForm(f => ({ ...f, historicBillDay: e.target.value }))}
                         className="input" style={{ width: '100%' }}
                       />
                     </div>
@@ -878,14 +892,23 @@ export default function AdFuelPage() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Historic Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
                   <input
-                    type="number" min={0} placeholder="e.g. 5000"
-                    value={clientEditForm.monthlyBudget}
-                    onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                    type="number" min={1} max={31} placeholder="e.g. 21"
+                    value={clientEditForm.historicBillDay}
+                    onChange={e => setClientEditForm(f => ({ ...f, historicBillDay: e.target.value }))}
                     className="input" style={{ width: '100%' }}
                   />
                 </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
+                <input
+                  type="number" min={0} placeholder="e.g. 5000"
+                  value={clientEditForm.monthlyBudget}
+                  onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                  className="input" style={{ width: '100%' }}
+                />
               </div>
 
               {clientEditError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{clientEditError}</p>}
