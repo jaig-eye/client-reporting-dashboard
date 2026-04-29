@@ -22,7 +22,8 @@ export async function PATCH(
     'show_benchmarks', 'hidden_metrics', 'enabled_benchmarks',
     'layout_type', 'metric_layout_override',
     'bill_day', 'historic_bill_day', 'monthly_budget', 'discord_channel_id',
-    'local_dominator_url',
+    'local_dominator_url', 'stripe_customer_id',
+    'ad_fuel_alert_threshold',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

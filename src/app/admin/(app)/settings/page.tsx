@@ -50,6 +50,10 @@ interface Settings {
   hidden_connector_types:         string[]
   discord_bot_token:              string
   crm_name:                       string
+  stripe_api_key:                 string
+  stripe_webhook_secret:          string
+  ads_sync_frequency:             string
+  ads_sync_hour_utc:              number
 }
 
 const DEFAULT: Settings = {
@@ -83,17 +87,22 @@ const DEFAULT: Settings = {
   hidden_connector_types:         [],
   discord_bot_token:              '',
   crm_name:                       'CRM',
+  stripe_api_key:                 '',
+  stripe_webhook_secret:          '',
+  ads_sync_frequency:             'hourly',
+  ads_sync_hour_utc:              0,
 }
 
 const TABS = [
-  { id: 'branding',      label: 'Branding'     },
-  { id: 'benchmarks',    label: 'Benchmarks'   },
-  { id: 'colors',        label: 'Colors'       },
-  { id: 'ai',            label: 'AI'           },
-  { id: 'sync',          label: 'Sync'         },
+  { id: 'branding',      label: 'Branding'      },
+  { id: 'benchmarks',    label: 'Benchmarks'    },
+  { id: 'colors',        label: 'Colors'        },
+  { id: 'ai',            label: 'AI'            },
+  { id: 'sync',          label: 'Sync'          },
+  { id: 'integrations',  label: 'Integrations'  },
   { id: 'notifications', label: 'Notifications' },
-  { id: 'overview',      label: 'Overview'     },
-  { id: 'layouts',       label: 'Layouts'      },
+  { id: 'overview',      label: 'Overview'      },
+  { id: 'layouts',       label: 'Layouts'       },
 ]
 
 const HIDEABLE_CONNECTORS = [
@@ -417,10 +426,35 @@ export default function AgencySettingsPage() {
 
         {/* ─── Sync ──────────────────────────────────────────────── */}
         {activeTab === 'sync' && (
+          <div className="space-y-5">
           <div className="card p-6 space-y-5">
             <div>
-              <h2 className="section-title mb-1">Sync Schedule</h2>
-              <p className="section-desc">Automated sync keeps all client dashboards up to date. The cron runs hourly but only syncs when your schedule says to.</p>
+              <h2 className="section-title mb-1">Ad Data Sync</h2>
+              <p className="section-desc">Google Ads + Meta Ads — synced on this schedule (default: hourly for near-real-time ad fuel tracking).</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Frequency">
+                <select className="input" value={form.ads_sync_frequency} onChange={e => field('ads_sync_frequency', e.target.value)}>
+                  <option value="hourly">Hourly</option>
+                  <option value="every6h">Every 6 hours</option>
+                  <option value="every12h">Every 12 hours</option>
+                  <option value="daily">Daily</option>
+                </select>
+              </FormField>
+              {form.ads_sync_frequency !== 'hourly' && (
+                <FormField label="Hour (UTC)" hint="0–23">
+                  <input type="number" min={0} max={23} className="input"
+                    value={form.ads_sync_hour_utc}
+                    onChange={e => field('ads_sync_hour_utc', parseInt(e.target.value))} />
+                </FormField>
+              )}
+            </div>
+          </div>
+
+          <div className="card p-6 space-y-5">
+            <div>
+              <h2 className="section-title mb-1">All Other Data Sync</h2>
+              <p className="section-desc">GA4, Search Console, GHL, Ahrefs, etc. The cron runs hourly but only syncs when your schedule says to.</p>
             </div>
 
             <label className="flex items-center gap-3 cursor-pointer">
@@ -485,6 +519,30 @@ export default function AgencySettingsPage() {
 
             <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
               Re-syncs the last 3 days for all active connections (captures late conversions).
+            </p>
+          </div>
+          </div>
+        )}
+
+        {/* ─── Integrations ──────────────────────────────────────── */}
+        {activeTab === 'integrations' && (
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Stripe</h2>
+              <p className="section-desc">Auto-log ad fuel payments from Stripe invoices. Add the agency&apos;s Stripe Secret Key and Webhook Secret, then set each client&apos;s Stripe Customer ID in their settings.</p>
+            </div>
+            <FormField label="Stripe Secret Key" hint="Starts with sk_live_ or sk_test_">
+              <input type="password" className="input" value={form.stripe_api_key}
+                onChange={e => field('stripe_api_key', e.target.value)}
+                placeholder="sk_live_…" autoComplete="off" />
+            </FormField>
+            <FormField label="Stripe Webhook Secret" hint="Starts with whsec_ — from Stripe dashboard → Webhooks">
+              <input type="password" className="input" value={form.stripe_webhook_secret}
+                onChange={e => field('stripe_webhook_secret', e.target.value)}
+                placeholder="whsec_…" autoComplete="off" />
+            </FormField>
+            <p className="text-xs rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+              Webhook endpoint: <code style={{ fontFamily: 'monospace' }}>/api/webhooks/stripe</code> — register this URL in your Stripe dashboard. Events: <code style={{ fontFamily: 'monospace' }}>invoice.payment_succeeded</code>
             </p>
           </div>
         )}

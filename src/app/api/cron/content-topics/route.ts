@@ -81,6 +81,13 @@ export async function GET(request: NextRequest) {
   const globalFreq = (globalSettings as { schedule_frequency?: string } | null)?.schedule_frequency ?? 'weekly'
   const globalDay  = (globalSettings as { schedule_day_of_week?: number } | null)?.schedule_day_of_week ?? 1
 
+  // Reset topics stuck in 'generating' for more than 1 hour (timed out or crashed)
+  await db
+    .from('content_topics')
+    .update({ status: 'approved', generation_error: 'Timed out — reset by cron' })
+    .eq('status', 'generating')
+    .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
+
   const topicsGenerated: string[] = []
   const postsTriggered:  string[] = []
 
@@ -179,6 +186,9 @@ export async function GET(request: NextRequest) {
           postsTriggered.push(topic.id)
         } catch (e) {
           console.error(`[content-topics cron] Failed to generate post for topic ${topic.id}:`, e)
+          await db.from('content_topics')
+            .update({ status: 'approved', generation_error: String(e) })
+            .eq('id', topic.id)
         }
       }
     }

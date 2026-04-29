@@ -13,9 +13,13 @@ export const maxDuration = 300
 import { sendEmail } from '@/lib/email'
 
 interface TopicIdea {
-  topic:          string
-  rationale:      string
-  target_keyword: string
+  topic:               string
+  target_keyword:      string
+  keyword_opportunity: string
+  ranking_strategy:    string
+  audience_intent:     string
+  why_now:             string
+  competition_level:   string
 }
 
 async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
@@ -194,17 +198,16 @@ export async function POST(request: NextRequest) {
   const systemPrompt = `You are an SEO content strategist for ${settings.agency_name ?? 'a digital agency'}.
 Suggest blog post topic ideas for a client based on their business context and Google Search Console data.
 
-For each topic provide:
-- A clear, specific blog post title
-- A brief rationale (2–3 sentences): which GSC gap it addresses, what keyword it targets, why it will rank
-- The primary target keyword phrase
-
 Return ONLY a JSON array of exactly ${count} objects:
 [
   {
     "topic": "Full blog post title",
-    "rationale": "2–3 sentences on the GSC opportunity and ranking strategy",
-    "target_keyword": "primary keyword phrase"
+    "target_keyword": "primary keyword phrase",
+    "keyword_opportunity": "'keyword phrase' — X/mo, pos Y (the specific GSC or keyword data behind this pick)",
+    "ranking_strategy": "How this article will outrank existing results (1–2 sentences)",
+    "audience_intent": "What the searcher needs or wants (1 sentence)",
+    "why_now": "Seasonal, competitive, or trending timing reason (1 sentence)",
+    "competition_level": "Low/Medium/High — brief 1-line reasoning"
   }
 ]
 No text outside the JSON array.`
@@ -266,8 +269,15 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
   const rows = topics.map(t => ({
     client_id,
     topic:               t.topic,
-    rationale:           t.rationale,
     target_keyword:      t.target_keyword,
+    // Concatenated fallback for backward compat
+    rationale:           [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level]
+                           .filter(Boolean).join(' | '),
+    keyword_opportunity: t.keyword_opportunity ?? null,
+    ranking_strategy:    t.ranking_strategy ?? null,
+    audience_intent:     t.audience_intent ?? null,
+    why_now:             t.why_now ?? null,
+    competition_level:   t.competition_level ?? null,
     status:              'pending',
     target_publish_date: target_publish_date ?? null,
   }))
@@ -290,7 +300,7 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
         to:      notifEmail,
         subject: `[${agencyName}] Topics ready for review — ${clientName}`,
         html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong> and are waiting for your review.</p>
-               <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${t.rationale}</small></li>`).join('')}</ul>
+               <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${[t.keyword_opportunity, t.ranking_strategy].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>
                <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/admin/content?tab=queue">Review Topics →</a></p>`,
       })
     } catch (emailErr) {

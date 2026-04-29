@@ -392,6 +392,11 @@ Target approximately ${targetLength} words.`
   try {
     rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt)
   } catch (err) {
+    if (topic_id) {
+      await db.from('content_topics')
+        .update({ status: 'approved', generation_error: String(err) })
+        .eq('id', topic_id)
+    }
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 
@@ -427,7 +432,7 @@ Target approximately ${targetLength} words.`
     if (topic_id && postId) {
       await db
         .from('content_topics')
-        .update({ post_id: postId, status: 'generated' })
+        .update({ post_id: postId, status: 'generated', generation_error: null })
         .eq('id', topic_id)
     }
   }

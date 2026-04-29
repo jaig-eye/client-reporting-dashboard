@@ -84,6 +84,7 @@ export async function syncClient(
   dateTo?: string,
   triggeredBy?: 'cron' | 'admin' | 'system',
   excludeGsc?: boolean,
+  connectorTypes?: string[],
 ): Promise<number> {
   const db = createAdminClient()
 
@@ -110,6 +111,7 @@ export async function syncClient(
 
   for (const connection of connections) {
     if (excludeGsc && connection.connector.type === 'google_search_console') continue
+    if (connectorTypes && !connectorTypes.includes(connection.connector.type)) continue
 
     const adapter = getConnectorAdapter(connection.connector.type)
     if (!adapter) {

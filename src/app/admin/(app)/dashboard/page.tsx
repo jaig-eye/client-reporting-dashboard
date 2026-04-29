@@ -33,6 +33,14 @@ function fmtSpend(n: number) {
 }
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%` }
 function fmtX(n: number)   { return `${n.toFixed(2)}x` }
+function fmtBalance(n: number) {
+  const neg = n < 0
+  const abs = Math.abs(n)
+  const str = abs >= 1_000_000 ? `$${(abs / 1_000_000).toFixed(1)}M`
+             : abs >= 1_000    ? `$${(abs / 1_000).toFixed(1)}k`
+             : `$${Math.round(abs).toLocaleString()}`
+  return neg ? `-${str}` : str
+}
 
 // ─── page ─────────────────────────────────────────────────────────────────────
 
@@ -80,7 +88,7 @@ export default async function AdminOverviewPage({
     campaignAssignmentsRes,
   ] = await Promise.all([
     db.from('clients')
-      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback')
+      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut')
       .order('name'),
 
     db.from('client_connections')
@@ -104,7 +112,7 @@ export default async function AdminOverviewPage({
       .lte('date', dateTo),
 
     db.from('agency_settings')
-      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, overview_columns, default_lead_action, default_lead_action_fallback, default_purchase_action, default_purchase_action_fallback')
+      .select('benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, overview_columns, default_lead_action, default_lead_action_fallback, default_purchase_action, default_purchase_action_fallback, ad_fuel_cut, ad_fuel_cutoff_date')
       .single(),
 
     db.from('client_campaign_assignments')
@@ -142,6 +150,7 @@ export default async function AdminOverviewPage({
     enabled_benchmarks?: string[] | null
     lead_action?: string | null; lead_action_fallback?: string | null
     purchase_action?: string | null; purchase_action_fallback?: string | null
+    ad_fuel_cut?: number | null
   }
 
   const clients     = (clientsRes.data     ?? []) as ClientRow[]
@@ -163,6 +172,45 @@ export default async function AdminOverviewPage({
     : DEFAULT_COLS
   // Expand legacy 'roas_cpl' column into separate 'roas' + 'cpa' columns
   const overviewCols: string[] = rawCols.flatMap(c => c === 'roas_cpl' ? ['roas', 'cpa'] : [c])
+
+  // Ad fuel balance queries — separate from period-filtered metrics
+  const afCutoffDate    = (rawSettings?.ad_fuel_cutoff_date as string | null) ?? '2025-01-01'
+  const afCutoffMs      = new Date(afCutoffDate + 'T00:00:00Z').getTime()
+  const agencyAdFuelCut = (rawSettings?.ad_fuel_cut as number | null) ?? 0.20
+
+  const [afGoogleRes, afMetaRes, afLedgerRes] = await Promise.all([
+    db.rpc('sum_google_spend_by_client', { from_date: afCutoffDate }),
+    db.rpc('sum_meta_spend_by_client',   { from_date: afCutoffDate }),
+    db.from('ad_fuel_ledger').select('client_id, amount_af, date_of_payment'),
+  ])
+
+  type AfSumRow    = { client_id: string; spend: number }
+  type AfLedgerRow = { client_id: string; amount_af: number; date_of_payment: string }
+
+  const afGMap: Record<string, number> = {}
+  const afMMap: Record<string, number> = {}
+  for (const r of (afGoogleRes.data ?? []) as AfSumRow[]) afGMap[r.client_id] = Number(r.spend ?? 0)
+  for (const r of (afMetaRes.data  ?? []) as AfSumRow[]) afMMap[r.client_id]  = Number(r.spend ?? 0)
+
+  const afLedgerByClient: Record<string, AfLedgerRow[]> = {}
+  for (const r of (afLedgerRes.data ?? []) as AfLedgerRow[]) {
+    if (!afLedgerByClient[r.client_id]) afLedgerByClient[r.client_id] = []
+    afLedgerByClient[r.client_id].push(r)
+  }
+
+  const afBalanceByClient: Record<string, number> = {}
+  for (const client of clients) {
+    const cut    = client.ad_fuel_cut ?? agencyAdFuelCut
+    const split  = 1 - cut
+    const rawSpend = (afGMap[client.id] ?? 0) + (afMMap[client.id] ?? 0)
+    const afSpend  = split > 0 ? rawSpend / split : 0
+    let afPurchased = 0
+    for (const e of afLedgerByClient[client.id] ?? []) {
+      const eMs = new Date(e.date_of_payment + 'T00:00:00Z').getTime()
+      if (eMs >= afCutoffMs) afPurchased += Number(e.amount_af)
+    }
+    afBalanceByClient[client.id] = afPurchased - afSpend
+  }
 
   // Campaign display_mode map: `${clientId}:${campaignId}` → 'ecommerce' | 'lead_gen'
   const campaignModeMap = new Map<string, string>()
@@ -292,6 +340,10 @@ export default async function AdminOverviewPage({
   const totalSpend        = googleSpendTotal + metaSpendTotal
   const syncErrorCount    = syncJobs.filter(j => j.status === 'error').length
   const clientsWithErrors = new Set(syncJobs.filter(j => j.status === 'error').map(j => j.client_id)).size
+  // Only sum clients that have ledger entries (others haven't been set up for ad fuel)
+  const totalAdFuelBalance = clients
+    .filter(c => (afLedgerByClient[c.id]?.length ?? 0) > 0)
+    .reduce((s, c) => s + (afBalanceByClient[c.id] ?? 0), 0)
 
   // Build per-client row data
   let clientRows = clients.map(client => {
@@ -354,11 +406,15 @@ export default async function AdminOverviewPage({
     const deltaRoas        = compare !== 'none' && roas !== null && priorRoas !== null ? calcDelta(roas, priorRoas) : undefined
     const deltaCpl         = compare !== 'none' && cpl !== null && priorCpl !== null   ? calcDelta(cpl, priorCpl)  : undefined
 
+    const afBalance   = afBalanceByClient[client.id] ?? 0
+    const hasAfLedger = (afLedgerByClient[client.id]?.length ?? 0) > 0
+
     return {
       id: client.id, name: client.name, logoUrl: client.logo_url ?? null,
       connectors: conns.map(c => ({ type: c.connector.type as ConnectorType, label: c.connector.label })),
       spend, conversions, clicks, impressions, ctr, roas, cpl, showRoas, efficiencyScore, hoursStale, syncStatus, syncErrCount,
       deltaSpend, deltaConv, deltaCtr, deltaClicks, deltaImpr, deltaRoas, deltaCpl,
+      afBalance, hasAfLedger,
     }
   })
 
@@ -380,6 +436,9 @@ export default async function AdminOverviewPage({
         av = a.clicks; bv = b.clicks
       } else if (sortCol === 'impressions') {
         av = a.impressions; bv = b.impressions
+      } else if (sortCol === 'ad_fuel') {
+        av = a.hasAfLedger ? a.afBalance : -Infinity
+        bv = b.hasAfLedger ? b.afBalance : -Infinity
       } else if (sortCol === 'name') {
         return sortDir === 'asc'
           ? a.name.localeCompare(b.name)
@@ -425,11 +484,12 @@ export default async function AdminOverviewPage({
       </div>
 
       {/* Stat cards — only Sync Errors is clickable */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         <StatCard label="Total Clients"        value={String(clients.length)} />
         <StatCard label="Active Connectors"    value={String(connections.length)} color="blue" />
         <StatCard label="Sync Errors (7d)"     value={String(clientsWithErrors)} href="/admin/system" color={clientsWithErrors > 0 ? 'red' : 'default'} />
         <StatCard label="Total Spend (period)" value={fmtSpend(totalSpend)} color="blue" />
+        <StatCard label="Total Ad Fuel"        value={fmtBalance(totalAdFuelBalance)} color={totalAdFuelBalance > 500 ? 'green' : totalAdFuelBalance < 0 ? 'red' : 'default'} href="/admin/ad-fuel" />
       </div>
 
       {/* Row hover via CSS — server component can't use onMouseEnter/Leave */}
@@ -464,6 +524,7 @@ export default async function AdminOverviewPage({
                     if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
                     return null
                   })}
+                  <SortableTh col="ad_fuel" label="Ad Fuel" align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                   <th style={TH_STYLE}></th>
                 </tr>
               </thead>
@@ -581,6 +642,18 @@ export default async function AdminOverviewPage({
                         )
                         return null
                       })}
+
+                      {/* Ad Fuel balance */}
+                      <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        {row.hasAfLedger ? (
+                          <span style={{
+                            color: row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
+                            fontWeight: 600,
+                          }}>
+                            {fmtBalance(row.afBalance)}
+                          </span>
+                        ) : <Dash />}
+                      </td>
 
                       {/* Actions — gear icon */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>

@@ -96,7 +96,7 @@ const PACE_STYLE: Record<string, { bg: string; color: string }> = {
   'Overspending':  { bg: '#fee2e2', color: '#991b1b' },
 }
 
-const ENTRY_TYPES = ['MRR', 'Catch Up', 'Other']
+const ENTRY_TYPES = ['MRR', 'One-Time', 'Catch Up', 'Other']
 
 function loadCols(): ColConfig[] {
   if (typeof window === 'undefined') return DEFAULT_COLS

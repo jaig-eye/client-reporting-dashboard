@@ -103,7 +103,7 @@ export default async function ContentPage({
       .limit(200),
     // All non-rejected topics (for queue / cycle cards)
     db.from('content_topics')
-      .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, created_at')
+      .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, created_at')
       .not('status', 'eq', 'rejected')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(200),
@@ -179,21 +179,32 @@ export default async function ContentPage({
     const deadlineDate = new Date(nextPublish.getTime() - 7 * 86_400_000)
     const deadlineStr  = deadlineDate.toISOString().split('T')[0]
 
-    const clientTopics = (topicsByClient.get(clientId) ?? []).map(t => ({
-      id:               String(t.id),
-      topic:            String(t.topic),
-      targetKeyword:    t.target_keyword ? String(t.target_keyword) : null,
-      targetPublishDate: t.target_publish_date ? String(t.target_publish_date) : null,
-      status:           String(t.status),
-      rationale:        t.rationale ? String(t.rationale) : null,
-    }))
+    const mapTopic = (t: Record<string, unknown>) => ({
+      id:                 String(t.id),
+      topic:              String(t.topic),
+      targetKeyword:      t.target_keyword ? String(t.target_keyword) : null,
+      targetPublishDate:  t.target_publish_date ? String(t.target_publish_date) : null,
+      status:             String(t.status),
+      rationale:          t.rationale ? String(t.rationale) : null,
+      keywordOpportunity: t.keyword_opportunity ? String(t.keyword_opportunity) : null,
+      rankingStrategy:    t.ranking_strategy ? String(t.ranking_strategy) : null,
+      audienceIntent:     t.audience_intent ? String(t.audience_intent) : null,
+      whyNow:             t.why_now ? String(t.why_now) : null,
+      competitionLevel:   t.competition_level ? String(t.competition_level) : null,
+      generationError:    t.generation_error ? String(t.generation_error) : null,
+    })
 
-    // Focus on topics for the upcoming publish date (or unscheduled ones)
+    const clientTopics = (topicsByClient.get(clientId) ?? []).map(t => mapTopic(t as Record<string, unknown>))
+
+    // Pending topics for the current publish cycle
     const cycleTopics = clientTopics.filter(
-      t => !t.targetPublishDate || t.targetPublishDate === nextPublishStr
+      t => (!t.targetPublishDate || t.targetPublishDate === nextPublishStr) && t.status === 'pending'
     )
 
-    const approved = cycleTopics.filter(t => ['approved', 'generating', 'generated', 'scheduled'].includes(t.status)).length
+    // All approved/generating topics for this client (back-queue)
+    const queuedTopics = clientTopics.filter(t => ['approved', 'generating'].includes(t.status))
+
+    const approved = queuedTopics.length
 
     return {
       clientId,
@@ -205,6 +216,7 @@ export default async function ContentPage({
       nextPublishDate: nextPublishStr,
       topicDeadline:   deadlineStr,
       topics:          cycleTopics,
+      queuedTopics,
     }
   }).sort((a, b) => a.nextPublishDate.localeCompare(b.nextPublishDate))
 

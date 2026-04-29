@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ShareNetwork, Receipt, Printer } from '@phosphor-icons/react'
+import { ShareNetwork, Receipt, Printer, Envelope, CaretDown } from '@phosphor-icons/react'
 import { setRawMode } from '@/app/actions/rawMode'
+import ReportModal from './ReportModal'
 
 interface Client {
   id: string
@@ -30,9 +31,11 @@ export default function AdminDashboardBar({
 }: Props) {
   const router       = useRouter()
   const searchParams = useSearchParams()
-  const [switching,   setSwitching]   = useState(false)
-  const [copied,      setCopied]      = useState(false)
-  const [togglingRaw, setTogglingRaw] = useState(false)
+  const [switching,    setSwitching]    = useState(false)
+  const [copied,       setCopied]       = useState(false)
+  const [togglingRaw,  setTogglingRaw]  = useState(false)
+  const [reportOpen,   setReportOpen]   = useState(false)
+  const [reportDropdown, setReportDropdown] = useState(false)
 
   function openReport() {
     const from    = searchParams.get('from')
@@ -173,25 +176,73 @@ export default function AdminDashboardBar({
         Client Settings
       </a>
 
-      {/* Report button */}
-      <button
-        onClick={openReport}
-        title="Print / Save as PDF"
-        style={{
-          background: 'rgba(255,255,255,0.15)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          borderRadius: 6, color: '#fff',
-          fontSize: '0.75rem', fontWeight: 500,
-          padding: '0.25rem 0.65rem',
-          cursor: 'pointer', whiteSpace: 'nowrap',
-          display: 'flex', alignItems: 'center', gap: 4,
-          transition: 'background 0.15s',
-        }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
-      >
-        <Printer size={13} weight="bold" />Report
-      </button>
+      {/* Report dropdown */}
+      <div style={{ position: 'relative' }}>
+        <button
+          onClick={() => setReportDropdown(v => !v)}
+          style={{
+            background: 'rgba(255,255,255,0.15)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: 6, color: '#fff',
+            fontSize: '0.75rem', fontWeight: 500,
+            padding: '0.25rem 0.65rem',
+            cursor: 'pointer', whiteSpace: 'nowrap',
+            display: 'flex', alignItems: 'center', gap: 4,
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
+        >
+          <Printer size={13} weight="bold" />Report<CaretDown size={10} />
+        </button>
+        {reportDropdown && (
+          <div
+            style={{
+              position: 'absolute', top: '110%', right: 0,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+              minWidth: 160, zIndex: 1000,
+              overflow: 'hidden',
+            }}
+            onMouseLeave={() => setReportDropdown(false)}
+          >
+            {[
+              { label: 'Print / PDF', icon: <Printer size={13} />, action: () => { openReport(); setReportDropdown(false) } },
+              { label: 'Preview & Email', icon: <Envelope size={13} />, action: () => { setReportOpen(true); setReportDropdown(false) } },
+            ].map(item => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  width: '100%', textAlign: 'left',
+                  background: 'none', border: 'none',
+                  padding: '0.5rem 0.875rem',
+                  fontSize: '0.8125rem', color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'background 0.1s, color 0.1s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+              >
+                {item.icon}{item.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {reportOpen && (
+        <ReportModal
+          from={searchParams.get('from') ?? ''}
+          to={searchParams.get('to') ?? ''}
+          compare={searchParams.get('compare') ?? 'none'}
+          clientId={currentClientId}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
 
       {/* Share link */}
       <button

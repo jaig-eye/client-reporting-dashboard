@@ -12,7 +12,6 @@ import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
-import ExportButtons from '@/components/ExportButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -365,7 +364,6 @@ function PageHeader({ client, fromDate, toDate, compare }: { client: Client; fro
         <h1 className="font-semibold text-base" style={{ color: 'var(--text-primary)', margin: 0 }}>Analytics — GA4</h1>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <ExportButtons clientId={client.id} from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
         <Suspense fallback={null}>
           <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
         </Suspense>

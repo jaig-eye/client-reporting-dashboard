@@ -4,12 +4,18 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export interface CycleTopic {
-  id:               string
-  topic:            string
-  targetKeyword:    string | null
-  targetPublishDate: string | null
-  status:           string
-  rationale:        string | null
+  id:                 string
+  topic:              string
+  targetKeyword:      string | null
+  targetPublishDate:  string | null
+  status:             string
+  rationale:          string | null
+  keywordOpportunity: string | null
+  rankingStrategy:    string | null
+  audienceIntent:     string | null
+  whyNow:             string | null
+  competitionLevel:   string | null
+  generationError:    string | null
 }
 
 export interface ContentCycle {
@@ -22,6 +28,7 @@ export interface ContentCycle {
   nextPublishDate: string
   topicDeadline:   string
   topics:          CycleTopic[]
+  queuedTopics:    CycleTopic[]
 }
 
 function fmtDate(iso: string): string {
@@ -71,20 +78,54 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+function RationaleFields({ topic }: { topic: CycleTopic }) {
+  const hasStructured = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel
+  if (!hasStructured && !topic.rationale) return null
+
+  const fields: { label: string; value: string | null }[] = [
+    { label: 'Keyword',     value: topic.keywordOpportunity },
+    { label: 'Strategy',    value: topic.rankingStrategy    },
+    { label: 'Audience',    value: topic.audienceIntent     },
+    { label: 'Why now',     value: topic.whyNow             },
+    { label: 'Competition', value: topic.competitionLevel   },
+  ].filter(f => f.value)
+
+  if (hasStructured && fields.length > 0) {
+    return (
+      <div style={{ marginTop: '0.375rem', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.15rem 0.625rem', fontSize: '0.7125rem' }}>
+        {fields.map(f => (
+          <>
+            <span key={`${f.label}-k`} style={{ color: 'var(--text-faint)', fontWeight: 600, whiteSpace: 'nowrap' }}>{f.label}:</span>
+            <span key={`${f.label}-v`} style={{ color: 'var(--text-muted)', lineHeight: 1.4 }}>{f.value}</span>
+          </>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.375rem', lineHeight: 1.5 }}>
+      {topic.rationale}
+    </p>
+  )
+}
+
 function TopicRow({
   topic,
   onApprove,
   onReject,
   loading,
+  showActions = true,
 }: {
-  topic:     CycleTopic
-  onApprove: (id: string) => void
-  onReject:  (id: string) => void
-  loading:   boolean
+  topic:       CycleTopic
+  onApprove:   (id: string) => void
+  onReject:    (id: string) => void
+  loading:     boolean
+  showActions?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
-  const isPending = topic.status === 'pending'
-  const isActionable = isPending
+  const hasRationale = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel || topic.rationale
+  const isGenerating = topic.status === 'generating'
 
   return (
     <div style={{
@@ -94,15 +135,15 @@ function TopicRow({
       overflow:     'hidden',
     }}>
       <div style={{
-        display:        'flex',
-        alignItems:     'flex-start',
-        gap:            '0.75rem',
-        padding:        '0.625rem 0.875rem',
+        display:    'flex',
+        alignItems: 'flex-start',
+        gap:        '0.75rem',
+        padding:    '0.625rem 0.875rem',
       }}>
-        {/* Topic text */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.8375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {isGenerating && <span style={{ marginRight: 4 }}>⏳</span>}
               {topic.topic}
             </span>
             {topic.targetKeyword && (
@@ -114,8 +155,14 @@ function TopicRow({
                 {topic.targetKeyword}
               </span>
             )}
+            {topic.targetPublishDate && (
+              <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>
+                → {fmtDate(topic.targetPublishDate)}
+              </span>
+            )}
           </div>
-          {topic.rationale && (
+
+          {hasRationale && (
             <button
               onClick={() => setExpanded(e => !e)}
               style={{ fontSize: '0.7rem', color: 'var(--blue)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginTop: '0.2rem' }}
@@ -123,17 +170,18 @@ function TopicRow({
               {expanded ? '▲ hide rationale' : '▼ rationale'}
             </button>
           )}
-          {expanded && topic.rationale && (
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.375rem', lineHeight: 1.5 }}>
-              {topic.rationale}
+          {expanded && <RationaleFields topic={topic} />}
+
+          {topic.generationError && (
+            <p style={{ fontSize: '0.7rem', color: 'var(--red)', marginTop: '0.25rem' }}>
+              ⚠ {topic.generationError}
             </p>
           )}
         </div>
 
-        {/* Status + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
           <StatusBadge status={topic.status} />
-          {isActionable && (
+          {showActions && topic.status === 'pending' && (
             <>
               <button
                 onClick={() => onApprove(topic.id)}
@@ -166,6 +214,7 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const [loadingId,  setLoadingId]  = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [genResult,  setGenResult]  = useState('')
+  const [queueOpen,  setQueueOpen]  = useState(false)
 
   const daysToPublish  = daysUntil(cycle.nextPublishDate)
   const daysToDeadline = daysUntil(cycle.topicDeadline)
@@ -212,6 +261,8 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
       setGenerating(false)
     }
   }
+
+  const queueCount = cycle.queuedTopics.length
 
   return (
     <div className="card" style={{ marginBottom: '1rem', overflow: 'hidden' }}>
@@ -273,14 +324,14 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
         </div>
       </div>
 
-      {/* Progress bar + topic rows */}
+      {/* Progress bar + pending topic rows */}
       <div style={{ padding: '0.875rem 1.25rem' }}>
         {/* Approval progress */}
-        {progressFilled && cycle.topicsGenerated > 0 && (
+        {progressFilled && queueCount > 0 && (
           <div style={{ marginBottom: '0.875rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.375rem' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {cycle.topicsApproved} of {cycle.postsNeeded} topic{cycle.postsNeeded !== 1 ? 's' : ''} approved
+                {cycle.topicsApproved} of {cycle.postsNeeded} topic{cycle.postsNeeded !== 1 ? 's' : ''} queued for generation
               </span>
               {needsMoreApprovals && (
                 <span style={{ fontSize: '0.7rem', color: '#d97706' }}>
@@ -300,10 +351,10 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
           </div>
         )}
 
-        {/* Topics */}
+        {/* Pending topics for this cycle */}
         {cycle.topics.length === 0 ? (
           <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', textAlign: 'center', padding: '1rem 0' }}>
-            No topics yet — click "Generate Topics" to start this cycle.
+            No topics pending — click "Generate Topics" to start this cycle.
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
@@ -316,6 +367,37 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                 loading={loadingId === t.id}
               />
             ))}
+          </div>
+        )}
+
+        {/* Back-queue: approved/generating topics */}
+        {queueCount > 0 && (
+          <div style={{ marginTop: cycle.topics.length > 0 ? '0.875rem' : 0, borderTop: cycle.topics.length > 0 ? '1px solid var(--border, #e5e7eb)' : undefined, paddingTop: cycle.topics.length > 0 ? '0.75rem' : 0 }}>
+            <button
+              onClick={() => setQueueOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.375rem',
+                fontSize: '0.775rem', fontWeight: 600, color: 'var(--text-muted)',
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              }}
+            >
+              <span style={{ fontSize: '0.6rem' }}>{queueOpen ? '▼' : '▶'}</span>
+              {queueCount} topic{queueCount !== 1 ? 's' : ''} queued for generation
+            </button>
+            {queueOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', marginTop: '0.5rem' }}>
+                {cycle.queuedTopics.map(t => (
+                  <TopicRow
+                    key={t.id}
+                    topic={t}
+                    onApprove={id => updateStatus(id, 'approved')}
+                    onReject={id => updateStatus(id, 'rejected')}
+                    loading={loadingId === t.id}
+                    showActions={false}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/content-topics",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/ad-fuel-alerts",
+      "schedule": "0 * * * *"
     }
   ]
 }

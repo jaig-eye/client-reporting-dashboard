@@ -175,6 +175,12 @@ export interface Client {
   discord_channel_id?: string | null
   /** Local Dominator share link — embedded full-width on the client dashboard summary page. */
   local_dominator_url?: string | null
+  /** Stripe customer ID in the agency's Stripe account — used for auto-logging ad fuel payments. */
+  stripe_customer_id?: string | null
+  /** Optional balance threshold ($) for early-warning Discord alerts. Alert also fires at $0. */
+  ad_fuel_alert_threshold?: number | null
+  /** Timestamp of last ad fuel low-balance Discord alert — used to prevent spam. */
+  last_fuel_alert_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -235,6 +241,14 @@ export interface AgencySettings {
   hidden_connector_types?: string[]
   /** Discord bot token for sending per-client notifications to Discord channels. */
   discord_bot_token?: string | null
+  /** Stripe Secret API key for auto-logging ad fuel payments to the ledger. */
+  stripe_api_key?: string | null
+  /** Stripe webhook signing secret — used to verify incoming webhook events. */
+  stripe_webhook_secret?: string | null
+  /** Separate sync schedule for paid-ads connectors (google_ads, meta_ads). */
+  ads_sync_frequency?: string
+  /** UTC hour (0–23) for the ads sync when ads_sync_frequency is not 'hourly'. */
+  ads_sync_hour_utc?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
