@@ -522,9 +522,9 @@ export default async function AdminOverviewPage({
                     if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."      align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
+                    if (col === 'ad_fuel')    return <SortableTh key={col} col="ad_fuel" label="Ad Fuel" align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                     return null
                   })}
-                  <SortableTh col="ad_fuel" label="Ad Fuel" align="right" sortHref={sortHref} sortCol={sortCol} sortDir={sortDir} />
                   <th style={TH_STYLE}></th>
                 </tr>
               </thead>
@@ -640,20 +640,20 @@ export default async function AdminOverviewPage({
                             </div>
                           </td>
                         )
+                        if (col === 'ad_fuel') return (
+                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {row.hasAfLedger ? (
+                              <span style={{
+                                color: row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
+                                fontWeight: 600,
+                              }}>
+                                {fmtBalance(row.afBalance)}
+                              </span>
+                            ) : <Dash />}
+                          </td>
+                        )
                         return null
                       })}
-
-                      {/* Ad Fuel balance */}
-                      <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                        {row.hasAfLedger ? (
-                          <span style={{
-                            color: row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
-                            fontWeight: 600,
-                          }}>
-                            {fmtBalance(row.afBalance)}
-                          </span>
-                        ) : <Dash />}
-                      </td>
 
                       {/* Actions — gear icon */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>

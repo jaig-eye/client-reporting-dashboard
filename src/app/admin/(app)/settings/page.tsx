@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
-const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status'] as const
+const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status', 'ad_fuel'] as const
 const OVERVIEW_COLUMN_LABELS: Record<string, string> = {
   spend:       'Spend',
   roas_cpl:    'ROAS / CPA',
@@ -16,6 +16,7 @@ const OVERVIEW_COLUMN_LABELS: Record<string, string> = {
   clicks:      'Clicks',
   impressions: 'Impressions',
   sync_status: 'Sync Status',
+  ad_fuel:     'Ad Fuel Balance',
 }
 const DEFAULT_OVERVIEW_COLUMNS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sync_status']
 

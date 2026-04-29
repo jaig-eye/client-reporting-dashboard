@@ -63,7 +63,8 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     if (existing) continue
 
-    const isRecurring = fullInvoice.billing_reason === 'subscription_cycle'
+    // Single ad fuel line on invoice → One-Time; bundled with other products → MRR
+    const isRecurring = fullInvoice.lines.data.length > 1
     const dateOfPayment = new Date(fullInvoice.created * 1000).toISOString().split('T')[0]
 
     await db.from('ad_fuel_ledger').insert({

@@ -48,7 +48,8 @@ export async function syncStripeInvoicesForClient(clientId: string, stripe: Stri
         .maybeSingle()
       if (existing) continue
 
-      const isRecurring = invoice.billing_reason === 'subscription_cycle'
+      // Single ad fuel line on invoice → One-Time; bundled with other products → MRR
+      const isRecurring = invoice.lines.data.length > 1
       const dateOfPayment = new Date(invoice.created * 1000).toISOString().split('T')[0]
 
       await db.from('ad_fuel_ledger').insert({
