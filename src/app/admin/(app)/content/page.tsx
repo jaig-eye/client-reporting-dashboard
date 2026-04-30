@@ -343,9 +343,9 @@ export default async function ContentPage({
             )}
           </section>
 
-          {/* Posts to review */}
+          {/* Post Queue */}
           <section className="mt-8">
-            <h2 className="section-title mb-1">Posts to Review</h2>
+            <h2 className="section-title mb-1">Post Queue</h2>
             <p className="section-desc mb-4">Generated posts awaiting review and publishing.</p>
             <ContentQueue posts={posts} sites={sites} />
           </section>

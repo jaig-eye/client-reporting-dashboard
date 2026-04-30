@@ -35,10 +35,6 @@ function fmtDate(iso: string): string {
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
-function daysUntil(iso: string): number {
-  return Math.round((new Date(iso + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
-}
-
 function freqLabel(freq: string | null): string {
   const map: Record<string, string> = {
     daily:         'Daily',
@@ -232,23 +228,11 @@ function TopicRow({
 
 function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const router    = useRouter()
-  const [loadingId,      setLoadingId]      = useState<string | null>(null)
-  const [generating,     setGenerating]     = useState(false)
-  const [genResult,      setGenResult]      = useState('')
-  const [queueOpen,      setQueueOpen]      = useState(true)
-  const [postGenResults, setPostGenResults] = useState<Record<string, string>>({})
+  const [loadingId,  setLoadingId]  = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [genResult,  setGenResult]  = useState('')
 
-  const [cardOpen, setCardOpen] = useState(false)
-
-  const daysToPublish  = daysUntil(cycle.nextPublishDate)
-  const daysToDeadline = daysUntil(cycle.topicDeadline)
-  const pastDeadline   = daysToDeadline < 0
-  const closeDeadline  = daysToDeadline >= 0 && daysToDeadline <= 3
-
-  const progressPct = cycle.postsNeeded > 0
-    ? Math.min(100, Math.round((cycle.topicsApproved / cycle.postsNeeded) * 100))
-    : 0
-  const needsMoreApprovals = cycle.topicsApproved < cycle.postsNeeded
+  const [cardOpen, setCardOpen] = useState(cycle.topics.length > 0)
 
   async function updateStatus(id: string, status: 'approved' | 'rejected') {
     setLoadingId(id)
@@ -259,29 +243,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
         body: JSON.stringify({ status }),
       })
       router.refresh()
-    } finally {
-      setLoadingId(null)
-    }
-  }
-
-  async function generatePost(topicId: string) {
-    setLoadingId(topicId)
-    setPostGenResults(r => ({ ...r, [topicId]: '' }))
-    try {
-      const res  = await fetch('/api/admin/content/generate', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ topic_id: topicId }),
-      })
-      const data = await res.json()
-      if (res.ok && data.post_id) {
-        setPostGenResults(r => ({ ...r, [topicId]: 'Post generated!' }))
-        router.refresh()
-      } else {
-        setPostGenResults(r => ({ ...r, [topicId]: data.error || 'Generation failed — check DB migration or AI config' }))
-      }
-    } catch (err) {
-      setPostGenResults(r => ({ ...r, [topicId]: String(err) }))
     } finally {
       setLoadingId(null)
     }
@@ -308,8 +269,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
     }
   }
 
-  const queueCount = cycle.queuedTopics.length
-
   return (
     <div className="card" style={{ marginBottom: '0.5rem', overflow: 'hidden' }}>
       {/* Card header */}
@@ -328,11 +287,10 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
             {cycle.clientName}
           </span>
           <a
-            href="/admin/content?tab=settings"
-            style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', textDecoration: 'none', whiteSpace: 'nowrap' }}
-            title="Content Settings"
+            href={`/admin/clients/${cycle.clientId}?tab=content`}
+            style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', textDecoration: 'none', whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border, #e5e7eb)' }}
           >
-            ⚙ Settings
+            Settings
           </a>
           <span style={{
             fontSize: '0.6875rem', fontWeight: 500, padding: '1px 6px', borderRadius: 999,
@@ -340,26 +298,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
           }}>
             {freqLabel(cycle.frequency)}
           </span>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-            Publish: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(cycle.nextPublishDate)}</strong>
-            {daysToPublish > 0 && <span style={{ color: 'var(--text-faint)' }}> ({daysToPublish}d)</span>}
-          </span>
-          <span style={{ fontSize: '0.75rem', color: pastDeadline ? '#dc2626' : closeDeadline ? '#d97706' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-            · Deadline: <strong>{fmtDate(cycle.topicDeadline)}</strong>
-            {pastDeadline
-              ? <span style={{ color: '#dc2626' }}> (past)</span>
-              : daysToDeadline === 0
-                ? <span style={{ color: '#d97706' }}> (today)</span>
-                : closeDeadline
-                  ? <span style={{ color: '#d97706' }}> ({daysToDeadline}d)</span>
-                  : <span style={{ color: 'var(--text-faint)' }}> ({daysToDeadline}d)</span>
-            }
-          </span>
-          {(cycle.topics.length > 0 || cycle.queuedTopics.length > 0) && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
-              {cycle.topicsApproved}/{cycle.postsNeeded} queued
-            </span>
-          )}
         </div>
 
         {/* Right: actions + toggle */}
@@ -393,31 +331,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
       {/* Expanded body */}
       {cardOpen && (
         <div style={{ padding: '0.625rem 1rem' }}>
-          {/* Approval progress */}
-          {cycle.postsNeeded > 0 && queueCount > 0 && (
-            <div style={{ marginBottom: '0.625rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                <span style={{ fontSize: '0.7125rem', color: 'var(--text-muted)' }}>
-                  {cycle.topicsApproved} of {cycle.postsNeeded} topic{cycle.postsNeeded !== 1 ? 's' : ''} queued for generation
-                </span>
-                {needsMoreApprovals && (
-                  <span style={{ fontSize: '0.6875rem', color: '#d97706' }}>
-                    {cycle.postsNeeded - cycle.topicsApproved} more needed
-                  </span>
-                )}
-              </div>
-              <div style={{ height: 4, borderRadius: 999, background: 'var(--bg-muted, #f3f4f6)', overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width:  `${progressPct}%`,
-                  background: progressPct >= 100 ? '#16a34a' : '#2563eb',
-                  borderRadius: 999,
-                  transition: 'width 0.3s',
-                }} />
-              </div>
-            </div>
-          )}
-
           {/* Pending topics for this cycle */}
           {cycle.topics.length === 0 ? (
             <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', textAlign: 'center', padding: '0.75rem 0' }}>
@@ -434,40 +347,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                   loading={loadingId === t.id}
                 />
               ))}
-            </div>
-          )}
-
-          {/* Back-queue: approved/generating topics */}
-          {queueCount > 0 && (
-            <div style={{ marginTop: cycle.topics.length > 0 ? '0.625rem' : 0, borderTop: cycle.topics.length > 0 ? '1px solid var(--border, #e5e7eb)' : undefined, paddingTop: cycle.topics.length > 0 ? '0.5rem' : 0 }}>
-              <button
-                onClick={() => setQueueOpen(o => !o)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '0.3rem',
-                  fontSize: '0.7125rem', fontWeight: 600, color: 'var(--text-muted)',
-                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                }}
-              >
-                <span style={{ fontSize: '0.55rem' }}>{queueOpen ? '▼' : '▶'}</span>
-                {queueCount} topic{queueCount !== 1 ? 's' : ''} scheduled — ready for generation
-              </button>
-              {queueOpen && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.375rem' }}>
-                  {cycle.queuedTopics.map(t => (
-                    <TopicRow
-                      key={t.id}
-                      topic={t}
-                      onApprove={id => updateStatus(id, 'approved')}
-                      onReject={id => updateStatus(id, 'rejected')}
-                      onGeneratePost={generatePost}
-                      loading={loadingId === t.id}
-                      showActions={false}
-                      showGeneratePost
-                      postGenResult={postGenResults[t.id]}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </div>

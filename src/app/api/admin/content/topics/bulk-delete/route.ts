@@ -1,6 +1,7 @@
 // POST /api/admin/content/topics/bulk-delete
-// Body: { ids?: string[], purge_all?: boolean }
-// ids      — delete specific topic IDs and their linked content_posts
+// Body: { ids?: string[], post_ids?: string[], purge_all?: boolean }
+// ids      — delete specific topic IDs and their linked content_posts (via post_id FK)
+// post_ids — delete specific content_post IDs directly (for posts not linked to a topic)
 // purge_all — delete ALL content_topics and content_posts
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -14,7 +15,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { ids?: string[]; purge_all?: boolean }
+  const body = await request.json() as { ids?: string[]; post_ids?: string[]; purge_all?: boolean }
   const db = createAdminClient()
 
   if (body.purge_all) {
@@ -27,30 +28,39 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ deleted: 'all' })
   }
 
-  const ids = body.ids ?? []
-  if (ids.length === 0) {
+  const topicIds = body.ids ?? []
+  const postIds  = body.post_ids ?? []
+
+  if (topicIds.length === 0 && postIds.length === 0) {
     return NextResponse.json({ error: 'No ids provided' }, { status: 400 })
   }
 
-  // Fetch the post_ids linked to these topics so we can delete them too
-  const { data: topics } = await db
-    .from('content_topics')
-    .select('id, post_id')
-    .in('id', ids)
+  // For topic IDs: fetch linked post_ids so we can cascade-delete them
+  let linkedPostIds: string[] = []
+  if (topicIds.length > 0) {
+    const { data: topics } = await db
+      .from('content_topics')
+      .select('id, post_id')
+      .in('id', topicIds)
 
-  const postIds = (topics ?? [])
-    .map(t => (t as { post_id: string | null }).post_id)
-    .filter((id): id is string => !!id)
+    linkedPostIds = (topics ?? [])
+      .map(t => (t as { post_id: string | null }).post_id)
+      .filter((id): id is string => !!id)
+  }
+
+  const allPostIdsToDelete = Array.from(new Set(linkedPostIds.concat(postIds)))
 
   const [topicsRes, postsRes] = await Promise.all([
-    db.from('content_topics').delete().in('id', ids),
-    postIds.length > 0
-      ? db.from('content_posts').delete().in('id', postIds)
+    topicIds.length > 0
+      ? db.from('content_topics').delete().in('id', topicIds)
+      : Promise.resolve({ error: null }),
+    allPostIdsToDelete.length > 0
+      ? db.from('content_posts').delete().in('id', allPostIdsToDelete)
       : Promise.resolve({ error: null }),
   ])
 
   if (topicsRes.error) return NextResponse.json({ error: topicsRes.error.message }, { status: 500 })
   if (postsRes.error)  return NextResponse.json({ error: postsRes.error.message },  { status: 500 })
 
-  return NextResponse.json({ deleted: ids.length })
+  return NextResponse.json({ deleted: topicIds.length + postIds.length })
 }

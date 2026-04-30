@@ -244,6 +244,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const router = useRouter()
   const [items,          setItems]          = useState<QueueItem[]>(initialItems)
   const [tab,            setTab]            = useState<TabId>('scheduled')
+  const [clientFilter,   setClientFilter]   = useState<string>('all')
   const [selected,       setSelected]       = useState<Set<string>>(new Set())
   const [rationaleItem,  setRationaleItem]  = useState<QueueItem | null>(null)
   const [editingPostId,  setEditingPostId]  = useState<string | null>(null)
@@ -252,16 +253,23 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [showPurge,      setShowPurge]      = useState(false)
   const [error,          setError]          = useState('')
 
+  const clientOptions = Array.from(
+    new Map(items.map(i => [i.clientId, i.clientName])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]))
+
   const isScheduledTab = (i: QueueItem) =>
     i.type === 'topic' && ['scheduled', 'approved', 'generating'].includes(i.status)
 
   const isUploadedTab = (i: QueueItem) =>
     i.type === 'post' && i.wpPostId != null
 
+  const applyClientFilter = (arr: QueueItem[]) =>
+    clientFilter === 'all' ? arr : arr.filter(i => i.clientId === clientFilter)
+
   const tabItems: Record<TabId, QueueItem[]> = {
-    all:       items,
-    scheduled: items.filter(isScheduledTab),
-    uploaded:  items.filter(isUploadedTab),
+    all:       applyClientFilter(items),
+    scheduled: applyClientFilter(items.filter(isScheduledTab)),
+    uploaded:  applyClientFilter(items.filter(isUploadedTab)),
   }
 
   const filtered = tabItems[tab]
@@ -289,13 +297,15 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   async function deleteSelected() {
     const ids = Array.from(selected).filter(id => filtered.some(i => i.id === id))
     if (ids.length === 0) return
+    const topicIds = ids.filter(id => filtered.find(i => i.id === id)?.type === 'topic')
+    const postIds  = ids.filter(id => filtered.find(i => i.id === id)?.type === 'post')
     setBulkLoading(true)
     setError('')
     try {
       const res = await fetch('/api/admin/content/topics/bulk-delete', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ids }),
+        body:    JSON.stringify({ ids: topicIds, post_ids: postIds }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')
       setItems(prev => prev.filter(i => !ids.includes(i.id)))
@@ -332,10 +342,13 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     setLoading(item.id)
     setError('')
     try {
+      const body = item.type === 'topic'
+        ? { ids: [item.id] }
+        : { post_ids: [item.id] }
       const res = await fetch('/api/admin/content/topics/bulk-delete', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ids: [item.id] }),
+        body:    JSON.stringify(body),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')
       setItems(prev => prev.filter(i => i.id !== item.id))
@@ -365,28 +378,46 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     <>
       {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
-        {/* Tab pills */}
-        <div style={{ display: 'flex', gap: '0.25rem' }}>
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => { setTab(t.id); setSelected(new Set()) }}
+        {/* Left: tab pills + client filter */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.25rem' }}>
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setTab(t.id); setSelected(new Set()) }}
+                style={{
+                  padding: '0.25rem 0.625rem',
+                  fontSize: '0.8rem',
+                  borderRadius: 6,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: tab === t.id ? 600 : 400,
+                  background: tab === t.id ? 'var(--blue)' : 'var(--bg-subtle)',
+                  color: tab === t.id ? '#fff' : 'var(--text-muted)',
+                  transition: 'background 0.15s, color 0.15s',
+                }}
+              >
+                {t.label} ({t.count})
+              </button>
+            ))}
+          </div>
+          {clientOptions.length > 1 && (
+            <select
+              value={clientFilter}
+              onChange={e => { setClientFilter(e.target.value); setSelected(new Set()) }}
               style={{
-                padding: '0.25rem 0.625rem',
-                fontSize: '0.8rem',
-                borderRadius: 6,
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: tab === t.id ? 600 : 400,
-                background: tab === t.id ? 'var(--blue)' : 'var(--bg-subtle)',
-                color: tab === t.id ? '#fff' : 'var(--text-muted)',
-                transition: 'background 0.15s, color 0.15s',
+                fontSize: '0.8rem', padding: '0.25rem 0.5rem',
+                border: '1px solid var(--border, #e5e7eb)', borderRadius: 6,
+                background: 'var(--bg-surface, #fff)', color: 'var(--text-primary)', cursor: 'pointer',
               }}
             >
-              {t.label} ({t.count})
-            </button>
-          ))}
+              <option value="all">All Clients</option>
+              {clientOptions.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Actions */}
@@ -430,7 +461,8 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
           overflow:     'hidden',
           background:   'var(--bg-surface, #fff)',
         }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: 640 }}>
             <colgroup>
               <col style={{ width: 36 }} />
               <col style={{ width: 90 }} />
@@ -440,7 +472,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col style={{ width: 90 }} />
               {tab !== 'uploaded' && <col style={{ width: 86 }} />}
               {tab !== 'scheduled' && <col style={{ width: 52 }} />}
-              <col style={{ width: 1 }} />
+              <col style={{ width: tab === 'uploaded' ? 210 : 56 }} />
             </colgroup>
             <thead>
               <tr>
@@ -601,6 +633,18 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                                 View ↗
                               </a>
                             )}
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() => deleteSingle(item)}
+                              style={{
+                                fontSize: '0.7rem', padding: '0.15rem 0.4rem',
+                                background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+                              }}
+                              title="Delete"
+                            >
+                              {isLoading ? '…' : '✕'}
+                            </button>
                           </>
                         )}
                       </div>
@@ -610,6 +654,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
