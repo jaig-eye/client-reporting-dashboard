@@ -250,7 +250,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [editingPostId,  setEditingPostId]  = useState<string | null>(null)
   const [loading,        setLoading]        = useState<string | null>(null)
   const [bulkLoading,    setBulkLoading]    = useState(false)
-  const [showPurge,      setShowPurge]      = useState(false)
   const [error,          setError]          = useState('')
 
   const clientOptions = Array.from(
@@ -312,27 +311,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
       setSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete')
-    } finally {
-      setBulkLoading(false)
-    }
-  }
-
-  async function purgeAll() {
-    setShowPurge(false)
-    setBulkLoading(true)
-    setError('')
-    try {
-      const res = await fetch('/api/admin/content/topics/bulk-delete', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ purge_all: true }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Purge failed')
-      setItems([])
-      setSelected(new Set())
-      router.refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to purge')
     } finally {
       setBulkLoading(false)
     }
@@ -433,14 +411,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedCount})`}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setShowPurge(true)}
-            className="btn btn-danger"
-            style={{ fontSize: '0.8rem', padding: '0.25rem 0.625rem' }}
-          >
-            Purge All
-          </button>
         </div>
       </div>
 
@@ -462,17 +432,17 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
           background:   'var(--bg-surface, #fff)',
         }}>
           <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: 640 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 36 }} />
               <col style={{ width: 90 }} />
-              <col style={{ width: 110 }} />
-              <col />
-              <col style={{ width: 130 }} />
-              <col style={{ width: 90 }} />
-              {tab !== 'uploaded' && <col style={{ width: 86 }} />}
+              <col style={{ width: 100 }} />
+              <col style={{ width: 280 }} />
+              <col style={{ width: 120 }} />
+              <col style={{ width: 80 }} />
+              {tab !== 'uploaded' && <col style={{ width: 80 }} />}
               {tab !== 'scheduled' && <col style={{ width: 52 }} />}
-              <col style={{ width: tab === 'uploaded' ? 210 : 56 }} />
+              <col style={{ width: tab === 'uploaded' ? 210 : 52 }} />
             </colgroup>
             <thead>
               <tr>
@@ -552,7 +522,10 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     {/* Keyword */}
                     <td style={{ ...tdStyle, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                       {item.targetKeyword ? (
-                        <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '1px 5px', borderRadius: 4 }}>
+                        <span
+                          title={item.targetKeyword}
+                          style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '1px 5px', borderRadius: 4, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}
+                        >
                           {item.targetKeyword}
                         </span>
                       ) : null}
@@ -661,11 +634,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
       {/* Rationale modal */}
       {rationaleItem && (
         <RationaleModal item={rationaleItem} onClose={() => setRationaleItem(null)} />
-      )}
-
-      {/* Purge confirmation */}
-      {showPurge && (
-        <PurgeConfirmModal onConfirm={purgeAll} onClose={() => setShowPurge(false)} />
       )}
 
       {/* Post editor drawer */}
