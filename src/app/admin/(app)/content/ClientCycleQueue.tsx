@@ -200,7 +200,7 @@ function TopicRow({
                 className="btn btn-primary"
                 style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem' }}
               >
-                Approve
+                Schedule
               </button>
               <button
                 onClick={() => onReject(topic.id)}
@@ -238,8 +238,7 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const [queueOpen,      setQueueOpen]      = useState(true)
   const [postGenResults, setPostGenResults] = useState<Record<string, string>>({})
 
-  const hasActivity = cycle.topics.length > 0 || cycle.queuedTopics.length > 0
-  const [cardOpen, setCardOpen] = useState(hasActivity)
+  const [cardOpen, setCardOpen] = useState(false)
 
   const daysToPublish  = daysUntil(cycle.nextPublishDate)
   const daysToDeadline = daysUntil(cycle.topicDeadline)
@@ -328,6 +327,13 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
           <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
             {cycle.clientName}
           </span>
+          <a
+            href="/admin/content?tab=settings"
+            style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+            title="Content Settings"
+          >
+            ⚙ Settings
+          </a>
           <span style={{
             fontSize: '0.6875rem', fontWeight: 500, padding: '1px 6px', borderRadius: 999,
             background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-faint)', flexShrink: 0,
@@ -349,7 +355,7 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                   : <span style={{ color: 'var(--text-faint)' }}> ({daysToDeadline}d)</span>
             }
           </span>
-          {hasActivity && (
+          {(cycle.topics.length > 0 || cycle.queuedTopics.length > 0) && (
             <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
               {cycle.topicsApproved}/{cycle.postsNeeded} queued
             </span>
@@ -443,7 +449,7 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                 }}
               >
                 <span style={{ fontSize: '0.55rem' }}>{queueOpen ? '▼' : '▶'}</span>
-                {queueCount} topic{queueCount !== 1 ? 's' : ''} approved — ready to generate posts
+                {queueCount} topic{queueCount !== 1 ? 's' : ''} scheduled — ready for generation
               </button>
               {queueOpen && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.375rem' }}>

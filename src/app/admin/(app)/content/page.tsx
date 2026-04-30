@@ -120,7 +120,7 @@ export default async function ContentPage({
       .limit(500),
     // Topics in the generation pipeline (approved / generating / scheduled) — shown in Posts to Review
     db.from('content_topics')
-      .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, created_at')
+      .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
       .in('status', ['approved', 'generating', 'scheduled'])
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(200),
@@ -201,8 +201,8 @@ export default async function ContentPage({
       t => (!t.targetPublishDate || t.targetPublishDate === nextPublishStr) && t.status === 'pending'
     )
 
-    // All approved/generating topics for this client (back-queue)
-    const queuedTopics = clientTopics.filter(t => ['approved', 'generating'].includes(t.status))
+    // All scheduled/approved/generating topics for this client (back-queue)
+    const queuedTopics = clientTopics.filter(t => ['scheduled', 'approved', 'generating'].includes(t.status))
 
     const approved = queuedTopics.length
 
@@ -251,25 +251,34 @@ export default async function ContentPage({
   }))
 
   const scheduledTopicItems = (scheduledTopicsRes.data ?? []).map(t => ({
-    type:              'topic' as const,
-    id:                String(t.id),
-    clientId:          String(t.client_id),
-    clientName:        allClientsMap.get(String(t.client_id)) ?? 'Unknown',
-    status:            String(t.status),
-    targetKeyword:     t.target_keyword ? String(t.target_keyword) : null,
-    title:             null,
-    topicText:         String(t.topic),
-    wordCount:         null,
-    headingCount:      null,
-    internalLinks:     null,
-    generatedAt:       String(t.created_at),
-    generatedBy:       'scheduled',
-    publishedUrl:      null,
-    generateByDate:    t.generate_by_date    ? String(t.generate_by_date)    : null,
-    targetPublishDate: t.target_publish_date  ? String(t.target_publish_date) : null,
-    rationale:         t.rationale            ? String(t.rationale)           : null,
-    wpPostId:          null,
-    wpSiteUrl:         null,
+    type:                'topic' as const,
+    id:                  String(t.id),
+    clientId:            String(t.client_id),
+    clientName:          allClientsMap.get(String(t.client_id)) ?? 'Unknown',
+    status:              String(t.status),
+    targetKeyword:       t.target_keyword ? String(t.target_keyword) : null,
+    title:               null,
+    topicText:           String(t.topic),
+    wordCount:           null,
+    headingCount:        null,
+    internalLinks:       null,
+    generatedAt:         String(t.created_at),
+    generatedBy:         'scheduled',
+    publishedUrl:        null,
+    generateByDate:      t.generate_by_date    ? String(t.generate_by_date)    : null,
+    targetPublishDate:   t.target_publish_date  ? String(t.target_publish_date) : null,
+    rationale:           t.rationale            ? String(t.rationale)           : null,
+    wpPostId:            null,
+    wpSiteUrl:           null,
+    keywordOpportunity:  (t as Record<string, unknown>).keyword_opportunity  ? String((t as Record<string, unknown>).keyword_opportunity)  : null,
+    rankingStrategy:     (t as Record<string, unknown>).ranking_strategy     ? String((t as Record<string, unknown>).ranking_strategy)     : null,
+    audienceIntent:      (t as Record<string, unknown>).audience_intent      ? String((t as Record<string, unknown>).audience_intent)      : null,
+    whyNow:              (t as Record<string, unknown>).why_now              ? String((t as Record<string, unknown>).why_now)              : null,
+    competitionLevel:    (t as Record<string, unknown>).competition_level    ? String((t as Record<string, unknown>).competition_level)    : null,
+    generationError:     (t as Record<string, unknown>).generation_error     ? String((t as Record<string, unknown>).generation_error)     : null,
+    suggestedTitle:      (t as Record<string, unknown>).suggested_title      ? String((t as Record<string, unknown>).suggested_title)      : null,
+    searchVolume:        (t as Record<string, unknown>).search_volume        != null ? Number((t as Record<string, unknown>).search_volume)        : null,
+    keywordDifficulty:   (t as Record<string, unknown>).keyword_difficulty   != null ? Number((t as Record<string, unknown>).keyword_difficulty)   : null,
   }))
 
   const posts = [...scheduledTopicItems, ...postItems]

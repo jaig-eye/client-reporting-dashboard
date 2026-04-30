@@ -82,7 +82,8 @@ async function wpPost(
 export interface WpPostPayload {
   title: string
   content: string
-  status?: 'publish' | 'draft' | 'pending'
+  status?: 'publish' | 'draft' | 'pending' | 'future'
+  date?: string
   categories?: number[]
   tags?: number[]
   featured_media?: number
@@ -113,6 +114,7 @@ export async function publishPost(
     title: post.title,
     content: post.content,
     status: post.status ?? 'draft',
+    ...(post.date ? { date: post.date } : {}),
     categories: post.categories,
     tags: post.tags,
     featured_media: post.featured_media,

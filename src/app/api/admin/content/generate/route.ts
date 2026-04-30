@@ -394,7 +394,7 @@ Target approximately ${targetLength} words.`
   } catch (err) {
     if (topic_id) {
       await db.from('content_topics')
-        .update({ status: 'approved', generation_error: String(err) })
+        .update({ status: 'scheduled', generation_error: String(err) })
         .eq('id', topic_id)
     }
     return NextResponse.json({ error: String(err) }, { status: 500 })
@@ -432,7 +432,7 @@ Target approximately ${targetLength} words.`
     if (insertError) {
       if (topic_id) {
         await db.from('content_topics')
-          .update({ status: 'approved', generation_error: `DB error: ${insertError.message}` })
+          .update({ status: 'scheduled', generation_error: `DB error: ${insertError.message}` })
           .eq('id', topic_id)
       }
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })
@@ -462,10 +462,14 @@ Target approximately ${targetLength} words.`
 
         if (auth?.username && auth?.app_password && config?.site_url) {
           const { publishPost } = await import('@/lib/connectors/wordpress')
+          const today           = new Date().toISOString().split('T')[0]
+          const publishDate     = topicData.target_publish_date!
+          const wpStatus        = publishDate > today ? 'future' : 'draft'
           const wpResult = await publishPost(config.site_url, auth, {
             title:   parsed.title,
             content: parsed.content,
-            status:  'draft',
+            status:  wpStatus,
+            date:    `${publishDate}T09:00:00`,
             slug:    parsed.slug || undefined,
             excerpt: parsed.metaDescription || undefined,
             meta: {
@@ -476,10 +480,10 @@ Target approximately ${targetLength} words.`
           })
           await db.from('content_posts').update({
             wp_post_id:          wpResult.id,
-            wp_status:           'draft',
+            wp_status:           wpStatus,
             wp_site_url:         config.site_url,
             status:              'draft_saved',
-            target_publish_date: topicData.target_publish_date,
+            target_publish_date: publishDate,
           }).eq('id', postId)
         }
       } catch (wpErr) {

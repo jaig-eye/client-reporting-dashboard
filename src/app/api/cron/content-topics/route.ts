@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
   // Reset topics stuck in 'generating' for more than 1 hour (timed out or crashed)
   await db
     .from('content_topics')
-    .update({ status: 'approved', generation_error: 'Timed out — reset by cron' })
+    .update({ status: 'scheduled', generation_error: 'Timed out — reset by cron' })
     .eq('status', 'generating')
     .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
 
@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
         .from('content_topics')
         .select('id')
         .eq('client_id', client_id)
-        .eq('status', 'approved')
+        .in('status', ['scheduled', 'approved'])
 
       for (const topic of approvedTopics ?? []) {
         try {
@@ -188,7 +188,7 @@ export async function GET(request: NextRequest) {
         } catch (e) {
           console.error(`[content-topics cron] Failed to generate post for topic ${topic.id}:`, e)
           await db.from('content_topics')
-            .update({ status: 'approved', generation_error: String(e) })
+            .update({ status: 'scheduled', generation_error: String(e) })
             .eq('id', topic.id)
         }
       }

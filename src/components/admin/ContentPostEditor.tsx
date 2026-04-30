@@ -123,8 +123,6 @@ function metaLength(meta: string | null): number {
 export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate }: Props) {
   const [post,         setPost]         = useState<PostDetail | null>(null)
   const [loading,      setLoading]      = useState(true)
-  const [saving,       setSaving]       = useState(false)
-  const [publishing,   setPublishing]   = useState(false)
   const [regenerating, setRegenerating] = useState(false)
   const [error,        setError]        = useState('')
 
@@ -246,66 +244,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  // ── Publish helpers ─────────────────────────────────────────────────────────
-  function buildPublishBody(overrideStatus?: string) {
-    return {
-      post_id:          postId,
-      connection_id:    connectionId,
-      title,
-      content,
-      status:           overrideStatus ?? wpStatus,
-      slug,
-      meta_description: metaDescription,
-      target_keyword:   targetKeyword,
-      seo_title:        seoTitle,
-      author_id:        authorId,
-      tags,
-    }
-  }
-
-  async function handleSaveDraft() {
-    if (!connectionId) { setError('Select a WordPress site first'); return }
-    setSaving(true)
-    setError('')
-    try {
-      const res = await fetch('/api/admin/content/publish', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(buildPublishBody('draft')),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to save draft')
-      const data = await res.json()
-      setPost(prev => prev ? { ...prev, status: 'draft_saved', publishedUrl: data.url ?? prev.publishedUrl } : prev)
-      onUpdate({ id: postId, status: 'draft_saved', title: title || null, targetKeyword: targetKeyword || null, wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks, publishedUrl: data.url ?? null })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save draft')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handlePublish() {
-    if (!connectionId) { setError('Select a WordPress site first'); return }
-    setPublishing(true)
-    setError('')
-    try {
-      const res = await fetch('/api/admin/content/publish', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(buildPublishBody()),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to publish')
-      const data = await res.json()
-      const newStatus = wpStatus === 'publish' ? 'published' : 'draft_saved'
-      setPost(prev => prev ? { ...prev, status: newStatus, publishedUrl: data.url ?? prev.publishedUrl } : prev)
-      onUpdate({ id: postId, status: newStatus, title: title || null, targetKeyword: targetKeyword || null, wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks, publishedUrl: data.url ?? null })
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to publish')
-    } finally {
-      setPublishing(false)
-    }
-  }
 
   async function handleApprove() {
     setError('')
@@ -771,12 +709,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 Approve
               </button>
             )}
-            <button type="button" disabled={saving} onClick={handleSaveDraft} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-              {saving ? 'Saving…' : 'Save Draft to WP'}
-            </button>
-            <button type="button" disabled={publishing} onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-              {publishing ? 'Publishing…' : wpStatus === 'publish' ? 'Publish to WP' : 'Send to WP Draft'}
-            </button>
             <div style={{ flex: 1 }} />
             <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
               Reject

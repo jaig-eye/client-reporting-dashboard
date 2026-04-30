@@ -1,29 +1,39 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import ContentPostEditor from './ContentPostEditor'
 
 interface QueueItem {
-  type:              'post' | 'topic'
-  id:                string
-  clientId:          string
-  clientName:        string
-  status:            string
-  targetKeyword:     string | null
-  title:             string | null
-  topicText:         string | null
-  wordCount:         number | null
-  headingCount:      number | null
-  internalLinks:     number | null
-  generatedAt:       string
-  generatedBy:       string
-  publishedUrl:      string | null
-  generateByDate:    string | null
-  targetPublishDate: string | null
-  rationale:         string | null
-  wpPostId:          number | null
-  wpSiteUrl:         string | null
+  type:                'post' | 'topic'
+  id:                  string
+  clientId:            string
+  clientName:          string
+  status:              string
+  targetKeyword:       string | null
+  title:               string | null
+  topicText:           string | null
+  wordCount:           number | null
+  headingCount:        number | null
+  internalLinks:       number | null
+  generatedAt:         string
+  generatedBy:         string
+  publishedUrl:        string | null
+  generateByDate:      string | null
+  targetPublishDate:   string | null
+  rationale:           string | null
+  wpPostId:            number | null
+  wpSiteUrl:           string | null
+  // rationale fields (topics only)
+  keywordOpportunity?: string | null
+  rankingStrategy?:    string | null
+  audienceIntent?:     string | null
+  whyNow?:             string | null
+  competitionLevel?:   string | null
+  generationError?:    string | null
+  suggestedTitle?:     string | null
+  searchVolume?:       number | null
+  keywordDifficulty?:  number | null
 }
 
 interface Site {
@@ -39,410 +49,378 @@ interface Props {
   sites: Site[]
 }
 
-const STATUS_TABS = ['all', 'scheduled', 'pending', 'approved', 'published', 'rejected'] as const
-type StatusFilter = typeof STATUS_TABS[number]
+type TabId = 'all' | 'scheduled' | 'uploaded'
 
-const POST_STATUS_LABELS: Record<string, string> = {
-  pending:     'Pending',
-  approved:    'Approved',
-  published:   'Published',
-  draft_saved: 'Scheduled',
-  rejected:    'Rejected',
+const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }> = {
+  pending:    { bg: '#fef3c7', color: '#92400e', label: 'Pending'     },
+  approved:   { bg: '#ede9fe', color: '#5b21b6', label: 'Scheduled'   },
+  scheduled:  { bg: '#ede9fe', color: '#5b21b6', label: 'Scheduled'   },
+  generating: { bg: '#dbeafe', color: '#1e40af', label: 'Generating…' },
+  generated:  { bg: '#dbeafe', color: '#1e40af', label: 'Generated'   },
+  published:  { bg: '#dcfce7', color: '#166534', label: 'Published'   },
+  draft_saved:{ bg: '#ede9fe', color: '#5b21b6', label: 'In WP'       },
+  rejected:   { bg: '#fee2e2', color: '#991b1b', label: 'Rejected'    },
 }
 
-const TOPIC_STATUS_LABELS: Record<string, string> = {
-  approved:   'Scheduled',
-  scheduled:  'Scheduled',
-  generating: 'Generating…',
-}
-
-const STATUS_BADGE: Record<string, { bg: string; color: string }> = {
-  pending:    { bg: '#fef3c7', color: '#92400e' },
-  approved:   { bg: '#dbeafe', color: '#1e40af' },
-  published:  { bg: '#dcfce7', color: '#166534' },
-  draft_saved:{ bg: '#ede9fe', color: '#5b21b6' },
-  rejected:   { bg: '#fee2e2', color: '#991b1b' },
-  generating: { bg: '#ede9fe', color: '#5b21b6' },
-  scheduled:  { bg: '#ede9fe', color: '#5b21b6' },
-}
-
-function statusLabel(item: QueueItem): string {
-  if (item.type === 'topic') return TOPIC_STATUS_LABELS[item.status] ?? item.status
-  return POST_STATUS_LABELS[item.status] ?? item.status
-}
-
-function statusBadgeStyle(item: QueueItem) {
-  const key = item.type === 'topic'
-    ? (item.status === 'generating' ? 'generating' : 'scheduled')
-    : item.status
-  return STATUS_BADGE[key] ?? STATUS_BADGE.pending
+const COMPETITION_BADGE: Record<string, { bg: string; color: string }> = {
+  low:    { bg: '#dcfce7', color: '#166534' },
+  medium: { bg: '#fef3c7', color: '#92400e' },
+  high:   { bg: '#fee2e2', color: '#991b1b' },
 }
 
 function fmtDate(iso: string): string {
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', timeZone: 'UTC',
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
   })
 }
 
-function timeSince(iso: string): string {
-  const h = (Date.now() - new Date(iso).getTime()) / 3_600_000
-  if (h < 1)  return 'now'
-  if (h < 24) return `${Math.floor(h)}h`
-  const d = h / 24
-  if (d < 7)  return `${Math.floor(d)}d`
-  return `${Math.floor(d / 7)}w`
+function StatusBadge({ item }: { item: QueueItem }) {
+  const key = item.type === 'topic'
+    ? (item.status === 'generating' ? 'generating' : 'scheduled')
+    : item.status
+  const s = STATUS_BADGE[key] ?? STATUS_BADGE.pending
+  return (
+    <span style={{
+      display: 'inline-block', padding: '1px 7px', borderRadius: 999,
+      fontSize: '0.6875rem', fontWeight: 700, background: s.bg, color: s.color,
+      whiteSpace: 'nowrap', width: 82, textAlign: 'center', flexShrink: 0,
+    }}>
+      {s.label}
+    </span>
+  )
 }
 
-function ItemRow({
-  item,
-  onOpenEditor,
-  onReject,
-  onForceGenerate,
-  loading,
-  rowError,
-}: {
-  item:             QueueItem
-  onOpenEditor:     (id: string) => void
-  onReject:         (item: QueueItem) => void
-  onForceGenerate:  (id: string) => void
-  loading:          string | null
-  rowError:         string | undefined
-}) {
-  const badge = statusBadgeStyle(item)
-  const isLoading = loading === item.id
-  const isTopic = item.type === 'topic'
-  const isGenerating = item.status === 'generating' && !isLoading
-  const displayTitle = isTopic ? item.topicText : item.title
-  const displayDate = item.targetPublishDate
-    ? fmtDate(item.targetPublishDate)
-    : !isTopic
-      ? timeSince(item.generatedAt)
-      : null
+function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => void }) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const fields: { label: string; value: string | number | null | undefined }[] = [
+    { label: 'Topic',              value: item.topicText },
+    { label: 'Client',             value: item.clientName },
+    { label: 'Target Keyword',     value: item.targetKeyword },
+    { label: 'Suggested Title',    value: item.suggestedTitle },
+    { label: 'Publish Date',       value: item.targetPublishDate ? fmtDate(item.targetPublishDate) : null },
+    { label: 'Search Volume',      value: item.searchVolume },
+    { label: 'Keyword Difficulty', value: item.keywordDifficulty },
+    { label: 'Competition',        value: item.competitionLevel },
+  ]
+
+  const ratFields: { label: string; value: string | null | undefined }[] = [
+    { label: 'Keyword Opportunity', value: item.keywordOpportunity },
+    { label: 'Ranking Strategy',    value: item.rankingStrategy },
+    { label: 'Audience Intent',     value: item.audienceIntent },
+    { label: 'Why Now',             value: item.whyNow },
+  ]
 
   return (
-    <div>
-      <div style={{
-        display:     'flex',
-        alignItems:  'center',
-        gap:         '0.625rem',
-        padding:     '0.35rem 0.75rem',
-        borderBottom:'1px solid var(--border, #e5e7eb)',
-        minHeight:   40,
-      }}>
-        {/* Status badge */}
-        <span style={{
-          display:      'inline-block',
-          padding:      '1px 7px',
-          borderRadius: 999,
-          fontSize:     '0.6875rem',
-          fontWeight:   700,
-          background:   badge.bg,
-          color:        badge.color,
-          whiteSpace:   'nowrap',
-          flexShrink:   0,
-          width:        76,
-          textAlign:    'center',
-        }}>
-          {statusLabel(item)}
-        </span>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 1000, padding: '1rem',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-surface, #fff)', borderRadius: 12,
+          padding: '1.5rem', maxWidth: 560, width: '100%', maxHeight: '85vh',
+          overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            Topic Details
+          </h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--text-faint)', lineHeight: 1 }}>×</button>
+        </div>
 
-        {/* Client */}
-        <span style={{
-          fontSize:     '0.75rem',
-          fontWeight:   600,
-          color:        'var(--text-muted)',
-          whiteSpace:   'nowrap',
-          overflow:     'hidden',
-          textOverflow: 'ellipsis',
-          flexShrink:   0,
-          width:        104,
-        }}>
-          {item.clientName}
-        </span>
+        {/* Key metrics grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
+          {fields.filter(f => f.value != null && f.value !== '').map(f => (
+            <div key={f.label} style={{ background: 'var(--bg-subtle, #f8f9fa)', borderRadius: 6, padding: '0.5rem 0.625rem' }}>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</div>
+              <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>{String(f.value)}</div>
+            </div>
+          ))}
+        </div>
 
-        {/* Title / topic */}
-        <span style={{
-          flex:         1,
-          fontSize:     '0.8125rem',
-          fontWeight:   isTopic ? 400 : 600,
-          fontStyle:    isTopic ? 'italic' : 'normal',
-          color:        'var(--text-primary)',
-          overflow:     'hidden',
-          whiteSpace:   'nowrap',
-          textOverflow: 'ellipsis',
-          minWidth:     0,
-        }}>
-          {isGenerating && <span style={{ marginRight: 3 }}>⏳</span>}
-          {displayTitle ?? <span style={{ color: 'var(--text-faint)', fontWeight: 400, fontStyle: 'italic' }}>Untitled</span>}
-        </span>
+        {/* Rationale fields */}
+        {ratFields.filter(f => f.value).map(f => (
+          <div key={f.label} style={{ marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{f.label}</div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>{f.value}</div>
+          </div>
+        ))}
 
-        {/* Keyword */}
-        {item.targetKeyword ? (
-          <span style={{
-            fontSize:     '0.6875rem',
-            color:        'var(--text-faint)',
-            background:   'var(--bg-subtle, #f8f9fa)',
-            padding:      '1px 5px',
-            borderRadius: 4,
-            whiteSpace:   'nowrap',
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
-            flexShrink:   0,
-            maxWidth:     130,
-          }}>
-            {item.targetKeyword}
-          </span>
-        ) : (
-          <span style={{ width: 0, flexShrink: 0 }} />
+        {item.generationError && (
+          <div style={{ background: '#fee2e2', borderRadius: 6, padding: '0.5rem 0.75rem', marginTop: '0.75rem' }}>
+            <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#991b1b', marginBottom: 2 }}>GENERATION ERROR</div>
+            <div style={{ fontSize: '0.8125rem', color: '#7f1d1d' }}>{item.generationError}</div>
+          </div>
         )}
-
-        {/* Date */}
-        <span style={{
-          fontSize:   '0.75rem',
-          color:      'var(--text-faint)',
-          whiteSpace: 'nowrap',
-          flexShrink: 0,
-          width:      60,
-          textAlign:  'right',
-        }}>
-          {displayDate ?? '—'}
-        </span>
-
-        {/* Word count (posts only) */}
-        <span style={{
-          fontSize:   '0.75rem',
-          color:      'var(--text-faint)',
-          whiteSpace: 'nowrap',
-          flexShrink: 0,
-          width:      52,
-          textAlign:  'right',
-        }}>
-          {!isTopic && item.wordCount != null ? `${item.wordCount.toLocaleString()}w` : ''}
-        </span>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
-          {!isTopic && (
-            <>
-              {item.wpPostId && item.wpSiteUrl && (
-                <a
-                  href={`${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-primary"
-                  style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
-                >
-                  Edit in WP ↗
-                </a>
-              )}
-              <button
-                type="button"
-                onClick={() => onOpenEditor(item.id)}
-                className="btn btn-secondary"
-                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
-              >
-                SEO Report
-              </button>
-              {item.status === 'pending' && (
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onClick={() => onReject(item)}
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', color: 'var(--red)', whiteSpace: 'nowrap' }}
-                >
-                  Reject
-                </button>
-              )}
-              {item.publishedUrl && (
-                <a
-                  href={item.publishedUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
-                >
-                  View ↗
-                </a>
-              )}
-            </>
-          )}
-
-          {isTopic && !isGenerating && (
-            <>
-              <button
-                type="button"
-                disabled={isLoading}
-                onClick={() => onForceGenerate(item.id)}
-                className="btn btn-primary"
-                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
-              >
-                {isLoading ? 'Generating…' : '▶ Generate Now'}
-              </button>
-              {!isLoading && (
-                <button
-                  type="button"
-                  onClick={() => onReject(item)}
-                  style={{
-                    fontSize: '0.7rem', padding: '0.15rem 0.4rem',
-                    background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </>
-          )}
-
-          {isTopic && isGenerating && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', fontStyle: 'italic', whiteSpace: 'nowrap' }}>
-              Generating…
-            </span>
-          )}
-        </div>
       </div>
-
-      {/* Inline messages */}
-      {(isLoading || rowError) && (
-        <div style={{ padding: '0.2rem 0.75rem', borderBottom: '1px solid var(--border, #e5e7eb)', background: 'var(--bg-subtle)' }}>
-          {isLoading && !rowError && (
-            <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>
-              This may take 1–2 minutes…
-            </span>
-          )}
-          {rowError && (
-            <span style={{ fontSize: '0.6875rem', color: 'var(--red)' }}>{rowError}</span>
-          )}
-        </div>
-      )}
     </div>
   )
 }
 
+function PurgeConfirmModal({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) {
+  const [text, setText] = useState('')
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-surface, #fff)', borderRadius: 12, padding: '1.5rem',
+          maxWidth: 420, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        }}
+      >
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: 'var(--red, #dc2626)' }}>Purge All Content</h3>
+        <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
+          This will permanently delete <strong>all topics and posts</strong>. This cannot be undone.
+          Type <strong>PURGE</strong> to confirm.
+        </p>
+        <input
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder="Type PURGE"
+          autoFocus
+          style={{ width: '100%', padding: '0.5rem 0.625rem', borderRadius: 6, border: '1px solid var(--border)', fontSize: '0.875rem', marginBottom: '1rem', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button onClick={onClose} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={text !== 'PURGE'}
+            className="btn btn-danger"
+            style={{ fontSize: '0.8125rem', opacity: text !== 'PURGE' ? 0.5 : 1 }}
+          >
+            Purge All
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const thStyle: React.CSSProperties = {
+  padding: '0.4rem 0.625rem',
+  fontSize: '0.6875rem',
+  fontWeight: 700,
+  color: 'var(--text-faint)',
+  textAlign: 'left',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  whiteSpace: 'nowrap',
+  borderBottom: '1px solid var(--border, #e5e7eb)',
+  background: 'var(--bg-subtle, #f8f9fa)',
+}
+
+const tdStyle: React.CSSProperties = {
+  padding: '0.375rem 0.625rem',
+  fontSize: '0.8125rem',
+  color: 'var(--text-primary)',
+  verticalAlign: 'middle',
+}
+
 export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const router = useRouter()
-  const [items,         setItems]         = useState<QueueItem[]>(initialItems)
-  const [statusFilter,  setStatusFilter]  = useState<StatusFilter>('scheduled')
-  const [editingPostId, setEditingPostId] = useState<string | null>(null)
-  const [loading,       setLoading]       = useState<string | null>(null)
-  const [error,         setError]         = useState('')
-  const [errorById,     setErrorById]     = useState<Record<string, string>>({})
+  const [items,          setItems]          = useState<QueueItem[]>(initialItems)
+  const [tab,            setTab]            = useState<TabId>('scheduled')
+  const [selected,       setSelected]       = useState<Set<string>>(new Set())
+  const [rationaleItem,  setRationaleItem]  = useState<QueueItem | null>(null)
+  const [editingPostId,  setEditingPostId]  = useState<string | null>(null)
+  const [loading,        setLoading]        = useState<string | null>(null)
+  const [bulkLoading,    setBulkLoading]    = useState(false)
+  const [showPurge,      setShowPurge]      = useState(false)
+  const [error,          setError]          = useState('')
 
-  const isScheduled = (i: QueueItem) =>
-    i.type === 'topic' || (i.type === 'post' && i.status === 'draft_saved')
+  const isScheduledTab = (i: QueueItem) =>
+    i.type === 'topic' && ['scheduled', 'approved', 'generating'].includes(i.status)
 
-  const counts: Record<StatusFilter, number> = {
-    all:       items.length,
-    scheduled: items.filter(isScheduled).length,
-    pending:   items.filter(i => i.type === 'post' && i.status === 'pending').length,
-    approved:  items.filter(i => i.type === 'post' && i.status === 'approved').length,
-    published: items.filter(i => i.type === 'post' && i.status === 'published').length,
-    rejected:  items.filter(i => i.type === 'post' && i.status === 'rejected').length,
+  const isUploadedTab = (i: QueueItem) =>
+    i.type === 'post' && i.wpPostId != null
+
+  const tabItems: Record<TabId, QueueItem[]> = {
+    all:       items,
+    scheduled: items.filter(isScheduledTab),
+    uploaded:  items.filter(isUploadedTab),
   }
 
-  const filtered = (() => {
-    if (statusFilter === 'all')       return items
-    if (statusFilter === 'scheduled') return items.filter(isScheduled)
-    return items.filter(i => i.type === 'post' && i.status === statusFilter)
-  })()
+  const filtered = tabItems[tab]
 
-  async function rejectItem(item: QueueItem) {
+  const allIds   = filtered.map(i => i.id)
+  const allSelected = allIds.length > 0 && allIds.every(id => selected.has(id))
+  const someSelected = allIds.some(id => selected.has(id))
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelected(prev => { const n = new Set(prev); allIds.forEach(id => n.delete(id)); return n })
+    } else {
+      setSelected(prev => new Set(Array.from(prev).concat(allIds)))
+    }
+  }
+
+  function toggleOne(id: string) {
+    setSelected(prev => {
+      const n = new Set(prev)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+  }
+
+  async function deleteSelected() {
+    const ids = Array.from(selected).filter(id => filtered.some(i => i.id === id))
+    if (ids.length === 0) return
+    setBulkLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/content/topics/bulk-delete', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ids }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')
+      setItems(prev => prev.filter(i => !ids.includes(i.id)))
+      setSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
+  async function purgeAll() {
+    setShowPurge(false)
+    setBulkLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/content/topics/bulk-delete', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ purge_all: true }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Purge failed')
+      setItems([])
+      setSelected(new Set())
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to purge')
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
+  async function deleteSingle(item: QueueItem) {
     setLoading(item.id)
     setError('')
     try {
-      if (item.type === 'topic') {
-        const res = await fetch(`/api/admin/content/topics/${item.id}`, {
-          method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ status: 'rejected' }),
-        })
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-        setItems(prev => prev.filter(i => i.id !== item.id))
-      } else {
-        const res = await fetch('/api/admin/content/status', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ post_id: item.id, status: 'rejected' }),
-        })
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'rejected' } : i))
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed')
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function forceGenerate(topicId: string) {
-    setLoading(topicId)
-    setErrorById(prev => { const n = { ...prev }; delete n[topicId]; return n })
-    try {
-      const res = await fetch('/api/admin/content/generate', {
+      const res = await fetch('/api/admin/content/topics/bulk-delete', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ topic_id: topicId }),
+        body:    JSON.stringify({ ids: [item.id] }),
       })
-      if (!res.ok) {
-        const msg = (await res.json().catch(() => ({}))).error || 'Generation failed'
-        setErrorById(prev => ({ ...prev, [topicId]: msg }))
-        return
-      }
-      router.refresh()
+      if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')
+      setItems(prev => prev.filter(i => i.id !== item.id))
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to trigger generation'
-      setErrorById(prev => ({ ...prev, [topicId]: msg }))
+      setError(err instanceof Error ? err.message : 'Failed to delete')
     } finally {
       setLoading(null)
     }
   }
 
-  const editingItem = editingPostId ? items.find(i => i.id === editingPostId) ?? null : null
-  const siteForPost = editingItem ? sites.find(s => s.clientId === editingItem.clientId) ?? null : null
+  const openRationale = useCallback((item: QueueItem) => {
+    if (item.type === 'topic') setRationaleItem(item)
+  }, [])
 
-  const TAB_LABELS: Record<StatusFilter, string> = {
-    all:       'All',
-    scheduled: 'Scheduled',
-    pending:   'Pending',
-    approved:  'Approved',
-    published: 'Published',
-    rejected:  'Rejected',
-  }
+  const editingItem  = editingPostId ? items.find(i => i.id === editingPostId) ?? null : null
+  const siteForPost  = editingItem   ? sites.find(s => s.clientId === editingItem.clientId) ?? null : null
+
+  const tabs: { id: TabId; label: string; count: number }[] = [
+    { id: 'all',       label: 'All',       count: tabItems.all.length       },
+    { id: 'scheduled', label: 'Scheduled', count: tabItems.scheduled.length },
+    { id: 'uploaded',  label: 'Uploaded',  count: tabItems.uploaded.length  },
+  ]
+
+  const selectedCount = Array.from(selected).filter(id => filtered.some(i => i.id === id)).length
 
   return (
     <>
-      {/* Filter tabs */}
-      <div className="flex gap-1 mb-3" style={{ flexWrap: 'wrap' }}>
-        {STATUS_TABS.map(s => (
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        {/* Tab pills */}
+        <div style={{ display: 'flex', gap: '0.25rem' }}>
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => { setTab(t.id); setSelected(new Set()) }}
+              style={{
+                padding: '0.25rem 0.625rem',
+                fontSize: '0.8rem',
+                borderRadius: 6,
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: tab === t.id ? 600 : 400,
+                background: tab === t.id ? 'var(--blue)' : 'var(--bg-subtle)',
+                color: tab === t.id ? '#fff' : 'var(--text-muted)',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+            >
+              {t.label} ({t.count})
+            </button>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              disabled={bulkLoading}
+              onClick={deleteSelected}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8rem', color: 'var(--red)', padding: '0.25rem 0.625rem' }}
+            >
+              {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedCount})`}
+            </button>
+          )}
           <button
-            key={s}
             type="button"
-            onClick={() => setStatusFilter(s)}
-            style={{
-              padding: '0.25rem 0.625rem',
-              fontSize: '0.8rem',
-              borderRadius: 6,
-              border: 'none',
-              cursor: 'pointer',
-              fontWeight: statusFilter === s ? 600 : 400,
-              background: statusFilter === s ? 'var(--blue)' : 'var(--bg-subtle)',
-              color: statusFilter === s ? '#fff' : 'var(--text-muted)',
-              transition: 'background 0.15s, color 0.15s',
-            }}
+            onClick={() => setShowPurge(true)}
+            className="btn btn-danger"
+            style={{ fontSize: '0.8rem', padding: '0.25rem 0.625rem' }}
           >
-            {TAB_LABELS[s]} ({counts[s]})
+            Purge All
           </button>
-        ))}
+        </div>
       </div>
 
-      {error && <p className="text-xs mb-3" style={{ color: 'var(--red)' }}>{error}</p>}
+      {error && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: '0.5rem' }}>{error}</p>}
 
       {filtered.length === 0 ? (
         <div className="card p-6 text-center">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            {statusFilter === 'pending'   ? 'No posts pending review.'
-            : statusFilter === 'scheduled' ? 'No posts scheduled for generation.'
-            : `No ${statusFilter} posts.`}
+            {tab === 'scheduled' ? 'No topics scheduled for generation.'
+            : tab === 'uploaded'  ? 'No posts uploaded to WordPress yet.'
+            : 'No items.'}
           </p>
         </div>
       ) : (
@@ -452,18 +430,197 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
           overflow:     'hidden',
           background:   'var(--bg-surface, #fff)',
         }}>
-          {filtered.map(item => (
-            <ItemRow
-              key={item.id}
-              item={item}
-              onOpenEditor={id => setEditingPostId(id)}
-              onReject={rejectItem}
-              onForceGenerate={forceGenerate}
-              loading={loading}
-              rowError={errorById[item.id]}
-            />
-          ))}
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 36 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 110 }} />
+              <col />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 90 }} />
+              {tab !== 'uploaded' && <col style={{ width: 86 }} />}
+              {tab !== 'scheduled' && <col style={{ width: 52 }} />}
+              <col style={{ width: 1 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={thStyle}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
+                    onChange={toggleAll}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </th>
+                <th style={thStyle}>Status</th>
+                <th style={thStyle}>Client</th>
+                <th style={thStyle}>Title / Topic</th>
+                <th style={thStyle}>Keyword</th>
+                <th style={thStyle}>Publish Date</th>
+                {tab !== 'uploaded'  && <th style={thStyle}>Competition</th>}
+                {tab !== 'scheduled' && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
+                <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item, idx) => {
+                const isLast    = idx === filtered.length - 1
+                const isLoading = loading === item.id
+                const compKey   = (item.competitionLevel ?? '').toLowerCase()
+                const comp      = COMPETITION_BADGE[compKey]
+                const wpEditUrl = item.wpSiteUrl && item.wpPostId
+                  ? `${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`
+                  : null
+
+                const rowStyle: React.CSSProperties = {
+                  borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
+                  cursor: item.type === 'topic' ? 'pointer' : 'default',
+                  transition: 'background 0.1s',
+                }
+
+                return (
+                  <tr
+                    key={item.id}
+                    style={rowStyle}
+                    onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'var(--bg-subtle, #f8f9fa)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = '' }}
+                    onClick={() => openRationale(item)}
+                  >
+                    {/* Checkbox */}
+                    <td style={tdStyle} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleOne(item.id)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
+
+                    {/* Status */}
+                    <td style={tdStyle}>
+                      <StatusBadge item={item} />
+                    </td>
+
+                    {/* Client */}
+                    <td style={{ ...tdStyle, fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                      {item.clientName}
+                    </td>
+
+                    {/* Title / Topic */}
+                    <td style={{ ...tdStyle, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                      {item.status === 'generating' && (
+                        <span style={{ marginRight: 4, fontSize: '0.75rem' }}>⏳</span>
+                      )}
+                      <span style={{ fontStyle: item.type === 'topic' ? 'italic' : 'normal', fontWeight: item.type === 'post' ? 600 : 400 }}>
+                        {(item.type === 'topic' ? item.topicText : item.title) ?? <span style={{ color: 'var(--text-faint)' }}>Untitled</span>}
+                      </span>
+                    </td>
+
+                    {/* Keyword */}
+                    <td style={{ ...tdStyle, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                      {item.targetKeyword ? (
+                        <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '1px 5px', borderRadius: 4 }}>
+                          {item.targetKeyword}
+                        </span>
+                      ) : null}
+                    </td>
+
+                    {/* Publish Date */}
+                    <td style={{ ...tdStyle, fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                      {item.targetPublishDate ? fmtDate(item.targetPublishDate) : '—'}
+                    </td>
+
+                    {/* Competition (scheduled tab only) */}
+                    {tab !== 'uploaded' && (
+                      <td style={tdStyle}>
+                        {comp && item.competitionLevel ? (
+                          <span style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}>
+                            {item.competitionLevel}
+                          </span>
+                        ) : null}
+                      </td>
+                    )}
+
+                    {/* Words (uploaded tab only) */}
+                    {tab !== 'scheduled' && (
+                      <td style={{ ...tdStyle, textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                        {item.type === 'post' && item.wordCount != null ? `${item.wordCount.toLocaleString()}w` : ''}
+                      </td>
+                    )}
+
+                    {/* Actions */}
+                    <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {/* Topic rows */}
+                        {item.type === 'topic' && item.status !== 'generating' && (
+                          <button
+                            type="button"
+                            disabled={isLoading}
+                            onClick={() => deleteSingle(item)}
+                            style={{
+                              fontSize: '0.7rem', padding: '0.15rem 0.4rem',
+                              background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+                            }}
+                            title="Delete"
+                          >
+                            {isLoading ? '…' : '✕'}
+                          </button>
+                        )}
+
+                        {/* Post rows */}
+                        {item.type === 'post' && (
+                          <>
+                            {wpEditUrl && (
+                              <a
+                                href={wpEditUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-primary"
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                              >
+                                Edit in WP ↗
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setEditingPostId(item.id)}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                            >
+                              SEO Report
+                            </button>
+                            {item.publishedUrl && (
+                              <a
+                                href={item.publishedUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-secondary"
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                              >
+                                View ↗
+                              </a>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {/* Rationale modal */}
+      {rationaleItem && (
+        <RationaleModal item={rationaleItem} onClose={() => setRationaleItem(null)} />
+      )}
+
+      {/* Purge confirmation */}
+      {showPurge && (
+        <PurgeConfirmModal onConfirm={purgeAll} onClose={() => setShowPurge(false)} />
       )}
 
       {/* Post editor drawer */}

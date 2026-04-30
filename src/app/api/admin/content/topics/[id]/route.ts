@@ -34,6 +34,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  // Approval now schedules the topic for cron-based generation
+  if (patch.status === 'approved') patch.status = 'scheduled'
+
   const db = createAdminClient()
   const { data, error } = await db
     .from('content_topics')
@@ -46,7 +49,7 @@ export async function PATCH(
 
   // Auto-reject remaining pending topics once the required approval count is reached
   const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
-  if (patch.status === 'approved' && topic.target_publish_date) {
+  if (patch.status === 'scheduled' && topic.target_publish_date) {
     // Resolve posts_per_run: client-specific setting falls back to global
     const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
       db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),
@@ -73,39 +76,6 @@ export async function PATCH(
         .eq('status', 'pending')
         .neq('id', id)
     }
-  }
-
-  // Trigger post generation immediately on every approval
-  if (patch.status === 'approved') {
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '')
-    if (!appUrl) {
-      // No URL configured; leave as 'approved' — cron will pick it up
-      return NextResponse.json(data)
-    }
-    await db.from('content_topics').update({ status: 'generating' }).eq('id', id)
-    const genDb = createAdminClient()
-    void fetch(`${appUrl}/api/admin/content/generate`, {
-      method:  'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
-      },
-      body: JSON.stringify({ topic_id: id }),
-    })
-      .then(async res => {
-        if (!res.ok) {
-          const errText = await res.text().catch(() => `HTTP ${res.status}`)
-          await genDb.from('content_topics')
-            .update({ status: 'approved', generation_error: errText })
-            .eq('id', id)
-        }
-      })
-      .catch(async err => {
-        console.error(`[topics PATCH] generate fetch failed for ${id}:`, err)
-        await genDb.from('content_topics')
-          .update({ status: 'approved', generation_error: String(err) })
-          .eq('id', id)
-      })
   }
 
   return NextResponse.json(data)
