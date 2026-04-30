@@ -221,7 +221,7 @@ function PurgeConfirmModal({ onConfirm, onClose }: { onConfirm: () => void; onCl
 }
 
 const thStyle: React.CSSProperties = {
-  padding: '0.4rem 0.625rem',
+  padding: '0.4rem 0.75rem',
   fontSize: '0.6875rem',
   fontWeight: 700,
   color: 'var(--text-faint)',
@@ -229,15 +229,17 @@ const thStyle: React.CSSProperties = {
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
   whiteSpace: 'nowrap',
+  overflow: 'hidden',
   borderBottom: '1px solid var(--border, #e5e7eb)',
   background: 'var(--bg-subtle, #f8f9fa)',
 }
 
 const tdStyle: React.CSSProperties = {
-  padding: '0.375rem 0.625rem',
+  padding: '0.375rem 0.75rem',
   fontSize: '0.8125rem',
   color: 'var(--text-primary)',
   verticalAlign: 'middle',
+  overflow: 'hidden',
 }
 
 export default function ContentQueue({ posts: initialItems, sites }: Props) {
@@ -528,11 +530,11 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col style={{ width: 90 }} />
               <col style={{ width: 100 }} />
               <col />
-              <col style={{ width: 120 }} />
-              <col style={{ width: 80 }} />
-              {tab === 'scheduled' && <col style={{ width: 80 }} />}
-              {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 52 }} />}
-              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 196 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 70 : 196 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 108 }} />
+              {tab === 'scheduled' && <col style={{ width: 112 }} />}
+              {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 56 }} />}
+              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 80 : 200 }} />
             </colgroup>
             <thead>
               <tr>
