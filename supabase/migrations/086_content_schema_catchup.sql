@@ -3,6 +3,11 @@
 -- migrations (048, 049, 050, 064, 065, 066, 067, 084) were already applied.
 
 -- ── content_posts ─────────────────────────────────────────────────────────────
+-- Widen generated_by to allow 'topic' (topic-driven generation)
+ALTER TABLE content_posts DROP CONSTRAINT IF EXISTS content_posts_generated_by_check;
+ALTER TABLE content_posts ADD CONSTRAINT content_posts_generated_by_check
+  CHECK (generated_by IN ('scheduled', 'manual', 'topic'));
+
 -- 048: SEO fields
 ALTER TABLE content_posts
   ADD COLUMN IF NOT EXISTS seo_title      TEXT,
