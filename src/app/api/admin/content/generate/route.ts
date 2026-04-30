@@ -426,8 +426,17 @@ Target approximately ${targetLength} words.`
       prompt_used:         userPrompt,
       target_publish_date: topicData?.target_publish_date ?? null,
     }
-    const { data: savedPost } = await db.from('content_posts').insert(postRow).select('id').single()
+    const { data: savedPost, error: insertError } = await db.from('content_posts').insert(postRow).select('id').single()
     postId = savedPost?.id ?? null
+
+    if (insertError) {
+      if (topic_id) {
+        await db.from('content_topics')
+          .update({ status: 'approved', generation_error: `DB error: ${insertError.message}` })
+          .eq('id', topic_id)
+      }
+      return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })
+    }
 
     // Link post back to topic
     if (topic_id && postId) {

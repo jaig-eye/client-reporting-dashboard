@@ -77,8 +77,13 @@ export async function PATCH(
 
   // Trigger post generation immediately on every approval
   if (patch.status === 'approved') {
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '')
+    if (!appUrl) {
+      // No URL configured; leave as 'approved' — cron will pick it up
+      return NextResponse.json(data)
+    }
     await db.from('content_topics').update({ status: 'generating' }).eq('id', id)
+    const genDb = createAdminClient()
     void fetch(`${appUrl}/api/admin/content/generate`, {
       method:  'POST',
       headers: {
@@ -86,7 +91,21 @@ export async function PATCH(
         'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
       },
       body: JSON.stringify({ topic_id: id }),
-    }).catch(err => console.error(`[topics PATCH] post gen failed for ${id}:`, err))
+    })
+      .then(async res => {
+        if (!res.ok) {
+          const errText = await res.text().catch(() => `HTTP ${res.status}`)
+          await genDb.from('content_topics')
+            .update({ status: 'approved', generation_error: errText })
+            .eq('id', id)
+        }
+      })
+      .catch(async err => {
+        console.error(`[topics PATCH] generate fetch failed for ${id}:`, err)
+        await genDb.from('content_topics')
+          .update({ status: 'approved', generation_error: String(err) })
+          .eq('id', id)
+      })
   }
 
   return NextResponse.json(data)

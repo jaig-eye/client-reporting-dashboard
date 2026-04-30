@@ -66,12 +66,13 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span style={{
       display:      'inline-block',
-      padding:      '2px 8px',
+      padding:      '1px 7px',
       borderRadius: 999,
       fontSize:     '0.6875rem',
       fontWeight:   600,
       background:   s.bg,
       color:        s.color,
+      flexShrink:   0,
     }}>
       {s.label}
     </span>
@@ -92,7 +93,7 @@ function RationaleFields({ topic }: { topic: CycleTopic }) {
 
   if (hasStructured && fields.length > 0) {
     return (
-      <div style={{ marginTop: '0.375rem', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.15rem 0.625rem', fontSize: '0.7125rem' }}>
+      <div style={{ marginTop: '0.25rem', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.1rem 0.5rem', fontSize: '0.7rem' }}>
         {fields.map(f => (
           <>
             <span key={`${f.label}-k`} style={{ color: 'var(--text-faint)', fontWeight: 600, whiteSpace: 'nowrap' }}>{f.label}:</span>
@@ -104,7 +105,7 @@ function RationaleFields({ topic }: { topic: CycleTopic }) {
   }
 
   return (
-    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.375rem', lineHeight: 1.5 }}>
+    <p style={{ fontSize: '0.7125rem', color: 'var(--text-muted)', marginTop: '0.25rem', lineHeight: 1.4 }}>
       {topic.rationale}
     </p>
   )
@@ -118,6 +119,7 @@ function TopicRow({
   loading,
   showActions = true,
   showGeneratePost = false,
+  postGenResult,
 }: {
   topic:             CycleTopic
   onApprove:         (id: string) => void
@@ -126,6 +128,7 @@ function TopicRow({
   loading:           boolean
   showActions?:      boolean
   showGeneratePost?: boolean
+  postGenResult?:    string
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasRationale = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel || topic.rationale
@@ -133,27 +136,26 @@ function TopicRow({
 
   return (
     <div style={{
-      borderRadius: 8,
+      borderRadius: 6,
       border:       '1px solid var(--border, #e5e7eb)',
       background:   'var(--bg-base, #fff)',
-      overflow:     'hidden',
     }}>
       <div style={{
         display:    'flex',
-        alignItems: 'flex-start',
-        gap:        '0.75rem',
-        padding:    '0.625rem 0.875rem',
+        alignItems: 'center',
+        gap:        '0.5rem',
+        padding:    '0.35rem 0.75rem',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.8375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              {isGenerating && <span style={{ marginRight: 4 }}>⏳</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {isGenerating && <span style={{ marginRight: 3 }}>⏳</span>}
               {topic.topic}
             </span>
             {topic.targetKeyword && (
               <span style={{
                 fontSize: '0.6875rem', color: 'var(--text-faint)',
-                padding: '1px 6px', borderRadius: 999,
+                padding: '1px 5px', borderRadius: 999,
                 background: 'var(--bg-muted, #f3f4f6)',
               }}>
                 {topic.targetKeyword}
@@ -164,26 +166,31 @@ function TopicRow({
                 → {fmtDate(topic.targetPublishDate)}
               </span>
             )}
+            {hasRationale && (
+              <button
+                onClick={() => setExpanded(e => !e)}
+                style={{ fontSize: '0.65rem', color: 'var(--blue)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+              >
+                {expanded ? '▲' : '▼ rationale'}
+              </button>
+            )}
           </div>
 
-          {hasRationale && (
-            <button
-              onClick={() => setExpanded(e => !e)}
-              style={{ fontSize: '0.7rem', color: 'var(--blue)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginTop: '0.2rem' }}
-            >
-              {expanded ? '▲ hide rationale' : '▼ rationale'}
-            </button>
-          )}
           {expanded && <RationaleFields topic={topic} />}
 
           {topic.generationError && (
-            <p style={{ fontSize: '0.7rem', color: 'var(--red)', marginTop: '0.25rem' }}>
+            <p style={{ fontSize: '0.6875rem', color: 'var(--red)', margin: '0.15rem 0 0' }}>
               ⚠ {topic.generationError}
+            </p>
+          )}
+          {postGenResult && (
+            <p style={{ fontSize: '0.6875rem', color: postGenResult === 'Post generated!' ? 'var(--green)' : 'var(--red)', margin: '0.15rem 0 0' }}>
+              {postGenResult}
             </p>
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
           <StatusBadge status={topic.status} />
           {showActions && topic.status === 'pending' && (
             <>
@@ -191,7 +198,7 @@ function TopicRow({
                 onClick={() => onApprove(topic.id)}
                 disabled={loading}
                 className="btn btn-primary"
-                style={{ padding: '0.2rem 0.625rem', fontSize: '0.75rem' }}
+                style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem' }}
               >
                 Approve
               </button>
@@ -199,7 +206,7 @@ function TopicRow({
                 onClick={() => onReject(topic.id)}
                 disabled={loading}
                 style={{
-                  padding: '0.2rem 0.5rem', fontSize: '0.75rem',
+                  padding: '0.15rem 0.4rem', fontSize: '0.75rem',
                   background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
                 }}
               >
@@ -212,9 +219,9 @@ function TopicRow({
               onClick={() => onGeneratePost(topic.id)}
               disabled={loading}
               className="btn btn-primary"
-              style={{ padding: '0.2rem 0.625rem', fontSize: '0.75rem' }}
+              style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem' }}
             >
-              Generate Post
+              {loading ? '…' : 'Generate Post'}
             </button>
           )}
         </div>
@@ -231,6 +238,9 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const [queueOpen,      setQueueOpen]      = useState(true)
   const [postGenResults, setPostGenResults] = useState<Record<string, string>>({})
 
+  const hasActivity = cycle.topics.length > 0 || cycle.queuedTopics.length > 0
+  const [cardOpen, setCardOpen] = useState(hasActivity)
+
   const daysToPublish  = daysUntil(cycle.nextPublishDate)
   const daysToDeadline = daysUntil(cycle.topicDeadline)
   const pastDeadline   = daysToDeadline < 0
@@ -239,7 +249,6 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const progressPct = cycle.postsNeeded > 0
     ? Math.min(100, Math.round((cycle.topicsApproved / cycle.postsNeeded) * 100))
     : 0
-  const progressFilled = cycle.postsNeeded > 0
   const needsMoreApprovals = cycle.topicsApproved < cycle.postsNeeded
 
   async function updateStatus(id: string, status: 'approved' | 'rejected') {
@@ -266,11 +275,11 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
         body:    JSON.stringify({ topic_id: topicId }),
       })
       const data = await res.json()
-      if (res.ok) {
+      if (res.ok && data.post_id) {
         setPostGenResults(r => ({ ...r, [topicId]: 'Post generated!' }))
         router.refresh()
       } else {
-        setPostGenResults(r => ({ ...r, [topicId]: data.error || 'Generation failed' }))
+        setPostGenResults(r => ({ ...r, [topicId]: data.error || 'Generation failed — check DB migration or AI config' }))
       }
     } catch (err) {
       setPostGenResults(r => ({ ...r, [topicId]: String(err) }))
@@ -303,130 +312,144 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const queueCount = cycle.queuedTopics.length
 
   return (
-    <div className="card" style={{ marginBottom: '1rem', overflow: 'hidden' }}>
+    <div className="card" style={{ marginBottom: '0.5rem', overflow: 'hidden' }}>
       {/* Card header */}
       <div style={{
         display:        'flex',
-        alignItems:     'flex-start',
+        alignItems:     'center',
         justifyContent: 'space-between',
-        gap:            '1rem',
-        padding:        '0.875rem 1.25rem',
+        gap:            '0.75rem',
+        padding:        '0.5rem 1rem',
         background:     'var(--bg-subtle, #f8f9fa)',
-        borderBottom:   '1px solid var(--border, #e5e7eb)',
+        borderBottom:   cardOpen ? '1px solid var(--border, #e5e7eb)' : 'none',
       }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              {cycle.clientName}
+        {/* Left: client info */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+            {cycle.clientName}
+          </span>
+          <span style={{
+            fontSize: '0.6875rem', fontWeight: 500, padding: '1px 6px', borderRadius: 999,
+            background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-faint)', flexShrink: 0,
+          }}>
+            {freqLabel(cycle.frequency)}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            Publish: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(cycle.nextPublishDate)}</strong>
+            {daysToPublish > 0 && <span style={{ color: 'var(--text-faint)' }}> ({daysToPublish}d)</span>}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: pastDeadline ? '#dc2626' : closeDeadline ? '#d97706' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            · Deadline: <strong>{fmtDate(cycle.topicDeadline)}</strong>
+            {pastDeadline
+              ? <span style={{ color: '#dc2626' }}> (past)</span>
+              : daysToDeadline === 0
+                ? <span style={{ color: '#d97706' }}> (today)</span>
+                : closeDeadline
+                  ? <span style={{ color: '#d97706' }}> ({daysToDeadline}d)</span>
+                  : <span style={{ color: 'var(--text-faint)' }}> ({daysToDeadline}d)</span>
+            }
+          </span>
+          {hasActivity && (
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
+              {cycle.topicsApproved}/{cycle.postsNeeded} queued
             </span>
-            <span style={{
-              fontSize: '0.6875rem', fontWeight: 500, padding: '1px 7px', borderRadius: 999,
-              background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-faint)',
-            }}>
-              {freqLabel(cycle.frequency)}
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Publish: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(cycle.nextPublishDate)}</strong>
-              {daysToPublish > 0 && <span style={{ color: 'var(--text-faint)' }}> ({daysToPublish}d)</span>}
-            </span>
-            <span style={{ fontSize: '0.75rem', color: pastDeadline ? '#dc2626' : closeDeadline ? '#d97706' : 'var(--text-muted)' }}>
-              Topic deadline: <strong>{fmtDate(cycle.topicDeadline)}</strong>
-              {pastDeadline
-                ? <span style={{ color: '#dc2626' }}> (past deadline — approvals trigger immediate generation)</span>
-                : daysToDeadline === 0
-                  ? <span style={{ color: '#d97706' }}> (today)</span>
-                  : closeDeadline
-                    ? <span style={{ color: '#d97706' }}> ({daysToDeadline}d left)</span>
-                    : <span style={{ color: 'var(--text-faint)' }}> ({daysToDeadline}d)</span>
-              }
-            </span>
-          </div>
+          )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexShrink: 0 }}>
+        {/* Right: actions + toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
           <button
             onClick={generateTopics}
             disabled={generating}
             className="btn btn-secondary"
-            style={{ fontSize: '0.8rem', padding: '0.3rem 0.75rem' }}
+            style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
           >
             {generating ? 'Generating…' : '▶ Generate Topics'}
           </button>
           {genResult && (
-            <span style={{ fontSize: '0.75rem', color: genResult.includes('fail') || genResult.includes('error') ? 'var(--red)' : 'var(--green)' }}>
+            <span style={{ fontSize: '0.7rem', color: genResult.includes('fail') || genResult.includes('error') ? 'var(--red)' : 'var(--green)' }}>
               {genResult}
             </span>
           )}
+          <button
+            onClick={() => setCardOpen(o => !o)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-faint)', fontSize: '0.75rem', padding: '0.25rem',
+            }}
+            title={cardOpen ? 'Collapse' : 'Expand'}
+          >
+            {cardOpen ? '▲' : '▼'}
+          </button>
         </div>
       </div>
 
-      {/* Progress bar + pending topic rows */}
-      <div style={{ padding: '0.875rem 1.25rem' }}>
-        {/* Approval progress */}
-        {progressFilled && queueCount > 0 && (
-          <div style={{ marginBottom: '0.875rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.375rem' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {cycle.topicsApproved} of {cycle.postsNeeded} topic{cycle.postsNeeded !== 1 ? 's' : ''} queued for generation
-              </span>
-              {needsMoreApprovals && (
-                <span style={{ fontSize: '0.7rem', color: '#d97706' }}>
-                  {cycle.postsNeeded - cycle.topicsApproved} more needed
+      {/* Expanded body */}
+      {cardOpen && (
+        <div style={{ padding: '0.625rem 1rem' }}>
+          {/* Approval progress */}
+          {cycle.postsNeeded > 0 && queueCount > 0 && (
+            <div style={{ marginBottom: '0.625rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                <span style={{ fontSize: '0.7125rem', color: 'var(--text-muted)' }}>
+                  {cycle.topicsApproved} of {cycle.postsNeeded} topic{cycle.postsNeeded !== 1 ? 's' : ''} queued for generation
                 </span>
-              )}
+                {needsMoreApprovals && (
+                  <span style={{ fontSize: '0.6875rem', color: '#d97706' }}>
+                    {cycle.postsNeeded - cycle.topicsApproved} more needed
+                  </span>
+                )}
+              </div>
+              <div style={{ height: 4, borderRadius: 999, background: 'var(--bg-muted, #f3f4f6)', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width:  `${progressPct}%`,
+                  background: progressPct >= 100 ? '#16a34a' : '#2563eb',
+                  borderRadius: 999,
+                  transition: 'width 0.3s',
+                }} />
+              </div>
             </div>
-            <div style={{ height: 6, borderRadius: 999, background: 'var(--bg-muted, #f3f4f6)', overflow: 'hidden' }}>
-              <div style={{
-                height: '100%',
-                width:  `${progressPct}%`,
-                background: progressPct >= 100 ? '#16a34a' : '#2563eb',
-                borderRadius: 999,
-                transition: 'width 0.3s',
-              }} />
+          )}
+
+          {/* Pending topics for this cycle */}
+          {cycle.topics.length === 0 ? (
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', textAlign: 'center', padding: '0.75rem 0' }}>
+              No topics pending — click "Generate Topics" to start this cycle.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              {cycle.topics.map(t => (
+                <TopicRow
+                  key={t.id}
+                  topic={t}
+                  onApprove={id => updateStatus(id, 'approved')}
+                  onReject={id => updateStatus(id, 'rejected')}
+                  loading={loadingId === t.id}
+                />
+              ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Pending topics for this cycle */}
-        {cycle.topics.length === 0 ? (
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', textAlign: 'center', padding: '1rem 0' }}>
-            No topics pending — click "Generate Topics" to start this cycle.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {cycle.topics.map(t => (
-              <TopicRow
-                key={t.id}
-                topic={t}
-                onApprove={id => updateStatus(id, 'approved')}
-                onReject={id => updateStatus(id, 'rejected')}
-                loading={loadingId === t.id}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Back-queue: approved/generating topics */}
-        {queueCount > 0 && (
-          <div style={{ marginTop: cycle.topics.length > 0 ? '0.875rem' : 0, borderTop: cycle.topics.length > 0 ? '1px solid var(--border, #e5e7eb)' : undefined, paddingTop: cycle.topics.length > 0 ? '0.75rem' : 0 }}>
-            <button
-              onClick={() => setQueueOpen(o => !o)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.375rem',
-                fontSize: '0.775rem', fontWeight: 600, color: 'var(--text-muted)',
-                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-              }}
-            >
-              <span style={{ fontSize: '0.6rem' }}>{queueOpen ? '▼' : '▶'}</span>
-              {queueCount} topic{queueCount !== 1 ? 's' : ''} approved — ready to generate posts
-            </button>
-            {queueOpen && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', marginTop: '0.5rem' }}>
-                {cycle.queuedTopics.map(t => (
-                  <div key={t.id}>
+          {/* Back-queue: approved/generating topics */}
+          {queueCount > 0 && (
+            <div style={{ marginTop: cycle.topics.length > 0 ? '0.625rem' : 0, borderTop: cycle.topics.length > 0 ? '1px solid var(--border, #e5e7eb)' : undefined, paddingTop: cycle.topics.length > 0 ? '0.5rem' : 0 }}>
+              <button
+                onClick={() => setQueueOpen(o => !o)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  fontSize: '0.7125rem', fontWeight: 600, color: 'var(--text-muted)',
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: '0.55rem' }}>{queueOpen ? '▼' : '▶'}</span>
+                {queueCount} topic{queueCount !== 1 ? 's' : ''} approved — ready to generate posts
+              </button>
+              {queueOpen && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.375rem' }}>
+                  {cycle.queuedTopics.map(t => (
                     <TopicRow
+                      key={t.id}
                       topic={t}
                       onApprove={id => updateStatus(id, 'approved')}
                       onReject={id => updateStatus(id, 'rejected')}
@@ -434,19 +457,15 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                       loading={loadingId === t.id}
                       showActions={false}
                       showGeneratePost
+                      postGenResult={postGenResults[t.id]}
                     />
-                    {postGenResults[t.id] && (
-                      <p style={{ fontSize: '0.7rem', color: postGenResults[t.id] === 'Post generated!' ? 'var(--green)' : 'var(--red)', margin: '0.15rem 0.875rem 0' }}>
-                        {postGenResults[t.id]}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
