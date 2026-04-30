@@ -98,7 +98,7 @@ export default async function ContentPage({
     db.from('clients').select('id, name').order('name'),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
     db.from('content_posts')
-      .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url')
+      .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, target_publish_date, wp_post_id, wp_site_url')
       .order('generated_at', { ascending: false })
       .limit(200),
     // All non-rejected topics (for queue / cycle cards)
@@ -242,10 +242,12 @@ export default async function ContentPage({
     internalLinks:     (p.internal_links as number) ?? null,
     generatedAt:       String(p.generated_at),
     generatedBy:       String(p.generated_by),
-    publishedUrl:      p.published_url ? String(p.published_url) : null,
+    publishedUrl:      p.published_url       ? String(p.published_url)           : null,
     generateByDate:    null,
-    targetPublishDate: null,
+    targetPublishDate: p.target_publish_date  ? String(p.target_publish_date)    : null,
     rationale:         null,
+    wpPostId:          p.wp_post_id           ? Number(p.wp_post_id)              : null,
+    wpSiteUrl:         p.wp_site_url          ? String(p.wp_site_url)             : null,
   }))
 
   const scheduledTopicItems = (scheduledTopicsRes.data ?? []).map(t => ({
@@ -263,9 +265,11 @@ export default async function ContentPage({
     generatedAt:       String(t.created_at),
     generatedBy:       'scheduled',
     publishedUrl:      null,
-    generateByDate:    t.generate_by_date ? String(t.generate_by_date) : null,
-    targetPublishDate: t.target_publish_date ? String(t.target_publish_date) : null,
-    rationale:         t.rationale ? String(t.rationale) : null,
+    generateByDate:    t.generate_by_date    ? String(t.generate_by_date)    : null,
+    targetPublishDate: t.target_publish_date  ? String(t.target_publish_date) : null,
+    rationale:         t.rationale            ? String(t.rationale)           : null,
+    wpPostId:          null,
+    wpSiteUrl:         null,
   }))
 
   const posts = [...scheduledTopicItems, ...postItems]

@@ -22,6 +22,8 @@ interface QueueItem {
   generateByDate:    string | null
   targetPublishDate: string | null
   rationale:         string | null
+  wpPostId:          number | null
+  wpSiteUrl:         string | null
 }
 
 interface Site {
@@ -44,7 +46,7 @@ const POST_STATUS_LABELS: Record<string, string> = {
   pending:     'Pending',
   approved:    'Approved',
   published:   'Published',
-  draft_saved: 'WP Draft',
+  draft_saved: 'Scheduled',
   rejected:    'Rejected',
 }
 
@@ -58,7 +60,7 @@ const STATUS_BADGE: Record<string, { bg: string; color: string }> = {
   pending:    { bg: '#fef3c7', color: '#92400e' },
   approved:   { bg: '#dbeafe', color: '#1e40af' },
   published:  { bg: '#dcfce7', color: '#166534' },
-  draft_saved:{ bg: '#f3f4f6', color: '#374151' },
+  draft_saved:{ bg: '#ede9fe', color: '#5b21b6' },
   rejected:   { bg: '#fee2e2', color: '#991b1b' },
   generating: { bg: '#ede9fe', color: '#5b21b6' },
   scheduled:  { bg: '#ede9fe', color: '#5b21b6' },
@@ -203,9 +205,16 @@ function ItemCard({
           </div>
         )}
 
+        {/* Scheduled publish date (draft_saved posts) */}
+        {!isTopic && item.status === 'draft_saved' && item.targetPublishDate && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.5rem 0 0' }}>
+            Scheduled: <strong style={{ color: 'var(--text-primary)' }}>{fmtDate(item.targetPublishDate)}</strong>
+          </p>
+        )}
+
         {/* Generated time (posts) */}
         {!isTopic && (
-          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.5rem 0 0' }}>
+          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.375rem 0 0' }}>
             {timeSince(item.generatedAt)}
             {item.generatedBy === 'scheduled' && <span style={{ marginLeft: 4, opacity: 0.6 }}>auto</span>}
           </p>
@@ -222,13 +231,24 @@ function ItemCard({
         {/* Post actions */}
         {!isTopic && (
           <>
+            {item.wpPostId && item.wpSiteUrl && (
+              <a
+                href={`${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+              >
+                Edit in WP ↗
+              </a>
+            )}
             <button
               type="button"
               onClick={() => onOpenEditor(item.id)}
               className="btn btn-secondary"
               style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
             >
-              Review
+              SEO Report
             </button>
             {item.status === 'pending' && (
               <button
@@ -313,9 +333,12 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [error,         setError]         = useState('')
   const [errorById,     setErrorById]     = useState<Record<string, string>>({})
 
+  const isScheduled = (i: QueueItem) =>
+    i.type === 'topic' || (i.type === 'post' && i.status === 'draft_saved')
+
   const counts: Record<StatusFilter, number> = {
     all:       items.length,
-    scheduled: items.filter(i => i.type === 'topic').length,
+    scheduled: items.filter(isScheduled).length,
     pending:   items.filter(i => i.type === 'post' && i.status === 'pending').length,
     approved:  items.filter(i => i.type === 'post' && i.status === 'approved').length,
     published: items.filter(i => i.type === 'post' && i.status === 'published').length,
@@ -324,7 +347,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
 
   const filtered = (() => {
     if (statusFilter === 'all')       return items
-    if (statusFilter === 'scheduled') return items.filter(i => i.type === 'topic')
+    if (statusFilter === 'scheduled') return items.filter(isScheduled)
     return items.filter(i => i.type === 'post' && i.status === statusFilter)
   })()
 

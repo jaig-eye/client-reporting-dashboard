@@ -866,15 +866,15 @@ export default async function DashboardPage({
           </>
         )}
 
-        {/* ── Local Dominator ──────────────────────────────────── */}
+        {/* ── Google Maps Ranking ──────────────────────────────── */}
         {!isFiltered && client.local_dominator_url && (
           <div>
-            <h2 className="section-title">Local Dominator</h2>
+            <h2 className="section-title">Google Maps Ranking</h2>
             <div className="card" style={{ overflow: 'hidden', padding: 0, marginTop: '0.75rem' }}>
               <iframe
                 src={client.local_dominator_url}
                 style={{ display: 'block', width: '100%', height: 520, border: 'none' }}
-                title="Local Dominator"
+                title="Google Maps Ranking"
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
               />

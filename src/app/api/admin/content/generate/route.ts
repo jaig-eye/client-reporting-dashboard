@@ -260,7 +260,7 @@ export async function POST(request: NextRequest) {
   const agency   = agencySettings.agency_name || 'the agency'
 
   // ── Resolve effective client_id and topic data ─────────────────────────────
-  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null }
+  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null; target_publish_date: string | null }
 
   let effectiveClientId = client_id ?? null
   let topicData: TopicData | null = null
@@ -268,7 +268,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date')
       .eq('id', topic_id)
       .single()
     if (topicErr || !topic) {
@@ -407,23 +407,24 @@ Target approximately ${targetLength} words.`
   if (effectiveClientId) {
     const connectionId = (clientSettings?.connection_id as string | null) ?? null
     const postRow = {
-      client_id:        effectiveClientId,
-      connection_id:    connectionId,
-      status:           'pending',
-      title:            parsed.title,
-      seo_title:        parsed.seoTitle || parsed.title,
-      content:          parsed.content,
-      meta_description: parsed.metaDescription,
-      slug:             parsed.slug,
-      target_keyword:   parsed.focusKeyword,
-      focus_topic:      topicData?.topic ?? null,
-      suggested_tags:   parsed.suggestedTags,
-      word_count:       computeWordCount(parsed.content),
-      heading_count:    computeHeadingCount(parsed.content),
-      internal_links:   computeInternalLinks(parsed.content),
-      generated_by:     topic_id ? 'topic' : 'manual',
-      ai_model:         model,
-      prompt_used:      userPrompt,
+      client_id:           effectiveClientId,
+      connection_id:       connectionId,
+      status:              'pending',
+      title:               parsed.title,
+      seo_title:           parsed.seoTitle || parsed.title,
+      content:             parsed.content,
+      meta_description:    parsed.metaDescription,
+      slug:                parsed.slug,
+      target_keyword:      parsed.focusKeyword,
+      focus_topic:         topicData?.topic ?? null,
+      suggested_tags:      parsed.suggestedTags,
+      word_count:          computeWordCount(parsed.content),
+      heading_count:       computeHeadingCount(parsed.content),
+      internal_links:      computeInternalLinks(parsed.content),
+      generated_by:        topic_id ? 'topic' : 'manual',
+      ai_model:            model,
+      prompt_used:         userPrompt,
+      target_publish_date: topicData?.target_publish_date ?? null,
     }
     const { data: savedPost } = await db.from('content_posts').insert(postRow).select('id').single()
     postId = savedPost?.id ?? null
@@ -434,6 +435,48 @@ Target approximately ${targetLength} words.`
         .from('content_topics')
         .update({ post_id: postId, status: 'generated', generation_error: null })
         .eq('id', topic_id)
+    }
+
+    // Auto-upload to WordPress as a draft when a connection is configured
+    if (postId && connectionId && topicData?.target_publish_date) {
+      try {
+        const { data: connRow } = await db
+          .from('client_connections')
+          .select('connector:connectors(auth, config)')
+          .eq('id', connectionId)
+          .single()
+
+        type ConnRow = { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } | null }
+        const conn   = connRow as unknown as ConnRow | null
+        const auth   = conn?.connector?.auth   as { username: string; app_password: string } | undefined
+        const config = conn?.connector?.config as { site_url: string } | undefined
+
+        if (auth?.username && auth?.app_password && config?.site_url) {
+          const { publishPost } = await import('@/lib/connectors/wordpress')
+          const wpResult = await publishPost(config.site_url, auth, {
+            title:   parsed.title,
+            content: parsed.content,
+            status:  'draft',
+            slug:    parsed.slug || undefined,
+            excerpt: parsed.metaDescription || undefined,
+            meta: {
+              rank_math_title:          parsed.seoTitle        || parsed.title,
+              rank_math_description:    parsed.metaDescription || '',
+              rank_math_focus_keyword:  parsed.focusKeyword    || '',
+            },
+          })
+          await db.from('content_posts').update({
+            wp_post_id:          wpResult.id,
+            wp_status:           'draft',
+            wp_site_url:         config.site_url,
+            status:              'draft_saved',
+            target_publish_date: topicData.target_publish_date,
+          }).eq('id', postId)
+        }
+      } catch (wpErr) {
+        console.error('[generate] WP auto-draft failed:', wpErr)
+        // Leave post as 'pending' — do not rethrow
+      }
     }
   }
 

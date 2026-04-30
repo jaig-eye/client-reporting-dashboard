@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await db
     .from('content_posts')
-    .select('id, client_id, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id')
+    .select('id, client_id, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url')
     .eq('id', id)
     .single()
 
@@ -42,7 +42,9 @@ export async function GET(request: NextRequest) {
     wordCount:       (p.word_count   as number) ?? null,
     headingCount:    (p.heading_count as number) ?? null,
     internalLinks:   (p.internal_links as number) ?? null,
-    publishedUrl:    p.published_url ? String(p.published_url) : null,
-    wpAuthorId:      p.wp_author_id  ? Number(p.wp_author_id)  : null,
+    publishedUrl:    p.published_url  ? String(p.published_url)  : null,
+    wpAuthorId:      p.wp_author_id   ? Number(p.wp_author_id)   : null,
+    wpPostId:        p.wp_post_id     ? Number(p.wp_post_id)     : null,
+    wpSiteUrl:       p.wp_site_url    ? String(p.wp_site_url)    : null,
   })
 }

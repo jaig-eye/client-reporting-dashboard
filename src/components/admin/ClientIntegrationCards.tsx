@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { DiscordLogo, StripeLogo, LocalDominatorLogo } from '@/components/ConnectorLogo'
 
 interface Props {
   clientId:          string
@@ -112,10 +113,10 @@ export default function ClientIntegrationCards({
       <div className="card p-5">
         <div className="flex items-start gap-3 mb-4">
           <div
-            className="h-9 w-9 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
-            style={{ background: '#5865F2', fontSize: '0.9rem' }}
+            className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: '#5865F218', border: '1px solid #5865F230' }}
           >
-            D
+            <DiscordLogo size={22} aria-hidden="true" />
           </div>
           <div>
             <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Discord</h3>
@@ -157,10 +158,10 @@ export default function ClientIntegrationCards({
       <div className="card p-5">
         <div className="flex items-start gap-3 mb-4">
           <div
-            className="h-9 w-9 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
-            style={{ background: '#635BFF', fontSize: '0.9rem' }}
+            className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: '#635BFF18', border: '1px solid #635BFF30' }}
           >
-            S
+            <StripeLogo size={22} aria-hidden="true" />
           </div>
           <div>
             <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Stripe</h3>
@@ -218,15 +219,15 @@ export default function ClientIntegrationCards({
       <div className="card p-5">
         <div className="flex items-start gap-3 mb-4">
           <div
-            className="h-9 w-9 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
-            style={{ background: '#f97316', fontSize: '0.75rem' }}
+            className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: '#f9731618', border: '1px solid #f9731630' }}
           >
-            LD
+            <LocalDominatorLogo size={22} aria-hidden="true" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Local Dominator</h3>
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Google Maps Ranking</h3>
             <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-              Embeds the share link on the client&apos;s reporting dashboard.
+              Embeds the ranking map on the client&apos;s dashboard summary and dedicated Google Maps Ranking tab.
             </p>
           </div>
         </div>

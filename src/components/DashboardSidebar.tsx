@@ -23,6 +23,7 @@ interface SidebarProps {
   basePath?: string
   isAdminPreview?: boolean
   crmName?: string
+  hasLocalDominator?: boolean
 }
 
 interface NavItem {
@@ -65,9 +66,10 @@ const NAV: NavItem[] = [
     label: 'SEO',
     icon: <MagnifyingGlass size={13} aria-hidden />,
     children: [
-      { key: 'gsc',    label: 'Search Console',          requiredConnector: 'google_search_console',  href: '/dashboard/seo/search-console' },
-      { key: 'gbp',    label: 'Business Profile',        requiredConnector: 'google_business_profile', href: '/dashboard/seo/gbp'            },
-      { key: 'ahrefs', label: 'Authority (Ahrefs)',      requiredConnector: 'ahrefs',                 href: '/dashboard/seo/authority'      },
+      { key: 'gsc',          label: 'Search Console',       requiredConnector: 'google_search_console',  href: '/dashboard/seo/search-console' },
+      { key: 'gbp',          label: 'Business Profile',     requiredConnector: 'google_business_profile', href: '/dashboard/seo/gbp'            },
+      { key: 'ahrefs',       label: 'Authority (Ahrefs)',   requiredConnector: 'ahrefs',                 href: '/dashboard/seo/authority'      },
+      { key: 'maps_ranking', label: 'Google Maps Ranking',  href: '/dashboard/seo/maps'                                                       },
     ],
   },
   {
@@ -89,6 +91,7 @@ export default function DashboardSidebar({
   basePath = '',
   isAdminPreview = false,
   crmName = 'CRM',
+  hasLocalDominator = false,
 }: SidebarProps) {
   const pathname     = usePathname()
   const searchParams = useSearchParams()
@@ -213,7 +216,11 @@ export default function DashboardSidebar({
           if (section.children) {
             const visibleChildren = isAdminPreview
               ? section.children
-              : section.children.filter(child => !child.requiredConnector || hasConnector(child.requiredConnector))
+              : section.children.filter(child => {
+                  if (child.requiredConnector && !hasConnector(child.requiredConnector)) return false
+                  if (child.key === 'maps_ranking' && !hasLocalDominator) return false
+                  return true
+                })
             if (visibleChildren.length === 0) return null
 
             const sectionOpen = open[section.key] !== false

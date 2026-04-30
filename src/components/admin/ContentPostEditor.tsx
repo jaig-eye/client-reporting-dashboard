@@ -45,6 +45,8 @@ interface PostDetail {
   internalLinks:    number | null
   publishedUrl:     string | null
   wpAuthorId:       number | null
+  wpPostId:         number | null
+  wpSiteUrl:        string | null
 }
 
 interface Author {
@@ -450,7 +452,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           </h2>
           {post && (
             <span className={`badge ${post.status === 'pending' ? 'badge-amber' : post.status === 'approved' ? 'badge-blue' : post.status === 'published' ? 'badge-green' : post.status === 'draft_saved' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
-              {post.status === 'draft_saved' ? 'WP Draft' : post.status}
+              {post.status === 'draft_saved' ? 'Scheduled' : post.status}
             </span>
           )}
           <button
@@ -491,6 +493,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>
                     ✓ On WordPress
                   </span>
+                  {post?.wpPostId && post?.wpSiteUrl && (
+                    <a
+                      href={`${post.wpSiteUrl}/wp-admin/post.php?post=${post.wpPostId}&action=edit`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}
+                    >
+                      Edit in WordPress ↗
+                    </a>
+                  )}
                   {post?.publishedUrl && (
                     <a href={post.publishedUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>
                       View post ↗
@@ -498,7 +510,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   )}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been pushed to WordPress. Future edits should be made directly on the site.
+                  This post has been saved to WordPress as a draft. Edit and publish directly in WordPress.
                 </p>
               </div>
             )}

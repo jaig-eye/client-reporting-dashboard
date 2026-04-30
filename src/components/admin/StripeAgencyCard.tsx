@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { StripeLogo } from '@/components/ConnectorLogo'
 
 interface Props {
   initialApiKey:        string
@@ -32,10 +33,10 @@ export default function StripeAgencyCard({ initialApiKey, initialWebhookSecret }
     <div className="card p-5">
       <div className="flex items-start gap-4 mb-4">
         <div
-          className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-          style={{ background: '#635BFF' }}
+          className="h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ background: '#635BFF18', border: '1px solid #635BFF30' }}
         >
-          S
+          <StripeLogo size={26} aria-hidden="true" />
         </div>
         <div>
           <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Stripe</h2>
