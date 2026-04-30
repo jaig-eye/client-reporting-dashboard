@@ -249,6 +249,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [rationaleItem,  setRationaleItem]  = useState<QueueItem | null>(null)
   const [editingPostId,  setEditingPostId]  = useState<string | null>(null)
   const [loading,        setLoading]        = useState<string | null>(null)
+  const [generating,     setGenerating]     = useState<string | null>(null)
   const [bulkLoading,    setBulkLoading]    = useState(false)
   const [error,          setError]          = useState('')
 
@@ -334,6 +335,25 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
       setError(err instanceof Error ? err.message : 'Failed to delete')
     } finally {
       setLoading(null)
+    }
+  }
+
+  async function forceGenerate(item: QueueItem) {
+    setGenerating(item.id)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/content/generate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ topic_id: item.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Generation failed')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Generation failed')
+    } finally {
+      setGenerating(null)
     }
   }
 
@@ -467,10 +487,12 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
             </thead>
             <tbody>
               {filtered.map((item, idx) => {
-                const isLast    = idx === filtered.length - 1
-                const isLoading = loading === item.id
-                const compKey   = (item.competitionLevel ?? '').toLowerCase()
-                const comp      = COMPETITION_BADGE[compKey]
+                const isLast       = idx === filtered.length - 1
+                const isLoading    = loading === item.id
+                const isGenerating = generating === item.id
+                // AI may return "Low — reasoning…", extract just the first word
+                const compKey = (item.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
+                const comp    = COMPETITION_BADGE[compKey]
                 const wpEditUrl = item.wpSiteUrl && item.wpPostId
                   ? `${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`
                   : null
@@ -539,9 +561,12 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     {/* Competition (scheduled tab only) */}
                     {tab !== 'uploaded' && (
                       <td style={tdStyle}>
-                        {comp && item.competitionLevel ? (
-                          <span style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}>
-                            {item.competitionLevel}
+                        {comp ? (
+                          <span
+                            title={item.competitionLevel ?? undefined}
+                            style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}
+                          >
+                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
                           </span>
                         ) : null}
                       </td>
@@ -559,18 +584,37 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                       <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end', alignItems: 'center' }}>
                         {/* Topic rows */}
                         {item.type === 'topic' && item.status !== 'generating' && (
-                          <button
-                            type="button"
-                            disabled={isLoading}
-                            onClick={() => deleteSingle(item)}
-                            style={{
-                              fontSize: '0.7rem', padding: '0.15rem 0.4rem',
-                              background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
-                            }}
-                            title="Delete"
-                          >
-                            {isLoading ? '…' : '✕'}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={isGenerating || isLoading}
+                              onClick={() => forceGenerate(item)}
+                              style={{
+                                fontSize: '0.7rem', padding: '0.15rem 0.4rem',
+                                background: 'none', border: 'none',
+                                color: isGenerating ? 'var(--blue)' : 'var(--text-muted)',
+                                cursor: isGenerating ? 'default' : 'pointer',
+                              }}
+                              title="Force generate post now"
+                            >
+                              {isGenerating ? '⏳' : '▶'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isLoading || isGenerating}
+                              onClick={() => deleteSingle(item)}
+                              style={{
+                                fontSize: '0.7rem', padding: '0.15rem 0.4rem',
+                                background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+                              }}
+                              title="Delete"
+                            >
+                              {isLoading ? '…' : '✕'}
+                            </button>
+                          </>
+                        )}
+                        {item.type === 'topic' && item.status === 'generating' && (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', padding: '0.15rem 0.4rem' }}>⏳</span>
                         )}
 
                         {/* Post rows */}
