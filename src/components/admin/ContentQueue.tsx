@@ -49,7 +49,7 @@ interface Props {
   sites: Site[]
 }
 
-type TabId = 'all' | 'scheduled' | 'uploaded'
+type TabId = 'all' | 'scheduled' | 'pending' | 'uploaded'
 
 const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }> = {
   pending:    { bg: '#fef3c7', color: '#92400e', label: 'Pending'     },
@@ -244,12 +244,16 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const router = useRouter()
   const [items,          setItems]          = useState<QueueItem[]>(initialItems)
   const [tab,            setTab]            = useState<TabId>('scheduled')
+
+  // Sync when server refreshes data (router.refresh() re-passes initialItems)
+  useEffect(() => { setItems(initialItems) }, [initialItems])
   const [clientFilter,   setClientFilter]   = useState<string>('all')
   const [selected,       setSelected]       = useState<Set<string>>(new Set())
   const [rationaleItem,  setRationaleItem]  = useState<QueueItem | null>(null)
   const [editingPostId,  setEditingPostId]  = useState<string | null>(null)
   const [loading,        setLoading]        = useState<string | null>(null)
   const [generating,     setGenerating]     = useState<string | null>(null)
+  const [approving,      setApproving]      = useState<string | null>(null)
   const [bulkLoading,    setBulkLoading]    = useState(false)
   const [error,          setError]          = useState('')
 
@@ -260,6 +264,9 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const isScheduledTab = (i: QueueItem) =>
     i.type === 'topic' && ['scheduled', 'approved', 'generating'].includes(i.status)
 
+  const isPendingTab = (i: QueueItem) =>
+    i.type === 'post' && i.wpPostId == null && i.status !== 'rejected'
+
   const isUploadedTab = (i: QueueItem) =>
     i.type === 'post' && i.wpPostId != null
 
@@ -267,8 +274,9 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     clientFilter === 'all' ? arr : arr.filter(i => i.clientId === clientFilter)
 
   const tabItems: Record<TabId, QueueItem[]> = {
-    all:       applyClientFilter(items),
+    all:       applyClientFilter(items.filter(i => i.status !== 'rejected')),
     scheduled: applyClientFilter(items.filter(isScheduledTab)),
+    pending:   applyClientFilter(items.filter(isPendingTab)),
     uploaded:  applyClientFilter(items.filter(isUploadedTab)),
   }
 
@@ -357,6 +365,23 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     }
   }
 
+  async function approvePost(item: QueueItem) {
+    setApproving(item.id)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/content/posts/${item.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Upload failed')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setApproving(null)
+    }
+  }
+
   const openRationale = useCallback((item: QueueItem) => {
     if (item.type === 'topic') setRationaleItem(item)
   }, [])
@@ -367,6 +392,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const tabs: { id: TabId; label: string; count: number }[] = [
     { id: 'all',       label: 'All',       count: tabItems.all.length       },
     { id: 'scheduled', label: 'Scheduled', count: tabItems.scheduled.length },
+    { id: 'pending',   label: 'Pending',   count: tabItems.pending.length   },
     { id: 'uploaded',  label: 'Uploaded',  count: tabItems.uploaded.length  },
   ]
 
@@ -440,6 +466,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
         <div className="card p-6 text-center">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             {tab === 'scheduled' ? 'No topics scheduled for generation.'
+            : tab === 'pending'   ? 'No generated posts awaiting approval.'
             : tab === 'uploaded'  ? 'No posts uploaded to WordPress yet.'
             : 'No items.'}
           </p>
@@ -457,12 +484,12 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col style={{ width: 36 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 100 }} />
-              <col style={{ width: 280 }} />
+              <col />
               <col style={{ width: 120 }} />
               <col style={{ width: 80 }} />
-              {tab !== 'uploaded' && <col style={{ width: 80 }} />}
-              {tab !== 'scheduled' && <col style={{ width: 52 }} />}
-              <col style={{ width: tab === 'uploaded' ? 210 : 52 }} />
+              {(tab === 'scheduled' || tab === 'all') && <col style={{ width: 80 }} />}
+              {tab !== 'scheduled' && <col style={{ width: 56 }} />}
+              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 190 : 70 }} />
             </colgroup>
             <thead>
               <tr>
@@ -480,7 +507,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                 <th style={thStyle}>Title / Topic</th>
                 <th style={thStyle}>Keyword</th>
                 <th style={thStyle}>Publish Date</th>
-                {tab !== 'uploaded'  && <th style={thStyle}>Competition</th>}
+                {(tab === 'scheduled' || tab === 'all') && <th style={thStyle}>Competition</th>}
                 {tab !== 'scheduled' && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
@@ -559,7 +586,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     </td>
 
                     {/* Competition (scheduled tab only) */}
-                    {tab !== 'uploaded' && (
+                    {(tab === 'scheduled' || tab === 'all') && (
                       <td style={tdStyle}>
                         {comp ? (
                           <span
@@ -620,6 +647,18 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                         {/* Post rows */}
                         {item.type === 'post' && (
                           <>
+                            {/* Pending posts: Approve → uploads to WP draft */}
+                            {item.wpPostId == null && item.status !== 'rejected' && (
+                              <button
+                                type="button"
+                                disabled={approving === item.id}
+                                onClick={() => approvePost(item)}
+                                className="btn btn-primary"
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                              >
+                                {approving === item.id ? '…' : 'Approve'}
+                              </button>
+                            )}
                             {wpEditUrl && (
                               <a
                                 href={wpEditUrl}
