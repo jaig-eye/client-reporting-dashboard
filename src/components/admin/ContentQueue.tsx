@@ -530,9 +530,9 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col />
               <col style={{ width: 120 }} />
               <col style={{ width: 80 }} />
-              {(tab === 'scheduled' || tab === 'all') && <col style={{ width: 80 }} />}
-              {tab !== 'scheduled' && <col style={{ width: 56 }} />}
-              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 190 : tab === 'rejected' ? 110 : 70 }} />
+              {tab === 'scheduled' && <col style={{ width: 80 }} />}
+              {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 52 }} />}
+              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 196 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 70 : 196 }} />
             </colgroup>
             <thead>
               <tr>
@@ -550,8 +550,8 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                 <th style={thStyle}>Title / Topic</th>
                 <th style={thStyle}>Keyword</th>
                 <th style={thStyle}>Publish Date</th>
-                {(tab === 'scheduled' || tab === 'all') && <th style={thStyle}>Competition</th>}
-                {tab !== 'scheduled' && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
+                {tab === 'scheduled' && <th style={thStyle}>Competition</th>}
+                {(tab === 'pending' || tab === 'uploaded') && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
@@ -628,8 +628,8 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                       {item.targetPublishDate ? fmtDate(item.targetPublishDate) : '—'}
                     </td>
 
-                    {/* Competition (scheduled tab only) */}
-                    {(tab === 'scheduled' || tab === 'all') && (
+                    {/* Competition — Scheduled tab only */}
+                    {tab === 'scheduled' && (
                       <td style={tdStyle}>
                         {comp ? (
                           <span
@@ -642,8 +642,8 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                       </td>
                     )}
 
-                    {/* Words (uploaded tab only) */}
-                    {tab !== 'scheduled' && (
+                    {/* Words — Pending/Uploaded tabs only */}
+                    {(tab === 'pending' || tab === 'uploaded') && (
                       <td style={{ ...tdStyle, textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
                         {item.type === 'post' && item.wordCount != null ? `${item.wordCount.toLocaleString()}w` : ''}
                       </td>
