@@ -6,28 +6,29 @@ import { useRouter, useSearchParams } from 'next/navigation'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface DashRow {
-  clientId:            string
-  clientName:          string
-  googleAccountId:     string | null
-  facebookAccountId:   string | null
-  crmId:               string | null
-  discordChannelId:    string | null
-  billDay:             number | null
-  historicBillDay:     number | null
-  monthlyBudget:       number | null
-  adFuelCut:           number
-  afBalance:           number
-  rawBalance:          number
-  lifetimeRawBalance:  number
-  afPurchased:         number
-  afSpend:             number
-  rawPurchased:        number
-  rawSpend:            number
-  googleRaw:           number
-  facebookRaw:         number
-  afSinceBill:         number | null
-  avgDailyAf:          number | null
-  pace:                string
+  clientId:              string
+  clientName:            string
+  googleAccountId:       string | null
+  facebookAccountId:     string | null
+  crmId:                 string | null
+  discordChannelId:      string | null
+  adFuelAlertThreshold:  number | null
+  billDay:               number | null
+  historicBillDay:       number | null
+  monthlyBudget:         number | null
+  adFuelCut:             number
+  afBalance:             number
+  rawBalance:            number
+  lifetimeRawBalance:    number
+  afPurchased:           number
+  afSpend:               number
+  rawPurchased:          number
+  rawSpend:              number
+  googleRaw:             number
+  facebookRaw:           number
+  afSinceBill:           number | null
+  avgDailyAf:            number | null
+  pace:                  string
 }
 
 interface LedgerEntry {
@@ -214,16 +215,17 @@ export default function AdFuelPage() {
 
   // Client edit modal (bill day + budget)
   const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
-  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '' })
+  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '' })
   const [clientEditSaving, setClientEditSaving] = useState(false)
   const [clientEditError,  setClientEditError]  = useState('')
 
   function openClientEdit(row: DashRow) {
     setClientEditModal(row)
     setClientEditForm({
-      billDay:         String(row.billDay ?? ''),
-      historicBillDay: String(row.historicBillDay ?? ''),
-      monthlyBudget:   String(row.monthlyBudget ?? ''),
+      billDay:              String(row.billDay ?? ''),
+      historicBillDay:      String(row.historicBillDay ?? ''),
+      monthlyBudget:        String(row.monthlyBudget ?? ''),
+      adFuelAlertThreshold: row.adFuelAlertThreshold != null ? String(row.adFuelAlertThreshold) : '',
     })
     setClientEditError('')
   }
@@ -233,9 +235,10 @@ export default function AdFuelPage() {
     setClientEditSaving(true)
     setClientEditError('')
     const body: Record<string, unknown> = {
-      bill_day:          clientEditForm.billDay         === '' ? null : parseInt(clientEditForm.billDay),
-      historic_bill_day: clientEditForm.historicBillDay === '' ? null : parseInt(clientEditForm.historicBillDay),
-      monthly_budget:    clientEditForm.monthlyBudget   === '' ? null : parseFloat(clientEditForm.monthlyBudget),
+      bill_day:                clientEditForm.billDay              === '' ? null : parseInt(clientEditForm.billDay),
+      historic_bill_day:       clientEditForm.historicBillDay      === '' ? null : parseInt(clientEditForm.historicBillDay),
+      monthly_budget:          clientEditForm.monthlyBudget        === '' ? null : parseFloat(clientEditForm.monthlyBudget),
+      ad_fuel_alert_threshold: clientEditForm.adFuelAlertThreshold === '' ? null : parseFloat(clientEditForm.adFuelAlertThreshold),
     }
     const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -264,7 +267,7 @@ export default function AdFuelPage() {
 
   // Settings tab — client selector for manual values
   const [settingsClientId,   setSettingsClientId]   = useState('')
-  const [settingsForm,       setSettingsForm]       = useState({ billDay: '', historicBillDay: '', monthlyBudget: '' })
+  const [settingsForm,       setSettingsForm]       = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '' })
   const [settingsSaving,     setSettingsSaving]     = useState(false)
   const [settingsSaveMsg,    setSettingsSaveMsg]    = useState('')
 
@@ -315,12 +318,13 @@ export default function AdFuelPage() {
 
   // Populate settings form when a client is selected in settings tab
   useEffect(() => {
-    if (!settingsClientId) { setSettingsForm({ billDay: '', historicBillDay: '', monthlyBudget: '' }); return }
+    if (!settingsClientId) { setSettingsForm({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '' }); return }
     const row = rows.find(r => r.clientId === settingsClientId)
     if (row) setSettingsForm({
-      billDay:         String(row.billDay ?? ''),
-      historicBillDay: String(row.historicBillDay ?? ''),
-      monthlyBudget:   String(row.monthlyBudget ?? ''),
+      billDay:              String(row.billDay ?? ''),
+      historicBillDay:      String(row.historicBillDay ?? ''),
+      monthlyBudget:        String(row.monthlyBudget ?? ''),
+      adFuelAlertThreshold: row.adFuelAlertThreshold != null ? String(row.adFuelAlertThreshold) : '',
     })
   }, [settingsClientId, rows])
 
@@ -329,9 +333,10 @@ export default function AdFuelPage() {
     setSettingsSaving(true)
     setSettingsSaveMsg('')
     const body: Record<string, unknown> = {
-      bill_day:          settingsForm.billDay         === '' ? null : parseInt(settingsForm.billDay),
-      historic_bill_day: settingsForm.historicBillDay === '' ? null : parseInt(settingsForm.historicBillDay),
-      monthly_budget:    settingsForm.monthlyBudget   === '' ? null : parseFloat(settingsForm.monthlyBudget),
+      bill_day:                settingsForm.billDay              === '' ? null : parseInt(settingsForm.billDay),
+      historic_bill_day:       settingsForm.historicBillDay      === '' ? null : parseInt(settingsForm.historicBillDay),
+      monthly_budget:          settingsForm.monthlyBudget        === '' ? null : parseFloat(settingsForm.monthlyBudget),
+      ad_fuel_alert_threshold: settingsForm.adFuelAlertThreshold === '' ? null : parseFloat(settingsForm.adFuelAlertThreshold),
     }
     const res = await fetch(`/api/admin/clients/${settingsClientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -789,7 +794,7 @@ export default function AdFuelPage() {
 
               {settingsClientId && (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
                       <input
@@ -814,6 +819,17 @@ export default function AdFuelPage() {
                         type="number" min={0} placeholder="e.g. 5000"
                         value={settingsForm.monthlyBudget}
                         onChange={e => setSettingsForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                        className="input" style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                        Alert Threshold ($) <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>optional</span>
+                      </label>
+                      <input
+                        type="number" min={0} placeholder="e.g. 200"
+                        value={settingsForm.adFuelAlertThreshold}
+                        onChange={e => setSettingsForm(f => ({ ...f, adFuelAlertThreshold: e.target.value }))}
                         className="input" style={{ width: '100%' }}
                       />
                     </div>
@@ -920,14 +936,27 @@ export default function AdFuelPage() {
                   />
                 </div>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
-                <input
-                  type="number" min={0} placeholder="e.g. 5000"
-                  value={clientEditForm.monthlyBudget}
-                  onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
-                  className="input" style={{ width: '100%' }}
-                />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
+                  <input
+                    type="number" min={0} placeholder="e.g. 5000"
+                    value={clientEditForm.monthlyBudget}
+                    onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                    className="input" style={{ width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                    Alert Threshold ($) <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>optional</span>
+                  </label>
+                  <input
+                    type="number" min={0} placeholder="e.g. 200"
+                    value={clientEditForm.adFuelAlertThreshold}
+                    onChange={e => setClientEditForm(f => ({ ...f, adFuelAlertThreshold: e.target.value }))}
+                    className="input" style={{ width: '100%' }}
+                  />
+                </div>
               </div>
 
               {clientEditError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{clientEditError}</p>}

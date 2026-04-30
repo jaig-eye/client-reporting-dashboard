@@ -1,9 +1,10 @@
-// Data Connections — /admin/connections
-// Agency-level management of all data source connectors.
+// Integrations — /admin/connections
+// Agency-level management of all data source connectors + Stripe.
 //
 // Google connectors (Ads, Analytics, Search Console, Business Profile) are
 // displayed as a single grouped card — one OAuth flow connects all four.
 // All other connectors (Meta, Ahrefs, GHL, WordPress) remain as flat cards.
+// Stripe agency credentials are managed here too.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
@@ -16,6 +17,7 @@ import {
 import { GoogleAdsLogo, GALogo, GSCLogo } from '@/components/ConnectorLogo'
 import type { Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
+import StripeAgencyCard from '@/components/admin/StripeAgencyCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,8 +28,12 @@ export default async function ConnectionsPage({
 }) {
   const sp = await searchParams
   const db = createAdminClient()
-  const { data: connectors } = await db.from('connectors').select('*').order('created_at')
-  const existing = (connectors ?? []) as Connector[]
+  const [connectorsRes, agencyRes] = await Promise.all([
+    db.from('connectors').select('*').order('created_at'),
+    db.from('agency_settings').select('stripe_api_key, stripe_webhook_secret').single(),
+  ])
+  const existing = (connectorsRes.data ?? []) as Connector[]
+  const agencySettings = agencyRes.data as { stripe_api_key?: string; stripe_webhook_secret?: string } | null
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
@@ -43,9 +49,9 @@ export default async function ConnectionsPage({
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Data Connections</h1>
+          <h1 className="page-title">Integrations</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Connect the agency to external data sources. Once connected, assign accounts to clients.
+            Connect the agency to external data sources and third-party services. Once connected, assign accounts to clients.
           </p>
         </div>
       </div>
@@ -240,6 +246,12 @@ export default async function ConnectionsPage({
             </div>
           )
         })}
+        {/* ── Stripe ────────────────────────────────────────────────── */}
+        <StripeAgencyCard
+          initialApiKey={agencySettings?.stripe_api_key ?? ''}
+          initialWebhookSecret={agencySettings?.stripe_webhook_secret ?? ''}
+        />
+
       </div>
 
       {/* Info box */}

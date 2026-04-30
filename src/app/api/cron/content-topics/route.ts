@@ -156,13 +156,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── 7 days out: auto-generate posts for approved topics ───────────────
-    if (days <= 7 && days > 0) {
+    // ── Always: auto-generate posts for all approved topics ──────────────
+    // Run for any client with auto_generate enabled — pick up ALL approved
+    // topics regardless of publish date so nothing stays stuck in queue.
+    if (days <= 30) {
       const { data: approvedTopics } = await db
         .from('content_topics')
         .select('id')
         .eq('client_id', client_id)
-        .eq('target_publish_date', publishDateStr)
         .eq('status', 'approved')
 
       for (const topic of approvedTopics ?? []) {

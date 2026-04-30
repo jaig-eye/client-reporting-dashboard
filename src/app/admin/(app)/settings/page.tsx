@@ -100,7 +100,6 @@ const TABS = [
   { id: 'colors',        label: 'Colors'        },
   { id: 'ai',            label: 'AI'            },
   { id: 'sync',          label: 'Sync'          },
-  { id: 'integrations',  label: 'Integrations'  },
   { id: 'notifications', label: 'Notifications' },
   { id: 'overview',      label: 'Overview'      },
   { id: 'layouts',       label: 'Layouts'       },
@@ -522,29 +521,6 @@ export default function AgencySettingsPage() {
               Re-syncs the last 3 days for all active connections (captures late conversions).
             </p>
           </div>
-          </div>
-        )}
-
-        {/* ─── Integrations ──────────────────────────────────────── */}
-        {activeTab === 'integrations' && (
-          <div className="card p-6 space-y-4">
-            <div>
-              <h2 className="section-title">Stripe</h2>
-              <p className="section-desc">Auto-log ad fuel payments from Stripe invoices. Add the agency&apos;s Stripe Secret Key and Webhook Secret, then set each client&apos;s Stripe Customer ID in their settings.</p>
-            </div>
-            <FormField label="Stripe Secret Key" hint="Starts with sk_live_ or sk_test_">
-              <input type="password" className="input" value={form.stripe_api_key}
-                onChange={e => field('stripe_api_key', e.target.value)}
-                placeholder="sk_live_…" autoComplete="off" />
-            </FormField>
-            <FormField label="Stripe Webhook Secret" hint="Starts with whsec_ — from Stripe dashboard → Webhooks">
-              <input type="password" className="input" value={form.stripe_webhook_secret}
-                onChange={e => field('stripe_webhook_secret', e.target.value)}
-                placeholder="whsec_…" autoComplete="off" />
-            </FormField>
-            <p className="text-xs rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
-              Webhook endpoint: <code style={{ fontFamily: 'monospace' }}>/api/webhooks/stripe</code> — register this URL in your Stripe dashboard. Events: <code style={{ fontFamily: 'monospace' }}>invoice.payment_succeeded</code>
-            </p>
           </div>
         )}
 

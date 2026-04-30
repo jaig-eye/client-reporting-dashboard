@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
   type DayRow   = { client_id: string; date: string; spend: number }
   type LedgerRow = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ConnRow  = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
-  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; historic_bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null }
+  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; historic_bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null; ad_fuel_alert_threshold: number | null }
 
   let gFilterMap: Record<string, number> = {}
   let mFilterMap: Record<string, number> = {}
@@ -270,10 +270,11 @@ export async function GET(request: NextRequest) {
       googleAccountId:   googleAcctByClient[client.id] ?? null,
       facebookAccountId: fbAcctByClient[client.id]     ?? null,
       crmId:             crmIdByClient[client.id]       ?? null,
-      discordChannelId:  client.discord_channel_id,
-      billDay:           client.bill_day,
-      historicBillDay:   client.historic_bill_day,
-      monthlyBudget:     client.monthly_budget,
+      discordChannelId:       client.discord_channel_id,
+      adFuelAlertThreshold:   client.ad_fuel_alert_threshold,
+      billDay:                client.bill_day,
+      historicBillDay:        client.historic_bill_day,
+      monthlyBudget:          client.monthly_budget,
       adFuelCut:         cut,
       afBalance,
       rawBalance,

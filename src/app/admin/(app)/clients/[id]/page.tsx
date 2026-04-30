@@ -29,6 +29,7 @@ import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import ClientDirectConnections from './ClientDirectConnections'
+import ClientIntegrationCards from '@/components/admin/ClientIntegrationCards'
 import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
 import GscInsightsPanel from '@/components/admin/GscInsightsPanel'
 import type { GscInsightRow } from '@/components/admin/GscInsightsPanel'
@@ -37,7 +38,7 @@ export const dynamic = 'force-dynamic'
 
 const TABS = [
   { id: 'general',      label: 'General'      },
-  { id: 'sources',      label: 'Data Sources' },
+  { id: 'sources',      label: 'Integrations' },
   { id: 'performance',  label: 'Metrics'      },
   { id: 'content',      label: 'Content'      },
   { id: 'advanced',     label: 'Advanced'     },
@@ -195,10 +196,6 @@ export default async function ClientDetailPage({
                 clientId={id}
                 name={client.name}
                 slug={client.slug ?? ''}
-                discordChannelId={client.discord_channel_id}
-                localDominatorUrl={client.local_dominator_url}
-                stripeCustomerId={client.stripe_customer_id}
-                adFuelAlertThreshold={client.ad_fuel_alert_threshold}
               />
             </div>
 
@@ -337,7 +334,7 @@ export default async function ClientDetailPage({
             </div>
           </div>
 
-          {/* ── Ungrouped flat cards ───────────────────────────────── */}
+          {/* ── Ungrouped flat connector cards ───────────────────── */}
           {UNGROUPED_CONNECTOR_TYPES.map(type => {
             const def         = getConnectorDef(type)
             const connection  = connByType.get(type)
@@ -420,6 +417,17 @@ export default async function ClientDetailPage({
               </div>
             )
           })}
+
+          {/* ── Third-party integration cards ─────────────────────── */}
+          <div>
+            <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Integrations</p>
+            <ClientIntegrationCards
+              clientId={id}
+              discordChannelId={(client as unknown as { discord_channel_id?: string }).discord_channel_id ?? null}
+              stripeCustomerId={(client as unknown as { stripe_customer_id?: string }).stripe_customer_id ?? null}
+              localDominatorUrl={(client as unknown as { local_dominator_url?: string }).local_dominator_url ?? null}
+            />
+          </div>
         </div>
       )}
 

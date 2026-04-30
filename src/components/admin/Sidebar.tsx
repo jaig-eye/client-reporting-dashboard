@@ -24,7 +24,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/admin/dashboard',   label: 'Clients',          icon: <Buildings size={16} aria-hidden />,     matchPrefix: true  },
-  { href: '/admin/connections', label: 'Data Connections', icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
+  { href: '/admin/connections', label: 'Integrations',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
   { href: '/admin/content',     label: 'Content',          icon: <Pencil size={16} aria-hidden />,        matchPrefix: true  },
   { href: '/admin/ad-fuel',     label: 'Ad Fuel',          icon: <GasPump size={16} aria-hidden />,       matchPrefix: true  },
   { href: '/admin/users',       label: 'Users',            icon: <UsersThree size={16} aria-hidden />,    matchPrefix: true  },

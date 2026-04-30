@@ -114,14 +114,18 @@ function TopicRow({
   topic,
   onApprove,
   onReject,
+  onGeneratePost,
   loading,
   showActions = true,
+  showGeneratePost = false,
 }: {
-  topic:       CycleTopic
-  onApprove:   (id: string) => void
-  onReject:    (id: string) => void
-  loading:     boolean
-  showActions?: boolean
+  topic:             CycleTopic
+  onApprove:         (id: string) => void
+  onReject:          (id: string) => void
+  onGeneratePost?:   (id: string) => void
+  loading:           boolean
+  showActions?:      boolean
+  showGeneratePost?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasRationale = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel || topic.rationale
@@ -203,6 +207,16 @@ function TopicRow({
               </button>
             </>
           )}
+          {showGeneratePost && (topic.status === 'approved' || topic.generationError) && onGeneratePost && !isGenerating && (
+            <button
+              onClick={() => onGeneratePost(topic.id)}
+              disabled={loading}
+              className="btn btn-primary"
+              style={{ padding: '0.2rem 0.625rem', fontSize: '0.75rem' }}
+            >
+              Generate Post
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -211,10 +225,11 @@ function TopicRow({
 
 function CycleCard({ cycle }: { cycle: ContentCycle }) {
   const router    = useRouter()
-  const [loadingId,  setLoadingId]  = useState<string | null>(null)
-  const [generating, setGenerating] = useState(false)
-  const [genResult,  setGenResult]  = useState('')
-  const [queueOpen,  setQueueOpen]  = useState(false)
+  const [loadingId,      setLoadingId]      = useState<string | null>(null)
+  const [generating,     setGenerating]     = useState(false)
+  const [genResult,      setGenResult]      = useState('')
+  const [queueOpen,      setQueueOpen]      = useState(true)
+  const [postGenResults, setPostGenResults] = useState<Record<string, string>>({})
 
   const daysToPublish  = daysUntil(cycle.nextPublishDate)
   const daysToDeadline = daysUntil(cycle.topicDeadline)
@@ -236,6 +251,29 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
         body: JSON.stringify({ status }),
       })
       router.refresh()
+    } finally {
+      setLoadingId(null)
+    }
+  }
+
+  async function generatePost(topicId: string) {
+    setLoadingId(topicId)
+    setPostGenResults(r => ({ ...r, [topicId]: '' }))
+    try {
+      const res  = await fetch('/api/admin/content/generate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ topic_id: topicId }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setPostGenResults(r => ({ ...r, [topicId]: 'Post generated!' }))
+        router.refresh()
+      } else {
+        setPostGenResults(r => ({ ...r, [topicId]: data.error || 'Generation failed' }))
+      }
+    } catch (err) {
+      setPostGenResults(r => ({ ...r, [topicId]: String(err) }))
     } finally {
       setLoadingId(null)
     }
@@ -382,19 +420,27 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
               }}
             >
               <span style={{ fontSize: '0.6rem' }}>{queueOpen ? '▼' : '▶'}</span>
-              {queueCount} topic{queueCount !== 1 ? 's' : ''} queued for generation
+              {queueCount} topic{queueCount !== 1 ? 's' : ''} approved — ready to generate posts
             </button>
             {queueOpen && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', marginTop: '0.5rem' }}>
                 {cycle.queuedTopics.map(t => (
-                  <TopicRow
-                    key={t.id}
-                    topic={t}
-                    onApprove={id => updateStatus(id, 'approved')}
-                    onReject={id => updateStatus(id, 'rejected')}
-                    loading={loadingId === t.id}
-                    showActions={false}
-                  />
+                  <div key={t.id}>
+                    <TopicRow
+                      topic={t}
+                      onApprove={id => updateStatus(id, 'approved')}
+                      onReject={id => updateStatus(id, 'rejected')}
+                      onGeneratePost={generatePost}
+                      loading={loadingId === t.id}
+                      showActions={false}
+                      showGeneratePost
+                    />
+                    {postGenResults[t.id] && (
+                      <p style={{ fontSize: '0.7rem', color: postGenResults[t.id] === 'Post generated!' ? 'var(--green)' : 'var(--red)', margin: '0.15rem 0.875rem 0' }}>
+                        {postGenResults[t.id]}
+                      </p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
