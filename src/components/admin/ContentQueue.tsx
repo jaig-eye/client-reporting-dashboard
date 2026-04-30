@@ -49,7 +49,7 @@ interface Props {
   sites: Site[]
 }
 
-type TabId = 'all' | 'scheduled' | 'pending' | 'uploaded'
+type TabId = 'all' | 'scheduled' | 'pending' | 'uploaded' | 'rejected'
 
 const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }> = {
   pending:    { bg: '#fef3c7', color: '#92400e', label: 'Pending'     },
@@ -254,6 +254,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [loading,        setLoading]        = useState<string | null>(null)
   const [generating,     setGenerating]     = useState<string | null>(null)
   const [approving,      setApproving]      = useState<string | null>(null)
+  const [restoring,      setRestoring]      = useState<string | null>(null)
   const [bulkLoading,    setBulkLoading]    = useState(false)
   const [error,          setError]          = useState('')
 
@@ -278,6 +279,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     scheduled: applyClientFilter(items.filter(isScheduledTab)),
     pending:   applyClientFilter(items.filter(isPendingTab)),
     uploaded:  applyClientFilter(items.filter(isUploadedTab)),
+    rejected:  applyClientFilter(items.filter(i => i.status === 'rejected')),
   }
 
   const filtered = tabItems[tab]
@@ -365,6 +367,45 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     }
   }
 
+  async function rejectPost(item: QueueItem) {
+    setLoading(item.id)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/content/posts/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Reject failed')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Reject failed')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function restoreItem(item: QueueItem) {
+    setRestoring(item.id)
+    setError('')
+    try {
+      const url = item.type === 'topic'
+        ? `/api/admin/content/topics/${item.id}`
+        : `/api/admin/content/posts/${item.id}`
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'pending' }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Restore failed')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Restore failed')
+    } finally {
+      setRestoring(null)
+    }
+  }
+
   async function approvePost(item: QueueItem) {
     setApproving(item.id)
     setError('')
@@ -394,6 +435,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
     { id: 'scheduled', label: 'Scheduled', count: tabItems.scheduled.length },
     { id: 'pending',   label: 'Pending',   count: tabItems.pending.length   },
     { id: 'uploaded',  label: 'Uploaded',  count: tabItems.uploaded.length  },
+    { id: 'rejected',  label: 'Rejected',  count: tabItems.rejected.length  },
   ]
 
   const selectedCount = Array.from(selected).filter(id => filtered.some(i => i.id === id)).length
@@ -468,6 +510,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
             {tab === 'scheduled' ? 'No topics scheduled for generation.'
             : tab === 'pending'   ? 'No generated posts awaiting approval.'
             : tab === 'uploaded'  ? 'No posts uploaded to WordPress yet.'
+            : tab === 'rejected'  ? 'No rejected items.'
             : 'No items.'}
           </p>
         </div>
@@ -489,7 +532,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col style={{ width: 80 }} />
               {(tab === 'scheduled' || tab === 'all') && <col style={{ width: 80 }} />}
               {tab !== 'scheduled' && <col style={{ width: 56 }} />}
-              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 190 : 70 }} />
+              <col style={{ width: tab === 'uploaded' ? 210 : tab === 'pending' ? 190 : tab === 'rejected' ? 110 : 70 }} />
             </colgroup>
             <thead>
               <tr>
@@ -609,8 +652,32 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     {/* Actions */}
                     <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        {/* Topic rows */}
-                        {item.type === 'topic' && item.status !== 'generating' && (
+                        {/* Rejected items: Restore + Delete */}
+                        {item.status === 'rejected' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={restoring === item.id}
+                              onClick={() => restoreItem(item)}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                            >
+                              {restoring === item.id ? '…' : 'Restore'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isLoading || restoring === item.id}
+                              onClick={() => deleteSingle(item)}
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              title="Delete permanently"
+                            >
+                              {isLoading ? '…' : '✕'}
+                            </button>
+                          </>
+                        )}
+
+                        {/* Topic rows (non-rejected) */}
+                        {item.type === 'topic' && item.status !== 'generating' && item.status !== 'rejected' && (
                           <>
                             <button
                               type="button"
@@ -689,18 +756,28 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                                 View ↗
                               </a>
                             )}
-                            <button
-                              type="button"
-                              disabled={isLoading}
-                              onClick={() => deleteSingle(item)}
-                              style={{
-                                fontSize: '0.7rem', padding: '0.15rem 0.4rem',
-                                background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
-                              }}
-                              title="Delete"
-                            >
-                              {isLoading ? '…' : '✕'}
-                            </button>
+                            {item.wpPostId == null && item.status !== 'rejected' && (
+                              <button
+                                type="button"
+                                disabled={isLoading}
+                                onClick={() => rejectPost(item)}
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                title="Reject"
+                              >
+                                {isLoading ? '…' : '✕'}
+                              </button>
+                            )}
+                            {item.wpPostId != null && (
+                              <button
+                                type="button"
+                                disabled={isLoading}
+                                onClick={() => deleteSingle(item)}
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                title="Delete"
+                              >
+                                {isLoading ? '…' : '✕'}
+                              </button>
+                            )}
                           </>
                         )}
                       </div>

@@ -118,10 +118,10 @@ export default async function ContentPage({
       .in('status', ['published', 'approved'])
       .order('generated_at', { ascending: false })
       .limit(500),
-    // Topics in the generation pipeline (approved / generating / scheduled) — shown in Posts to Review
+    // Topics in the pipeline + rejected — shown in Post Queue tabs
     db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
-      .in('status', ['approved', 'generating', 'scheduled'])
+      .in('status', ['approved', 'generating', 'scheduled', 'rejected'])
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(200),
   ])
