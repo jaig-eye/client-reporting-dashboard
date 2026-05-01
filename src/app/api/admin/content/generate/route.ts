@@ -118,25 +118,44 @@ function parseManualLinks(manualLinkUrls: string[]): { url: string; label: strin
   })
 }
 
+// Escape literal control characters that appear inside JSON string values.
+// State-machine approach so structural whitespace (between fields) is untouched.
+function repairJsonStrings(json: string): string {
+  let out = '', inStr = false, esc = false
+  for (const ch of json) {
+    if (esc)                          { out += ch; esc = false; continue }
+    if (ch === '\\' && inStr)         { out += ch; esc = true;  continue }
+    if (ch === '"')                   { out += ch; inStr = !inStr; continue }
+    if (inStr && ch === '\n')         { out += '\\n'; continue }
+    if (inStr && ch === '\r')         { out += '\\r'; continue }
+    if (inStr && ch === '\t')         { out += '\\t'; continue }
+    out += ch
+  }
+  return out
+}
+
 function parseResponse(rawText: string) {
   const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   const jsonMatch = stripped.match(/\{[\s\S]*\}/)
   if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0])
-      return {
-        title:           String(parsed.title           || ''),
-        seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
-        content:         String(parsed.content         || rawText),
-        metaDescription: String(parsed.metaDescription || ''),
-        slug:            String(parsed.slug            || ''),
-        focusKeyword:    String(parsed.focusKeyword    || ''),
-        suggestedTags:   Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags.map(String) : [],
-      }
-    } catch { /* fall through to field extraction */ }
+    // Try raw first, then with control-char repair (handles literal newlines in HTML values)
+    for (const attempt of [jsonMatch[0], repairJsonStrings(jsonMatch[0])]) {
+      try {
+        const parsed = JSON.parse(attempt)
+        return {
+          title:           String(parsed.title           || ''),
+          seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
+          content:         String(parsed.content         || rawText),
+          metaDescription: String(parsed.metaDescription || ''),
+          slug:            String(parsed.slug            || ''),
+          focusKeyword:    String(parsed.focusKeyword    || ''),
+          suggestedTags:   Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags.map(String) : [],
+        }
+      } catch { /* try next */ }
+    }
   }
-  // Fallback: JSON was truncated or malformed — extract simple string fields via regex.
-  // "content" may be huge so we skip extracting it here and keep rawText.
+  // Last resort: JSON was truncated — extract the simple scalar fields via regex
+  // so at least title/slug/meta are saved even when content overran the token limit.
   function extractStr(field: string): string {
     const m = rawText.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*?)(?:"|$)`))
     return m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : ''
