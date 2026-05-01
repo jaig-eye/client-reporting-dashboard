@@ -729,9 +729,8 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col />
               <col style={{ width: 130 }} />
               <col style={{ width: 108 }} />
-              {tab === 'scheduled' && <col style={{ width: 112 }} />}
               {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 56 }} />}
-              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 80 : 200 }} />
+              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : 200 }} />
             </colgroup>
             <thead>
               <tr>
@@ -749,7 +748,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                 <th style={thStyle}>Title / Topic</th>
                 <th style={thStyle}>Keyword</th>
                 <th style={thStyle}>Publish Date</th>
-                {tab === 'scheduled' && <th style={thStyle}>Competition</th>}
                 {(tab === 'pending' || tab === 'uploaded') && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
@@ -826,20 +824,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     <td style={{ ...tdStyle, fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
                       {item.targetPublishDate ? fmtDate(item.targetPublishDate) : '—'}
                     </td>
-
-                    {/* Competition — Scheduled tab only */}
-                    {tab === 'scheduled' && (
-                      <td style={tdStyle}>
-                        {comp ? (
-                          <span
-                            title={item.competitionLevel ?? undefined}
-                            style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}
-                          >
-                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
-                          </span>
-                        ) : null}
-                      </td>
-                    )}
 
                     {/* Words — Pending/Uploaded tabs only */}
                     {(tab === 'pending' || tab === 'uploaded') && (
