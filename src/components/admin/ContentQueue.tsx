@@ -97,10 +97,14 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const compShort = item.competitionLevel
+    ? item.competitionLevel.split(/[\s/—–\-]/)[0].trim() || null
+    : null
+
   const seoStats: { label: string; value: string | number | null | undefined }[] = [
     { label: 'Search Volume',      value: item.searchVolume },
     { label: 'Keyword Difficulty', value: item.keywordDifficulty },
-    { label: 'Competition',        value: item.competitionLevel },
+    { label: 'Competition',        value: compShort },
   ]
 
   const metaChips: { label: string; value: string | null | undefined }[] = [
@@ -113,6 +117,7 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
     { label: 'Ranking Strategy',    value: item.rankingStrategy,    color: '#7c3aed' },
     { label: 'Audience Intent',     value: item.audienceIntent,     color: '#059669' },
     { label: 'Why Now',             value: item.whyNow,             color: '#d97706' },
+    { label: 'Competition',         value: (compShort && item.competitionLevel && item.competitionLevel.length > compShort.length + 2) ? item.competitionLevel : null, color: '#ea580c' },
   ]
 
   const hasSeoStats  = seoStats.some(s => s.value != null && s.value !== '')
@@ -177,7 +182,7 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
         {hasSeoStats && (
           <>
             <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
-            <div style={{ padding: '0.875rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.625rem' }}>
+            <div style={{ padding: '0.875rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.625rem' }}>
               {seoStats.filter(s => s.value != null && s.value !== '').map(s => (
                 <div key={s.label} style={{ background: 'var(--bg-subtle)', borderRadius: 8, padding: '0.625rem 0.75rem', textAlign: 'center' }}>
                   <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>{s.label}</div>
@@ -606,6 +611,115 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
           overflow:     'hidden',
           background:   'var(--bg-surface, #fff)',
         }}>
+          {tab === 'scheduled' ? (
+            <div>
+              {filtered.map((item, idx) => {
+                const isLast       = idx === filtered.length - 1
+                const isLoading    = loading === item.id
+                const isGenerating = generating === item.id
+                const compKey = (item.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
+                const comp    = COMPETITION_BADGE[compKey]
+                const ratSnippets = [
+                  { label: 'Keyword',  value: item.keywordOpportunity, color: '#2563eb' },
+                  { label: 'Strategy', value: item.rankingStrategy,    color: '#7c3aed' },
+                  { label: 'Audience', value: item.audienceIntent,     color: '#059669' },
+                  { label: 'Why now',  value: item.whyNow,             color: '#d97706' },
+                ].filter(f => f.value)
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => openRationale(item)}
+                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-subtle, #f8f9fa)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = '' }}
+                    style={{ padding: '0.875rem 1.25rem', borderBottom: isLast ? 'none' : '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                  >
+                    {/* Meta row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleOne(item.id)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                      />
+                      <StatusBadge item={item} />
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.clientName}
+                      </span>
+                      {item.targetPublishDate && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <span>→</span>
+                          <span>{fmtDate(item.targetPublishDate)}</span>
+                        </span>
+                      )}
+                      <div
+                        style={{ marginLeft: 'auto', display: 'flex', gap: '0.25rem', alignItems: 'center', flexShrink: 0 }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {item.status !== 'generating' && item.status !== 'rejected' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isGenerating || isLoading}
+                              onClick={() => forceGenerate(item)}
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: isGenerating ? 'var(--blue)' : 'var(--text-muted)', cursor: isGenerating ? 'default' : 'pointer' }}
+                              title="Force generate post now"
+                            >{isGenerating ? '⏳' : '▶'}</button>
+                            <button
+                              type="button"
+                              disabled={isLoading || isGenerating}
+                              onClick={() => deleteSingle(item)}
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              title="Delete"
+                            >{isLoading ? '…' : '✕'}</button>
+                          </>
+                        )}
+                        {item.status === 'generating' && (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', padding: '0.15rem 0.4rem' }}>⏳</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Topic title */}
+                    <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '0.4375rem' }}>
+                      {item.topicText}
+                    </div>
+
+                    {/* Chips: keyword + competition + search volume */}
+                    {(item.targetKeyword || comp || item.searchVolume != null) && (
+                      <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: ratSnippets.length ? '0.5rem' : 0 }}>
+                        {item.targetKeyword && (
+                          <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
+                            {item.targetKeyword}
+                          </span>
+                        )}
+                        {comp && (
+                          <span style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: comp.bg, color: comp.color }}>
+                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
+                          </span>
+                        )}
+                        {item.searchVolume != null && (
+                          <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{item.searchVolume} impr/mo</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Rationale snippets */}
+                    {ratSnippets.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1875rem' }}>
+                        {ratSnippets.map(f => (
+                          <div key={f.label} style={{ display: 'flex', gap: '0.375rem', alignItems: 'baseline', overflow: 'hidden' }}>
+                            <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, flexShrink: 0 }}>{f.label}:</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
           <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
@@ -889,6 +1003,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
             </tbody>
           </table>
           </div>
+          )}
         </div>
       )}
 
