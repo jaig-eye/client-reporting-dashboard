@@ -21,6 +21,18 @@ export const dynamic = 'force-dynamic'
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function subtractDays(d: Date, n: number) { return new Date(d.getTime() - n * 86_400_000) }
 
+function getAfEffectiveCutoff(cutoffDate: string, historicBillDay: number): string {
+  const c = new Date(cutoffDate + 'T00:00:00Z')
+  const year = c.getUTCFullYear(), month = c.getUTCMonth(), day = c.getUTCDate()
+  if (day <= historicBillDay) return new Date(Date.UTC(year, month, historicBillDay)).toISOString().slice(0, 10)
+  return new Date(Date.UTC(year, month + 1, historicBillDay)).toISOString().slice(0, 10)
+}
+function subtractOneDayStr(date: string): string {
+  const d = new Date(date + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
 function getMtdFrom() {
   const now = new Date()
   return fmtDate(new Date(now.getFullYear(), now.getMonth(), 1))
@@ -88,7 +100,7 @@ export default async function AdminOverviewPage({
     campaignAssignmentsRes,
   ] = await Promise.all([
     db.from('clients')
-      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut')
+      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut, historic_bill_day')
       .order('name'),
 
     db.from('client_connections')
@@ -151,6 +163,7 @@ export default async function AdminOverviewPage({
     lead_action?: string | null; lead_action_fallback?: string | null
     purchase_action?: string | null; purchase_action_fallback?: string | null
     ad_fuel_cut?: number | null
+    historic_bill_day?: number | null
   }
 
   const clients     = (clientsRes.data     ?? []) as ClientRow[]
@@ -198,11 +211,38 @@ export default async function AdminOverviewPage({
     afLedgerByClient[r.client_id].push(r)
   }
 
+  // Mirror the Ad Fuel page: subtract gap spend (cutoff → effectiveCutoff-1) for clients
+  // with a historic_bill_day so the balance starts from the first real billing cycle.
+  const afGapGoogle: Record<string, number> = {}
+  const afGapMeta:   Record<string, number> = {}
+  const historicAfClients = clients.filter(c => c.historic_bill_day != null)
+  if (historicAfClients.length > 0) {
+    const gapGroups: Record<string, string[]> = {}
+    for (const c of historicAfClients) {
+      const eff = getAfEffectiveCutoff(afCutoffDate, c.historic_bill_day!)
+      if (eff > afCutoffDate) {
+        const gapEnd = subtractOneDayStr(eff)
+        if (!gapGroups[gapEnd]) gapGroups[gapEnd] = []
+        gapGroups[gapEnd].push(c.id)
+      }
+    }
+    await Promise.all(Object.entries(gapGroups).map(async ([gapEnd, ids]) => {
+      const [gGap, mGap] = await Promise.all([
+        db.rpc('sum_google_spend_by_client', { from_date: afCutoffDate, to_date: gapEnd }),
+        db.rpc('sum_meta_spend_by_client',   { from_date: afCutoffDate, to_date: gapEnd }),
+      ])
+      for (const r of (gGap.data ?? []) as AfSumRow[]) if (ids.includes(r.client_id)) afGapGoogle[r.client_id] = Number(r.spend ?? 0)
+      for (const r of (mGap.data ?? []) as AfSumRow[]) if (ids.includes(r.client_id)) afGapMeta[r.client_id]   = Number(r.spend ?? 0)
+    }))
+  }
+
   const afBalanceByClient: Record<string, number> = {}
   for (const client of clients) {
     const cut    = client.ad_fuel_cut ?? agencyAdFuelCut
     const split  = 1 - cut
-    const rawSpend = (afGMap[client.id] ?? 0) + (afMMap[client.id] ?? 0)
+    const gAdj = afGapGoogle[client.id] ?? 0
+    const mAdj = afGapMeta[client.id]   ?? 0
+    const rawSpend = Math.max(0, (afGMap[client.id] ?? 0) - gAdj) + Math.max(0, (afMMap[client.id] ?? 0) - mAdj)
     const afSpend  = split > 0 ? rawSpend / split : 0
     let afPurchased = 0
     for (const e of afLedgerByClient[client.id] ?? []) {

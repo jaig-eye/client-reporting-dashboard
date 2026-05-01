@@ -514,21 +514,26 @@ export default function AdFuelPage() {
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
         <>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
-            <select
-              value={datePreset}
-              onChange={e => applyPreset(e.target.value as DatePreset)}
-              className="input"
-              style={{ fontSize: '0.8125rem' }}
-            >
-              <option value="all">All time (from {cutoffDate})</option>
-              <option value="mtd">Month to Date</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last90">Last 90 days</option>
-              <option value="last_month">Last Month</option>
-              <option value="last_year">Last Year</option>
-              <option value="custom">Custom range…</option>
-            </select>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            {(['all', 'mtd', 'last30', 'last90', 'last_month', 'last_year', 'custom'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => applyPreset(p)}
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.25rem 0.625rem',
+                  borderRadius: 999,
+                  border: '1px solid',
+                  cursor: 'pointer',
+                  background: datePreset === p ? 'var(--blue)' : 'transparent',
+                  borderColor: datePreset === p ? 'var(--blue)' : 'var(--border)',
+                  color: datePreset === p ? '#fff' : 'var(--text-muted)',
+                  transition: 'all 0.1s',
+                }}
+              >
+                {{ all: 'All time', mtd: 'MTD', last30: '30d', last90: '90d', last_month: 'Last mo.', last_year: 'Last yr.', custom: 'Custom' }[p]}
+              </button>
+            ))}
             {datePreset === 'custom' && (
               <>
                 <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem' }} />
