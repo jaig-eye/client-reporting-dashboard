@@ -97,29 +97,33 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const fields: { label: string; value: string | number | null | undefined }[] = [
-    { label: 'Topic',              value: item.topicText },
-    { label: 'Client',             value: item.clientName },
-    { label: 'Target Keyword',     value: item.targetKeyword },
-    { label: 'Suggested Title',    value: item.suggestedTitle },
-    { label: 'Publish Date',       value: item.targetPublishDate ? fmtDate(item.targetPublishDate) : null },
+  const seoStats: { label: string; value: string | number | null | undefined }[] = [
     { label: 'Search Volume',      value: item.searchVolume },
     { label: 'Keyword Difficulty', value: item.keywordDifficulty },
     { label: 'Competition',        value: item.competitionLevel },
   ]
 
-  const ratFields: { label: string; value: string | null | undefined }[] = [
-    { label: 'Keyword Opportunity', value: item.keywordOpportunity },
-    { label: 'Ranking Strategy',    value: item.rankingStrategy },
-    { label: 'Audience Intent',     value: item.audienceIntent },
-    { label: 'Why Now',             value: item.whyNow },
+  const metaChips: { label: string; value: string | null | undefined }[] = [
+    { label: 'Target Keyword',  value: item.targetKeyword },
+    { label: 'Suggested Title', value: item.suggestedTitle },
   ]
+
+  const ratFields: { label: string; value: string | null | undefined; color: string }[] = [
+    { label: 'Keyword Opportunity', value: item.keywordOpportunity, color: '#2563eb' },
+    { label: 'Ranking Strategy',    value: item.rankingStrategy,    color: '#7c3aed' },
+    { label: 'Audience Intent',     value: item.audienceIntent,     color: '#059669' },
+    { label: 'Why Now',             value: item.whyNow,             color: '#d97706' },
+  ]
+
+  const hasSeoStats  = seoStats.some(s => s.value != null && s.value !== '')
+  const hasMetaChips = metaChips.some(m => m.value != null && m.value !== '')
+  const hasRationale = ratFields.some(f => f.value)
 
   return (
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 1000, padding: '1rem',
       }}
@@ -127,40 +131,98 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-surface, #fff)', borderRadius: 12,
-          padding: '1.5rem', maxWidth: 560, width: '100%', maxHeight: '85vh',
-          overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+          background: 'var(--bg-surface, #fff)',
+          borderRadius: 14,
+          maxWidth: 600,
+          width: '100%',
+          maxHeight: '88vh',
+          overflow: 'auto',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.22)',
+          borderTop: '4px solid var(--blue, #2563eb)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+        {/* Header */}
+        <div style={{ padding: '1.25rem 1.5rem 1rem', position: 'relative' }}>
+          <button
+            onClick={onClose}
+            style={{
+              position: 'absolute', top: '1rem', right: '1rem',
+              background: 'var(--bg-subtle)', border: 'none', cursor: 'pointer',
+              width: 28, height: 28, borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '1rem', color: 'var(--text-faint)', lineHeight: 1,
+            }}
+          >×</button>
+          <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--blue, #2563eb)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
             Topic Details
-          </h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--text-faint)', lineHeight: 1 }}>×</button>
-        </div>
-
-        {/* Key metrics grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
-          {fields.filter(f => f.value != null && f.value !== '').map(f => (
-            <div key={f.label} style={{ background: 'var(--bg-subtle, #f8f9fa)', borderRadius: 6, padding: '0.5rem 0.625rem' }}>
-              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</div>
-              <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>{String(f.value)}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Rationale fields */}
-        {ratFields.filter(f => f.value).map(f => (
-          <div key={f.label} style={{ marginBottom: '0.75rem' }}>
-            <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{f.label}</div>
-            <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>{f.value}</div>
           </div>
-        ))}
+          <h2 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.35, paddingRight: '2.5rem' }}>
+            {item.topicText}
+          </h2>
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+            {item.clientName && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span style={{ color: 'var(--text-faint)' }}>Client </span>{item.clientName}
+              </span>
+            )}
+            {item.targetPublishDate && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span style={{ color: 'var(--text-faint)' }}>Publish </span>{fmtDate(item.targetPublishDate)}
+              </span>
+            )}
+          </div>
+        </div>
 
+        {/* SEO stats row */}
+        {hasSeoStats && (
+          <>
+            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
+            <div style={{ padding: '0.875rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.625rem' }}>
+              {seoStats.filter(s => s.value != null && s.value !== '').map(s => (
+                <div key={s.label} style={{ background: 'var(--bg-subtle)', borderRadius: 8, padding: '0.625rem 0.75rem', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>{s.label}</div>
+                  <div style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{String(s.value)}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Meta chips */}
+        {hasMetaChips && (
+          <>
+            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
+            <div style={{ padding: '0.875rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {metaChips.filter(m => m.value != null && m.value !== '').map(m => (
+                <div key={m.label} style={{ display: 'flex', gap: '0.625rem', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0, minWidth: 112 }}>{m.label}</span>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontWeight: 500 }}>{m.value}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Rationale sections */}
+        {hasRationale && (
+          <>
+            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
+            <div style={{ padding: '1rem 1.5rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {ratFields.filter(f => f.value).map(f => (
+                <div key={f.label} style={{ borderLeft: `3px solid ${f.color}`, paddingLeft: '0.75rem' }}>
+                  <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3125rem' }}>{f.label}</div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.65 }}>{f.value}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Generation error */}
         {item.generationError && (
-          <div style={{ background: '#fee2e2', borderRadius: 6, padding: '0.5rem 0.75rem', marginTop: '0.75rem' }}>
-            <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#991b1b', marginBottom: 2 }}>GENERATION ERROR</div>
-            <div style={{ fontSize: '0.8125rem', color: '#7f1d1d' }}>{item.generationError}</div>
+          <div style={{ margin: '0 1.5rem 1.25rem', background: '#fee2e2', borderRadius: 8, padding: '0.625rem 0.875rem' }}>
+            <div style={{ fontSize: '0.625rem', fontWeight: 700, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Generation Error</div>
+            <div style={{ fontSize: '0.8125rem', color: '#7f1d1d', lineHeight: 1.5 }}>{item.generationError}</div>
           </div>
         )}
       </div>

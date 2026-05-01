@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { CalendarBlank } from '@phosphor-icons/react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ export default function AdFuelPage() {
   const [tab, setTab] = useState<'dashboard' | 'ledger' | 'settings'>('dashboard')
 
   // Dashboard state — seed from URL params if present
-  type DatePreset = 'all' | 'mtd' | 'last30' | 'last90' | 'last_month' | 'last_year' | 'custom'
+  type DatePreset = 'all' | 'today' | 'yesterday' | 'last7' | 'last14' | 'last30' | 'last90' | 'mtd' | 'last_month' | 'ytd' | 'last_year' | 'custom'
   const [datePreset, setDatePreset] = useState<DatePreset>(() => {
     if (typeof window === 'undefined') return 'all'
     const p = new URLSearchParams(window.location.search)
@@ -179,13 +180,24 @@ export default function AdFuelPage() {
     const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('date_to') : null
     return p ?? today()
   })
-  const [rows,       setRows]       = useState<DashRow[]>([])
-  const [cutoffDate, setCutoffDate] = useState('2025-01-01')
-  const [loading,    setLoading]    = useState(false)
+  const [rows,           setRows]           = useState<DashRow[]>([])
+  const [cutoffDate,     setCutoffDate]     = useState('2025-01-01')
+  const [loading,        setLoading]        = useState(false)
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const datePickerRef = useRef<HTMLDivElement>(null)
 
   // Column config (persisted to localStorage)
   const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
   useEffect(() => { setCols(loadCols()) }, [])
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+        setDatePickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
   function saveCols(next: ColConfig[]) {
     setCols(next)
     try { localStorage.setItem(LS_KEY, JSON.stringify(next)) } catch {}
@@ -195,23 +207,44 @@ export default function AdFuelPage() {
     const fmt = (d: Date) => d.toISOString().slice(0, 10)
     const now = new Date()
     setDatePreset(preset)
+    if (preset === 'custom') return
+    setDatePickerOpen(false)
     if (preset === 'all') { setDateFilterEnabled(false); return }
     setDateFilterEnabled(true)
-    if (preset === 'mtd') {
-      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(fmt(now))
+    if (preset === 'today') {
+      setDateFrom(fmt(now)); setDateTo(fmt(now))
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86_400_000)
+      setDateFrom(fmt(y)); setDateTo(fmt(y))
+    } else if (preset === 'last7') {
+      setDateFrom(fmt(new Date(now.getTime() - 6 * 86_400_000))); setDateTo(fmt(now))
+    } else if (preset === 'last14') {
+      setDateFrom(fmt(new Date(now.getTime() - 13 * 86_400_000))); setDateTo(fmt(now))
     } else if (preset === 'last30') {
       setDateFrom(fmt(new Date(now.getTime() - 29 * 86_400_000))); setDateTo(fmt(now))
     } else if (preset === 'last90') {
       setDateFrom(fmt(new Date(now.getTime() - 89 * 86_400_000))); setDateTo(fmt(now))
+    } else if (preset === 'mtd') {
+      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(fmt(now))
     } else if (preset === 'last_month') {
       const m = now.getMonth(), y = now.getFullYear()
       setDateFrom(fmt(new Date(y, m - 1, 1))); setDateTo(fmt(new Date(y, m, 0)))
+    } else if (preset === 'ytd') {
+      setDateFrom(fmt(new Date(now.getFullYear(), 0, 1))); setDateTo(fmt(now))
     } else if (preset === 'last_year') {
       const y = now.getFullYear() - 1
       setDateFrom(fmt(new Date(y, 0, 1))); setDateTo(fmt(new Date(y, 11, 31)))
     }
-    // 'custom' — keep current dates, let user adjust
   }
+
+  const PRESET_LABELS: Record<string, string> = {
+    all: 'All time', today: 'Today', yesterday: 'Yesterday',
+    last7: 'Last 7 days', last14: 'Last 14 days',
+    last30: 'Last 30 days', last90: 'Last 90 days',
+    mtd: 'Month to Date', last_month: 'Last Month',
+    ytd: 'Year to Date', last_year: 'Last Year',
+  }
+  const dateRangeLabel = PRESET_LABELS[datePreset] ?? `${dateFrom} – ${dateTo}`
 
   // Client edit modal (bill day + budget)
   const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
@@ -514,35 +547,94 @@ export default function AdFuelPage() {
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
         <>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
-            {(['all', 'mtd', 'last30', 'last90', 'last_month', 'last_year', 'custom'] as const).map(p => (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', justifyContent: 'flex-end' }}>
+            {/* Date range dropdown */}
+            <div style={{ position: 'relative' }} ref={datePickerRef}>
               <button
-                key={p}
-                onClick={() => applyPreset(p)}
+                onClick={() => setDatePickerOpen(o => !o)}
                 style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.625rem',
-                  borderRadius: 999,
-                  border: '1px solid',
-                  cursor: 'pointer',
-                  background: datePreset === p ? 'var(--blue)' : 'transparent',
-                  borderColor: datePreset === p ? 'var(--blue)' : 'var(--border)',
-                  color: datePreset === p ? '#fff' : 'var(--text-muted)',
-                  transition: 'all 0.1s',
+                  display: 'flex', alignItems: 'center', gap: '0.4375rem',
+                  padding: '0.375rem 0.75rem', borderRadius: 8, cursor: 'pointer',
+                  border: '1px solid var(--border)', background: 'var(--bg-surface)',
+                  fontSize: '0.8125rem', color: 'var(--text-primary)',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                 }}
               >
-                {{ all: 'All time', mtd: 'MTD', last30: '30d', last90: '90d', last_month: 'Last mo.', last_year: 'Last yr.', custom: 'Custom' }[p]}
+                <CalendarBlank size={14} style={{ flexShrink: 0 }} />
+                <span>{dateRangeLabel}</span>
+                <span style={{ color: 'var(--text-faint)', fontSize: '0.625rem', marginLeft: 2 }}>▾</span>
               </button>
-            ))}
-            {datePreset === 'custom' && (
-              <>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input" style={{ fontSize: '0.8125rem' }} />
-                <span style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>to</span>
-                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input" style={{ fontSize: '0.8125rem' }} />
-              </>
-            )}
-            <button onClick={fetchDashboard} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>Refresh</button>
-            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem', marginLeft: 'auto' }}>Export CSV</button>
+
+              {datePickerOpen && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 200,
+                  background: 'var(--bg-surface)', borderRadius: 10,
+                  border: '1px solid var(--border)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+                  minWidth: 210,
+                }}>
+                  <div style={{ padding: '0.375rem' }}>
+                    {([
+                      ['all',        'All time'],
+                      ['today',      'Today'],
+                      ['yesterday',  'Yesterday'],
+                      ['last7',      'Last 7 days'],
+                      ['last14',     'Last 14 days'],
+                      ['last30',     'Last 30 days'],
+                      ['last90',     'Last 90 days'],
+                      ['mtd',        'Month to Date'],
+                      ['last_month', 'Last Month'],
+                      ['ytd',        'Year to Date'],
+                      ['last_year',  'Last Year'],
+                    ] as [DatePreset, string][]).map(([p, label]) => (
+                      <button
+                        key={p}
+                        onClick={() => applyPreset(p)}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left',
+                          padding: '0.4375rem 0.625rem', borderRadius: 6, border: 'none',
+                          background: datePreset === p ? 'var(--bg-subtle)' : 'transparent',
+                          cursor: 'pointer', fontSize: '0.8125rem',
+                          color: datePreset === p ? 'var(--text-primary)' : 'var(--text-muted)',
+                          fontWeight: datePreset === p ? 600 : 400,
+                        }}
+                      >{label}</button>
+                    ))}
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Custom Range</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginBottom: 2 }}>From</div>
+                        <input
+                          type="date" value={dateFrom}
+                          onChange={e => { setDateFrom(e.target.value); setDatePreset('custom'); setDateFilterEnabled(true) }}
+                          className="input" style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.375rem' }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginBottom: 2 }}>To</div>
+                        <input
+                          type="date" value={dateTo}
+                          onChange={e => { setDateTo(e.target.value); setDatePreset('custom'); setDateFilterEnabled(true) }}
+                          className="input" style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.375rem' }}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setDatePickerOpen(false)}
+                      style={{
+                        width: '100%', padding: '0.4375rem', borderRadius: 6, border: 'none',
+                        background: 'var(--blue, #2563eb)', color: '#fff',
+                        cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600,
+                      }}
+                    >Apply</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Export CSV</button>
           </div>
 
           {loading ? (
