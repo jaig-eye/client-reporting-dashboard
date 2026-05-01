@@ -154,17 +154,18 @@ function parseResponse(rawText: string) {
       } catch { /* try next */ }
     }
   }
-  // Last resort: JSON was truncated — extract the simple scalar fields via regex
-  // so at least title/slug/meta are saved even when content overran the token limit.
+  // Last resort: JSON was truncated or unparseable — extract each field via regex
+  // so title/slug/meta/content are all recovered even if the JSON is incomplete.
   function extractStr(field: string): string {
-    const m = rawText.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*?)(?:"|$)`))
+    const m = rawText.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*?)(?:"|$)`, 's'))
     return m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : ''
   }
-  const title = extractStr('title')
+  const title   = extractStr('title')
+  const content = extractStr('content')
   return {
     title,
     seoTitle:        extractStr('seoTitle') || title,
-    content:         rawText,
+    content:         content || rawText,
     metaDescription: extractStr('metaDescription'),
     slug:            extractStr('slug'),
     focusKeyword:    extractStr('focusKeyword'),
