@@ -162,7 +162,7 @@ function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => voi
             Topic Details
           </div>
           <h2 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.35, paddingRight: '2.5rem' }}>
-            {item.topicText}
+            {item.topicText ?? item.title}
           </h2>
           <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
             {item.clientName && (
@@ -514,7 +514,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   }
 
   const openRationale = useCallback((item: QueueItem) => {
-    if (item.type === 'topic') setRationaleItem(item)
+    setRationaleItem(item)
   }, [])
 
   const editingItem  = editingPostId ? items.find(i => i.id === editingPostId) ?? null : null
@@ -611,115 +611,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
           overflow:     'hidden',
           background:   'var(--bg-surface, #fff)',
         }}>
-          {tab === 'scheduled' ? (
-            <div>
-              {filtered.map((item, idx) => {
-                const isLast       = idx === filtered.length - 1
-                const isLoading    = loading === item.id
-                const isGenerating = generating === item.id
-                const compKey = (item.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
-                const comp    = COMPETITION_BADGE[compKey]
-                const ratSnippets = [
-                  { label: 'Keyword',  value: item.keywordOpportunity, color: '#2563eb' },
-                  { label: 'Strategy', value: item.rankingStrategy,    color: '#7c3aed' },
-                  { label: 'Audience', value: item.audienceIntent,     color: '#059669' },
-                  { label: 'Why now',  value: item.whyNow,             color: '#d97706' },
-                ].filter(f => f.value)
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => openRationale(item)}
-                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-subtle, #f8f9fa)' }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = '' }}
-                    style={{ padding: '0.875rem 1.25rem', borderBottom: isLast ? 'none' : '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                  >
-                    {/* Meta row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(item.id)}
-                        onChange={() => toggleOne(item.id)}
-                        onClick={e => e.stopPropagation()}
-                        style={{ cursor: 'pointer', flexShrink: 0 }}
-                      />
-                      <StatusBadge item={item} />
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.clientName}
-                      </span>
-                      {item.targetPublishDate && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
-                          <span>→</span>
-                          <span>{fmtDate(item.targetPublishDate)}</span>
-                        </span>
-                      )}
-                      <div
-                        style={{ marginLeft: 'auto', display: 'flex', gap: '0.25rem', alignItems: 'center', flexShrink: 0 }}
-                        onClick={e => e.stopPropagation()}
-                      >
-                        {item.status !== 'generating' && item.status !== 'rejected' && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={isGenerating || isLoading}
-                              onClick={() => forceGenerate(item)}
-                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: isGenerating ? 'var(--blue)' : 'var(--text-muted)', cursor: isGenerating ? 'default' : 'pointer' }}
-                              title="Force generate post now"
-                            >{isGenerating ? '⏳' : '▶'}</button>
-                            <button
-                              type="button"
-                              disabled={isLoading || isGenerating}
-                              onClick={() => deleteSingle(item)}
-                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                              title="Delete"
-                            >{isLoading ? '…' : '✕'}</button>
-                          </>
-                        )}
-                        {item.status === 'generating' && (
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', padding: '0.15rem 0.4rem' }}>⏳</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Topic title */}
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '0.4375rem' }}>
-                      {item.topicText}
-                    </div>
-
-                    {/* Chips: keyword + competition + search volume */}
-                    {(item.targetKeyword || comp || item.searchVolume != null) && (
-                      <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: ratSnippets.length ? '0.5rem' : 0 }}>
-                        {item.targetKeyword && (
-                          <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
-                            {item.targetKeyword}
-                          </span>
-                        )}
-                        {comp && (
-                          <span style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: comp.bg, color: comp.color }}>
-                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
-                          </span>
-                        )}
-                        {item.searchVolume != null && (
-                          <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{item.searchVolume} impr/mo</span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Rationale snippets */}
-                    {ratSnippets.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1875rem' }}>
-                        {ratSnippets.map(f => (
-                          <div key={f.label} style={{ display: 'flex', gap: '0.375rem', alignItems: 'baseline', overflow: 'hidden' }}>
-                            <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, flexShrink: 0 }}>{f.label}:</span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
           <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
@@ -729,8 +620,9 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
               <col />
               <col style={{ width: 130 }} />
               <col style={{ width: 108 }} />
+              {tab === 'scheduled' && <col style={{ width: 112 }} />}
               {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 56 }} />}
-              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : 200 }} />
+              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 80 : 200 }} />
             </colgroup>
             <thead>
               <tr>
@@ -748,6 +640,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                 <th style={thStyle}>Title / Topic</th>
                 <th style={thStyle}>Keyword</th>
                 <th style={thStyle}>Publish Date</th>
+                {tab === 'scheduled' && <th style={thStyle}>Competition</th>}
                 {(tab === 'pending' || tab === 'uploaded') && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
@@ -766,7 +659,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
 
                 const rowStyle: React.CSSProperties = {
                   borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
-                  cursor: item.type === 'topic' ? 'pointer' : 'default',
+                  cursor: 'pointer',
                   transition: 'background 0.1s',
                 }
 
@@ -824,6 +717,20 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                     <td style={{ ...tdStyle, fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
                       {item.targetPublishDate ? fmtDate(item.targetPublishDate) : '—'}
                     </td>
+
+                    {/* Competition — Scheduled tab only */}
+                    {tab === 'scheduled' && (
+                      <td style={tdStyle}>
+                        {comp ? (
+                          <span
+                            title={item.competitionLevel ?? undefined}
+                            style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}
+                          >
+                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
+                          </span>
+                        ) : null}
+                      </td>
+                    )}
 
                     {/* Words — Pending/Uploaded tabs only */}
                     {(tab === 'pending' || tab === 'uploaded') && (
@@ -987,7 +894,6 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
             </tbody>
           </table>
           </div>
-          )}
         </div>
       )}
 

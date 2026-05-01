@@ -75,36 +75,10 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-function RationaleFields({ topic }: { topic: CycleTopic }) {
-  const hasStructured = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel
-  if (!hasStructured && !topic.rationale) return null
-
-  const fields: { label: string; value: string | null }[] = [
-    { label: 'Keyword',     value: topic.keywordOpportunity },
-    { label: 'Strategy',    value: topic.rankingStrategy    },
-    { label: 'Audience',    value: topic.audienceIntent     },
-    { label: 'Why now',     value: topic.whyNow             },
-    { label: 'Competition', value: topic.competitionLevel   },
-  ].filter(f => f.value)
-
-  if (hasStructured && fields.length > 0) {
-    return (
-      <div style={{ marginTop: '0.25rem', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.1rem 0.5rem', fontSize: '0.7rem' }}>
-        {fields.map(f => (
-          <>
-            <span key={`${f.label}-k`} style={{ color: 'var(--text-faint)', fontWeight: 600, whiteSpace: 'nowrap' }}>{f.label}:</span>
-            <span key={`${f.label}-v`} style={{ color: 'var(--text-muted)', lineHeight: 1.4 }}>{f.value}</span>
-          </>
-        ))}
-      </div>
-    )
-  }
-
-  return (
-    <p style={{ fontSize: '0.7125rem', color: 'var(--text-muted)', marginTop: '0.25rem', lineHeight: 1.4 }}>
-      {topic.rationale}
-    </p>
-  )
+const COMP_BADGE: Record<string, { bg: string; color: string }> = {
+  low:    { bg: '#dcfce7', color: '#166534' },
+  medium: { bg: '#fef3c7', color: '#92400e' },
+  high:   { bg: '#fee2e2', color: '#991b1b' },
 }
 
 function TopicRow({
@@ -113,6 +87,7 @@ function TopicRow({
   onReject,
   onGeneratePost,
   loading,
+  isLast = false,
   showActions = true,
   showGeneratePost = false,
   postGenResult,
@@ -122,71 +97,83 @@ function TopicRow({
   onReject:          (id: string) => void
   onGeneratePost?:   (id: string) => void
   loading:           boolean
+  isLast?:           boolean
   showActions?:      boolean
   showGeneratePost?: boolean
   postGenResult?:    string
 }) {
-  const [expanded, setExpanded] = useState(false)
-  const hasRationale = topic.keywordOpportunity || topic.rankingStrategy || topic.audienceIntent || topic.whyNow || topic.competitionLevel || topic.rationale
   const isGenerating = topic.status === 'generating'
+  const compKey = (topic.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
+  const comp    = COMP_BADGE[compKey]
+
+  const ratSnippets = [
+    { label: 'Keyword',     value: topic.keywordOpportunity, color: '#2563eb' },
+    { label: 'Strategy',    value: topic.rankingStrategy,    color: '#7c3aed' },
+    { label: 'Audience',    value: topic.audienceIntent,     color: '#059669' },
+    { label: 'Why now',     value: topic.whyNow,             color: '#d97706' },
+    { label: 'Competition', value: topic.competitionLevel,   color: '#ea580c' },
+  ].filter(f => f.value)
 
   return (
     <div style={{
-      borderRadius: 6,
-      border:       '1px solid var(--border, #e5e7eb)',
-      background:   'var(--bg-base, #fff)',
+      padding:      '0.875rem 1rem',
+      borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
     }}>
-      <div style={{
-        display:    'flex',
-        alignItems: 'center',
-        gap:        '0.5rem',
-        padding:    '0.35rem 0.75rem',
-      }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+        {/* Main content */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              {isGenerating && <span style={{ marginRight: 3 }}>⏳</span>}
-              {topic.topic}
-            </span>
-            {topic.targetKeyword && (
-              <span style={{
-                fontSize: '0.6875rem', color: 'var(--text-faint)',
-                padding: '1px 5px', borderRadius: 999,
-                background: 'var(--bg-muted, #f3f4f6)',
-              }}>
-                {topic.targetKeyword}
-              </span>
-            )}
-            {topic.targetPublishDate && (
-              <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>
-                → {fmtDate(topic.targetPublishDate)}
-              </span>
-            )}
-            {hasRationale && (
-              <button
-                onClick={() => setExpanded(e => !e)}
-                style={{ fontSize: '0.65rem', color: 'var(--blue)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-              >
-                {expanded ? '▲' : '▼ rationale'}
-              </button>
-            )}
+          {/* Topic title */}
+          <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '0.375rem' }}>
+            {isGenerating && <span style={{ marginRight: 4 }}>⏳</span>}
+            {topic.topic}
           </div>
 
-          {expanded && <RationaleFields topic={topic} />}
+          {/* Chips row */}
+          {(topic.targetKeyword || comp || topic.targetPublishDate) && (
+            <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: ratSnippets.length ? '0.5rem' : 0 }}>
+              {topic.targetKeyword && (
+                <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
+                  {topic.targetKeyword}
+                </span>
+              )}
+              {comp && (
+                <span style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: comp.bg, color: comp.color }}>
+                  {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
+                </span>
+              )}
+              {topic.targetPublishDate && (
+                <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <span>→</span>
+                  <span>{fmtDate(topic.targetPublishDate)}</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Rationale snippets */}
+          {ratSnippets.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1875rem' }}>
+              {ratSnippets.map(f => (
+                <div key={f.label} style={{ display: 'flex', gap: '0.375rem', alignItems: 'baseline', overflow: 'hidden' }}>
+                  <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, flexShrink: 0 }}>{f.label}:</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {topic.generationError && (
-            <p style={{ fontSize: '0.6875rem', color: 'var(--red)', margin: '0.15rem 0 0' }}>
-              ⚠ {topic.generationError}
-            </p>
+            <p style={{ fontSize: '0.6875rem', color: 'var(--red)', margin: '0.25rem 0 0' }}>⚠ {topic.generationError}</p>
           )}
           {postGenResult && (
-            <p style={{ fontSize: '0.6875rem', color: postGenResult === 'Post generated!' ? 'var(--green)' : 'var(--red)', margin: '0.15rem 0 0' }}>
+            <p style={{ fontSize: '0.6875rem', color: postGenResult === 'Post generated!' ? 'var(--green)' : 'var(--red)', margin: '0.25rem 0 0' }}>
               {postGenResult}
             </p>
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+        {/* Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0, paddingTop: '0.125rem' }}>
           <StatusBadge status={topic.status} />
           {showActions && topic.status === 'pending' && (
             <>
@@ -201,10 +188,7 @@ function TopicRow({
               <button
                 onClick={() => onReject(topic.id)}
                 disabled={loading}
-                style={{
-                  padding: '0.15rem 0.4rem', fontSize: '0.75rem',
-                  background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
-                }}
+                style={{ padding: '0.15rem 0.4rem', fontSize: '0.75rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
               >
                 ✕
               </button>
@@ -330,18 +314,18 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
 
       {/* Expanded body */}
       {cardOpen && (
-        <div style={{ padding: '0.625rem 1rem' }}>
-          {/* Pending topics for this cycle */}
+        <div>
           {cycle.topics.length === 0 ? (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', textAlign: 'center', padding: '0.75rem 0' }}>
-              No topics pending — click "Generate Topics" to start this cycle.
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', textAlign: 'center', padding: '1rem' }}>
+              No topics pending — click &quot;Generate Topics&quot; to start this cycle.
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-              {cycle.topics.map(t => (
+            <div>
+              {cycle.topics.map((t, idx) => (
                 <TopicRow
                   key={t.id}
                   topic={t}
+                  isLast={idx === cycle.topics.length - 1}
                   onApprove={id => updateStatus(id, 'approved')}
                   onReject={id => updateStatus(id, 'rejected')}
                   loading={loadingId === t.id}
