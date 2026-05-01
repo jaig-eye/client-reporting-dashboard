@@ -4,6 +4,7 @@
 // Calls the sync API route and shows loading/success/error state with a progress bar.
 
 import { useState } from 'react'
+import { ArrowsCounterClockwise } from '@phosphor-icons/react'
 
 interface Props {
   clientId: string
@@ -40,7 +41,12 @@ export default function ClientSyncButton({ clientId, connectionId }: Props) {
         className="btn btn-secondary"
         style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem', opacity: isLoading ? 0.7 : 1 }}
       >
-        {isLoading ? 'Syncing…' : status === 'success' ? 'Synced ✓' : status === 'error' ? 'Error ✗' : 'Sync'}
+        {isLoading
+          ? 'Syncing…'
+          : status === 'success' ? 'Synced ✓'
+          : status === 'error'   ? 'Error ✗'
+          : <><ArrowsCounterClockwise size={13} style={{ marginRight: 4 }} />Sync</>
+        }
       </button>
       {isLoading && (
         <div style={{ height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', position: 'relative' }}>

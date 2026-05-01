@@ -16,7 +16,9 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/admin') && pathname !== '/admin') {
     const session = request.cookies.get('admin_session')?.value
     if (!session || session !== process.env.ADMIN_PASSWORD) {
-      return NextResponse.redirect(new URL('/admin', request.url))
+      const loginUrl = new URL('/admin', request.url)
+      loginUrl.searchParams.set('returnUrl', pathname + request.nextUrl.search)
+      return NextResponse.redirect(loginUrl)
     }
   }
 

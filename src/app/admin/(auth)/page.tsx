@@ -5,10 +5,12 @@
 // Regular admin: enter email + password set by super admin.
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 export default function AdminLoginPage() {
-  const router    = useRouter()
+  const router       = useRouter()
+  const searchParams = useSearchParams()
+  const returnUrl    = searchParams.get('returnUrl') ?? '/admin/dashboard'
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState('')
@@ -36,7 +38,7 @@ export default function AdminLoginPage() {
       body:    JSON.stringify({ email: email.trim() || undefined, password }),
     })
     if (res.ok) {
-      router.push('/admin/dashboard')
+      router.push(returnUrl)
     } else {
       const d = await res.json().catch(() => ({}))
       setError(d.error || 'Invalid credentials')

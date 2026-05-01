@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 export interface CycleTopic {
@@ -91,6 +91,7 @@ function TopicRow({
   showActions = true,
   showGeneratePost = false,
   postGenResult,
+  highlightId,
 }: {
   topic:             CycleTopic
   onApprove:         (id: string) => void
@@ -101,7 +102,15 @@ function TopicRow({
   showActions?:      boolean
   showGeneratePost?: boolean
   postGenResult?:    string
+  highlightId?:      string
 }) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const isHighlighted = topic.id === highlightId
+  useEffect(() => {
+    if (isHighlighted && rowRef.current) {
+      rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isHighlighted])
   const isGenerating = topic.status === 'generating'
   const compKey = (topic.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
   const comp    = COMP_BADGE[compKey]
@@ -115,10 +124,18 @@ function TopicRow({
   ].filter(f => f.value)
 
   return (
-    <div style={{
-      padding:      '0.875rem 1rem',
-      borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
-    }}>
+    <>
+    {isHighlighted && (
+      <style>{`@keyframes ccqFlash { 0%,100%{background:transparent} 25%,75%{background:#fef9c3} }`}</style>
+    )}
+    <div
+      ref={rowRef}
+      style={{
+        padding:      '0.875rem 1rem',
+        borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
+        animation:    isHighlighted ? 'ccqFlash 2s ease 0.3s' : undefined,
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
         {/* Main content */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -207,10 +224,11 @@ function TopicRow({
         </div>
       </div>
     </div>
+    </>
   )
 }
 
-function CycleCard({ cycle }: { cycle: ContentCycle }) {
+function CycleCard({ cycle, highlightId }: { cycle: ContentCycle; highlightId?: string }) {
   const router    = useRouter()
   const [loadingId,  setLoadingId]  = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -329,6 +347,7 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
                   onApprove={id => updateStatus(id, 'approved')}
                   onReject={id => updateStatus(id, 'rejected')}
                   loading={loadingId === t.id}
+                  highlightId={highlightId}
                 />
               ))}
             </div>
@@ -339,11 +358,11 @@ function CycleCard({ cycle }: { cycle: ContentCycle }) {
   )
 }
 
-export default function ClientCycleQueue({ cycles }: { cycles: ContentCycle[] }) {
+export default function ClientCycleQueue({ cycles, highlightId }: { cycles: ContentCycle[]; highlightId?: string }) {
   if (cycles.length === 0) return null
   return (
     <div>
-      {cycles.map(c => <CycleCard key={c.clientId} cycle={c} />)}
+      {cycles.map(c => <CycleCard key={c.clientId} cycle={c} highlightId={highlightId} />)}
     </div>
   )
 }

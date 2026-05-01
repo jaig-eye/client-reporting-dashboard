@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ShareNetwork, Receipt, Printer, Envelope, CaretDown } from '@phosphor-icons/react'
+import { ShareNetwork, Coins, Coin, Printer, Envelope, CaretDown } from '@phosphor-icons/react'
 import { setRawMode } from '@/app/actions/rawMode'
 import ReportModal from './ReportModal'
 
@@ -157,7 +157,10 @@ export default function AdminDashboardBar({
           lineHeight: 0,
         }}
       >
-        <Receipt size={14} weight={rawMode ? 'fill' : 'regular'} />
+        {rawMode
+          ? <Coin size={14} weight="fill" />
+          : <Coins size={14} weight="regular" />
+        }
       </button>
 
       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.875rem' }}>|</span>

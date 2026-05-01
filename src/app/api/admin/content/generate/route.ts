@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { sendEmail } from '@/lib/email'
 
 export const maxDuration = 300
 
@@ -282,7 +283,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ───────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, agency_name')
+    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated')
     .single()
 
   if (!agencySettings?.ai_api_key) {
@@ -479,6 +480,30 @@ Target approximately ${targetLength} words.`
         .from('content_topics')
         .update({ post_id: postId, status: 'generated', generation_error: null })
         .eq('id', topic_id)
+    }
+
+    // Email notification — post generated
+    const notifEmail = agencySettings.notification_email as string | null
+    if (postId && notifEmail && agencySettings.notify_post_generated) {
+      const agencyName  = agencySettings.agency_name || 'Agency Dashboard'
+      const appUrl      = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+      const publishDate = topicData?.target_publish_date ?? null
+      const dateLabel   = publishDate ? ` — publishes ${publishDate}` : ''
+      try {
+        let clientName = ''
+        if (effectiveClientId) {
+          const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
+          clientName = (cl as { name?: string } | null)?.name ?? ''
+        }
+        await sendEmail({
+          to:      notifEmail,
+          subject: `[${agencyName}] Post ready for review: ${parsed.title}`,
+          html: `<p>A new post has been generated for <strong>${clientName || 'a client'}</strong> and is ready for review: <strong>${parsed.title}</strong>${dateLabel}.</p>
+                 <p><a href="${appUrl}/admin/content?tab=queue&highlight=${postId}">Review Post →</a></p>`,
+        })
+      } catch (emailErr) {
+        console.error('[generate] email error:', emailErr)
+      }
     }
 
     // Auto-upload to WordPress as a draft when a connection is configured

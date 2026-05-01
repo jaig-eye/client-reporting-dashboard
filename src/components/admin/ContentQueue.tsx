@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import ContentPostEditor from './ContentPostEditor'
 
@@ -47,6 +47,7 @@ interface Site {
 interface Props {
   posts: QueueItem[]
   sites: Site[]
+  highlightId?: string
 }
 
 type TabId = 'all' | 'scheduled' | 'pending' | 'uploaded' | 'rejected'
@@ -309,13 +310,24 @@ const tdStyle: React.CSSProperties = {
   overflow: 'hidden',
 }
 
-export default function ContentQueue({ posts: initialItems, sites }: Props) {
+export default function ContentQueue({ posts: initialItems, sites, highlightId }: Props) {
   const router = useRouter()
   const [items,          setItems]          = useState<QueueItem[]>(initialItems)
   const [tab,            setTab]            = useState<TabId>('scheduled')
 
   // Sync when server refreshes data (router.refresh() re-passes initialItems)
   useEffect(() => { setItems(initialItems) }, [initialItems])
+
+  // Scroll to and flash the highlighted row when arriving via deep link
+  const highlightRef = useRef(highlightId)
+  useEffect(() => {
+    if (!highlightRef.current) return
+    const el = document.querySelector<HTMLElement>(`[data-item-id="${highlightRef.current}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.style.animation = 'cqFlash 2s ease 0.3s'
+    }
+  }, [tab])
   const [clientFilter,   setClientFilter]   = useState<string>('all')
   const [selected,       setSelected]       = useState<Set<string>>(new Set())
   const [rationaleItem,  setRationaleItem]  = useState<QueueItem | null>(null)
@@ -532,6 +544,9 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
 
   return (
     <>
+      {highlightId && (
+        <style>{`@keyframes cqFlash { 0%,100%{background:transparent} 25%,75%{background:#fef9c3} }`}</style>
+      )}
       {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
         {/* Left: tab pills + client filter */}
@@ -666,6 +681,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                 return (
                   <tr
                     key={item.id}
+                    data-item-id={item.id}
                     style={rowStyle}
                     onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'var(--bg-subtle, #f8f9fa)' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = '' }}

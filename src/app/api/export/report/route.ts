@@ -50,6 +50,9 @@ interface ReportData {
   campaigns: CampaignRow[]
   syncedAt: string | null
   generatedAt: string
+  crmName: string
+  ga4: { sessions: number; users: number; newUsers: number; avgDuration: number } | null
+  ghl: { contacts: number; calls: number; forms: number; emailsSent: number; smsSent: number } | null
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -59,7 +62,8 @@ export async function GET(req: Request) {
   const format  = url.searchParams.get('format') ?? 'pdf'
   const fromParam   = url.searchParams.get('from')
   const toParam     = url.searchParams.get('to')
-  const compareParam = url.searchParams.get('compare') ?? 'none'
+  // Default to prev_period so reports always show MoM deltas
+  const compareParam = url.searchParams.get('compare') ?? 'prev_period'
 
   const cookieStore = await cookies()
   const token = cookieStore.get('client_token')?.value
@@ -98,9 +102,12 @@ export async function GET(req: Request) {
     .eq('status', 'active')
 
   const connections = (connData ?? []) as (ClientConnection & { connector: Pick<Connector, 'id' | 'type' | 'label'> })[]
-  const availableSources = connections.map(c => c.connector.type)
+  const availableSources  = connections.map(c => c.connector.type)
+  const hiddenConnectors  = new Set((settings.hidden_connector_types as string[] | undefined) ?? [])
   const hasGoogle = availableSources.includes('google_ads')
   const hasMeta   = availableSources.includes('meta_ads')
+  const hasGA4    = availableSources.includes('google_analytics') && !hiddenConnectors.has('google_analytics')
+  const hasGHL    = availableSources.includes('ghl') && !hiddenConnectors.has('ghl')
   const adFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
   const hiddenMetrics = new Set(client.hidden_metrics ?? [])
 
@@ -109,7 +116,7 @@ export async function GET(req: Request) {
     undefined
   )
 
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes] = await Promise.all([
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, ga4Res, ghlRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -138,6 +145,17 @@ export async function GET(req: Request) {
       ? db.from('client_campaign_assignments').select('campaign_id,display_mode,hidden')
           .eq('client_id', client.id).eq('source', 'meta_ads')
       : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
+    hasGA4
+      ? db.from('ga4_metrics').select('sessions, users, new_users, avg_session_duration')
+          .eq('client_id', client.id)
+          .is('channel_group', null)
+          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    hasGHL
+      ? db.from('ghl_metrics').select('contacts_created, total_calls, forms_submitted, emails_sent, sms_sent')
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
   const assignmentsData = [
@@ -230,6 +248,27 @@ export async function GET(req: Request) {
     ? new Date(activeConnection.last_synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : null
 
+  // Process GA4 data
+  type GA4Row = { sessions: number; users: number; new_users: number; avg_session_duration: number }
+  const ga4Rows = (ga4Res.data ?? []) as GA4Row[]
+  const ga4Data = ga4Rows.length > 0 ? {
+    sessions:    ga4Rows.reduce((s, r) => s + (Number(r.sessions) || 0), 0),
+    users:       ga4Rows.reduce((s, r) => s + (Number(r.users) || 0), 0),
+    newUsers:    ga4Rows.reduce((s, r) => s + (Number(r.new_users) || 0), 0),
+    avgDuration: ga4Rows.reduce((s, r) => s + (Number(r.avg_session_duration) || 0), 0) / ga4Rows.length,
+  } : null
+
+  // Process GHL data
+  type GHLRow = { contacts_created: number; total_calls: number; forms_submitted: number; emails_sent: number; sms_sent: number }
+  const ghlRows = (ghlRes.data ?? []) as GHLRow[]
+  const ghlData = ghlRows.length > 0 ? {
+    contacts:   ghlRows.reduce((s, r) => s + (Number(r.contacts_created) || 0), 0),
+    calls:      ghlRows.reduce((s, r) => s + (Number(r.total_calls) || 0), 0),
+    forms:      ghlRows.reduce((s, r) => s + (Number(r.forms_submitted) || 0), 0),
+    emailsSent: ghlRows.reduce((s, r) => s + (Number(r.emails_sent) || 0), 0),
+    smsSent:    ghlRows.reduce((s, r) => s + (Number(r.sms_sent) || 0), 0),
+  } : null
+
   const data: ReportData = {
     agencyName:    settings.agency_name ?? 'Your Agency',
     agencyLogoUrl: settings.agency_logo_url ?? null,
@@ -243,6 +282,9 @@ export async function GET(req: Request) {
     campaigns,
     syncedAt,
     generatedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    crmName: (settings.crm_name as string | undefined) ?? 'GoHighLevel',
+    ga4: ga4Data,
+    ghl: ghlData,
   }
 
   // ─── Route to correct template ──────────────────────────────────────────
@@ -252,7 +294,7 @@ export async function GET(req: Request) {
     return new Response(generateEmailHtml(data, hiddenMetrics), {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${safeClientName}-report-email.html"`,
+        'Content-Disposition': `inline; filename="${safeClientName}-report-email.html"`,
       },
     })
   }
@@ -405,6 +447,41 @@ function generatePrintHtml(d: ReportData, hidden: Set<string>): string {
     </table>
   </div>` : ''}
 
+  <!-- GA4 section -->
+  ${d.ga4 ? `
+  <div style="padding:24px 32px;border-top:1px solid #e2e6ec;">
+    <div style="font-size:0.7rem;font-weight:700;color:#9ca3af;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;">Website Traffic (GA4)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;">
+      ${[
+        { label: 'Sessions',     value: fmtNum(d.ga4.sessions),    delta: '', accent: '#10b981' },
+        { label: 'Users',        value: fmtNum(d.ga4.users),       delta: '', accent: '#3b82f6' },
+        { label: 'New Users',    value: fmtNum(d.ga4.newUsers),    delta: '', accent: '#8b5cf6' },
+        { label: 'Avg. Session', value: `${Math.floor(d.ga4.avgDuration / 60)}m ${Math.round(d.ga4.avgDuration % 60)}s`, delta: '', accent: '#f59e0b' },
+      ].map(k => `<div style="background:#fff;border:1px solid #e2e6ec;border-top:3px solid ${k.accent};border-radius:8px;padding:14px 16px;">
+        <div style="font-size:0.65rem;font-weight:700;color:#9ca3af;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">${k.label}</div>
+        <div style="font-size:1.25rem;font-weight:700;color:#111827;">${k.value}</div>
+      </div>`).join('')}
+    </div>
+  </div>` : ''}
+
+  <!-- GHL / CRM section -->
+  ${d.ghl ? `
+  <div style="padding:24px 32px;border-top:1px solid #e2e6ec;">
+    <div style="font-size:0.7rem;font-weight:700;color:#9ca3af;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;">CRM Activity (${escHtml(d.crmName)})</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;">
+      ${[
+        { label: 'New Contacts', value: fmtNum(d.ghl.contacts),   accent: '#10b981' },
+        { label: 'Calls',        value: fmtNum(d.ghl.calls),      accent: '#3b82f6' },
+        { label: 'Forms',        value: fmtNum(d.ghl.forms),      accent: '#8b5cf6' },
+        { label: 'Emails Sent',  value: fmtNum(d.ghl.emailsSent), accent: '#f59e0b' },
+        { label: 'SMS Sent',     value: fmtNum(d.ghl.smsSent),    accent: '#f97316' },
+      ].map(k => `<div style="background:#fff;border:1px solid #e2e6ec;border-top:3px solid ${k.accent};border-radius:8px;padding:14px 16px;">
+        <div style="font-size:0.65rem;font-weight:700;color:#9ca3af;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">${k.label}</div>
+        <div style="font-size:1.25rem;font-weight:700;color:#111827;">${k.value}</div>
+      </div>`).join('')}
+    </div>
+  </div>` : ''}
+
   <!-- Footer -->
   <div style="padding:16px 32px;border-top:1px solid #e2e6ec;display:flex;align-items:center;justify-content:space-between;">
     <span style="font-size:0.7rem;color:#9ca3af;">${escHtml(d.agencyName)}</span>
@@ -527,7 +604,13 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
     img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
     @media only screen and (max-width: 620px) {
       .email-container { width: 100% !important; }
-      .kpi-cell { display: block !important; width: 48% !important; float: left !important; padding: 0 2% 12px 0 !important; }
+      .kpi-cell, .sec-cell, .ga4-cell, .ghl-cell {
+        display: inline-block !important;
+        width: 45% !important;
+        margin: 0 2% 10px 0 !important;
+        vertical-align: top !important;
+      }
+      .camp-col-hide { display: none !important; }
     }
   </style>
 </head>
@@ -547,8 +630,8 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
               <tr>
                 <td valign="middle">
                   ${d.agencyLogoUrl
-                    ? `<div style="display:inline-block;background:#fff;border-radius:6px;padding:4px 8px;"><img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="24" style="display:block;max-height:24px;max-width:120px;object-fit:contain;" /></div>`
-                    : `<span style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:#fff;">${escHtml(d.agencyName)}</span>`}
+                    ? `<img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="40" style="display:block;max-height:40px;max-width:180px;object-fit:contain;background:#fff;padding:6px 10px;border-radius:4px;" />`
+                    : `<span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#fff;">${escHtml(d.agencyName)}</span>`}
                 </td>
                 <td valign="middle" align="right">
                   <div style="font-family:Arial,sans-serif;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">Performance Report</div>
@@ -613,6 +696,55 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
               </thead>
               <tbody>${campRows}</tbody>
             </table>
+          </td>
+        </tr>` : ''}
+
+        <!-- ── GA4 section ────────────────────────────── -->
+        ${d.ga4 ? `
+        <tr>
+          <td style="background-color:${WHITE};padding:4px 28px 20px;">
+            <div style="border-top:1px solid ${BORDER};margin-bottom:16px;"></div>
+            <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${FAINT};letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">Website Traffic (GA4)</div>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              ${[
+                { label: 'Sessions',         value: fmtNum(d.ga4.sessions),    color: '#10b981' },
+                { label: 'Users',            value: fmtNum(d.ga4.users),       color: '#3b82f6' },
+                { label: 'New Users',        value: fmtNum(d.ga4.newUsers),    color: '#8b5cf6' },
+                { label: 'Avg. Session',     value: `${Math.floor(d.ga4.avgDuration / 60)}m ${Math.round(d.ga4.avgDuration % 60)}s`, color: '#f59e0b' },
+              ].map(k => `<td width="140" valign="top" style="padding:0 6px 0 0;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
+                    <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
+                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                  </td>
+                </tr></table>
+              </td>`).join('')}
+            </tr></table>
+          </td>
+        </tr>` : ''}
+
+        <!-- ── GHL / CRM section ─────────────────────── -->
+        ${d.ghl ? `
+        <tr>
+          <td style="background-color:${WHITE};padding:4px 28px 20px;">
+            <div style="border-top:1px solid ${BORDER};margin-bottom:16px;"></div>
+            <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${FAINT};letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">CRM Activity (${escHtml(d.crmName)})</div>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              ${[
+                { label: 'New Contacts', value: fmtNum(d.ghl.contacts),   color: '#10b981' },
+                { label: 'Calls',        value: fmtNum(d.ghl.calls),      color: '#3b82f6' },
+                { label: 'Forms',        value: fmtNum(d.ghl.forms),      color: '#8b5cf6' },
+                { label: 'Emails Sent',  value: fmtNum(d.ghl.emailsSent), color: '#f59e0b' },
+                { label: 'SMS Sent',     value: fmtNum(d.ghl.smsSent),    color: '#f97316' },
+              ].map(k => `<td width="112" valign="top" style="padding:0 6px 0 0;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
+                    <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
+                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                  </td>
+                </tr></table>
+              </td>`).join('')}
+            </tr></table>
           </td>
         </tr>` : ''}
 

@@ -4,7 +4,7 @@
 // Sync logs (global + per-client), global backfill, app diagnostics.
 
 import { useEffect, useState, useCallback } from 'react'
-import { CaretLeft, CaretRight } from '@phosphor-icons/react'
+import { CaretLeft, CaretRight, ArrowsCounterClockwise } from '@phosphor-icons/react'
 
 interface SyncJob {
   id: string
@@ -147,7 +147,7 @@ export default function SystemPage() {
             disabled={syncing}
             className="btn btn-primary"
           >
-            {syncing ? 'Syncing all clients…' : 'Sync All Clients'}
+            {syncing ? 'Syncing all clients…' : <><ArrowsCounterClockwise size={13} style={{ marginRight: 5 }} />Sync All Clients</>}
           </button>
           {!syncing && (
             <button onClick={() => fetchJobs(page)} className="btn btn-secondary">

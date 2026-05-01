@@ -55,14 +55,15 @@ function calcNextPublishDate(
 export default async function ContentPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; status?: string }>
+  searchParams: Promise<{ tab?: string; status?: string; highlight?: string }>
 }) {
   const cookieStore = await cookies()
   const session     = cookieStore.get('admin_session')?.value
   if (!isAdminAuthed(session)) redirect('/admin/login')
 
-  const params    = await searchParams
-  const activeTab = params.tab ?? 'queue'
+  const params      = await searchParams
+  const activeTab   = params.tab ?? 'queue'
+  const highlightId = params.highlight ?? null
 
   const db = createAdminClient()
 
@@ -339,7 +340,7 @@ export default async function ContentPage({
                 </p>
               </div>
             ) : (
-              <ClientCycleQueue cycles={contentCycles} />
+              <ClientCycleQueue cycles={contentCycles} highlightId={highlightId ?? undefined} />
             )}
           </section>
 
@@ -347,7 +348,7 @@ export default async function ContentPage({
           <section className="mt-8">
             <h2 className="section-title mb-1">Post Queue</h2>
             <p className="section-desc mb-4">Generated posts awaiting review and publishing.</p>
-            <ContentQueue posts={posts} sites={sites} />
+            <ContentQueue posts={posts} sites={sites} highlightId={highlightId ?? undefined} />
           </section>
         </>
       )}

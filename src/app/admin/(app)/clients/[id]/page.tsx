@@ -420,7 +420,6 @@ export default async function ClientDetailPage({
 
           {/* ── Third-party integration cards ─────────────────────── */}
           <div>
-            <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Integrations</p>
             <ClientIntegrationCards
               clientId={id}
               discordChannelId={(client as unknown as { discord_channel_id?: string }).discord_channel_id ?? null}

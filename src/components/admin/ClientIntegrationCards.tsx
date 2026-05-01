@@ -190,17 +190,6 @@ export default function ClientIntegrationCards({
             >
               {stripeSaving ? 'Saving…' : 'Save'}
             </button>
-            {stripeId && (
-              <button
-                type="button"
-                onClick={handleStripeSync}
-                disabled={syncing}
-                className="btn btn-secondary"
-                style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}
-              >
-                {syncing ? 'Syncing…' : 'Sync last 90 days'}
-              </button>
-            )}
             {stripeMsg && (
               <span style={{ fontSize: '0.75rem', color: stripeMsg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
                 {stripeMsg}

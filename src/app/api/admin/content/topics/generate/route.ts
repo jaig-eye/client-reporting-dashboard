@@ -296,12 +296,14 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
   if (notifEmail && settings.notify_topics_created) {
     const agencyName = settings.agency_name ?? 'Agency Dashboard'
     try {
+      const firstTopicId = (saved as { id: string }[] | null)?.[0]?.id ?? ''
+      const appUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
       await sendEmail({
         to:      notifEmail,
         subject: `[${agencyName}] Topics ready for review — ${clientName}`,
         html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong> and are waiting for your review.</p>
                <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${[t.keyword_opportunity, t.ranking_strategy].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>
-               <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/admin/content?tab=queue">Review Topics →</a></p>`,
+               <p><a href="${appUrl}/admin/content${firstTopicId ? `?highlight=${firstTopicId}` : ''}">Review Topics →</a></p>`,
       })
     } catch (emailErr) {
       console.error('[topics/generate] email error:', emailErr)
