@@ -121,20 +121,35 @@ function parseManualLinks(manualLinkUrls: string[]): { url: string; label: strin
 function parseResponse(rawText: string) {
   const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   const jsonMatch = stripped.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return { title: '', seoTitle: '', content: rawText, metaDescription: '', slug: '', focusKeyword: '', suggestedTags: [] as string[] }
-  try {
-    const parsed = JSON.parse(jsonMatch[0])
-    return {
-      title:           String(parsed.title           || ''),
-      seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
-      content:         String(parsed.content         || rawText),
-      metaDescription: String(parsed.metaDescription || ''),
-      slug:            String(parsed.slug            || ''),
-      focusKeyword:    String(parsed.focusKeyword    || ''),
-      suggestedTags:   Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags.map(String) : [],
-    }
-  } catch {
-    return { title: '', seoTitle: '', content: rawText, metaDescription: '', slug: '', focusKeyword: '', suggestedTags: [] as string[] }
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0])
+      return {
+        title:           String(parsed.title           || ''),
+        seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
+        content:         String(parsed.content         || rawText),
+        metaDescription: String(parsed.metaDescription || ''),
+        slug:            String(parsed.slug            || ''),
+        focusKeyword:    String(parsed.focusKeyword    || ''),
+        suggestedTags:   Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags.map(String) : [],
+      }
+    } catch { /* fall through to field extraction */ }
+  }
+  // Fallback: JSON was truncated or malformed — extract simple string fields via regex.
+  // "content" may be huge so we skip extracting it here and keep rawText.
+  function extractStr(field: string): string {
+    const m = rawText.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*?)(?:"|$)`))
+    return m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : ''
+  }
+  const title = extractStr('title')
+  return {
+    title,
+    seoTitle:        extractStr('seoTitle') || title,
+    content:         rawText,
+    metaDescription: extractStr('metaDescription'),
+    slug:            extractStr('slug'),
+    focusKeyword:    extractStr('focusKeyword'),
+    suggestedTags:   [],
   }
 }
 
@@ -157,6 +172,17 @@ function buildSystemPrompt(
   postStructure: string
 ): string {
   return `You are a professional SEO content writer for ${agency}.
+
+CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No markdown fences, no explanation, no text before or after the JSON. The object must have exactly these fields:
+{
+  "title": "Post H1 title — descriptive, includes focus keyword",
+  "seoTitle": "SEO/meta title — max 60 chars",
+  "content": "Full HTML post body (h2, h3, h4, p, ul, strong, a tags as needed)",
+  "metaDescription": "150–160 characters, includes focus keyword",
+  "slug": "url-friendly-slug-max-5-words",
+  "focusKeyword": "primary target keyword phrase",
+  "suggestedTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
+}
 ${clientContext ? `\n${clientContext}` : ''}
 Your writing demonstrates E-E-A-T (Experience, Expertise, Authority, Trustworthiness).
 
@@ -178,18 +204,7 @@ SEO guidelines:
 - Add descriptive alt text to any <img> tags including the focus keyword
 - External links: target="_blank" rel="noopener noreferrer"
 - Internal links: use relative paths when linking within the same domain
-${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}
-Return ONLY a JSON object with exactly these fields:
-{
-  "title": "Post H1 title — descriptive, includes focus keyword",
-  "seoTitle": "SEO/meta title — max 60 chars",
-  "content": "Full HTML post body (h2, h3, h4, p, ul, strong, a tags as needed)",
-  "metaDescription": "150–160 characters, includes focus keyword",
-  "slug": "url-friendly-slug-max-5-words",
-  "focusKeyword": "primary target keyword phrase",
-  "suggestedTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
-}
-Do not include markdown fences or any text outside the JSON object.`
+${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -205,7 +220,7 @@ async function callAI(
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+      body: JSON.stringify({ model, max_tokens: 16000, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
     })
     if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
     const data = await res.json()

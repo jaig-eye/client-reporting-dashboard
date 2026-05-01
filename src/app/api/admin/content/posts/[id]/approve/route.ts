@@ -1,6 +1,8 @@
 // POST /api/admin/content/posts/[id]/approve
 // Uploads an already-generated pending post to WordPress as a draft.
 
+export const maxDuration = 60
+
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'

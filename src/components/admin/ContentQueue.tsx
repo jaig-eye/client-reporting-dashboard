@@ -256,6 +256,7 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
   const [loading,        setLoading]        = useState<string | null>(null)
   const [generating,     setGenerating]     = useState<string | null>(null)
   const [approving,      setApproving]      = useState<string | null>(null)
+  const [approveProgress, setApproveProgress] = useState(0)
   const [restoring,      setRestoring]      = useState<string | null>(null)
   const [bulkLoading,    setBulkLoading]    = useState(false)
   const [error,          setError]          = useState('')
@@ -410,18 +411,38 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
 
   async function approvePost(item: QueueItem) {
     setApproving(item.id)
+    setApproveProgress(5)
     setError('')
+
+    // Simulate progress while WP upload runs (tag creation + post creation can take 10-30s)
+    const tick = setInterval(() => {
+      setApproveProgress(p => p < 80 ? p + 8 : p)
+    }, 1500)
+
     try {
       const res = await fetch(`/api/admin/content/posts/${item.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
+      clearInterval(tick)
       if (!res.ok) throw new Error((await res.json()).error || 'Upload failed')
-      router.refresh()
+      const data = await res.json() as { wp_post_id: number; wp_edit_url: string }
+
+      setApproveProgress(100)
+      // Optimistically update item so it moves to the Uploaded tab immediately
+      setItems(prev => prev.map(i =>
+        i.id === item.id ? { ...i, wpPostId: data.wp_post_id, status: 'draft_saved' } : i
+      ))
+      setTimeout(() => {
+        setApproving(null)
+        setApproveProgress(0)
+        setTab('uploaded')
+      }, 400)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
-    } finally {
+      clearInterval(tick)
+      setApproveProgress(0)
       setApproving(null)
+      setError(err instanceof Error ? err.message : 'Upload failed')
     }
   }
 
@@ -718,15 +739,31 @@ export default function ContentQueue({ posts: initialItems, sites }: Props) {
                           <>
                             {/* Pending posts: Approve → uploads to WP draft */}
                             {item.wpPostId == null && item.status !== 'rejected' && (
-                              <button
-                                type="button"
-                                disabled={approving === item.id}
-                                onClick={() => approvePost(item)}
-                                className="btn btn-primary"
-                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
-                              >
-                                {approving === item.id ? '…' : 'Approve'}
-                              </button>
+                              approving === item.id ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 100 }}>
+                                  <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>
+                                    {approveProgress < 100 ? 'Uploading to WP…' : 'Done ✓'}
+                                  </div>
+                                  <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                                    <div style={{
+                                      height: '100%', borderRadius: 2,
+                                      background: approveProgress === 100 ? 'var(--green)' : 'var(--blue)',
+                                      width: `${approveProgress}%`,
+                                      transition: 'width 0.4s ease, background 0.2s',
+                                    }} />
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={!!approving}
+                                  onClick={() => approvePost(item)}
+                                  className="btn btn-primary"
+                                  style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                                >
+                                  Approve
+                                </button>
+                              )
                             )}
                             {wpEditUrl && (
                               <a

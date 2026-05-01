@@ -166,16 +166,17 @@ export async function GET(request: NextRequest) {
         .eq('client_id', client_id)
         .in('status', ['scheduled', 'approved'])
 
-      for (const topic of approvedTopics ?? []) {
+      // Fire all generate calls concurrently so the cron doesn't time out
+      // processing a long queue sequentially. Each generate call runs as its
+      // own function invocation and completes independently.
+      await Promise.allSettled((approvedTopics ?? []).map(async (topic) => {
         try {
           const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-          // Mark as generating before firing so UI reflects in-progress state
           await db
             .from('content_topics')
             .update({ status: 'generating' })
             .eq('id', topic.id)
-          // Generate endpoint sets status → 'generated' on completion
-          await fetch(`${appUrl}/api/admin/content/generate`, {
+          const res = await fetch(`${appUrl}/api/admin/content/generate`, {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -183,7 +184,7 @@ export async function GET(request: NextRequest) {
             },
             body: JSON.stringify({ topic_id: topic.id }),
           })
-
+          if (!res.ok) throw new Error(await res.text())
           postsTriggered.push(topic.id)
         } catch (e) {
           console.error(`[content-topics cron] Failed to generate post for topic ${topic.id}:`, e)
@@ -191,7 +192,7 @@ export async function GET(request: NextRequest) {
             .update({ status: 'scheduled', generation_error: String(e) })
             .eq('id', topic.id)
         }
-      }
+      }))
     }
   }
 
