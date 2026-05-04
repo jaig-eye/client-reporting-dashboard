@@ -72,12 +72,14 @@ export default function AdFuelBadge({
       {/* ── Liquid body ─────────────────────────────────────── */}
       <div style={{
         position: 'absolute',
-        bottom: 0, left: 0, right: 0,
-        height: `${displayFill}%`,
-        background: `rgba(${fillRgb},0.13)`,
+        bottom: -1, left: 0, right: 0,   // -1 eliminates subpixel gap at card bottom
+        height: `calc(${displayFill}% + 1px)`,
+        background: `rgba(${fillRgb},0.10)`,
+        borderBottomLeftRadius: 9,
+        borderBottomRightRadius: 9,
         transition: 'height 1.6s cubic-bezier(0.25,0.85,0.25,1)',
         zIndex: 1,
-        overflow: 'visible', // allow wave to extend above fill line
+        overflow: 'visible',
       }}>
         {/* Wave container sits centered on the fill boundary */}
         <div style={{
@@ -93,10 +95,10 @@ export default function AdFuelBadge({
             style={{
               position: 'absolute', top: 0, left: 0,
               width: '200%', height: 28,
-              animation: 'adFuelW1 3s linear infinite',
+              animation: 'adFuelW1 7s linear infinite',
             }}
           >
-            <path d={WAVE_PATH} fill={`rgba(${fillRgb},0.55)`} />
+            <path d={WAVE_PATH} fill={`rgba(${fillRgb},0.28)`} />
           </svg>
 
           {/* Wave 2 — reverse scroll, softer */}
@@ -106,11 +108,11 @@ export default function AdFuelBadge({
             style={{
               position: 'absolute', top: 0, left: 0,
               width: '200%', height: 28,
-              animation: 'adFuelW2 4.6s linear infinite',
-              opacity: 0.38,
+              animation: 'adFuelW2 11s linear infinite',
+              opacity: 0.55,
             }}
           >
-            <path d={WAVE_PATH2} fill={`rgba(${fillRgb},0.65)`} />
+            <path d={WAVE_PATH2} fill={`rgba(${fillRgb},0.22)`} />
           </svg>
         </div>
       </div>
