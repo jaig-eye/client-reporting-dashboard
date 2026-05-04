@@ -454,6 +454,7 @@ export default async function DashboardPage({
   const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
   const googleDailyBudget = effectiveAdFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, effectiveAdFuelCut) : googleDailyBudgetRaw
   const metaDailyBudget   = effectiveAdFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   effectiveAdFuelCut) : metaDailyBudgetRaw
+  const monthlyBudget     = (googleDailyBudget + metaDailyBudget) * 30.4
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────
   const gSpend = effectiveAdFuelCut > 0 ? applyAdFuel(googleTotal.spend, effectiveAdFuelCut) : googleTotal.spend
@@ -562,7 +563,7 @@ export default async function DashboardPage({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {afPurchased > 0 && (
-              <AdFuelBadge balance={adFuelBalance} clientName={client.name} />
+              <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} />
             )}
             <Suspense fallback={null}>
               <DateRangePicker
