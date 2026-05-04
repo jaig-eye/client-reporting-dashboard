@@ -72,47 +72,52 @@ export default function AdFuelBadge({
       {/* ── Liquid body ─────────────────────────────────────── */}
       <div style={{
         position: 'absolute',
-        bottom: -1, left: 0, right: 0,   // -1 eliminates subpixel gap at card bottom
+        bottom: -1, left: 0, right: 0,
         height: `calc(${displayFill}% + 1px)`,
-        background: `rgba(${fillRgb},0.10)`,
+        background: isLow ? 'rgba(245,158,11,0.14)' : 'rgba(216,217,248,0.9)',
         borderBottomLeftRadius: 9,
         borderBottomRightRadius: 9,
         transition: 'height 1.6s cubic-bezier(0.25,0.85,0.25,1)',
         zIndex: 1,
         overflow: 'visible',
       }}>
-        {/* Wave container sits centered on the fill boundary */}
+        {/* Wave container — same solid color as body so it blends flush */}
         <div style={{
           position: 'absolute',
-          top: -14, left: 0,
-          width: '100%', height: 28,
+          top: -18, left: 0,
+          width: '100%', height: 22,
           pointerEvents: 'none',
         }}>
-          {/* Wave 1 — forward scroll */}
+          {/* Wave 1 — forward scroll, same fill as body */}
           <svg
-            viewBox="0 0 360 28"
+            viewBox="0 0 360 22"
             preserveAspectRatio="none"
             style={{
               position: 'absolute', top: 0, left: 0,
-              width: '200%', height: 28,
+              width: '200%', height: 22,
               animation: 'adFuelW1 7s linear infinite',
             }}
           >
-            <path d={WAVE_PATH} fill={`rgba(${fillRgb},0.28)`} />
+            <path
+              d="M0,11 C30,2 60,2 90,11 C120,20 150,20 180,11 C210,2 240,2 270,11 C300,20 330,20 360,11 L360,22 L0,22 Z"
+              fill={isLow ? 'rgba(245,158,11,0.14)' : 'rgba(216,217,248,0.9)'}
+            />
           </svg>
 
-          {/* Wave 2 — reverse scroll, softer */}
+          {/* Wave 2 — reverse scroll, slightly lighter for depth */}
           <svg
-            viewBox="0 0 360 28"
+            viewBox="0 0 360 22"
             preserveAspectRatio="none"
             style={{
               position: 'absolute', top: 0, left: 0,
-              width: '200%', height: 28,
+              width: '200%', height: 22,
               animation: 'adFuelW2 11s linear infinite',
-              opacity: 0.55,
             }}
           >
-            <path d={WAVE_PATH2} fill={`rgba(${fillRgb},0.22)`} />
+            <path
+              d="M0,14 C30,6 60,6 90,14 C120,20 150,20 180,14 C210,6 240,6 270,14 C300,20 330,20 360,14 L360,22 L0,22 Z"
+              fill={isLow ? 'rgba(245,158,11,0.09)' : 'rgba(199,201,245,0.85)'}
+            />
           </svg>
         </div>
       </div>
