@@ -26,6 +26,19 @@ export const dynamic = 'force-dynamic'
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 
+// Matches the admin API helper — first occurrence of billDay on or after cutoffDate
+function getEffectiveCutoff(cutoffDate: string, billDay: number): string {
+  const c = new Date(cutoffDate + 'T00:00:00Z')
+  const y = c.getUTCFullYear(), mo = c.getUTCMonth(), d = c.getUTCDate()
+  if (d <= billDay) return new Date(Date.UTC(y, mo, billDay)).toISOString().slice(0, 10)
+  return new Date(Date.UTC(y, mo + 1, billDay)).toISOString().slice(0, 10)
+}
+function subtractOneDay(date: string): string {
+  const d = new Date(date + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -145,17 +158,41 @@ export default async function DashboardPage({
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
 
-  // ─── Ad Fuel balance (lifetime from cutoff) ───────────────────────────────
-  const cutoffDate = (settings as { ad_fuel_cutoff_date?: string | null }).ad_fuel_cutoff_date ?? '2025-01-01'
-  const [gLifeRes, mLifeRes, ledgerRes] = await Promise.all([
-    db.from('google_ads_metrics').select('spend').eq('client_id', client.id).gte('date', cutoffDate),
-    db.from('meta_ads_metrics').select('spend').eq('client_id', client.id).gte('date', cutoffDate),
+  // ─── Ad Fuel balance (matches admin API calculation exactly) ─────────────
+  // Always uses real cut — rawMode only affects displayed spend, not balance.
+  // Uses aggregate RPCs to avoid PostgREST's 1000-row cap on high-volume clients.
+  const cutoffDate    = (settings as { ad_fuel_cutoff_date?: string | null }).ad_fuel_cutoff_date ?? '2025-01-01'
+  const realAdFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : (settings.ad_fuel_cut ?? 0)
+  const balanceSplit  = 1 - realAdFuelCut
+
+  type SumRow = { client_id: string; spend: number }
+  const [gLifeRpc, mLifeRpc, ledgerBalRes] = await Promise.all([
+    db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }).eq('client_id', client.id),
+    db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }).eq('client_id', client.id),
     db.from('ad_fuel_ledger').select('amount_af').eq('client_id', client.id).gte('date_of_payment', cutoffDate),
   ])
-  const rawLifetime   = ((gLifeRes.data ?? []) as { spend: number }[]).reduce((s, r) => s + (Number(r.spend) || 0), 0)
-                      + ((mLifeRes.data ?? []) as { spend: number }[]).reduce((s, r) => s + (Number(r.spend) || 0), 0)
-  const afLifetime    = effectiveAdFuelCut > 0 ? rawLifetime / (1 - effectiveAdFuelCut) : rawLifetime
-  const afPurchased   = ((ledgerRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
+
+  let gRawLife = Number(((gLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
+  let mRawLife = Number(((mLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
+
+  // Gap adjustment: clients with historic_bill_day subtract gap spend (cutoff → effectiveCutoff-1)
+  const historicBillDay = (client as Record<string, unknown>).historic_bill_day as number | null | undefined
+  if (historicBillDay != null) {
+    const effCutoff = getEffectiveCutoff(cutoffDate, historicBillDay)
+    if (effCutoff > cutoffDate) {
+      const gapEnd = subtractOneDay(effCutoff)
+      const [gGap, mGap] = await Promise.all([
+        db.rpc('sum_google_spend_by_client', { from_date: cutoffDate, to_date: gapEnd }).eq('client_id', client.id),
+        db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate, to_date: gapEnd }).eq('client_id', client.id),
+      ])
+      gRawLife = Math.max(0, gRawLife - Number(((gGap.data ?? []) as SumRow[])[0]?.spend ?? 0))
+      mRawLife = Math.max(0, mRawLife - Number(((mGap.data ?? []) as SumRow[])[0]?.spend ?? 0))
+    }
+  }
+
+  const rawLifetime   = gRawLife + mRawLife
+  const afLifetime    = balanceSplit > 0 ? rawLifetime / balanceSplit : rawLifetime
+  const afPurchased   = ((ledgerBalRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
   const adFuelBalance = afPurchased - afLifetime
 
 

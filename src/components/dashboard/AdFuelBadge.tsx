@@ -72,51 +72,63 @@ export default function AdFuelBadge({
       {/* ── Liquid body ─────────────────────────────────────── */}
       <div style={{
         position: 'absolute',
-        bottom: -1, left: 0, right: 0,
-        height: `calc(${displayFill}% + 1px)`,
-        background: isLow ? 'rgba(245,158,11,0.14)' : 'rgba(216,217,248,0.9)',
-        borderBottomLeftRadius: 9,
-        borderBottomRightRadius: 9,
+        bottom: 0, left: 0, right: 0,
+        height: `${displayFill}%`,
+        background: isLow ? 'rgba(245,158,11,0.12)' : 'rgba(216,217,248,0.88)',
         transition: 'height 1.6s cubic-bezier(0.25,0.85,0.25,1)',
         zIndex: 1,
         overflow: 'visible',
       }}>
-        {/* Wave container — same solid color as body so it blends flush */}
+        {/* Wave container — gradient fill so peaks feather into white background */}
         <div style={{
           position: 'absolute',
-          top: -18, left: 0,
-          width: '100%', height: 22,
+          top: -22, left: 0,
+          width: '100%', height: 26,
           pointerEvents: 'none',
         }}>
-          {/* Wave 1 — forward scroll, same fill as body */}
+          {/* Wave 1 — forward scroll */}
           <svg
-            viewBox="0 0 360 22"
+            viewBox="0 0 360 26"
             preserveAspectRatio="none"
             style={{
               position: 'absolute', top: 0, left: 0,
-              width: '200%', height: 22,
+              width: '200%', height: 26,
               animation: 'adFuelW1 7s linear infinite',
             }}
           >
+            <defs>
+              <linearGradient id="wg1" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(216,217,248)'} stopOpacity="0" />
+                <stop offset="55%"  stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(216,217,248)'} stopOpacity="0.7" />
+                <stop offset="100%" stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(216,217,248)'} stopOpacity="0.88" />
+              </linearGradient>
+            </defs>
             <path
-              d="M0,11 C30,2 60,2 90,11 C120,20 150,20 180,11 C210,2 240,2 270,11 C300,20 330,20 360,11 L360,22 L0,22 Z"
-              fill={isLow ? 'rgba(245,158,11,0.14)' : 'rgba(216,217,248,0.9)'}
+              d="M0,13 C30,3 60,3 90,13 C120,23 150,23 180,13 C210,3 240,3 270,13 C300,23 330,23 360,13 L360,26 L0,26 Z"
+              fill="url(#wg1)"
             />
           </svg>
 
-          {/* Wave 2 — reverse scroll, slightly lighter for depth */}
+          {/* Wave 2 — reverse scroll, phase-offset for depth */}
           <svg
-            viewBox="0 0 360 22"
+            viewBox="0 0 360 26"
             preserveAspectRatio="none"
             style={{
               position: 'absolute', top: 0, left: 0,
-              width: '200%', height: 22,
+              width: '200%', height: 26,
               animation: 'adFuelW2 11s linear infinite',
             }}
           >
+            <defs>
+              <linearGradient id="wg2" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(199,201,245)'} stopOpacity="0" />
+                <stop offset="60%"  stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(199,201,245)'} stopOpacity="0.5" />
+                <stop offset="100%" stopColor={isLow ? 'rgb(245,158,11)' : 'rgb(199,201,245)'} stopOpacity="0.75" />
+              </linearGradient>
+            </defs>
             <path
-              d="M0,14 C30,6 60,6 90,14 C120,20 150,20 180,14 C210,6 240,6 270,14 C300,20 330,20 360,14 L360,22 L0,22 Z"
-              fill={isLow ? 'rgba(245,158,11,0.09)' : 'rgba(199,201,245,0.85)'}
+              d="M0,16 C30,7 60,7 90,16 C120,23 150,23 180,16 C210,7 240,7 270,16 C300,23 330,23 360,16 L360,26 L0,26 Z"
+              fill="url(#wg2)"
             />
           </svg>
         </div>
