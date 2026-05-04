@@ -20,6 +20,7 @@ import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } fro
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
+import AdFuelBadge from '@/components/dashboard/AdFuelBadge'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,6 +144,19 @@ export default async function DashboardPage({
   ]
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
+
+  // ─── Ad Fuel balance (lifetime from cutoff) ───────────────────────────────
+  const cutoffDate = (settings as { ad_fuel_cutoff_date?: string | null }).ad_fuel_cutoff_date ?? '2025-01-01'
+  const [gLifeRes, mLifeRes, ledgerRes] = await Promise.all([
+    db.from('google_ads_metrics').select('spend').eq('client_id', client.id).gte('date', cutoffDate),
+    db.from('meta_ads_metrics').select('spend').eq('client_id', client.id).gte('date', cutoffDate),
+    db.from('ad_fuel_ledger').select('amount_af').eq('client_id', client.id).gte('date_of_payment', cutoffDate),
+  ])
+  const rawLifetime   = ((gLifeRes.data ?? []) as { spend: number }[]).reduce((s, r) => s + (Number(r.spend) || 0), 0)
+                      + ((mLifeRes.data ?? []) as { spend: number }[]).reduce((s, r) => s + (Number(r.spend) || 0), 0)
+  const afLifetime    = effectiveAdFuelCut > 0 ? rawLifetime / (1 - effectiveAdFuelCut) : rawLifetime
+  const afPurchased   = ((ledgerRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
+  const adFuelBalance = afPurchased - afLifetime
 
 
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
@@ -546,7 +560,10 @@ export default async function DashboardPage({
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {afPurchased > 0 && (
+              <AdFuelBadge balance={adFuelBalance} clientName={client.name} />
+            )}
             <Suspense fallback={null}>
               <DateRangePicker
                 from={fromDate.toISOString().split('T')[0]}

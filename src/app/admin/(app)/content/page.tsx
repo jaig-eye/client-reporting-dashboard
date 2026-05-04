@@ -1,56 +1,18 @@
 // Content Tool — /admin/content
-// Three-tab interface: Queue / Manual / Settings
+// Calendar-first layout: calendar view + queue panel + settings
 
 import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
 import { cookies }             from 'next/headers'
 import { redirect }            from 'next/navigation'
-import ContentEditor           from './ContentEditor'
-import ContentQueue            from '@/components/admin/ContentQueue'
-import ContentTopics           from '@/components/admin/ContentTopics'
-import GlobalContentSettings   from './ContentSettingsPanel'
-import ClientCycleQueue        from './ClientCycleQueue'
-import type { ContentCycle }   from './ClientCycleQueue'
+import ContentEditor         from './ContentEditor'
+import ContentQueue          from '@/components/admin/ContentQueue'
+import ContentTopics         from '@/components/admin/ContentTopics'
+import GlobalContentSettings from './ContentSettingsPanel'
+import ContentCalendar       from './ContentCalendar'
+import type { CalendarItem } from './ContentCalendar'
 
 export const dynamic = 'force-dynamic'
-
-function calcNextPublishDate(
-  frequency: string,
-  dayOfWeek: number,
-  lastPublishedAt: string | null
-): Date {
-  const now = new Date()
-  const y   = now.getUTCFullYear()
-  const m   = now.getUTCMonth()
-  const daysSinceLast = lastPublishedAt
-    ? (Date.now() - new Date(lastPublishedAt).getTime()) / 86_400_000
-    : Infinity
-
-  switch (frequency) {
-    case 'monthly_first': {
-      const d = new Date(Date.UTC(y, m, 1))
-      return d <= now ? new Date(Date.UTC(y, m + 1, 1)) : d
-    }
-    case 'monthly_mid': {
-      const d = new Date(Date.UTC(y, m, 15))
-      return d <= now ? new Date(Date.UTC(y, m + 1, 15)) : d
-    }
-    case 'monthly_end': {
-      const d = new Date(Date.UTC(y, m, 28))
-      return d <= now ? new Date(Date.UTC(y, m + 1, 28)) : d
-    }
-    case 'monthly':
-      return new Date(Date.now() + (28 - Math.min(daysSinceLast, 28)) * 86_400_000)
-    case 'biweekly':
-      return new Date(Date.now() + (14 - Math.min(daysSinceLast, 14)) * 86_400_000)
-    case 'weekly': {
-      const daysUntil = ((dayOfWeek - now.getUTCDay()) + 7) % 7 || 7
-      return new Date(Date.now() + daysUntil * 86_400_000)
-    }
-    default:
-      return new Date(Date.now() + 86_400_000)
-  }
-}
 
 export default async function ContentPage({
   searchParams,
@@ -62,7 +24,7 @@ export default async function ContentPage({
   if (!isAdminAuthed(session)) redirect('/admin/login')
 
   const params      = await searchParams
-  const activeTab   = params.tab ?? 'queue'
+  const activeTab   = params.tab ?? 'calendar'
   const highlightId = params.highlight ?? null
 
   const db = createAdminClient()
@@ -86,9 +48,6 @@ export default async function ContentPage({
     allClientsRes,
     settingsRes,
     postsRes,
-    topicsRes,
-    autoSettingsRes,
-    lastPublishedRes,
     scheduledTopicsRes,
   ] = await Promise.all([
     // Clients with WP connections
@@ -99,127 +58,20 @@ export default async function ContentPage({
     db.from('clients').select('id, name').order('name'),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
     db.from('content_posts')
-      .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, target_publish_date, wp_post_id, wp_site_url')
+      .select('id, client_id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale')
       .order('generated_at', { ascending: false })
-      .limit(200),
-    // All non-rejected topics (for queue / cycle cards)
-    db.from('content_topics')
-      .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, created_at')
-      .not('status', 'eq', 'rejected')
-      .order('target_publish_date', { ascending: true, nullsFirst: false })
-      .limit(200),
-    // Content settings for auto_generate clients
-    db.from('content_settings')
-      .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, auto_generate')
-      .eq('auto_generate', true)
-      .not('client_id', 'is', null),
-    // Last published post per client (for cycle calculation)
-    db.from('content_posts')
-      .select('client_id, generated_at')
-      .in('status', ['published', 'approved'])
-      .order('generated_at', { ascending: false })
-      .limit(500),
-    // Topics in the pipeline + rejected — shown in Post Queue tabs
+      .limit(300),
+    // All topics for calendar + queue
     db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
-      .in('status', ['approved', 'generating', 'scheduled', 'rejected'])
       .order('target_publish_date', { ascending: true, nullsFirst: false })
-      .limit(200),
+      .limit(300),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const clientMap     = new Map(((clientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const allClients    = (allClientsRes.data ?? []) as { id: string; name: string }[]
   const aiConfigured  = !!(settingsRes.data?.ai_api_key)
-
-  // Build last-published-at map per client
-  const lastPublishedMap = new Map<string, string>()
-  for (const p of ((lastPublishedRes.data ?? []) as { client_id: string; generated_at: string }[])) {
-    if (!lastPublishedMap.has(p.client_id)) {
-      lastPublishedMap.set(p.client_id, p.generated_at)
-    }
-  }
-
-  // Group topics by client_id
-  const topicsByClient = new Map<string, typeof topicsRes.data>()
-  for (const t of (topicsRes.data ?? [])) {
-    const cid = String(t.client_id)
-    const arr = topicsByClient.get(cid) ?? []
-    arr.push(t)
-    topicsByClient.set(cid, arr)
-  }
-
-  // Load global fallback schedule
-  const { data: globalSettings } = await db
-    .from('content_settings')
-    .select('schedule_frequency, schedule_day_of_week')
-    .is('client_id', null)
-    .maybeSingle()
-  const globalFreq = (globalSettings as { schedule_frequency?: string } | null)?.schedule_frequency ?? 'weekly'
-  const globalDay  = (globalSettings as { schedule_day_of_week?: number } | null)?.schedule_day_of_week ?? 1
-
-  // Build ContentCycle[] for auto_generate clients
-  const contentCycles: ContentCycle[] = ((autoSettingsRes.data ?? []) as {
-    client_id: string
-    schedule_frequency: string | null
-    schedule_day_of_week: number | null
-    topics_per_run: number
-    posts_per_run: number
-    auto_generate: boolean
-  }[]).map(cs => {
-    const clientId   = cs.client_id
-    const clientName = allClientsMap.get(clientId) ?? 'Unknown'
-    const frequency  = cs.schedule_frequency ?? globalFreq
-    const dayOfWeek  = cs.schedule_day_of_week ?? globalDay
-
-    const lastPublishedAt = lastPublishedMap.get(clientId) ?? null
-    const nextPublish     = calcNextPublishDate(frequency, dayOfWeek, lastPublishedAt)
-    const nextPublishStr  = nextPublish.toISOString().split('T')[0]
-
-    // Deadline = 7 days before publish
-    const deadlineDate = new Date(nextPublish.getTime() - 7 * 86_400_000)
-    const deadlineStr  = deadlineDate.toISOString().split('T')[0]
-
-    const mapTopic = (t: Record<string, unknown>) => ({
-      id:                 String(t.id),
-      topic:              String(t.topic),
-      targetKeyword:      t.target_keyword ? String(t.target_keyword) : null,
-      targetPublishDate:  t.target_publish_date ? String(t.target_publish_date) : null,
-      status:             String(t.status),
-      rationale:          t.rationale ? String(t.rationale) : null,
-      keywordOpportunity: t.keyword_opportunity ? String(t.keyword_opportunity) : null,
-      rankingStrategy:    t.ranking_strategy ? String(t.ranking_strategy) : null,
-      audienceIntent:     t.audience_intent ? String(t.audience_intent) : null,
-      whyNow:             t.why_now ? String(t.why_now) : null,
-      competitionLevel:   t.competition_level ? String(t.competition_level) : null,
-      generationError:    t.generation_error ? String(t.generation_error) : null,
-    })
-
-    const clientTopics = (topicsByClient.get(clientId) ?? []).map(t => mapTopic(t as Record<string, unknown>))
-
-    // Pending topics for the current publish cycle
-    const cycleTopics = clientTopics.filter(
-      t => (!t.targetPublishDate || t.targetPublishDate === nextPublishStr) && t.status === 'pending'
-    )
-
-    // All scheduled/approved/generating topics for this client (back-queue)
-    const queuedTopics = clientTopics.filter(t => ['scheduled', 'approved', 'generating'].includes(t.status))
-
-    const approved = queuedTopics.length
-
-    return {
-      clientId,
-      clientName,
-      frequency:       cs.schedule_frequency ?? null,
-      postsNeeded:     cs.posts_per_run ?? 1,
-      topicsGenerated: cycleTopics.length,
-      topicsApproved:  approved,
-      nextPublishDate: nextPublishStr,
-      topicDeadline:   deadlineStr,
-      topics:          cycleTopics,
-      queuedTopics,
-    }
-  }).sort((a, b) => a.nextPublishDate.localeCompare(b.nextPublishDate))
 
   const sites = connections.map(c => ({
     connectionId: c.id,
@@ -246,7 +98,7 @@ export default async function ContentPage({
     publishedUrl:      p.published_url       ? String(p.published_url)           : null,
     generateByDate:    null,
     targetPublishDate: p.target_publish_date  ? String(p.target_publish_date)    : null,
-    rationale:         null,
+    rationale:         (p as Record<string, unknown>).topic_rationale ? String((p as Record<string, unknown>).topic_rationale) : null,
     wpPostId:          p.wp_post_id           ? Number(p.wp_post_id)              : null,
     wpSiteUrl:         p.wp_site_url          ? String(p.wp_site_url)             : null,
   }))
@@ -284,10 +136,47 @@ export default async function ContentPage({
 
   const posts = [...scheduledTopicItems, ...postItems]
 
+  // Calendar items: all topics + posts with a target_publish_date
+  const calendarItems: CalendarItem[] = [
+    ...scheduledTopicItems.map(t => ({
+      id:               t.id,
+      type:             'topic' as const,
+      clientId:         t.clientId,
+      clientName:       t.clientName,
+      status:           t.status,
+      targetPublishDate: t.targetPublishDate,
+      topicText:        t.topicText,
+      title:            t.title,
+      targetKeyword:    t.targetKeyword,
+      wpPostId:         t.wpPostId,
+      wpSiteUrl:        t.wpSiteUrl,
+      rationale:        t.rationale,
+      competitionLevel: t.competitionLevel ?? null,
+      generationError:  t.generationError ?? null,
+    })),
+    ...postItems.map(p => ({
+      id:               p.id,
+      type:             'post' as const,
+      clientId:         p.clientId,
+      clientName:       p.clientName,
+      status:           p.status,
+      targetPublishDate: p.targetPublishDate,
+      topicText:        null,
+      title:            p.title,
+      targetKeyword:    p.targetKeyword,
+      wpPostId:         p.wpPostId,
+      wpSiteUrl:        p.wpSiteUrl,
+      rationale:        p.rationale,
+      competitionLevel: null,
+      generationError:  null,
+    })),
+  ]
+
   const tabs = [
-    { id: 'queue',    label: 'Queue'    },
-    { id: 'manual',   label: 'Manual'   },
-    { id: 'settings', label: 'Settings' },
+    { id: 'calendar',  label: 'Calendar'  },
+    { id: 'queue',     label: 'Queue'     },
+    { id: 'manual',    label: 'Manual'    },
+    { id: 'settings',  label: 'Settings'  },
   ]
 
   return (
@@ -323,34 +212,18 @@ export default async function ContentPage({
         ))}
       </div>
 
+      {/* Calendar tab (default) */}
+      {activeTab === 'calendar' && (
+        <ContentCalendar items={calendarItems} clients={allClients} />
+      )}
+
       {/* Queue tab */}
       {activeTab === 'queue' && (
-        <>
-          {/* Active cycles */}
-          <section>
-            <h2 className="section-title mb-1">Active Cycles</h2>
-            <p className="section-desc mb-4">
-              Clients with auto-generation enabled, grouped by their next publish date. Approve topics before the
-              deadline — approved topics auto-generate posts 7 days before publish.
-            </p>
-            {contentCycles.length === 0 ? (
-              <div className="card p-6 text-center">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  No clients with auto-generation enabled. Enable it in Client Settings → Content.
-                </p>
-              </div>
-            ) : (
-              <ClientCycleQueue cycles={contentCycles} highlightId={highlightId ?? undefined} />
-            )}
-          </section>
-
-          {/* Post Queue */}
-          <section className="mt-8">
-            <h2 className="section-title mb-1">Post Queue</h2>
-            <p className="section-desc mb-4">Generated posts awaiting review and publishing.</p>
-            <ContentQueue posts={posts} sites={sites} highlightId={highlightId ?? undefined} />
-          </section>
-        </>
+        <section>
+          <h2 className="section-title mb-1">Post Queue</h2>
+          <p className="section-desc mb-4">All topics and uploaded WordPress drafts.</p>
+          <ContentQueue posts={posts} sites={sites} highlightId={highlightId ?? undefined} />
+        </section>
       )}
 
       {/* Manual tab */}

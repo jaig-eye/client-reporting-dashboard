@@ -34,8 +34,8 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  // Approval now schedules the topic for cron-based generation
-  if (patch.status === 'approved') patch.status = 'scheduled'
+  // Approval now triggers instant generation — set to 'generating' so UI shows progress
+  if (patch.status === 'approved') patch.status = 'generating'
 
   const db = createAdminClient()
   const { data, error } = await db
@@ -49,7 +49,7 @@ export async function PATCH(
 
   // Auto-reject remaining pending topics once the required approval count is reached
   const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
-  if (patch.status === 'scheduled' && topic.target_publish_date) {
+  if (patch.status === 'generating' && topic.target_publish_date) {
     // Resolve posts_per_run: client-specific setting falls back to global
     const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
       db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),

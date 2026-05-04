@@ -30,9 +30,8 @@ import ClientMetricVisibility from './ClientMetricVisibility'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import ClientDirectConnections from './ClientDirectConnections'
 import ClientIntegrationCards from '@/components/admin/ClientIntegrationCards'
-import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
-import GscInsightsPanel from '@/components/admin/GscInsightsPanel'
-import type { GscInsightRow } from '@/components/admin/GscInsightsPanel'
+import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
+import type { GscData } from '@/components/admin/ClientContentTabPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -487,19 +486,7 @@ export default async function ClientDetailPage({
 
       {/* ── CONTENT ──────────────────────────────────────────────── */}
       {activeTab === 'content' && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 400px',
-          gap: '2rem',
-          alignItems: 'start',
-        }}>
-          <div>
-            <ClientContentSettingsSection clientId={id} />
-          </div>
-          <div>
-            <GscOpportunitiesPanel clientId={id} isEcom={client.layout_type === 'ecom'} />
-          </div>
-        </div>
+        <ContentTabSection clientId={id} clientName={client.name} isEcom={client.layout_type === 'ecom'} />
       )}
 
       {/* ── ADVANCED ─────────────────────────────────────────────── */}
@@ -611,78 +598,67 @@ export default async function ClientDetailPage({
   )
 }
 
-// ─── Client Content Settings Section (form only) ─────────────────────────────
+// ─── Content tab server component ────────────────────────────────────────────
 
-async function ClientContentSettingsSection({ clientId }: { clientId: string }) {
+async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: string; clientName: string; isEcom: boolean }) {
   const db = createAdminClient()
 
-  const { data: wpConnData } = await db
-    .from('client_connections')
-    .select('id, external_id, external_name, connector:connectors!inner(type, config)')
-    .eq('client_id', clientId)
-    .eq('status', 'active')
-    .eq('connector.type', 'wordpress')
-
-  type WpConn = {
-    id: string
-    external_id: string
-    external_name: string | null
-    connector: { type: string; config: Record<string, unknown> }
-  }
-
-  const sites = ((wpConnData ?? []) as unknown as WpConn[]).map(c => ({
-    connectionId: c.id,
-    siteUrl:      c.external_id || String((c.connector.config as Record<string, string>).site_url ?? ''),
-    siteName:     c.external_name || (() => { try { return new URL(c.external_id || '').hostname } catch { return c.external_id || 'unknown' } })(),
-    clientId,
-  }))
-
-  return (
-    <div>
-      <div className="mb-6">
-        <h2 className="page-title" style={{ fontSize: '1.125rem' }}>Content Settings</h2>
-        <p className="section-desc">Configure AI content generation for this client — business background, brand voice, publishing schedule, and more.</p>
-      </div>
-      <ClientContentSettingsForm clientId={clientId} sites={sites} />
-    </div>
-  )
-}
-
-// ─── GSC Opportunities Panel (right column of content tab) ───────────────────
-
-async function GscOpportunitiesPanel({ clientId, isEcom }: { clientId: string; isEcom: boolean }) {
-  const db = createAdminClient()
-
-  // 28-day window so per-day rows aggregate to meaningful totals per (query, page)
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+  const monthStart  = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
-  const [{ data: rawRows }, { data: recentPosts }] = await Promise.all([
+  const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, postsData] = await Promise.all([
+    db.from('client_connections')
+      .select('id, external_id, external_name, connector:connectors!inner(type, config)')
+      .eq('client_id', clientId).eq('status', 'active').eq('connector.type', 'wordpress'),
+    db.from('content_settings')
+      .select('schedule_frequency, schedule_day_of_week, posts_per_run, topics_per_run, weeks_ahead, generate_lead_days, publish_time, auto_generate')
+      .eq('client_id', clientId).maybeSingle(),
+    db.from('content_topics')
+      .select('target_publish_date, status')
+      .eq('client_id', clientId)
+      .in('status', ['scheduled', 'pending', 'generating'])
+      .order('target_publish_date', { ascending: true, nullsFirst: false })
+      .limit(100),
+    db.from('content_posts')
+      .select('id')
+      .eq('client_id', clientId)
+      .gte('generated_at', monthStart)
+      .limit(200),
     db.from('gsc_metrics')
       .select('page, query, impressions, clicks, ctr, position')
       .eq('client_id', clientId)
       .gte('date', windowStart)
-      .neq('page', '')
-      .neq('query', '')
-      .not('page', 'ilike', '%?%'),
+      .neq('page', '').neq('query', '').not('page', 'ilike', '%?%'),
     db.from('content_posts')
       .select('target_keyword')
       .eq('client_id', clientId)
       .gte('generated_at', new Date(Date.now() - 90 * 86_400_000).toISOString())
       .limit(60),
+    db.from('content_posts')
+      .select('id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, generate_by_date, target_publish_date, wp_post_id, wp_site_url, topic_rationale')
+      .eq('client_id', clientId)
+      .order('generated_at', { ascending: false })
+      .limit(200),
   ])
 
-  // Aggregate by (query, page) — weighted average for position and CTR
+  type WpConn = { id: string; external_id: string; external_name: string | null; connector: { type: string; config: Record<string, unknown> } }
+  const sites = ((wpConnData.data ?? []) as unknown as WpConn[]).map(c => ({
+    connectionId: c.id,
+    siteUrl:      c.external_id || String((c.connector.config as Record<string, string>).site_url ?? ''),
+    siteName:     c.external_name || (() => { try { return new URL(c.external_id || '').hostname } catch { return c.external_id || 'unknown' } })(),
+    clientId,
+    clientName,
+  }))
+
+  const upcomingTopics    = (topicsData.data ?? []) as { target_publish_date: string | null; status: string }[]
+  const nextPublishDate   = upcomingTopics[0]?.target_publish_date ?? null
+  const recentPostsCount  = (recentPostsData.data ?? []).length
+
+  // GSC aggregation
   type AggRow = { page: string; query: string; impressions: number; clicks: number; weightedPos: number; weightedCtr: number }
   const agg = new Map<string, AggRow>()
-
-  for (const r of (rawRows ?? []) as { page: string; query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
+  for (const r of (gscRaw.data ?? []) as { page: string; query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
     if (!r.page || !r.query) continue
-    if (isEcom && (
-      r.page.includes('/product/') || r.page.includes('/products/') ||
-      r.page.includes('/shop/')    || r.page.includes('/collection/') ||
-      r.page.includes('/collections/')
-    )) continue
-
     const key  = `${r.query}||${r.page}`
     const impr = r.impressions ?? 0
     const ex   = agg.get(key)
@@ -693,48 +669,76 @@ async function GscOpportunitiesPanel({ clientId, isEcom }: { clientId: string; i
       ex.impressions += impr
       ex.clicks      += r.clicks ?? 0
     } else {
-      agg.set(key, { page: r.page, query: r.query, impressions: impr, clicks: r.clicks ?? 0,
-        weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0 })
+      agg.set(key, { page: r.page, query: r.query, impressions: impr, clicks: r.clicks ?? 0, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0 })
     }
   }
 
-  // Mark keywords used in the last 90 days of generated posts
   const recentKeywords = new Set(
-    (recentPosts ?? []).map(p => ((p as { target_keyword?: string }).target_keyword ?? '').toLowerCase().trim()).filter(Boolean)
+    (recentKwData.data ?? []).map(p => ((p as { target_keyword?: string }).target_keyword ?? '').toLowerCase().trim()).filter(Boolean)
   )
 
   const aggRows = Array.from(agg.values()).map(r => ({
-    page:             r.page,
-    query:            r.query,
-    impressions:      r.impressions,
-    ctr:              r.weightedCtr,
-    position:         r.weightedPos,
+    page: r.page, query: r.query, impressions: r.impressions, clicks: r.clicks,
+    ctr: r.weightedCtr, position: r.weightedPos,
     recentlyTargeted: recentKeywords.has(r.query.toLowerCase().trim()),
   }))
 
-  // Filter into sections — thresholds are 28-day totals (not single-day)
   const sortSection = (rows: typeof aggRows, limit: number) =>
-    rows
-      .sort((a, b) => {
-        if (a.recentlyTargeted !== b.recentlyTargeted) return a.recentlyTargeted ? 1 : -1
-        return b.impressions - a.impressions
-      })
-      .slice(0, limit)
+    [...rows].sort((a, b) => {
+      if (a.recentlyTargeted !== b.recentlyTargeted) return a.recentlyTargeted ? 1 : -1
+      return b.impressions - a.impressions
+    }).slice(0, limit)
 
-  const quickWins = sortSection(
-    aggRows.filter(r => r.position >= 5 && r.position <= 10 && r.impressions > 15 && r.ctr < 0.15),
-    12
-  )
-  const growth = sortSection(
-    aggRows.filter(r => r.position > 10 && r.position <= 20 && r.impressions > 10),
-    12
-  )
-  const lowCtr = sortSection(
-    aggRows.filter(r => r.position >= 1 && r.position <= 5  && r.impressions > 20 && r.ctr < 0.06),
-    10
-  )
+  const gscData: GscData = {
+    quickWins:  sortSection(aggRows.filter(r => r.position >= 5  && r.position <= 10 && r.impressions > 15 && r.ctr < 0.15), 25),
+    growth:     sortSection(aggRows.filter(r => r.position > 10  && r.position <= 20 && r.impressions > 10), 25),
+    lowCtr:     sortSection(aggRows.filter(r => r.position >= 1  && r.position <= 5  && r.impressions > 20 && r.ctr < 0.06), 25),
+    highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 50), 25),
+  }
 
-  return <GscInsightsPanel quickWins={quickWins} growth={growth} lowCtr={lowCtr} />
+  // Posts for queue tab
+  const posts = (postsData.data ?? []).map(p => {
+    type P = Record<string, unknown>
+    const r = p as P
+    return {
+      type:             'post' as const,
+      id:               String(r.id),
+      clientId,
+      clientName,
+      status:           String(r.status),
+      targetKeyword:    r.target_keyword ? String(r.target_keyword) : null,
+      title:            r.title         ? String(r.title)          : null,
+      topicText:        null,
+      wordCount:        r.word_count     != null ? Number(r.word_count)    : null,
+      headingCount:     r.heading_count  != null ? Number(r.heading_count) : null,
+      internalLinks:    r.internal_links != null ? Number(r.internal_links): null,
+      generatedAt:      String(r.generated_at),
+      generatedBy:      String(r.generated_by ?? ''),
+      publishedUrl:     r.published_url  ? String(r.published_url)  : null,
+      generateByDate:   r.generate_by_date ? String(r.generate_by_date) : null,
+      targetPublishDate:r.target_publish_date ? String(r.target_publish_date) : null,
+      rationale:        r.topic_rationale ? String(r.topic_rationale) : null,
+      wpPostId:         r.wp_post_id     ? Number(r.wp_post_id)   : null,
+      wpSiteUrl:        r.wp_site_url    ? String(r.wp_site_url)  : null,
+    }
+  })
+
+  return (
+    <ClientContentTabPanel
+      clientId={clientId}
+      clientName={clientName}
+      isEcom={isEcom}
+      sites={sites}
+      contentSettings={settingsData.data as Record<string, unknown> | null}
+      overviewStats={{
+        upcomingTopicsCount: upcomingTopics.length,
+        nextPublishDate,
+        recentPostsCount,
+      }}
+      gscData={gscData}
+      posts={posts}
+    />
+  )
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────

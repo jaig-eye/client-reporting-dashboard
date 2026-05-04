@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/ad-fuel-alerts",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/metric-alerts",
+      "schedule": "0 8 * * *"
     }
   ]
 }

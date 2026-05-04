@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     gscRawRes,
   ] = await Promise.all([
     db.from('agency_settings')
-      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created')
+      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready')
       .single(),
     db.from('clients').select('id, name').eq('id', client_id).single(),
     db.from('content_settings')
@@ -293,7 +293,7 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
 
   // ── Send email notification ────────────────────────────────────────────────
   const notifEmail = settings.notification_email as string | null
-  if (notifEmail && settings.notify_topics_created) {
+  if (notifEmail && (settings.notify_topics_created || settings.notify_topic_ready)) {
     const agencyName = settings.agency_name ?? 'Agency Dashboard'
     try {
       const firstTopicId = (saved as { id: string }[] | null)?.[0]?.id ?? ''

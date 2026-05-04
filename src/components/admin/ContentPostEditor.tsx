@@ -19,6 +19,8 @@ interface UpdatedPost {
   headingCount:  number | null
   internalLinks: number | null
   publishedUrl:  string | null
+  wpPostId?:     number | null
+  wpSiteUrl?:    string | null
 }
 
 interface Props {
@@ -124,6 +126,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [post,         setPost]         = useState<PostDetail | null>(null)
   const [loading,      setLoading]      = useState(true)
   const [regenerating, setRegenerating] = useState(false)
+  const [approving,    setApproving]    = useState(false)
   const [error,        setError]        = useState('')
 
   // Post fields
@@ -246,18 +249,40 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
 
   async function handleApprove() {
+    setApproving(true)
     setError('')
     try {
-      const res = await fetch('/api/admin/content/status', {
-        method:  'POST',
+      // 1. Save all in-drawer edits to DB first
+      const saveRes = await fetch(`/api/admin/content/post?id=${postId}`, {
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ post_id: postId, status: 'approved' }),
+        body:    JSON.stringify({
+          title, seoTitle, content, metaDescription, slug,
+          targetKeyword, suggestedTags: tags, connectionId: connectionId || null,
+          wpAuthorId: authorId,
+        }),
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      setPost(prev => prev ? { ...prev, status: 'approved' } : prev)
-      onUpdate({ id: postId, status: 'approved', title: title || null, targetKeyword: targetKeyword || null, wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks, publishedUrl: post?.publishedUrl ?? null })
+      if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
+
+      // 2. Upload to WordPress as draft
+      const approveRes = await fetch(`/api/admin/content/posts/${postId}/approve`, {
+        method: 'POST',
+      })
+      if (!approveRes.ok) throw new Error((await approveRes.json()).error || 'Failed to upload to WordPress')
+      const result = await approveRes.json() as { wp_post_id: number; wp_edit_url: string }
+
+      onUpdate({
+        id: postId, status: 'draft_saved',
+        title: title || null, targetKeyword: targetKeyword || null,
+        wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
+        publishedUrl: post?.publishedUrl ?? null,
+        wpPostId: result.wp_post_id, wpSiteUrl: post?.wpSiteUrl ?? null,
+      })
+      onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve')
+    } finally {
+      setApproving(false)
     }
   }
 
@@ -704,9 +729,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         {/* Footer actions */}
         {!loading && (
           <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {post?.status === 'pending' && (
-              <button type="button" onClick={handleApprove} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>
-                Approve
+            {post?.status === 'pending' && !isOnWP && (
+              <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
+                {approving ? 'Uploading…' : 'Approve & Upload'}
               </button>
             )}
             <div style={{ flex: 1 }} />

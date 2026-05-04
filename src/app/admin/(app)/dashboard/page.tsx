@@ -13,6 +13,7 @@ import AdminDateSync                 from './AdminDateSync'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
 import type { AgencySettings }       from '@/lib/types'
 import { resolveMetaConversions, calcDelta } from '@/lib/metrics'
+import MetricAlertBanner                   from '@/components/admin/MetricAlertBanner'
 
 export const dynamic = 'force-dynamic'
 
@@ -522,6 +523,9 @@ export default async function AdminOverviewPage({
           <Link href="/admin/clients/new" className="btn btn-primary">+ Add Client</Link>
         </div>
       </div>
+
+      {/* Metric alert banners */}
+      <MetricAlertBanner />
 
       {/* Stat cards — only Sync Errors is clickable */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">

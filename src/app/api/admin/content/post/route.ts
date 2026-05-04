@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed }     from '@/lib/auth'
 
+function countWords(html: string)    { return html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length }
+function countHeadings(html: string) { return (html.match(/<h[2-4][^>]*>/gi) || []).length }
+function countIntLinks(html: string) { return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http')).length }
+
 /**
  * GET /api/admin/content/post?id={post_id}
  * Returns full post detail for the editor drawer.
@@ -47,4 +51,55 @@ export async function GET(request: NextRequest) {
     wpPostId:        p.wp_post_id     ? Number(p.wp_post_id)     : null,
     wpSiteUrl:       p.wp_site_url    ? String(p.wp_site_url)    : null,
   })
+}
+
+/**
+ * PATCH /api/admin/content/post?id={post_id}
+ * Saves editable fields from the ContentPostEditor drawer before WP upload.
+ */
+export async function PATCH(request: NextRequest) {
+  const session = request.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const id = request.nextUrl.searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+  const body = await request.json() as {
+    title?:         string
+    seoTitle?:      string
+    content?:       string
+    metaDescription?: string
+    slug?:          string
+    targetKeyword?: string
+    suggestedTags?: string[]
+    connectionId?:  string | null
+    wpAuthorId?:    number | null
+  }
+
+  const updates: Record<string, unknown> = {}
+  if (body.title         !== undefined) updates.title               = body.title
+  if (body.seoTitle      !== undefined) updates.seo_title           = body.seoTitle
+  if (body.content       !== undefined) {
+    updates.content       = body.content
+    updates.word_count    = countWords(body.content)
+    updates.heading_count = countHeadings(body.content)
+    updates.internal_links = countIntLinks(body.content)
+  }
+  if (body.metaDescription !== undefined) updates.meta_description  = body.metaDescription
+  if (body.slug            !== undefined) updates.slug               = body.slug
+  if (body.targetKeyword   !== undefined) updates.target_keyword     = body.targetKeyword
+  if (body.suggestedTags   !== undefined) updates.suggested_tags     = body.suggestedTags
+  if (body.connectionId    !== undefined) updates.connection_id      = body.connectionId
+  if (body.wpAuthorId      !== undefined) updates.wp_author_id       = body.wpAuthorId
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ ok: true })
+  }
+
+  const db = createAdminClient()
+  const { error } = await db.from('content_posts').update(updates).eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
 }

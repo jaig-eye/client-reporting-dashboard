@@ -926,7 +926,14 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
           sites={sites}
           onClose={() => setEditingPostId(null)}
           onUpdate={updatedPost => {
-            setItems(prev => prev.map(i => i.id === updatedPost.id ? { ...i, ...updatedPost } : i))
+            setItems(prev => prev.map(i =>
+              i.id === updatedPost.id
+                ? { ...i, ...updatedPost,
+                    wpPostId:  updatedPost.wpPostId  !== undefined ? updatedPost.wpPostId  : i.wpPostId,
+                    wpSiteUrl: updatedPost.wpSiteUrl !== undefined ? updatedPost.wpSiteUrl : i.wpSiteUrl,
+                  }
+                : i
+            ))
           }}
         />
       )}

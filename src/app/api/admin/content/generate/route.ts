@@ -283,7 +283,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ───────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated')
+    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded')
     .single()
 
   if (!agencySettings?.ai_api_key) {
@@ -315,7 +315,7 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Load client settings + global settings in parallel ────────────────────
-  const [clientSettingsRes, globalSettingsRes, existingPostsRes] = await Promise.all([
+  const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
           .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id')
@@ -332,6 +332,11 @@ export async function POST(request: NextRequest) {
           .eq('client_id', effectiveClientId)
           .order('generated_at', { ascending: false })
           .limit(50)
+      : Promise.resolve({ data: null }),
+    effectiveClientId
+      ? db.from('content_sitemap_pages')
+          .select('url, is_priority, is_excluded')
+          .eq('client_id', effectiveClientId)
       : Promise.resolve({ data: null }),
   ])
 
@@ -352,6 +357,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Sitemap priority/excluded pages from DB
+  const sitemapRows = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[]
+  const priorityUrls = sitemapRows.filter(r => r.is_priority).map(r => r.url)
+  const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
+  if (priorityUrls.length > 0) {
+    contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
+  }
+  if (excludedUrls.length > 0) {
+    contextLines.push(`\nExcluded pages — do NOT link to or reference these:\n${excludedUrls.join('\n')}`)
+  }
+
   // Multi-sitemap: sitemap_urls[] first, fall back to legacy sitemap_url
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -362,7 +378,9 @@ export async function POST(request: NextRequest) {
 
   if (sitemapUrls.length > 0) {
     const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
-    const unique   = Array.from(new Set(allPages)).slice(0, 60)
+    // Filter out excluded pages and limit remaining
+    const excluded  = new Set(excludedUrls)
+    const unique    = Array.from(new Set(allPages)).filter(u => !excluded.has(u)).slice(0, 60)
     if (unique.length > 0) {
       contextLines.push(`\nAvailable site pages for internal linking:\n${unique.join('\n')}`)
     }
@@ -453,6 +471,7 @@ Target approximately ${targetLength} words.`
       slug:                parsed.slug,
       target_keyword:      parsed.focusKeyword,
       focus_topic:         topicData?.topic ?? null,
+      topic_rationale:     topicData?.rationale ?? null,
       suggested_tags:      parsed.suggestedTags,
       word_count:          computeWordCount(parsed.content),
       heading_count:       computeHeadingCount(parsed.content),
@@ -545,6 +564,29 @@ Target approximately ${targetLength} words.`
             status:              'draft_saved',
             target_publish_date: publishDate,
           }).eq('id', postId)
+
+          // Email notification — post uploaded to WordPress
+          const notifEmail = agencySettings.notification_email as string | null
+          if (notifEmail && agencySettings.notify_post_uploaded) {
+            const agencyName = agencySettings.agency_name || 'Agency Dashboard'
+            const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+            const dateLabel  = publishDate ? ` — publishes ${publishDate}` : ''
+            try {
+              let clientName = ''
+              if (effectiveClientId) {
+                const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
+                clientName = (cl as { name?: string } | null)?.name ?? ''
+              }
+              await sendEmail({
+                to:      notifEmail,
+                subject: `[${agencyName}] Post uploaded to WordPress: ${parsed.title}`,
+                html: `<p>A post for <strong>${clientName || 'a client'}</strong> has been uploaded to WordPress as a draft: <strong>${parsed.title}</strong>${dateLabel}.</p>
+                       <p><a href="${appUrl}/admin/content?tab=queue&highlight=${postId}">View Post →</a></p>`,
+              })
+            } catch (emailErr) {
+              console.error('[generate] WP-upload email error:', emailErr)
+            }
+          }
         }
       } catch (wpErr) {
         console.error('[generate] WP auto-draft failed:', wpErr)
