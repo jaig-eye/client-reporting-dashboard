@@ -176,7 +176,7 @@ export default async function DashboardPage({
   let mRawLife = Number(((mLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
 
   // Gap adjustment: clients with historic_bill_day subtract gap spend (cutoff → effectiveCutoff-1)
-  const historicBillDay = (client as Record<string, unknown>).historic_bill_day as number | null | undefined
+  const historicBillDay = (client as unknown as Record<string, unknown>).historic_bill_day as number | null | undefined
   if (historicBillDay != null) {
     const effCutoff = getEffectiveCutoff(cutoffDate, historicBillDay)
     if (effCutoff > cutoffDate) {
