@@ -880,3 +880,120 @@ export const googleAdsConnector: ConnectorAdapter = {
     }
   },
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Campaign pause / resume (used by auto-pause-ads cron)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function resolveGoogleToken(auth: Record<string, unknown>): Promise<string | null> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+  let accessToken    = auth.access_token  as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  return accessToken ?? null
+}
+
+async function mutateCampaigns(
+  customerId: string,
+  mccId: string,
+  accessToken: string,
+  devToken: string,
+  operations: Record<string, unknown>[]
+): Promise<void> {
+  const id  = customerId.replace(/-/g, '')
+  const mcc = mccId.replace(/-/g, '')
+  const CHUNK = 1000
+  for (let i = 0; i < operations.length; i += CHUNK) {
+    const res = await fetch(`${BASE_URL}/customers/${id}/campaigns:mutate`, {
+      method: 'POST',
+      headers: {
+        Authorization:       `Bearer ${accessToken}`,
+        'developer-token':   devToken,
+        'login-customer-id': mcc,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({ operations: operations.slice(i, i + CHUNK) }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`campaigns:mutate failed ${res.status}: ${text}`)
+    }
+  }
+}
+
+export async function pauseGoogleCampaigns(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>
+): Promise<{ paused: number; resourceNames: string[]; error?: string }> {
+  try {
+    const accessToken = await resolveGoogleToken(auth)
+    if (!accessToken) return { paused: 0, resourceNames: [], error: 'No access token' }
+
+    const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+    const devToken = (auth.developer_token   as string | undefined) || process.env.GOOGLE_DEVELOPER_TOKEN || ''
+
+    const results = await runQuery(
+      externalId, mccId, accessToken,
+      `SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`,
+      devToken
+    )
+
+    if (results.length === 0) return { paused: 0, resourceNames: [] }
+
+    type CampResult = { campaign: { id: string; resourceName: string } }
+    const resourceNames = (results as unknown as CampResult[]).map(r => r.campaign.resourceName)
+
+    await mutateCampaigns(
+      externalId, mccId, accessToken, devToken,
+      resourceNames.map(rn => ({ update: { resourceName: rn, status: 'PAUSED' }, updateMask: 'status' }))
+    )
+
+    return { paused: resourceNames.length, resourceNames }
+  } catch (err) {
+    return { paused: 0, resourceNames: [], error: String(err) }
+  }
+}
+
+export async function resumeGoogleCampaigns(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  resourceNames?: string[]
+): Promise<{ resumed: number; error?: string }> {
+  try {
+    const accessToken = await resolveGoogleToken(auth)
+    if (!accessToken) return { resumed: 0, error: 'No access token' }
+
+    const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+    const devToken = (auth.developer_token   as string | undefined) || process.env.GOOGLE_DEVELOPER_TOKEN || ''
+
+    // If we have specific resource names from the pause log, use those.
+    // Otherwise fall back to all currently PAUSED campaigns.
+    let targets = resourceNames ?? []
+    if (targets.length === 0) {
+      const results = await runQuery(
+        externalId, mccId, accessToken,
+        `SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'PAUSED'`,
+        devToken
+      )
+      type CampResult = { campaign: { id: string; resourceName: string } }
+      targets = (results as unknown as CampResult[]).map(r => r.campaign.resourceName)
+    }
+
+    if (targets.length === 0) return { resumed: 0 }
+
+    await mutateCampaigns(
+      externalId, mccId, accessToken, devToken,
+      targets.map(rn => ({ update: { resourceName: rn, status: 'ENABLED' }, updateMask: 'status' }))
+    )
+
+    return { resumed: targets.length }
+  } catch (err) {
+    return { resumed: 0, error: String(err) }
+  }
+}

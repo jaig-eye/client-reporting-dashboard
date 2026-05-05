@@ -1,0 +1,203 @@
+// Hourly cron — auto-pauses or auto-resumes campaigns based on Ad Fuel balance.
+// Only acts on clients with auto_pause_ads = true.
+// Sends Discord notification and logs every action to ad_pause_log.
+
+import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient }         from '@/lib/supabase/server'
+import { sendDiscordMessage }        from '@/lib/discord'
+import { pauseGoogleCampaigns, resumeGoogleCampaigns } from '@/lib/connectors/google-ads'
+import { pauseMetaCampaigns,  resumeMetaCampaigns  }   from '@/lib/connectors/meta-ads'
+
+export const maxDuration = 300
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get('authorization')
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const db = createAdminClient()
+
+  // Load agency settings + all auto-pause clients + their connections (with auth)
+  const [agencyRes, clientsRes, ledgerRes, gSpendRes, mSpendRes] = await Promise.all([
+    db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token').single(),
+    db.from('clients')
+      .select('id, name, ad_fuel_cut, discord_channel_id, auto_pause_ads, auto_resume_ads, campaigns_paused_at')
+      .eq('auto_pause_ads', true),
+    db.from('ad_fuel_ledger').select('client_id, amount_af, split_override, date_of_payment'),
+    db.rpc('sum_google_spend_by_client', { from_date: '2025-01-01' }),
+    db.rpc('sum_meta_spend_by_client',   { from_date: '2025-01-01' }),
+  ])
+
+  type AgencyRow  = { ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null; discord_bot_token: string | null }
+  type ClientRow  = { id: string; name: string; ad_fuel_cut: number | null; discord_channel_id: string | null; auto_pause_ads: boolean; auto_resume_ads: boolean; campaigns_paused_at: string | null }
+  type SumRow     = { client_id: string; spend: number }
+  type LedgerRow  = { client_id: string; amount_af: number; split_override: number | null; date_of_payment: string }
+
+  const agencyCut  = (agencyRes.data as AgencyRow | null)?.ad_fuel_cut ?? 0.20
+  const cutoffDate = (agencyRes.data as AgencyRow | null)?.ad_fuel_cutoff_date ?? '2025-01-01'
+  const botToken   = (agencyRes.data as AgencyRow | null)?.discord_bot_token ?? null
+  const cutoffMs   = new Date(cutoffDate + 'T00:00:00Z').getTime()
+
+  const clients = (clientsRes.data ?? []) as ClientRow[]
+  if (clients.length === 0) return NextResponse.json({ checked: 0, paused: [], resumed: [] })
+
+  const gMap: Record<string, number> = {}
+  const mMap: Record<string, number> = {}
+  for (const r of (gSpendRes.data ?? []) as SumRow[]) gMap[r.client_id] = Number(r.spend ?? 0)
+  for (const r of (mSpendRes.data ?? []) as SumRow[]) mMap[r.client_id] = Number(r.spend ?? 0)
+
+  const ledgerByClient: Record<string, LedgerRow[]> = {}
+  for (const r of (ledgerRes.data ?? []) as LedgerRow[]) {
+    if (!ledgerByClient[r.client_id]) ledgerByClient[r.client_id] = []
+    ledgerByClient[r.client_id].push(r)
+  }
+
+  // Load active google_ads + meta_ads connections for these clients (with connector auth/config)
+  const clientIds = clients.map(c => c.id)
+  const { data: connectionsData } = await db
+    .from('client_connections')
+    .select('client_id, external_id, connector:connectors!inner(type, auth, config)')
+    .in('client_id', clientIds)
+    .eq('status', 'active')
+    .in('connector.type', ['google_ads', 'meta_ads'])
+
+  type ConnRow = {
+    client_id:   string
+    external_id: string
+    connector:   { type: string; auth: Record<string, unknown>; config: Record<string, unknown> }
+  }
+  const connections = (connectionsData ?? []) as unknown as ConnRow[]
+
+  const googleByClient: Record<string, ConnRow> = {}
+  const metaByClient:   Record<string, ConnRow> = {}
+  for (const c of connections) {
+    if (c.connector.type === 'google_ads') googleByClient[c.client_id] = c
+    if (c.connector.type === 'meta_ads')   metaByClient[c.client_id]   = c
+  }
+
+  const paused:  string[] = []
+  const resumed: string[] = []
+
+  for (const client of clients) {
+    const cut   = client.ad_fuel_cut ?? agencyCut
+    const split = 1 - cut
+
+    const rawSpend = (gMap[client.id] ?? 0) + (mMap[client.id] ?? 0)
+    const afSpend  = split > 0 ? rawSpend / split : 0
+
+    let afPurchased = 0
+    for (const e of ledgerByClient[client.id] ?? []) {
+      const eMs = new Date(e.date_of_payment + 'T00:00:00Z').getTime()
+      if (eMs >= cutoffMs) afPurchased += Number(e.amount_af)
+    }
+
+    const balance          = afPurchased - afSpend
+    const isPaused         = client.campaigns_paused_at !== null
+    const googleConn       = googleByClient[client.id]
+    const metaConn         = metaByClient[client.id]
+
+    // ── AUTO-PAUSE ────────────────────────────────────────────────────────────
+    if (balance < 0 && !isPaused) {
+      let googleCount = 0, metaCount = 0
+      let googleError: string | undefined, metaError: string | undefined
+      let googleResourceNames: string[] = [], metaCampaignIds: string[] = []
+
+      if (googleConn) {
+        const result = await pauseGoogleCampaigns(googleConn.external_id, googleConn.connector.auth, googleConn.connector.config)
+        googleCount         = result.paused
+        googleError         = result.error
+        googleResourceNames = result.resourceNames
+      }
+      if (metaConn) {
+        const result = await pauseMetaCampaigns(metaConn.external_id, metaConn.connector.auth)
+        metaCount       = result.paused
+        metaError       = result.error
+        metaCampaignIds = result.campaignIds
+      }
+
+      const anySuccess = googleCount > 0 || metaCount > 0
+      const errorMsg   = [googleError, metaError].filter(Boolean).join('; ') || null
+
+      await Promise.all([
+        db.from('clients').update({ campaigns_paused_at: new Date().toISOString() }).eq('id', client.id),
+        db.from('ad_pause_log').insert({
+          client_id:                 client.id,
+          action:                    anySuccess ? 'paused' : 'pause_failed',
+          trigger:                   'auto',
+          balance:                   Number(balance.toFixed(2)),
+          google_campaigns_affected: googleCount,
+          meta_campaigns_affected:   metaCount,
+          paused_campaign_ids:       { google: googleResourceNames, meta: metaCampaignIds },
+          error:                     errorMsg,
+        }),
+      ])
+
+      if (botToken && client.discord_channel_id) {
+        const total   = googleCount + metaCount
+        const balStr  = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+        const msg = `🚨 **Ad Fuel Auto-Pause — ${client.name}**: Balance is -${balStr}. ${total} campaign(s) paused (${googleCount} Google, ${metaCount} Meta).${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
+        try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+      }
+
+      paused.push(client.name)
+    }
+
+    // ── AUTO-RESUME ────────────────────────────────────────────────────────────
+    else if (balance >= 0 && isPaused && client.auto_resume_ads) {
+      // Look up stored campaign IDs from the most recent pause log
+      const { data: lastLog } = await db
+        .from('ad_pause_log')
+        .select('paused_campaign_ids')
+        .eq('client_id', client.id)
+        .eq('action', 'paused')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      type PausedIds = { google?: string[]; meta?: string[] }
+      const storedIds = (lastLog?.paused_campaign_ids ?? {}) as PausedIds
+
+      let googleCount = 0, metaCount = 0
+      let googleError: string | undefined, metaError: string | undefined
+
+      if (googleConn) {
+        const result = await resumeGoogleCampaigns(googleConn.external_id, googleConn.connector.auth, googleConn.connector.config, storedIds.google)
+        googleCount = result.resumed
+        googleError = result.error
+      }
+      if (metaConn) {
+        const result = await resumeMetaCampaigns(metaConn.external_id, metaConn.connector.auth, storedIds.meta)
+        metaCount = result.resumed
+        metaError = result.error
+      }
+
+      const anySuccess = googleCount > 0 || metaCount > 0
+      const errorMsg   = [googleError, metaError].filter(Boolean).join('; ') || null
+
+      await Promise.all([
+        db.from('clients').update({ campaigns_paused_at: null }).eq('id', client.id),
+        db.from('ad_pause_log').insert({
+          client_id:                 client.id,
+          action:                    anySuccess ? 'resumed' : 'resume_failed',
+          trigger:                   'auto',
+          balance:                   Number(balance.toFixed(2)),
+          google_campaigns_affected: googleCount,
+          meta_campaigns_affected:   metaCount,
+          error:                     errorMsg,
+        }),
+      ])
+
+      if (botToken && client.discord_channel_id) {
+        const total  = googleCount + metaCount
+        const balStr = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+        const msg = `✅ **Ad Fuel Auto-Resume — ${client.name}**: Balance restored to ${balStr}. ${total} campaign(s) resumed (${googleCount} Google, ${metaCount} Meta).${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
+        try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+      }
+
+      resumed.push(client.name)
+    }
+  }
+
+  return NextResponse.json({ checked: clients.length, paused, resumed })
+}

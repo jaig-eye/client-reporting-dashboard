@@ -29,6 +29,7 @@ import ClientBenchmarks from './ClientBenchmarks'
 import ClientMetricVisibility from './ClientMetricVisibility'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import ClientDirectConnections from './ClientDirectConnections'
+import ClientAutoPauseSettings from './ClientAutoPauseSettings'
 import ClientIntegrationCards from '@/components/admin/ClientIntegrationCards'
 import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
@@ -40,6 +41,7 @@ const TABS = [
   { id: 'sources',      label: 'Integrations' },
   { id: 'performance',  label: 'Metrics'      },
   { id: 'content',      label: 'Content'      },
+  { id: 'adfuel',       label: 'Ad Fuel'      },
   { id: 'advanced',     label: 'Advanced'     },
 ]
 
@@ -57,7 +59,7 @@ export default async function ClientDetailPage({
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
-  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes, coverageRes] = await Promise.all([
+  const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes, coverageRes, pauseLogRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('client_connections')
       .select('*, connector:connectors(*)')
@@ -76,6 +78,7 @@ export default async function ClientDetailPage({
       .not('discovered_actions', 'is', null)
       .limit(200),
     db.rpc('get_client_data_coverage', { p_client_id: id }).then(r => r.error ? { data: [] } : r),
+    db.from('ad_pause_log').select('*').eq('client_id', id).order('created_at', { ascending: false }).limit(20),
   ])
 
   const client = clientRes.data as Client | null
@@ -91,6 +94,7 @@ export default async function ClientDetailPage({
   }
 
   const connections  = (connectionsRes.data ?? []) as (ClientConnection & { connector: Connector })[]
+  const pauseLog     = (pauseLogRes.data ?? []) as { id: string; action: string; trigger: string; balance: number | null; google_campaigns_affected: number; meta_campaigns_affected: number; error: string | null; created_at: string }[]
   const connectors   = (connectorsRes.data  ?? []) as Connector[]
   const recentJobs   = (recentJobsRes.data  ?? []) as SyncJob[]
   const coverageRows = ((coverageRes as { data: CoverageRow[] }).data ?? []).filter(r => r.min_date !== null)
@@ -487,6 +491,26 @@ export default async function ClientDetailPage({
       {/* ── CONTENT ──────────────────────────────────────────────── */}
       {activeTab === 'content' && (
         <ContentTabSection clientId={id} clientName={client.name} isEcom={client.layout_type === 'ecom'} />
+      )}
+
+      {/* ── AD FUEL ──────────────────────────────────────────────── */}
+      {activeTab === 'adfuel' && (
+        <div className="max-w-2xl">
+          <div className="mb-4">
+            <h2 className="section-title">Ad Fuel</h2>
+            <p className="section-desc">
+              Auto-pause settings for this client. Balance details are in{' '}
+              <a href="/admin/ad-fuel" style={{ color: 'var(--blue)' }}>Ad Fuel → Dashboard</a>.
+            </p>
+          </div>
+          <ClientAutoPauseSettings
+            clientId={id}
+            autoPauseAds={(client as unknown as Record<string, unknown>).auto_pause_ads as boolean ?? false}
+            autoResumeAds={(client as unknown as Record<string, unknown>).auto_resume_ads as boolean ?? false}
+            campaignsPausedAt={(client as unknown as Record<string, unknown>).campaigns_paused_at as string | null ?? null}
+            pauseLog={pauseLog}
+          />
+        </div>
       )}
 
       {/* ── ADVANCED ─────────────────────────────────────────────── */}

@@ -30,6 +30,9 @@ interface DashRow {
   afSinceBill:           number | null
   avgDailyAf:            number | null
   pace:                  string
+  autoPauseAds:          boolean
+  autoResumeAds:         boolean
+  campaignsPausedAt:     string | null
 }
 
 interface LedgerEntry {
@@ -147,6 +150,21 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
         ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
       </td>
     )
+    case 'autoPause': return (
+      <td key={key}>
+        {row.campaignsPausedAt ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626' }}>
+            ⏸ PAUSED
+          </span>
+        ) : row.autoPauseAds ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#16a34a' }}>
+            ✓ Auto
+          </span>
+        ) : (
+          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+        )}
+      </td>
+    )
     default: return <td key={key} />
   }
 }
@@ -248,7 +266,7 @@ export default function AdFuelPage() {
 
   // Client edit modal (bill day + budget)
   const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
-  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '' })
+  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '', autoPauseAds: false, autoResumeAds: false })
   const [clientEditSaving, setClientEditSaving] = useState(false)
   const [clientEditError,  setClientEditError]  = useState('')
 
@@ -259,6 +277,8 @@ export default function AdFuelPage() {
       historicBillDay:      String(row.historicBillDay ?? ''),
       monthlyBudget:        String(row.monthlyBudget ?? ''),
       adFuelAlertThreshold: row.adFuelAlertThreshold != null ? String(row.adFuelAlertThreshold) : '',
+      autoPauseAds:         row.autoPauseAds,
+      autoResumeAds:        row.autoResumeAds,
     })
     setClientEditError('')
   }
@@ -272,6 +292,8 @@ export default function AdFuelPage() {
       historic_bill_day:       clientEditForm.historicBillDay      === '' ? null : parseInt(clientEditForm.historicBillDay),
       monthly_budget:          clientEditForm.monthlyBudget        === '' ? null : parseFloat(clientEditForm.monthlyBudget),
       ad_fuel_alert_threshold: clientEditForm.adFuelAlertThreshold === '' ? null : parseFloat(clientEditForm.adFuelAlertThreshold),
+      auto_pause_ads:          clientEditForm.autoPauseAds,
+      auto_resume_ads:         clientEditForm.autoResumeAds,
     }
     const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -1054,6 +1076,45 @@ export default function AdFuelPage() {
                     className="input" style={{ width: '100%' }}
                   />
                 </div>
+              </div>
+
+              {/* ── Auto-Pause Settings ─────────────────────────────── */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Auto-Pause Campaigns</p>
+
+                {clientEditModal?.campaignsPausedAt && (
+                  <div style={{ padding: '0.5rem 0.75rem', borderRadius: 6, background: '#fee2e2', fontSize: '0.75rem', color: '#dc2626', fontWeight: 500 }}>
+                    ⏸ Campaigns paused since {new Date(clientEditModal.campaignsPausedAt).toLocaleDateString()}
+                  </div>
+                )}
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={clientEditForm.autoPauseAds}
+                    onChange={e => setClientEditForm(f => ({ ...f, autoPauseAds: e.target.checked, autoResumeAds: e.target.checked ? f.autoResumeAds : false }))}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.8125rem' }}>
+                    Auto-pause when balance goes negative
+                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>Pauses all active Google &amp; Meta campaigns</span>
+                  </span>
+                </label>
+
+                {clientEditForm.autoPauseAds && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer', marginLeft: '1.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={clientEditForm.autoResumeAds}
+                      onChange={e => setClientEditForm(f => ({ ...f, autoResumeAds: e.target.checked }))}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '0.8125rem' }}>
+                      Auto-resume when balance goes positive
+                      <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>Re-enables paused campaigns automatically</span>
+                    </span>
+                  </label>
+                )}
               </div>
 
               {clientEditError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{clientEditError}</p>}

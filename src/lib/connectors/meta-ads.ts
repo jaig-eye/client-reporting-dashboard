@@ -657,3 +657,98 @@ export const metaAdsConnector: ConnectorAdapter = {
     }
   },
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Campaign pause / resume (used by auto-pause-ads cron)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function metaPost(
+  path: string,
+  accessToken: string,
+  body: Record<string, string>
+): Promise<Record<string, unknown>> {
+  const url = `${BASE_URL}${path}`
+  const params = new URLSearchParams({ access_token: accessToken, ...body })
+  const res = await fetch(url, { method: 'POST', body: params })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Meta API POST error ${res.status}: ${text}`)
+  }
+  return res.json() as Promise<Record<string, unknown>>
+}
+
+export async function pauseMetaCampaigns(
+  externalId: string,
+  auth: Record<string, unknown>
+): Promise<{ paused: number; campaignIds: string[]; error?: string }> {
+  try {
+    const accessToken = resolveToken(auth)
+    if (!accessToken) return { paused: 0, campaignIds: [], error: 'No access token' }
+
+    const acctId = externalId.startsWith('act_') ? externalId : `act_${externalId}`
+
+    // Get all active campaigns
+    const url = new URL(`${BASE_URL}/${acctId}/campaigns`)
+    url.searchParams.set('access_token', accessToken)
+    url.searchParams.set('fields', 'id,status')
+    url.searchParams.set('effective_status', JSON.stringify(['ACTIVE']))
+    url.searchParams.set('limit', '500')
+
+    const res = await fetch(url.toString())
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Meta campaigns fetch failed ${res.status}: ${text}`)
+    }
+    const data = await res.json() as { data: { id: string; status: string }[] }
+    const campaigns = data.data ?? []
+
+    if (campaigns.length === 0) return { paused: 0, campaignIds: [] }
+
+    // Pause each campaign
+    const campaignIds: string[] = []
+    for (const camp of campaigns) {
+      await metaPost(`/${camp.id}`, accessToken, { status: 'PAUSED' })
+      campaignIds.push(camp.id)
+    }
+
+    return { paused: campaignIds.length, campaignIds }
+  } catch (err) {
+    return { paused: 0, campaignIds: [], error: String(err) }
+  }
+}
+
+export async function resumeMetaCampaigns(
+  externalId: string,
+  auth: Record<string, unknown>,
+  campaignIds?: string[]
+): Promise<{ resumed: number; error?: string }> {
+  try {
+    const accessToken = resolveToken(auth)
+    if (!accessToken) return { resumed: 0, error: 'No access token' }
+
+    const acctId = externalId.startsWith('act_') ? externalId : `act_${externalId}`
+
+    // Use stored campaign IDs from the pause log if available
+    let targets = campaignIds ?? []
+    if (targets.length === 0) {
+      const url = new URL(`${BASE_URL}/${acctId}/campaigns`)
+      url.searchParams.set('access_token', accessToken)
+      url.searchParams.set('fields', 'id')
+      url.searchParams.set('effective_status', JSON.stringify(['PAUSED']))
+      url.searchParams.set('limit', '500')
+      const res  = await fetch(url.toString())
+      const data = await res.json() as { data: { id: string }[] }
+      targets    = (data.data ?? []).map(c => c.id)
+    }
+
+    if (targets.length === 0) return { resumed: 0 }
+
+    for (const id of targets) {
+      await metaPost(`/${id}`, accessToken, { status: 'ACTIVE' })
+    }
+
+    return { resumed: targets.length }
+  } catch (err) {
+    return { resumed: 0, error: String(err) }
+  }
+}
