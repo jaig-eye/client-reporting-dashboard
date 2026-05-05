@@ -39,8 +39,8 @@ export default function AdFuelBadge({
   const displayFill = mounted ? rawFill : 0
 
   // Normal: soft blue. Low: amber.
-  const fillColor  = isLow ? 'rgba(251,191,36,0.14)'  : 'rgba(186,210,252,0.26)'
-  const waveColor  = isLow ? 'rgb(251,191,36)'         : 'rgb(186,210,252)'
+  const fillColor  = isLow ? 'rgba(251,191,36,0.14)'  : 'rgba(220,236,255,0.55)'
+  const waveColor  = isLow ? 'rgb(251,191,36)'         : 'rgb(220,236,255)'
   const btnBg      = isLow ? '#f59e0b'                 : '#3b82f6'
   const amtColor   = isLow ? '#d97706'                 : 'var(--text-primary)'
   const borderCol  = isLow ? 'rgba(245,158,11,0.3)'    : 'var(--border, #e5e7eb)'
