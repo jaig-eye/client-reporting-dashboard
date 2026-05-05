@@ -39,7 +39,7 @@ export default function AdFuelBadge({
   const displayFill = mounted ? rawFill : 0
 
   // Normal: soft blue. Low: amber.
-  const fillColor  = isLow ? 'rgba(251,191,36,0.14)'  : 'rgba(220,236,255,0.55)'
+  const fillColor  = isLow ? 'rgba(251,191,36,0.14)'  : 'rgba(220,236,255,0.30)'
   const waveColor  = isLow ? 'rgb(251,191,36)'         : 'rgb(220,236,255)'
   const btnBg      = isLow ? '#f59e0b'                 : '#3b82f6'
   const amtColor   = isLow ? '#d97706'                 : 'var(--text-primary)'
@@ -91,8 +91,8 @@ export default function AdFuelBadge({
             <defs>
               <linearGradient id="adfuelGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%"   stopColor={waveColor} stopOpacity="0"    />
-                <stop offset="42%"  stopColor={waveColor} stopOpacity="0.42" />
-                <stop offset="100%" stopColor={waveColor} stopOpacity="0.55" />
+                <stop offset="42%"  stopColor={waveColor} stopOpacity="0.30" />
+                <stop offset="100%" stopColor={waveColor} stopOpacity="0.30" />
               </linearGradient>
             </defs>
             <path d={WAVE_PATH} fill="url(#adfuelGrad)" />
