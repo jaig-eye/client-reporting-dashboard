@@ -50,6 +50,7 @@ interface Settings {
   notify_schedule_generated:      boolean
   notify_metric_alerts:           boolean
   metric_alert_threshold:         number
+  metric_alert_window_days:       number
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
@@ -91,6 +92,7 @@ const DEFAULT: Settings = {
   notify_schedule_generated:      true,
   notify_metric_alerts:           false,
   metric_alert_threshold:         40,
+  metric_alert_window_days:       14,
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
@@ -602,26 +604,45 @@ export default function AgencySettingsPage() {
               />
               <Toggle
                 label="Metric anomaly alerts (email)"
-                hint="Daily digest when any client metric changes by more than the threshold vs prior 14 days"
+                hint="Daily digest when any client metric changes by more than the threshold vs the prior comparison window"
                 checked={form.notify_metric_alerts}
                 onChange={v => field('notify_metric_alerts', v)}
               />
               {form.notify_metric_alerts && (
-                <div style={{ paddingLeft: 16 }}>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                    Alert Threshold (%)
-                    <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum change to trigger alert</span>
-                  </label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="number"
-                      className="input"
-                      style={{ maxWidth: 100 }}
-                      value={form.metric_alert_threshold}
-                      min={5} max={100} step={5}
-                      onChange={e => field('metric_alert_threshold', Number(e.target.value))}
-                    />
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
+                <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                      Alert Threshold (%)
+                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum change to trigger alert</span>
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="number"
+                        className="input"
+                        style={{ maxWidth: 100 }}
+                        value={form.metric_alert_threshold}
+                        min={5} max={100} step={5}
+                        onChange={e => field('metric_alert_threshold', Number(e.target.value))}
+                      />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                      Comparison Window (days)
+                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — compares last N days vs prior N days</span>
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="number"
+                        className="input"
+                        style={{ maxWidth: 100 }}
+                        value={form.metric_alert_window_days}
+                        min={7} max={90} step={7}
+                        onChange={e => field('metric_alert_window_days', Number(e.target.value))}
+                      />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>days</span>
+                    </div>
                   </div>
                 </div>
               )}

@@ -42,18 +42,19 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, clientsRes] = await Promise.all([
     db.from('agency_settings')
-      .select('notify_metric_alerts, metric_alert_threshold, notification_email, agency_name, ai_provider, ai_model, ai_api_key')
+      .select('notify_metric_alerts, metric_alert_threshold, metric_alert_window_days, notification_email, agency_name, ai_provider, ai_model, ai_api_key')
       .single(),
     db.from('clients').select('id, name'),
   ])
 
-  const agency    = agencyRes.data as Record<string, unknown> | null
-  const threshold = Number(agency?.metric_alert_threshold ?? 0.40)
-  const clients   = (clientsRes.data ?? []) as { id: string; name: string }[]
+  const agency      = agencyRes.data as Record<string, unknown> | null
+  const threshold   = Number(agency?.metric_alert_threshold ?? 0.40)
+  const windowDays  = Math.max(1, Number(agency?.metric_alert_window_days ?? 14))
+  const clients     = (clientsRes.data ?? []) as { id: string; name: string }[]
 
   const now    = new Date()
-  const d14    = new Date(now.getTime() - 14 * 86_400_000).toISOString().slice(0, 10)
-  const d28    = new Date(now.getTime() - 28 * 86_400_000).toISOString().slice(0, 10)
+  const d14    = new Date(now.getTime() - windowDays * 86_400_000).toISOString().slice(0, 10)
+  const d28    = new Date(now.getTime() - windowDays * 2 * 86_400_000).toISOString().slice(0, 10)
 
   const newAlerts: { clientId: string; clientName: string; metric: string; currentVal: number; priorVal: number; pctChange: number; direction: string }[] = []
 
@@ -90,13 +91,14 @@ export async function GET(request: NextRequest) {
       const pct = (cv - pv) / pv
       if (Math.abs(pct) < threshold) continue
 
-      // Check if we already inserted an alert for this client+metric in the last 7 days
+      // Skip if an undismissed alert already exists for this client+metric.
+      // This prevents compounding: once dismissed, a new alert can fire next run.
       const { count } = await db
         .from('metric_alerts')
         .select('id', { count: 'exact', head: true })
         .eq('client_id', client.id)
         .eq('metric', key)
-        .gte('created_at', new Date(now.getTime() - 7 * 86_400_000).toISOString())
+        .is('dismissed_at', null)
 
       if ((count ?? 0) > 0) continue
 
@@ -104,7 +106,7 @@ export async function GET(request: NextRequest) {
 
       // Simple insight without calling AI for now (AI call adds latency + cost)
       const pctLabel = `${Math.abs(pct * 100).toFixed(0)}%`
-      const insight  = `${metricLabel(key)} ${direction === 'up' ? 'increased' : 'decreased'} ${pctLabel} over the last 14 days vs the prior 14 days, from ${formatVal(key, pv)} to ${formatVal(key, cv)}.`
+      const insight  = `${metricLabel(key)} ${direction === 'up' ? 'increased' : 'decreased'} ${pctLabel} over the last ${windowDays} days vs the prior ${windowDays} days, from ${formatVal(key, pv)} to ${formatVal(key, cv)}.`
 
       await db.from('metric_alerts').insert({
         client_id:   client.id,
@@ -131,7 +133,7 @@ export async function GET(request: NextRequest) {
       await sendEmail({
         to:      String(agency.notification_email),
         subject: `[${agencyName}] Metric Anomalies Detected — ${newAlerts.length} alert${newAlerts.length > 1 ? 's' : ''}`,
-        html:    `<p>${newAlerts.length} metric anomal${newAlerts.length > 1 ? 'ies' : 'y'} detected across your clients (14-day vs prior 14 days):</p>
+        html:    `<p>${newAlerts.length} metric anomal${newAlerts.length > 1 ? 'ies' : 'y'} detected across your clients (${windowDays}-day vs prior ${windowDays} days):</p>
                   <table border="1" cellpadding="6" style="border-collapse:collapse">
                     <tr><th>Client</th><th>Metric</th><th>Change</th><th>Values</th></tr>
                     ${rows}
