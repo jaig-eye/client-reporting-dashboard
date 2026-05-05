@@ -25,10 +25,20 @@ function subtractOneDay(date: string): string {
   return d.toISOString().slice(0, 10)
 }
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'x-api-key',
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_HEADERS })
+}
+
 export async function GET(request: NextRequest) {
   const apiKey = request.headers.get('x-api-key')
   if (!apiKey || apiKey !== process.env.ADFUEL_API_KEY) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: CORS_HEADERS })
   }
 
   const locationId = new URL(request.url).searchParams.get('locationId')
@@ -128,5 +138,5 @@ export async function GET(request: NextRequest) {
     currency:   'USD',
     updatedAt:  new Date().toISOString(),
     cached:     false,
-  })
+  }, { headers: CORS_HEADERS })
 }
