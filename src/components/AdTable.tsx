@@ -110,7 +110,6 @@ export function AdGroupTable({
             {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
             {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
             {showCol('ad_count') && <SortTh sk="adCount">Ads</SortTh>}
-            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -133,9 +132,6 @@ export function AdGroupTable({
               {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.roas && row.roas > 0 ? `${row.roas.toFixed(2)}x` : '—'}</td>}
               {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
               {showCol('ad_count') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>}
-              <td className="text-xs" style={{ textAlign: 'right' }}>
-                <a href={row.href} style={{ color: 'var(--blue)', textDecoration: 'none', whiteSpace: 'nowrap' }}>View →</a>
-              </td>
             </tr>
           ))}
         </tbody>
@@ -156,7 +152,6 @@ export function AdGroupTable({
             {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 && totSpend > 0 ? `${(totCv / totSpend).toFixed(2)}x` : '—' })()}</td>}
             {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 ? fmt$(totCv) : '—' })()}</td>}
             {showCol('ad_count') && <td></td>}
-            <td></td>
           </tr>
         </tfoot>
       </table>
@@ -578,31 +573,39 @@ export function AdRowTable({
             )}
 
             {/* Video or image */}
-            {previewAd.video_id ? (
+            {(previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) ? (
               <>
-                <iframe
-                  src={`https://www.youtube.com/embed/${previewAd.video_id}?autoplay=1&rel=0`}
-                  allow="autoplay; fullscreen"
-                  allowFullScreen
-                  style={{ width: '100%', aspectRatio: '16/9', border: 'none', display: 'block' }}
-                />
-                <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', margin: '5px 1rem 0', lineHeight: 1.4 }}>
-                  Video preview via YouTube. Actual ad delivery may differ.
-                </p>
-              </>
-            ) : (previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) ? (
-              <>
-                <img
-                  src={metaImgSrc(
-                    previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!,
-                    previewAd.ad_id,
-                    clientId
+                <div style={{ position: 'relative' }}>
+                  <img
+                    src={metaImgSrc(
+                      previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!,
+                      previewAd.ad_id,
+                      clientId
+                    )}
+                    alt="ad creative"
+                    style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block', background: '#f0f2f5' }}
+                  />
+                  {previewAd.video_id && (
+                    <div style={{
+                      position: 'absolute', inset: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'rgba(0,0,0,0.2)',
+                      pointerEvents: 'none',
+                    }}>
+                      <div style={{
+                        width: 48, height: 48, borderRadius: '50%',
+                        background: 'rgba(255,255,255,0.9)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <svg width="18" height="18" viewBox="0 0 16 16" fill="#111">
+                          <path d="M4 3l10 5-10 5V3z"/>
+                        </svg>
+                      </div>
+                    </div>
                   )}
-                  alt="ad creative"
-                  style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block', background: '#f0f2f5' }}
-                />
+                </div>
                 <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center', margin: '5px 1rem 0', lineHeight: 1.4 }}>
-                  Preview is for reference only. Actual ad appearance and image quality may differ.
+                  {previewAd.video_id ? 'Video ad — thumbnail preview only.' : 'Preview is for reference only. Actual ad appearance may differ.'}
                 </p>
               </>
             ) : null}
