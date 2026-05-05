@@ -15,6 +15,8 @@ import { sendEmail } from '@/lib/email'
 interface TopicIdea {
   topic:               string
   target_keyword:      string
+  search_intent:       string
+  secondary_keywords:  string
   keyword_opportunity: string
   ranking_strategy:    string
   audience_intent:     string
@@ -203,6 +205,8 @@ Return ONLY a JSON array of exactly ${count} objects:
   {
     "topic": "Full blog post title",
     "target_keyword": "primary keyword phrase",
+    "search_intent": "informational | commercial | transactional | navigational",
+    "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
     "keyword_opportunity": "'keyword phrase' — X/mo, pos Y (the specific GSC or keyword data behind this pick)",
     "ranking_strategy": "How this article will outrank existing results (1–2 sentences)",
     "audience_intent": "What the searcher needs or wants (1 sentence)",
@@ -270,6 +274,8 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     client_id,
     topic:               t.topic,
     target_keyword:      t.target_keyword,
+    search_intent:       t.search_intent ?? null,
+    secondary_keywords:  t.secondary_keywords ?? null,
     // Concatenated fallback for backward compat
     rationale:           [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level]
                            .filter(Boolean).join(' | '),

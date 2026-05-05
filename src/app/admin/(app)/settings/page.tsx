@@ -434,27 +434,10 @@ export default function AgencySettingsPage() {
               </div>
             </div>
 
-            <div style={{ marginTop: 24 }}>
-              <h3 className="section-title mb-1" style={{ fontSize: '0.9375rem' }}>Master Writing Prompt</h3>
-              <p className="section-desc mb-3">
-                Override the default blog writing system prompt. Leave blank to use the built-in prompt.
-                Template variables: <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[BRAND_NAME]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[BRAND_DESCRIPTION]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[TARGET_AUDIENCE]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[VOICE_NOTES]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[WORD_COUNT]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[PRIMARY_KEYWORD]</code>{' '}
-                <code style={{ fontFamily: 'monospace', fontSize: '0.8125rem', background: 'var(--bg-muted)', padding: '1px 5px', borderRadius: 3 }}>[WORKING_TITLE]</code>
-              </p>
-              <textarea
-                className="input"
-                rows={20}
-                value={form.master_writing_prompt}
-                onChange={e => field('master_writing_prompt', e.target.value)}
-                placeholder="Paste your master blog writing prompt here…"
-                style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
-              />
-            </div>
+            <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
+              The master writing prompt is managed in{' '}
+              <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.
+            </p>
           </div>
         )}
 

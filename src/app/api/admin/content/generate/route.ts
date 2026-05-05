@@ -308,7 +308,7 @@ export async function POST(request: NextRequest) {
   const agency   = agencySettings.agency_name || 'the agency'
 
   // ── Resolve effective client_id and topic data ─────────────────────────────
-  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null; target_publish_date: string | null }
+  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null; target_publish_date: string | null; search_intent: string | null; secondary_keywords: string | null }
 
   let effectiveClientId = client_id ?? null
   let topicData: TopicData | null = null
@@ -316,7 +316,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords')
       .eq('id', topic_id)
       .single()
     if (topicErr || !topic) {
@@ -339,7 +339,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -432,14 +432,30 @@ export async function POST(request: NextRequest) {
       const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
       clientName = (cl as { name?: string } | null)?.name ?? ''
     }
+    // Build always-include links string for [URLS_AND_ANCHORS]
+    const alwaysIncludeLinks = parseManualLinks((clientSettings.manual_link_urls as string[] | null) ?? [])
+    const urlsAndAnchors = alwaysIncludeLinks.length > 0
+      ? alwaysIncludeLinks.map(l => `${l.url}${l.label ? ` (${l.label})` : ''}`).join('\n')
+      : '(none specified — use priority pages and sitemap context below when contextually relevant)'
+
     masterPreamble = rawMasterPrompt
       .replace(/\[BRAND_NAME\]/g,        clientName)
       .replace(/\[BRAND_DESCRIPTION\]/g, String(clientSettings.business_background ?? ''))
       .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
+      .replace(/\[AUDIENCE_DETAIL\]/g,   String(clientSettings.target_audience ?? ''))
       .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
       .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
       .replace(/\[PRIMARY_KEYWORD\]/g,   topicData?.target_keyword ?? '')
       .replace(/\[WORKING_TITLE\]/g,     topicData?.topic ?? '')
+      .replace(/\[SECONDARY_KEYWORDS\]/g, topicData?.secondary_keywords ?? '(derive LSI terms from topic and primary keyword)')
+      .replace(/\[SEARCH_INTENT\]/g,      topicData?.search_intent ?? 'informational')
+      // Also handle the exact dropdown-style placeholder from the template
+      .replace(/\[informational \| commercial \| transactional \| navigational\]/g, topicData?.search_intent ?? 'informational')
+      .replace(/\[URLS_AND_ANCHORS\]/g,   urlsAndAnchors)
+      .replace(/\[CTA\]/g,                String(clientSettings.cta_list ?? 'Contact us to learn more'))
+      .replace(/\[SOURCES\]/g,            'Research and cite 2–4 credible external sources (gov, edu, original studies, recognized industry publications) yourself')
+      // Strip any remaining unreplaced [PLACEHOLDER] tokens
+      .replace(/\[[A-Z_]+\]/g, '')
   }
 
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)

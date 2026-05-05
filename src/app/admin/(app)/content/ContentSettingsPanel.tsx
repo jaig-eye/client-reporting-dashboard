@@ -8,6 +8,10 @@ interface GlobalSettings {
   post_structure?: string
 }
 
+interface AgencyWritingPrompt {
+  master_writing_prompt?: string
+}
+
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -78,10 +82,18 @@ export default function ContentSettingsPanel({
   const [purging,      setPurging]      = useState(false)
   const [purgeError,   setPurgeError]   = useState('')
 
+  const [writingPrompt,        setWritingPrompt]        = useState('')
+  const [writingPromptSaving,  setWritingPromptSaving]  = useState(false)
+  const [writingPromptSaved,   setWritingPromptSaved]   = useState(false)
+  const [writingPromptError,   setWritingPromptError]   = useState('')
+
   useEffect(() => {
     fetch('/api/admin/content/global-settings')
       .then(r => r.json())
       .then((d: GlobalSettings) => setGlobal({ post_structure: d.post_structure ?? '' }))
+    fetch('/api/admin/settings')
+      .then(r => r.json())
+      .then((d: AgencyWritingPrompt) => setWritingPrompt(d.master_writing_prompt ?? ''))
   }, [])
 
   async function purgeAll() {
@@ -109,6 +121,17 @@ export default function ContentSettingsPanel({
     setGlobalSaving(false)
     if (res.ok) { setGlobalSaved(true); setTimeout(() => setGlobalSaved(false), 2500) }
     else { const d = await res.json(); setGlobalError(d.error || 'Failed to save') }
+  }
+
+  async function saveWritingPrompt() {
+    setWritingPromptSaving(true); setWritingPromptError(''); setWritingPromptSaved(false)
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ master_writing_prompt: writingPrompt }),
+    })
+    setWritingPromptSaving(false)
+    if (res.ok) { setWritingPromptSaved(true); setTimeout(() => setWritingPromptSaved(false), 2500) }
+    else { const d = await res.json(); setWritingPromptError(d.error || 'Failed to save') }
   }
 
   return (
@@ -143,6 +166,39 @@ export default function ContentSettingsPanel({
           </button>
           {globalSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
           {globalError && <span className="text-xs" style={{ color: 'var(--red)' }}>{globalError}</span>}
+        </div>
+      </div>
+
+      {/* Master Writing Prompt */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Master Writing Prompt</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>
+            Override the default AI writing system prompt for all content generation. Leave blank to use the built-in prompt.
+          </p>
+        </div>
+        <div>
+          <textarea
+            className="input"
+            rows={20}
+            style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
+            value={writingPrompt}
+            onChange={e => setWritingPrompt(e.target.value)}
+            placeholder="Paste your master blog writing prompt here…"
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            Template variables substituted automatically:{' '}
+            {['[BRAND_NAME]','[BRAND_DESCRIPTION]','[TARGET_AUDIENCE]','[VOICE_NOTES]','[WORD_COUNT]','[PRIMARY_KEYWORD]','[WORKING_TITLE]','[SECONDARY_KEYWORDS]','[SEARCH_INTENT]','[URLS_AND_ANCHORS]','[CTA]'].map(v => (
+              <code key={v} style={{ fontFamily: 'monospace', background: 'var(--bg-muted)', padding: '1px 4px', borderRadius: 3, marginRight: 4 }}>{v}</code>
+            ))}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="btn btn-primary" onClick={saveWritingPrompt} disabled={writingPromptSaving}>
+            {writingPromptSaving ? 'Saving…' : 'Save Prompt'}
+          </button>
+          {writingPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {writingPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{writingPromptError}</span>}
         </div>
       </div>
 

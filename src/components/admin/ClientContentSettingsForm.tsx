@@ -37,6 +37,7 @@ interface ClientSettings {
   monthly_publish_day?:  number | null
   topics_per_run?:       number
   weeks_ahead?:          number
+  cta_list?:             string
 }
 
 const DAY_NAMES  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -118,6 +119,7 @@ export default function ClientContentSettingsForm({
           monthly_publish_day:  d.monthly_publish_day    ?? null,
           topics_per_run:       d.topics_per_run         ?? 5,
           weeks_ahead:          d.weeks_ahead            ?? 4,
+          cta_list:             (d as Record<string, unknown>).cta_list ? String((d as Record<string, unknown>).cta_list) : '',
         })
         // Multi-sitemap: use sitemap_urls if populated, fall back to legacy sitemap_url
         const urls: string[] = Array.isArray(d.sitemap_urls) && d.sitemap_urls.length > 0
@@ -243,6 +245,21 @@ export default function ClientContentSettingsForm({
         <div>
           <Label hint="used when referencing phone in content">Phone Number</Label>
           <input className="input" type="tel" style={{ width: '50%' }} value={form.phone_number ?? ''} onChange={e => set('phone_number', e.target.value)} placeholder="(321) 555-5555" />
+        </div>
+
+        <div>
+          <Label hint="list the CTAs you want the AI to use at the end of posts">Call-to-Action Options</Label>
+          <textarea
+            className="input"
+            rows={3}
+            style={{ width: '100%' }}
+            value={form.cta_list ?? ''}
+            onChange={e => set('cta_list', e.target.value)}
+            placeholder={`e.g.\nCall us at (321) 555-5555 for a free quote.\nBook online at https://example.com/book\nVisit our showroom at 123 Main St, Orlando FL`}
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            One CTA per line. The AI will choose the most appropriate one for each post's awareness stage.
+          </p>
         </div>
       </div>
 
