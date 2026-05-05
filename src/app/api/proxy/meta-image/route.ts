@@ -38,10 +38,7 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
       if (!accessToken) return null
 
       const url = new URL(`${BASE_URL}/${adId}`)
-      // Request high-res image; thumbnail_width/height upgrades low-res fallback thumbnails
-      url.searchParams.set('fields', 'creative{image_url,thumbnail_url,thumbnail_width,thumbnail_height}')
-      url.searchParams.set('thumbnail_width',  '1080')
-      url.searchParams.set('thumbnail_height', '1080')
+      url.searchParams.set('fields', 'creative{image_url,thumbnail_url}')
       url.searchParams.set('access_token', accessToken)
 
       const res = await fetch(url.toString(), { next: { revalidate: 0 } })
@@ -49,7 +46,6 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
 
       const data = await res.json() as Record<string, unknown>
       const creative = data.creative as Record<string, unknown> | undefined
-      // Prefer high-res image_url; fall back to (now enlarged) thumbnail_url
       return (creative?.image_url ?? creative?.thumbnail_url ?? null) as string | null
     },
     [`meta-img-${adId}-${clientId}`],
