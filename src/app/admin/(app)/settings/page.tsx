@@ -118,9 +118,10 @@ const TABS = [
 ]
 
 const HIDEABLE_CONNECTORS = [
-  { type: 'google_analytics',      label: 'GA4 Analytics',        hint: 'Users, sessions, conversions — Google Analytics 4 tab' },
-  { type: 'google_search_console', label: 'Search Console (GSC)',  hint: 'Keyword positions, impressions, click-through rates'    },
-  { type: 'ahrefs',                label: 'Ahrefs Authority',      hint: 'Domain rating, backlinks, and keyword rankings'         },
+  { type: 'google_analytics',      label: 'GA4 Analytics',        hint: 'Users, sessions, conversions — Google Analytics 4 tab'         },
+  { type: 'google_search_console', label: 'Search Console (GSC)',  hint: 'Keyword positions, impressions, click-through rates'           },
+  { type: 'ahrefs',                label: 'Ahrefs Authority',      hint: 'Domain rating, backlinks, and keyword rankings'                },
+  { type: 'ghl',                   label: 'CRM (LaunchLocal)',     hint: 'Contacts, calls, forms, opportunities — GoHighLevel CRM tab'   },
 ]
 
 export default function AgencySettingsPage() {

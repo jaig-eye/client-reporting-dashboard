@@ -97,7 +97,7 @@ export default async function DashboardPage({
 
   const hasGoogle = isFiltered ? source === 'google_ads' : availableSources.includes('google_ads')
   const hasMeta   = isFiltered ? source === 'meta_ads'   : availableSources.includes('meta_ads')
-  const hasGhl    = availableSources.includes('ghl')
+  const hasGhl    = availableSources.includes('ghl') && !hiddenTypes.has('ghl')
 
   // Most recently synced connection (filtered by source if specified)
   const relevantConnections = isFiltered ? connections.filter(c => c.connector.type === source) : connections
