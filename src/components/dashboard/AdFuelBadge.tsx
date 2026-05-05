@@ -39,7 +39,7 @@ export default function AdFuelBadge({
   const displayFill = mounted ? rawFill : 0
 
   // Normal: soft blue. Low: amber.
-  const fillColor  = isLow ? 'rgba(251,191,36,0.18)'  : 'rgba(186,210,252,0.72)'
+  const fillColor  = isLow ? 'rgba(251,191,36,0.14)'  : 'rgba(186,210,252,0.26)'
   const waveColor  = isLow ? 'rgb(251,191,36)'         : 'rgb(186,210,252)'
   const btnBg      = isLow ? '#f59e0b'                 : '#3b82f6'
   const amtColor   = isLow ? '#d97706'                 : 'var(--text-primary)'
@@ -72,10 +72,10 @@ export default function AdFuelBadge({
         zIndex: 1,
         overflow: 'visible',
       }}>
-        {/* Single wave — sits on top of the fill body, gradient fades to transparent at crests */}
+        {/* Wave — top exactly at fill body edge (top: -22 = -height), no overlap */}
         <div style={{
           position: 'absolute',
-          top: -19, left: 0,
+          top: -22, left: 0,
           width: '100%', height: 22,
           pointerEvents: 'none',
         }}>
@@ -91,8 +91,8 @@ export default function AdFuelBadge({
             <defs>
               <linearGradient id="adfuelGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%"   stopColor={waveColor} stopOpacity="0"    />
-                <stop offset="45%"  stopColor={waveColor} stopOpacity="0.45" />
-                <stop offset="100%" stopColor={waveColor} stopOpacity="0.72" />
+                <stop offset="42%"  stopColor={waveColor} stopOpacity="0.38" />
+                <stop offset="100%" stopColor={waveColor} stopOpacity="0.26" />
               </linearGradient>
             </defs>
             <path d={WAVE_PATH} fill="url(#adfuelGrad)" />
