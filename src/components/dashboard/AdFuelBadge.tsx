@@ -91,8 +91,8 @@ export default function AdFuelBadge({
             <defs>
               <linearGradient id="adfuelGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%"   stopColor={waveColor} stopOpacity="0"    />
-                <stop offset="42%"  stopColor={waveColor} stopOpacity="0.38" />
-                <stop offset="100%" stopColor={waveColor} stopOpacity="0.26" />
+                <stop offset="42%"  stopColor={waveColor} stopOpacity="0.42" />
+                <stop offset="100%" stopColor={waveColor} stopOpacity="0.55" />
               </linearGradient>
             </defs>
             <path d={WAVE_PATH} fill="url(#adfuelGrad)" />
