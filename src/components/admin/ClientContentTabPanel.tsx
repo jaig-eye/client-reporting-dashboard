@@ -281,11 +281,8 @@ function QueueTab({ clientId: _clientId, posts: initialPosts, postsPerRun }: {
   const topics   = items.filter(i => i.type === 'topic')
   const postItems= items.filter(i => i.type === 'post')
 
-  // Cycle window = topics with a targetPublishDate within next 35 days
-  const cycleWindowDate = new Date(Date.now() + 35 * 86_400_000).toISOString().slice(0, 10)
   const approvedInCycle = topics.filter(t =>
-    ['approved', 'generating', 'generated'].includes(t.status) &&
-    t.targetPublishDate != null && t.targetPublishDate <= cycleWindowDate
+    ['approved', 'generating', 'generated'].includes(t.status)
   ).length
   const remaining = Math.max(0, postsPerRun - approvedInCycle)
 

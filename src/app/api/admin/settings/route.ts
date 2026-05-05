@@ -52,6 +52,7 @@ export async function PUT(request: NextRequest) {
     'crm_name',
     'stripe_api_key', 'stripe_webhook_secret',
     'ads_sync_frequency', 'ads_sync_hour_utc',
+    'master_writing_prompt',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

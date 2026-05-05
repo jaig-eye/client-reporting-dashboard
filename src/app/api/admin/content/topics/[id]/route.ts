@@ -34,9 +34,6 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  // Approval now triggers instant generation — set to 'generating' so UI shows progress
-  if (patch.status === 'approved') patch.status = 'generating'
-
   const db = createAdminClient()
   const { data, error } = await db
     .from('content_topics')
@@ -47,9 +44,9 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Auto-reject remaining pending topics once the required approval count is reached
+  // Auto-reject remaining pending/scheduled topics once the approval quota is reached
   const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
-  if (patch.status === 'generating' && topic.target_publish_date) {
+  if (patch.status === 'approved') {
     // Resolve posts_per_run: client-specific setting falls back to global
     const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
       db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),
@@ -59,21 +56,19 @@ export async function PATCH(
       ?? (globalCfg as { posts_per_run: number } | null)?.posts_per_run
       ?? 1
 
-    // Count how many topics are now approved (including the one just approved)
+    // Count all approved/in-progress topics for this client regardless of date
     const { count: approvedCount } = await db
       .from('content_topics')
       .select('id', { count: 'exact', head: true })
       .eq('client_id', topic.client_id)
-      .eq('target_publish_date', topic.target_publish_date)
-      .in('status', ['approved', 'generating', 'generated', 'scheduled'])
+      .in('status', ['approved', 'generating', 'generated'])
 
     if ((approvedCount ?? 0) >= postsNeeded) {
       await db
         .from('content_topics')
         .update({ status: 'rejected' })
         .eq('client_id', topic.client_id)
-        .eq('target_publish_date', topic.target_publish_date)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'scheduled'])
         .neq('id', id)
     }
   }

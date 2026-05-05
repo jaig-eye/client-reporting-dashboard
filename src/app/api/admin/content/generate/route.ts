@@ -190,11 +190,10 @@ function buildSystemPrompt(
   agency: string,
   clientContext: string,
   avoidTopics: string,
-  postStructure: string
+  postStructure: string,
+  masterPreamble?: string | null
 ): string {
-  return `You are a professional SEO content writer for ${agency}.
-
-CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No markdown fences, no explanation, no text before or after the JSON. The object must have exactly these fields:
+  const jsonFormat = `CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No markdown fences, no explanation, no text before or after the JSON. The object must have exactly these fields:
 {
   "title": "Post H1 title — descriptive, includes focus keyword",
   "seoTitle": "SEO/meta title — max 60 chars",
@@ -203,7 +202,20 @@ CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No m
   "slug": "url-friendly-slug-max-5-words",
   "focusKeyword": "primary target keyword phrase",
   "suggestedTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
-}
+}`
+
+  if (masterPreamble) {
+    return `${masterPreamble}
+
+${jsonFormat}
+${clientContext ? `\n${clientContext}` : ''}
+${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
+${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
+  }
+
+  return `You are a professional SEO content writer for ${agency}.
+
+${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 Your writing demonstrates E-E-A-T (Experience, Expertise, Authority, Trustworthiness).
 
@@ -283,7 +295,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ───────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded')
+    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt')
     .single()
 
   if (!agencySettings?.ai_api_key) {
@@ -313,11 +325,14 @@ export async function POST(request: NextRequest) {
     topicData         = topic as unknown as TopicData
     effectiveClientId = (topic as unknown as { client_id: string }).client_id
 
-    // Idempotency guard: if a post already exists for this topic, return it
-    const { data: existingPost } = await db.from('content_posts').select('id').eq('topic_id', topic_id).maybeSingle()
-    if (existingPost) {
-      return NextResponse.json({ ok: true, postId: (existingPost as { id: string }).id, skipped: true })
+    // Idempotency guard: if topic already has a linked post, return it
+    const { data: topicIdempotency } = await db.from('content_topics').select('post_id').eq('id', topic_id).single()
+    if ((topicIdempotency as { post_id: string | null } | null)?.post_id) {
+      return NextResponse.json({ ok: true, postId: (topicIdempotency as { post_id: string }).post_id, skipped: true })
     }
+
+    // Mark topic as generating so UI shows progress immediately
+    await db.from('content_topics').update({ status: 'generating' }).eq('id', topic_id)
   }
 
   // ── Load client settings + global settings in parallel ────────────────────
@@ -408,7 +423,26 @@ export async function POST(request: NextRequest) {
     clientSettings?.post_structure as string | undefined
   )
 
-  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure)
+  // Master writing prompt — substitute client Brand DNA variables if template is set
+  let masterPreamble: string | null = null
+  const rawMasterPrompt = (agencySettings as Record<string, unknown>).master_writing_prompt as string | null
+  if (rawMasterPrompt && clientSettings) {
+    let clientName = ''
+    if (effectiveClientId) {
+      const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
+      clientName = (cl as { name?: string } | null)?.name ?? ''
+    }
+    masterPreamble = rawMasterPrompt
+      .replace(/\[BRAND_NAME\]/g,        clientName)
+      .replace(/\[BRAND_DESCRIPTION\]/g, String(clientSettings.business_background ?? ''))
+      .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
+      .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
+      .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
+      .replace(/\[PRIMARY_KEYWORD\]/g,   topicData?.target_keyword ?? '')
+      .replace(/\[WORKING_TITLE\]/g,     topicData?.topic ?? '')
+  }
+
+  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)
 
   // ── Build user prompt ──────────────────────────────────────────────────────
   let userPrompt: string
@@ -465,7 +499,18 @@ Target approximately ${targetLength} words.`
   // ── Save to content_posts ──────────────────────────────────────────────────
   let postId: string | null = null
   if (effectiveClientId) {
-    const connectionId = (clientSettings?.connection_id as string | null) ?? null
+    let connectionId = (clientSettings?.connection_id as string | null) ?? null
+    if (!connectionId && effectiveClientId) {
+      const { data: fallbackConn } = await db
+        .from('client_connections')
+        .select('id, connector:connectors!inner(type)')
+        .eq('client_id', effectiveClientId)
+        .eq('status', 'active')
+        .eq('connector.type', 'wordpress')
+        .limit(1)
+        .maybeSingle()
+      connectionId = (fallbackConn as { id: string } | null)?.id ?? null
+    }
     const postRow = {
       client_id:           effectiveClientId,
       connection_id:       connectionId,
