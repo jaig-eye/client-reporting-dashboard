@@ -91,16 +91,18 @@ export default function ContentCalendar({
     else pendingByClient.set(item.clientId, { clientName: item.clientName, items: [item] })
   }
 
-  // Filter items for timeline (current month)
+  // Filter items for timeline — pending/scheduled topics live in the banner only
   const filtered = items.filter(item => {
     if (!item.targetPublishDate) return false
+    // Never show unapproved topics in the timeline
+    if (item.type === 'topic' && (item.status === 'pending' || item.status === 'scheduled')) return false
     const d = new Date(item.targetPublishDate + 'T00:00:00')
     if (d.getFullYear() !== year || d.getMonth() !== month) return false
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
-    if (statusFilter === 'awaiting' && !(item.type === 'topic' && (item.status === 'pending' || item.status === 'scheduled'))) return false
     if (statusFilter === 'generating' && item.status !== 'generating') return false
+    if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
     if (statusFilter === 'draft_saved' && item.status !== 'draft_saved') return false
-    if (statusFilter === 'rejected' && item.status !== 'rejected') return false
+    if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
     return true
   })
 
@@ -154,52 +156,153 @@ export default function ContentCalendar({
       {/* ── Pending Approvals Banner ──────────────────────────────────────────── */}
       {pendingApproval.length > 0 && (
         <div style={{
-          marginBottom: 20, borderRadius: 10, overflow: 'hidden',
-          border: '1px solid rgba(245,158,11,0.3)',
-          background: 'rgba(254,252,232,0.8)',
+          marginBottom: 24, borderRadius: 10, overflow: 'hidden',
+          border: '1px solid rgba(245,158,11,0.35)',
+          background: 'rgba(255,251,235,0.95)',
         }}>
+          {/* Banner header */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 16px', borderBottom: collapsed ? 'none' : '1px solid rgba(245,158,11,0.2)',
+            padding: '10px 16px',
+            borderBottom: collapsed ? 'none' : '1px solid rgba(245,158,11,0.2)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{
-                width: 7, height: 7, borderRadius: '50%', background: '#f59e0b',
-                animation: 'pulse 1.5s ease-in-out infinite', flexShrink: 0,
+                width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', flexShrink: 0,
+                animation: 'pulse 1.5s ease-in-out infinite',
               }} />
               <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#92400e' }}>
-                {pendingApproval.length} topic{pendingApproval.length !== 1 ? 's' : ''} awaiting approval
-                {' '}across {pendingByClient.size} client{pendingByClient.size !== 1 ? 's' : ''}
+                Topics awaiting approval
+              </span>
+              <span style={{
+                fontSize: '0.6875rem', fontWeight: 700, padding: '1px 7px',
+                borderRadius: 999, background: '#f59e0b', color: '#fff',
+              }}>
+                {pendingApproval.length}
               </span>
             </div>
             <button
               onClick={() => setCollapsed(c => !c)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#b45309', padding: '2px 6px' }}
             >
-              {collapsed ? 'Show ▾' : 'Hide ▴'}
+              {collapsed ? 'Show ▾' : 'Collapse ▴'}
             </button>
           </div>
 
           {!collapsed && (
-            <div style={{ padding: '8px 16px 12px' }}>
-              {Array.from(pendingByClient.entries()).map(([clientId, { clientName, items: clientItems }]) => (
-                <div key={clientId} style={{ marginBottom: 8 }}>
+            <div style={{ padding: '12px 16px 16px' }}>
+              {Array.from(pendingByClient.entries()).map(([clientId, { clientName, items: clientTopics }], groupIdx) => (
+                <div key={clientId} style={{
+                  marginBottom: groupIdx < pendingByClient.size - 1 ? 20 : 0,
+                }}>
+                  {/* Client header row */}
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    marginBottom: 8, paddingBottom: 6,
+                    borderBottom: '1px solid rgba(245,158,11,0.2)',
                   }}>
-                    <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#b45309' }}>{clientName}</span>
-                    <span style={{ fontSize: '0.75rem', color: '#d97706' }}>
-                      {clientItems.length} topic{clientItems.length !== 1 ? 's' : ''}
+                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#b45309' }}>
+                      {clientName}
                     </span>
-                    <button
-                      onClick={() => { setClientFilter(clientId); setStatusFilter('awaiting') }}
-                      style={{
-                        fontSize: '0.6875rem', padding: '2px 8px', borderRadius: 999,
-                        background: '#f59e0b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600,
-                      }}
-                    >
-                      Review →
-                    </button>
+                    <span style={{
+                      fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999,
+                      background: 'rgba(245,158,11,0.15)', color: '#b45309',
+                    }}>
+                      {clientTopics.length} topic{clientTopics.length !== 1 ? 's' : ''} — approve the ones you want
+                    </span>
+                  </div>
+
+                  {/* Topic rows */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {clientTopics.map(topic => {
+                      const isGen = generating.has(topic.id) || topic.status === 'generating'
+                      const err   = approveErr[topic.id]
+                      const publishFmt = topic.targetPublishDate
+                        ? new Date(topic.targetPublishDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        : null
+
+                      return (
+                        <div key={topic.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '7px 10px', borderRadius: 7,
+                          background: 'rgba(255,255,255,0.8)',
+                          border: '1px solid rgba(245,158,11,0.15)',
+                        }}>
+                          {/* Status dot */}
+                          <span style={{
+                            width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                            background: isGen ? '#3b82f6' : '#f59e0b',
+                            animation: isGen ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                          }} />
+
+                          {/* Topic text */}
+                          <span style={{
+                            flex: 1, fontSize: '0.8125rem', fontStyle: 'italic',
+                            color: 'var(--text-primary)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {topic.topicText ?? topic.targetKeyword ?? 'Topic'}
+                          </span>
+
+                          {/* Keyword pill */}
+                          {topic.targetKeyword && (
+                            <span style={{
+                              fontSize: '0.6875rem', padding: '1px 7px', borderRadius: 999,
+                              background: 'var(--bg-muted)', color: 'var(--text-muted)',
+                              flexShrink: 0, maxWidth: 140,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {topic.targetKeyword}
+                            </span>
+                          )}
+
+                          {/* Publish date */}
+                          {publishFmt && (
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                              {publishFmt}
+                            </span>
+                          )}
+
+                          {/* Actions */}
+                          {isGen ? (
+                            <span style={{ fontSize: '0.75rem', color: '#3b82f6', flexShrink: 0, fontWeight: 500 }}>
+                              Generating…
+                            </span>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                              <button
+                                onClick={() => approveTopic(topic)}
+                                className="btn btn-primary"
+                                style={{ fontSize: '0.6875rem', padding: '3px 12px' }}
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  await fetch(`/api/admin/content/topics/${topic.id}`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ status: 'rejected' }),
+                                  })
+                                  setItems(prev => prev.filter(i => i.id !== topic.id))
+                                }}
+                                style={{
+                                  fontSize: '0.6875rem', padding: '3px 7px', border: '1px solid rgba(245,158,11,0.3)',
+                                  borderRadius: 5, background: 'transparent', color: '#b45309', cursor: 'pointer',
+                                }}
+                                title="Skip this topic"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
+
+                          {err && (
+                            <span style={{ fontSize: '0.6875rem', color: '#ef4444', flexShrink: 0 }}>{err}</span>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -238,11 +341,11 @@ export default function ContentCalendar({
         {/* Status filter */}
         <div style={{ display: 'flex', gap: 4, background: 'var(--bg-muted)', borderRadius: 24, padding: 3 }}>
           {[
-            { id: 'all',        label: 'All'              },
-            { id: 'awaiting',   label: 'Awaiting Approval'},
-            { id: 'generating', label: 'Generating'       },
-            { id: 'draft_saved',label: 'On WordPress'     },
-            { id: 'rejected',   label: 'Rejected'         },
+            { id: 'all',        label: 'All'         },
+            { id: 'approved',   label: 'Approved'    },
+            { id: 'generating', label: 'Generating'  },
+            { id: 'draft_saved',label: 'On WordPress'},
+            { id: 'rejected',   label: 'Rejected'    },
           ].map(t => (
             <button key={t.id} style={tabStyle(statusFilter === t.id)} onClick={() => setStatusFilter(t.id)}>
               {t.label}
