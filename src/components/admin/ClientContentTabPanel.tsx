@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useRouter }                 from 'next/navigation'
 import ClientContentSettingsForm from './ClientContentSettingsForm'
 import ClientSitemapTab          from './ClientSitemapTab'
-import ContentQueue              from './ContentQueue'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -76,8 +76,9 @@ interface Props {
     nextPublishDate:     string | null
     recentPostsCount:    number
   }
-  gscData:  GscData
-  posts:    QueueItem[]
+  gscData:     GscData
+  posts:       QueueItem[]
+  postsPerRun: number
 }
 
 type SubTab = 'overview' | 'brand-dna' | 'sitemap' | 'priority' | 'gsc' | 'queue'
@@ -94,7 +95,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ClientContentTabPanel({
-  clientId, clientName, isEcom, sites, contentSettings, overviewStats, gscData, posts,
+  clientId, clientName, isEcom, sites, contentSettings, overviewStats, gscData, posts, postsPerRun,
 }: Props) {
   const [activeTab, setActiveTab] = useState<SubTab>('overview')
 
@@ -132,9 +133,10 @@ export default function ClientContentTabPanel({
       {activeTab === 'priority'  && <PriorityTab clientId={clientId} />}
       {activeTab === 'gsc'       && <GscTab data={gscData} isEcom={isEcom} />}
       {activeTab === 'queue'     && (
-        <ContentQueue
+        <QueueTab
+          clientId={clientId}
           posts={posts.filter(p => p.clientId === clientId)}
-          sites={sites}
+          postsPerRun={postsPerRun}
         />
       )}
     </div>
@@ -256,6 +258,355 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: '0.8125rem' }}>
       <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{label}:</span>
       <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{value}</span>
+    </div>
+  )
+}
+
+// ─── Queue sub-tab ────────────────────────────────────────────────────────────
+
+function QueueTab({ clientId: _clientId, posts: initialPosts, postsPerRun }: {
+  clientId:    string
+  posts:       QueueItem[]
+  postsPerRun: number
+}) {
+  const router = useRouter()
+  const [items,        setItems]        = useState(initialPosts)
+  const [generatingIds,setGeneratingIds]= useState<Set<string>>(new Set())
+  const [errors,       setErrors]       = useState<Record<string, string>>({})
+  const [deletingIds,  setDeletingIds]  = useState<Set<string>>(new Set())
+
+  useEffect(() => { setItems(initialPosts) }, [initialPosts])
+
+  const topics   = items.filter(i => i.type === 'topic')
+  const postItems= items.filter(i => i.type === 'post')
+
+  // Cycle window = topics with a targetPublishDate within next 35 days
+  const cycleWindowDate = new Date(Date.now() + 35 * 86_400_000).toISOString().slice(0, 10)
+  const approvedInCycle = topics.filter(t =>
+    ['approved', 'generating', 'generated'].includes(t.status) &&
+    t.targetPublishDate != null && t.targetPublishDate <= cycleWindowDate
+  ).length
+  const remaining = Math.max(0, postsPerRun - approvedInCycle)
+
+  const pendingTopics   = topics.filter(t => ['pending', 'scheduled'].includes(t.status))
+  const inProgressTopics= topics.filter(t => ['approved', 'generating'].includes(t.status))
+  const generatedTopics = topics.filter(t => t.status === 'generated')
+
+  const approveTopic = useCallback(async (topic: QueueItem) => {
+    if (generatingIds.has(topic.id)) return
+    setGeneratingIds(prev => new Set(prev).add(topic.id))
+    setErrors(prev => { const n = { ...prev }; delete n[topic.id]; return n })
+    setItems(prev => prev.map(i => i.id === topic.id ? { ...i, status: 'generating' } : i))
+
+    try {
+      const patchRes = await fetch(`/api/admin/content/topics/${topic.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'approved' }),
+      })
+      if (!patchRes.ok) throw new Error(((await patchRes.json()) as { error?: string }).error || 'Failed')
+      fetch('/api/admin/content/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: topic.id }),
+        keepalive: true,
+      }).then(() => router.refresh()).catch(() => router.refresh())
+    } catch (err) {
+      setErrors(prev => ({ ...prev, [topic.id]: err instanceof Error ? err.message : 'Failed' }))
+      setItems(prev => prev.map(i => i.id === topic.id ? { ...i, status: topic.status } : i))
+    } finally {
+      setGeneratingIds(prev => { const n = new Set(prev); n.delete(topic.id); return n })
+    }
+  }, [generatingIds, router])
+
+  const deleteTopic = useCallback(async (id: string) => {
+    if (deletingIds.has(id)) return
+    setDeletingIds(prev => new Set(prev).add(id))
+    try {
+      await fetch(`/api/admin/content/topics/${id}`, { method: 'DELETE' })
+      setItems(prev => prev.filter(i => i.id !== id))
+    } finally {
+      setDeletingIds(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
+  }, [deletingIds])
+
+  const thStyle: React.CSSProperties = {
+    padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600,
+    color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em',
+    borderBottom: '1px solid var(--border)', background: 'var(--bg-muted)',
+  }
+  const tdStyle: React.CSSProperties = {
+    padding: '8px 10px', fontSize: '0.8125rem', color: 'var(--text-primary)',
+    borderBottom: '1px solid var(--border)',
+  }
+
+  return (
+    <div>
+      {/* ── Cycle context ─────────────────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20,
+        padding: '10px 14px', borderRadius: 8,
+        background: remaining > 0 ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)',
+        border: `1px solid ${remaining > 0 ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}`,
+        fontSize: '0.8125rem',
+      }}>
+        <span style={{ color: 'var(--text-muted)' }}>
+          This cycle needs <strong style={{ color: 'var(--text-primary)' }}>{postsPerRun}</strong> post{postsPerRun !== 1 ? 's' : ''}
+        </span>
+        <span style={{ color: 'var(--text-faint)' }}>·</span>
+        <span style={{ color: 'var(--text-muted)' }}>
+          <strong style={{ color: '#16a34a' }}>{approvedInCycle}</strong> approved
+        </span>
+        {remaining > 0 && (
+          <>
+            <span style={{ color: 'var(--text-faint)' }}>·</span>
+            <span style={{ color: '#d97706', fontWeight: 600 }}>approve {remaining} more</span>
+          </>
+        )}
+        {remaining === 0 && approvedInCycle > 0 && (
+          <>
+            <span style={{ color: 'var(--text-faint)' }}>·</span>
+            <span style={{ color: '#16a34a', fontWeight: 600 }}>cycle complete ✓</span>
+          </>
+        )}
+      </div>
+
+      {/* ── Topics section ────────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 32 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Topics
+        </h3>
+
+        {topics.length === 0 ? (
+          <div className="card p-5" style={{ textAlign: 'center' }}>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+              No topics yet. Use the Overview tab to generate topics for this client.
+            </p>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Topic</th>
+                  <th style={thStyle}>Keyword</th>
+                  <th style={{ ...thStyle, width: 100 }}>Publish Date</th>
+                  <th style={{ ...thStyle, width: 80 }}>Competition</th>
+                  <th style={{ ...thStyle, width: 110 }}>Status</th>
+                  <th style={{ ...thStyle, width: 80 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...pendingTopics, ...inProgressTopics, ...generatedTopics].map(topic => {
+                  const isGen   = generatingIds.has(topic.id) || topic.status === 'generating'
+                  const isDel   = deletingIds.has(topic.id)
+                  const comp    = topic.competitionLevel?.split(/[\s,]/)[0]?.toLowerCase()
+                  const compBadge = comp === 'low' ? { bg: '#dcfce7', color: '#166534' }
+                    : comp === 'high' ? { bg: '#fee2e2', color: '#991b1b' }
+                    : { bg: 'var(--bg-muted)', color: 'var(--text-muted)' }
+
+                  return (
+                    <tr key={topic.id} style={{ opacity: isDel ? 0.4 : 1, transition: 'opacity 0.2s' }}>
+                      <td style={{ ...tdStyle, maxWidth: 0 }}>
+                        <span style={{
+                          display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap', fontStyle: 'italic', maxWidth: 320,
+                          color: 'var(--text-primary)',
+                        }}>
+                          {topic.topicText}
+                        </span>
+                        {errors[topic.id] && (
+                          <span style={{ display: 'block', fontSize: '0.6875rem', color: '#ef4444', marginTop: 2 }}>
+                            {errors[topic.id]}
+                          </span>
+                        )}
+                      </td>
+                      <td style={tdStyle}>
+                        {topic.targetKeyword && (
+                          <span style={{
+                            display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+                            background: 'var(--bg-muted)', color: 'var(--text-muted)',
+                            fontSize: '0.6875rem', maxWidth: 140,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {topic.targetKeyword}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                        {topic.targetPublishDate
+                          ? new Date(topic.targetPublishDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          : '—'}
+                      </td>
+                      <td style={tdStyle}>
+                        {comp && (
+                          <span style={{
+                            display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+                            background: compBadge.bg, color: compBadge.color,
+                            fontSize: '0.6875rem', fontWeight: 600, textTransform: 'capitalize',
+                          }}>
+                            {comp}
+                          </span>
+                        )}
+                      </td>
+                      <td style={tdStyle}>
+                        {isGen ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: '0.75rem' }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                            Generating…
+                          </span>
+                        ) : topic.status === 'generated' ? (
+                          <span style={{ color: '#16a34a', fontSize: '0.75rem', fontWeight: 600 }}>Generated ✓</span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{
+                              width: 6, height: 6, borderRadius: '50%',
+                              background: topic.status === 'pending' ? '#f59e0b' : '#6366f1',
+                            }} />
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                              {topic.status}
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {!isGen && topic.status !== 'generated' && (
+                          <div style={{ display: 'inline-flex', gap: 4 }}>
+                            <button
+                              onClick={() => approveTopic(topic)}
+                              disabled={isGen}
+                              className="btn btn-primary"
+                              style={{ fontSize: '0.6875rem', padding: '3px 10px' }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => deleteTopic(topic.id)}
+                              disabled={isDel}
+                              style={{
+                                fontSize: '0.6875rem', padding: '3px 7px', border: 'none',
+                                background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer',
+                              }}
+                              title="Delete topic"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
+                        {topic.status === 'generated' && (
+                          <button
+                            onClick={() => deleteTopic(topic.id)}
+                            disabled={isDel}
+                            style={{
+                              fontSize: '0.6875rem', padding: '3px 7px', border: 'none',
+                              background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer',
+                            }}
+                            title="Delete topic"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Posts section ─────────────────────────────────────────────────────── */}
+      <div>
+        <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Posts on WordPress
+        </h3>
+
+        {postItems.length === 0 ? (
+          <div className="card p-5" style={{ textAlign: 'center' }}>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+              No posts generated yet. Approve a topic above to start generating.
+            </p>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Title</th>
+                  <th style={{ ...thStyle, width: 90 }}>Status</th>
+                  <th style={{ ...thStyle, width: 80, textAlign: 'right' }}>Words</th>
+                  <th style={{ ...thStyle, width: 100 }}>Publish Date</th>
+                  <th style={{ ...thStyle, width: 120 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {postItems.map(post => {
+                  const statusCfg: Record<string, { bg: string; color: string; label: string }> = {
+                    draft_saved: { bg: '#dcfce7', color: '#166534', label: 'On WP'      },
+                    published:   { bg: '#bbf7d0', color: '#14532d', label: 'Published'  },
+                    pending:     { bg: '#fef3c7', color: '#92400e', label: 'Pending'    },
+                    rejected:    { bg: '#fee2e2', color: '#991b1b', label: 'Rejected'   },
+                  }
+                  const sc = statusCfg[post.status] ?? { bg: 'var(--bg-muted)', color: 'var(--text-muted)', label: post.status }
+
+                  return (
+                    <tr key={post.id}>
+                      <td style={{ ...tdStyle, maxWidth: 0 }}>
+                        <span style={{
+                          display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap', fontWeight: 500, maxWidth: 360,
+                        }}>
+                          {post.title ?? post.targetKeyword ?? '—'}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{
+                          display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+                          background: sc.bg, color: sc.color,
+                          fontSize: '0.6875rem', fontWeight: 600,
+                        }}>
+                          {sc.label}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        {post.wordCount?.toLocaleString() ?? '—'}
+                      </td>
+                      <td style={{ ...tdStyle, color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                        {post.targetPublishDate
+                          ? new Date(post.targetPublishDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          : '—'}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          {post.wpPostId && post.wpSiteUrl && (
+                            <a
+                              href={`${post.wpSiteUrl}/wp-admin/post.php?post=${post.wpPostId}&action=edit`}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ fontSize: '0.6875rem', color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}
+                            >
+                              Edit in WP ↗
+                            </a>
+                          )}
+                          {post.publishedUrl && (
+                            <a
+                              href={post.publishedUrl}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textDecoration: 'none' }}
+                            >
+                              View ↗
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

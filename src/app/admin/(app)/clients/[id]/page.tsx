@@ -614,11 +614,11 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
       .select('schedule_frequency, schedule_day_of_week, posts_per_run, topics_per_run, weeks_ahead, generate_lead_days, publish_time, auto_generate')
       .eq('client_id', clientId).maybeSingle(),
     db.from('content_topics')
-      .select('target_publish_date, status')
+      .select('id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
       .eq('client_id', clientId)
-      .in('status', ['scheduled', 'pending', 'generating'])
+      .in('status', ['pending', 'scheduled', 'approved', 'generating', 'generated'])
       .order('target_publish_date', { ascending: true, nullsFirst: false })
-      .limit(100),
+      .limit(200),
     db.from('content_posts')
       .select('id')
       .eq('client_id', clientId)
@@ -650,8 +650,16 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
     clientName,
   }))
 
-  const upcomingTopics    = (topicsData.data ?? []) as { target_publish_date: string | null; status: string }[]
-  const nextPublishDate   = upcomingTopics[0]?.target_publish_date ?? null
+  type TopicRow = {
+    id: string; topic: string; target_keyword: string | null; target_publish_date: string | null
+    generate_by_date: string | null; status: string; rationale: string | null
+    keyword_opportunity: string | null; ranking_strategy: string | null; audience_intent: string | null
+    why_now: string | null; competition_level: string | null; generation_error: string | null
+    suggested_title: string | null; search_volume: number | null; keyword_difficulty: number | null
+    created_at: string
+  }
+  const upcomingTopics    = (topicsData.data ?? []) as TopicRow[]
+  const nextPublishDate   = upcomingTopics.find(t => ['pending','scheduled','approved','generating'].includes(t.status))?.target_publish_date ?? null
   const recentPostsCount  = (recentPostsData.data ?? []).length
 
   // GSC aggregation
@@ -696,32 +704,68 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
     highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 50), 25),
   }
 
-  // Posts for queue tab
-  const posts = (postsData.data ?? []).map(p => {
-    type P = Record<string, unknown>
-    const r = p as P
-    return {
-      type:             'post' as const,
-      id:               String(r.id),
-      clientId,
-      clientName,
-      status:           String(r.status),
-      targetKeyword:    r.target_keyword ? String(r.target_keyword) : null,
-      title:            r.title         ? String(r.title)          : null,
-      topicText:        null,
-      wordCount:        r.word_count     != null ? Number(r.word_count)    : null,
-      headingCount:     r.heading_count  != null ? Number(r.heading_count) : null,
-      internalLinks:    r.internal_links != null ? Number(r.internal_links): null,
-      generatedAt:      String(r.generated_at),
-      generatedBy:      String(r.generated_by ?? ''),
-      publishedUrl:     r.published_url  ? String(r.published_url)  : null,
-      generateByDate:   r.generate_by_date ? String(r.generate_by_date) : null,
-      targetPublishDate:r.target_publish_date ? String(r.target_publish_date) : null,
-      rationale:        r.topic_rationale ? String(r.topic_rationale) : null,
-      wpPostId:         r.wp_post_id     ? Number(r.wp_post_id)   : null,
-      wpSiteUrl:        r.wp_site_url    ? String(r.wp_site_url)  : null,
-    }
-  })
+  // Topics + posts for queue tab
+  const topicQueueItems = upcomingTopics.map(t => ({
+    type:               'topic' as const,
+    id:                 t.id,
+    clientId,
+    clientName,
+    status:             t.status,
+    targetKeyword:      t.target_keyword ?? null,
+    title:              null,
+    topicText:          t.topic,
+    wordCount:          null,
+    headingCount:       null,
+    internalLinks:      null,
+    generatedAt:        t.created_at,
+    generatedBy:        'scheduled',
+    publishedUrl:       null,
+    generateByDate:     t.generate_by_date ?? null,
+    targetPublishDate:  t.target_publish_date ?? null,
+    rationale:          t.rationale ?? null,
+    wpPostId:           null,
+    wpSiteUrl:          null,
+    keywordOpportunity: t.keyword_opportunity ?? null,
+    rankingStrategy:    t.ranking_strategy ?? null,
+    audienceIntent:     t.audience_intent ?? null,
+    whyNow:             t.why_now ?? null,
+    competitionLevel:   t.competition_level ?? null,
+    generationError:    t.generation_error ?? null,
+    suggestedTitle:     t.suggested_title ?? null,
+    searchVolume:       t.search_volume ?? null,
+    keywordDifficulty:  t.keyword_difficulty ?? null,
+  }))
+
+  const posts = [
+    ...topicQueueItems,
+    ...(postsData.data ?? []).map(p => {
+      type P = Record<string, unknown>
+      const r = p as P
+      return {
+        type:             'post' as const,
+        id:               String(r.id),
+        clientId,
+        clientName,
+        status:           String(r.status),
+        targetKeyword:    r.target_keyword ? String(r.target_keyword) : null,
+        title:            r.title         ? String(r.title)          : null,
+        topicText:        null,
+        wordCount:        r.word_count     != null ? Number(r.word_count)    : null,
+        headingCount:     r.heading_count  != null ? Number(r.heading_count) : null,
+        internalLinks:    r.internal_links != null ? Number(r.internal_links): null,
+        generatedAt:      String(r.generated_at),
+        generatedBy:      String(r.generated_by ?? ''),
+        publishedUrl:     r.published_url  ? String(r.published_url)  : null,
+        generateByDate:   r.generate_by_date ? String(r.generate_by_date) : null,
+        targetPublishDate:r.target_publish_date ? String(r.target_publish_date) : null,
+        rationale:        r.topic_rationale ? String(r.topic_rationale) : null,
+        wpPostId:         r.wp_post_id     ? Number(r.wp_post_id)   : null,
+        wpSiteUrl:        r.wp_site_url    ? String(r.wp_site_url)  : null,
+      }
+    }),
+  ]
+
+  const postsPerRun = Number((settingsData.data as Record<string, unknown> | null)?.posts_per_run ?? 2)
 
   return (
     <ClientContentTabPanel
@@ -731,12 +775,13 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
       sites={sites}
       contentSettings={settingsData.data as Record<string, unknown> | null}
       overviewStats={{
-        upcomingTopicsCount: upcomingTopics.length,
+        upcomingTopicsCount: upcomingTopics.filter(t => ['pending','scheduled','approved','generating'].includes(t.status)).length,
         nextPublishDate,
         recentPostsCount,
       }}
       gscData={gscData}
       posts={posts}
+      postsPerRun={postsPerRun}
     />
   )
 }

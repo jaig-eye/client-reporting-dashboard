@@ -312,6 +312,12 @@ export async function POST(request: NextRequest) {
     }
     topicData         = topic as unknown as TopicData
     effectiveClientId = (topic as unknown as { client_id: string }).client_id
+
+    // Idempotency guard: if a post already exists for this topic, return it
+    const { data: existingPost } = await db.from('content_posts').select('id').eq('topic_id', topic_id).maybeSingle()
+    if (existingPost) {
+      return NextResponse.json({ ok: true, postId: (existingPost as { id: string }).id, skipped: true })
+    }
   }
 
   // ── Load client settings + global settings in parallel ────────────────────
