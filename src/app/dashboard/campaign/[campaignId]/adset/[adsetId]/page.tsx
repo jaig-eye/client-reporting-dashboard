@@ -811,6 +811,7 @@ export default async function AdSetDetailPage({
                         rows={adRows}
                         conversionLabel={conversionLabel}
                         tableColumns={adsColumns}
+                        clientId={client.id}
                       />
                     )}
                   </div>
@@ -852,6 +853,7 @@ export default async function AdSetDetailPage({
               conversionLabel={conversionLabel}
               showCardView={source === 'meta_ads'}
               tableColumns={adsColumns}
+              clientId={client.id}
             />
           </div>
         )}

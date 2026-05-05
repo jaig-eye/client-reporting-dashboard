@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { CalendarBlank } from '@phosphor-icons/react'
+import { CalendarBlank, Robot } from '@phosphor-icons/react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -119,7 +119,18 @@ function loadCols(): ColConfig[] {
 
 function renderCell(key: string, row: DashRow): React.ReactNode {
   switch (key) {
-    case 'client':       return <td key={key} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>{row.clientName}</td>
+    case 'client':       return (
+      <td key={key} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+          {row.clientName}
+          {row.autoPauseAds && (
+            <span title={row.campaignsPausedAt ? 'Auto-pause active — currently paused' : 'Auto-pause enabled'}>
+              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? '#dc2626' : '#6366f1'} />
+            </span>
+          )}
+        </span>
+      </td>
+    )
     case 'googleAcct':   return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>

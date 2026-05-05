@@ -195,16 +195,25 @@ export interface AdRow {
 
 type AdRowSortKey = 'ad_name' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate'
 
+function metaImgSrc(url: string, adId: string, clientId?: string): string {
+  if (clientId && url.includes('fbcdn.net')) {
+    return `/api/proxy/meta-image?ad_id=${encodeURIComponent(adId)}&client_id=${encodeURIComponent(clientId)}`
+  }
+  return url
+}
+
 export function AdRowTable({
   rows,
   conversionLabel,
   showCardView = false,
   tableColumns,
+  clientId,
 }: {
   rows:             AdRow[]
   conversionLabel:  string
   showCardView?:    boolean
   tableColumns?:    string[]
+  clientId?:        string
 }) {
   const showCol = (key: string) => !tableColumns || tableColumns.includes(key)
   const [sortKey, setSortKey]   = useState<AdRowSortKey | null>(null)
@@ -306,7 +315,7 @@ export function AdRowTable({
                 {previewImg ? (
                   <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', overflow: 'hidden' }}>
                     <img
-                      src={previewImg.includes('fbcdn.net') && !previewImg.includes('?') ? `${previewImg}?width=600` : previewImg}
+                      src={metaImgSrc(previewImg, row.ad_id, clientId)}
                       alt={row.ad_name}
                       loading="lazy"
                       decoding="async"
@@ -433,19 +442,19 @@ export function AdRowTable({
                             style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', display: 'block', flexShrink: 0 }}
                           >
                             <img
-                              src={previewImg}
+                              src={metaImgSrc(previewImg, row.ad_id, clientId)}
                               alt={row.ad_name}
                               style={{ width: thumbSize, height: thumbSize, objectFit: 'cover', borderRadius: 6, display: 'block' }}
                             />
                           </button>
                         ) : (
                           <LightboxImage
-                            src={previewImg}
+                            src={metaImgSrc(previewImg, row.ad_id, clientId)}
                             alt={row.ad_name}
                             width={thumbSize}
                             height={thumbSize}
                             videoId={row.video_id ?? undefined}
-                            fullSrc={row.image_url ?? undefined}
+                            fullSrc={row.image_url ? metaImgSrc(row.image_url, row.ad_id, clientId) : undefined}
                           />
                         )
                       ) : (
@@ -584,10 +593,11 @@ export function AdRowTable({
             ) : (previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url) ? (
               <>
                 <img
-                  src={(() => {
-                    const src = previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!
-                    return src.includes('fbcdn.net') && !src.includes('?') ? `${src}?width=1200` : src
-                  })()}
+                  src={metaImgSrc(
+                    previewAd.image_url || previewAd.thumbnail_url || previewAd.video_thumb_url!,
+                    previewAd.ad_id,
+                    clientId
+                  )}
                   alt="ad creative"
                   style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block', background: '#f0f2f5' }}
                 />

@@ -47,18 +47,27 @@ export interface AdSetData {
 
 export type DisplayMode = 'lead_gen' | 'ecommerce' | 'awareness' | 'engagement' | 'custom'
 
+function metaImgSrc(url: string, adId: string, clientId?: string): string {
+  if (clientId && url.includes('fbcdn.net')) {
+    return `/api/proxy/meta-image?ad_id=${encodeURIComponent(adId)}&client_id=${encodeURIComponent(clientId)}`
+  }
+  return url
+}
+
 export default function AdSetCards({
   adSets,
   displayMode = 'lead_gen',
   adFuelCut = 0,
   conversionLabel = 'Conversions',
   groupLabel = 'Ad Set',
+  clientId,
 }: {
   adSets:           AdSetData[]
   displayMode?:     DisplayMode
   adFuelCut?:       number
   conversionLabel?: string
   groupLabel?:      string
+  clientId?:        string
 }) {
   if (adSets.length === 0) {
     return (
@@ -147,6 +156,7 @@ export default function AdSetCards({
                   isEcom={isEcom}
                   adFuelCut={adFuelCut}
                   conversionLabel={conversionLabel}
+                  clientId={clientId}
                 />
               ))}
             </div>
@@ -166,11 +176,13 @@ export function AdCard({
   isEcom,
   adFuelCut,
   conversionLabel,
+  clientId,
 }: {
   ad:               AdCardData
   isEcom:           boolean
   adFuelCut:        number
   conversionLabel:  string
+  clientId?:        string
 }) {
   const displaySpend = adFuelCut > 0 ? ad.adFuelSpend : ad.spend
   const roasColor    = ad.roas >= 3 ? 'var(--green)' : ad.roas >= 1.5 ? '#d97706' : 'var(--red)'
@@ -195,7 +207,7 @@ export function AdCard({
       {previewImage ? (
         <div className="relative w-full flex-shrink-0" style={{ aspectRatio: '1.91 / 1', background: 'var(--bg-subtle)' }}>
           <img
-            src={previewImage}
+            src={metaImgSrc(previewImage, ad.ad_id, clientId)}
             alt={ad.ad_name}
             className="w-full h-full object-cover"
           />
