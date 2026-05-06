@@ -61,9 +61,11 @@ function isPast(dateStr: string): boolean {
 export default function ContentCalendar({
   items: initialItems,
   clients,
+  postsPerRunByClient = {},
 }: {
-  items:   CalendarItem[]
-  clients: { id: string; name: string }[]
+  items:                CalendarItem[]
+  clients:              { id: string; name: string }[]
+  postsPerRunByClient?: Record<string, number>
 }) {
   const router   = useRouter()
   const today    = new Date()
@@ -78,6 +80,14 @@ export default function ContentCalendar({
   const [rationaleFor, setRationaleFor] = useState<CalendarItem | null>(null)
 
   useEffect(() => { setItems(initialItems) }, [initialItems])
+
+  // Poll for status updates while any topic is generating
+  useEffect(() => {
+    const hasGenerating = items.some(i => i.type === 'topic' && i.status === 'generating')
+    if (!hasGenerating) return
+    const interval = setInterval(() => router.refresh(), 10_000)
+    return () => clearInterval(interval)
+  }, [items, router])
 
   const prevMonth = () => {
     if (month === 0) { setMonth(11); setYear(y => y - 1) }
@@ -137,6 +147,37 @@ export default function ContentCalendar({
         body: JSON.stringify({ status: 'approved' }),
       })
       if (!patchRes.ok) throw new Error(((await patchRes.json()) as { error?: string }).error || 'Failed')
+
+      // Check if the quota is now met for this client — auto-reject remaining pending topics
+      setItems(prev => {
+        const approvedCount = prev.filter(i =>
+          i.clientId === item.clientId &&
+          i.type === 'topic' &&
+          ['approved', 'generating', 'generated', 'draft_saved'].includes(i.status)
+        ).length  // includes the one just set to 'generating' above
+
+        const quota = postsPerRunByClient[item.clientId] ?? 2
+        if (approvedCount >= quota) {
+          const toReject = prev.filter(i =>
+            i.clientId === item.clientId &&
+            i.type === 'topic' &&
+            (i.status === 'pending' || i.status === 'scheduled') &&
+            i.id !== item.id
+          )
+          if (toReject.length > 0) {
+            Promise.all(toReject.map(t =>
+              fetch(`/api/admin/content/topics/${t.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'rejected' }),
+              })
+            ))
+            return prev.filter(i => !toReject.some(t => t.id === i.id))
+          }
+        }
+        return prev
+      })
+
       fetch('/api/admin/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,7 +190,7 @@ export default function ContentCalendar({
     } finally {
       setGenerating(prev => { const n = new Set(prev); n.delete(item.id); return n })
     }
-  }, [generating, router])
+  }, [generating, router, postsPerRunByClient])
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
     fontSize: '0.75rem', fontWeight: active ? 600 : 400, padding: '0.25rem 0.75rem',
@@ -199,24 +240,49 @@ export default function ContentCalendar({
 
           {!collapsed && (
             <div style={{ padding: '12px 16px 16px' }}>
-              {Array.from(pendingByClient.entries()).map(([clientId, { clientName, items: clientTopics }], groupIdx) => (
+              {Array.from(pendingByClient.entries()).map(([clientId, { clientName, items: clientTopics }], groupIdx) => {
+                const quota         = postsPerRunByClient[clientId] ?? 2
+                const approvedCount = items.filter(i =>
+                  i.clientId === clientId &&
+                  i.type === 'topic' &&
+                  ['approved', 'generating', 'generated', 'draft_saved'].includes(i.status)
+                ).length
+                const remaining = Math.max(0, quota - approvedCount)
+
+                return (
                 <div key={clientId} style={{
                   marginBottom: groupIdx < pendingByClient.size - 1 ? 20 : 0,
                 }}>
                   {/* Client header row */}
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
+                    display: 'flex', alignItems: 'flex-start', gap: 8,
                     marginBottom: 8, paddingBottom: 6,
                     borderBottom: '1px solid rgba(245,158,11,0.2)',
                   }}>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#b45309' }}>
-                      {clientName}
-                    </span>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#b45309' }}>
+                        {clientName}
+                      </span>
+                      {/* Approval progress bar */}
+                      <div style={{ display: 'flex', gap: 3, alignItems: 'center', marginTop: 5 }}>
+                        {Array.from({ length: quota }).map((_, i) => (
+                          <div key={i} style={{
+                            width: 18, height: 5, borderRadius: 3,
+                            background: i < approvedCount ? '#10b981' : 'rgba(245,158,11,0.3)',
+                            transition: 'background 0.3s',
+                          }} />
+                        ))}
+                        <span style={{ fontSize: '0.6875rem', color: '#b45309', marginLeft: 4 }}>
+                          {approvedCount}/{quota}
+                          {remaining > 0 ? ` · approve ${remaining} more` : ' · cycle complete ✓'}
+                        </span>
+                      </div>
+                    </div>
                     <span style={{
-                      fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999,
-                      background: 'rgba(245,158,11,0.15)', color: '#b45309',
+                      fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, flexShrink: 0,
+                      background: 'rgba(245,158,11,0.15)', color: '#b45309', marginTop: 2,
                     }}>
-                      {clientTopics.length} topic{clientTopics.length !== 1 ? 's' : ''} — approve the ones you want
+                      {clientTopics.length} topic{clientTopics.length !== 1 ? 's' : ''}
                     </span>
                   </div>
 
@@ -333,7 +399,8 @@ export default function ContentCalendar({
                     })}
                   </div>
                 </div>
-              ))}
+              )
+              })}
             </div>
           )}
         </div>

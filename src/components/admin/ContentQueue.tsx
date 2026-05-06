@@ -53,7 +53,7 @@ interface Props {
 type TabId = 'all' | 'scheduled' | 'pending' | 'uploaded' | 'rejected'
 
 const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }> = {
-  pending:    { bg: '#fef3c7', color: '#92400e', label: 'Pending'     },
+  pending:    { bg: '#fef3c7', color: '#92400e', label: 'Not in WP'   },
   approved:   { bg: '#ede9fe', color: '#5b21b6', label: 'Scheduled'   },
   scheduled:  { bg: '#ede9fe', color: '#5b21b6', label: 'Scheduled'   },
   generating: { bg: '#dbeafe', color: '#1e40af', label: 'Generating…' },
@@ -535,7 +535,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
   const tabs: { id: TabId; label: string; count: number }[] = [
     { id: 'all',       label: 'All',       count: tabItems.all.length       },
     { id: 'scheduled', label: 'Scheduled', count: tabItems.scheduled.length },
-    { id: 'pending',   label: 'Pending',   count: tabItems.pending.length   },
+    { id: 'pending',   label: 'Not in WP', count: tabItems.pending.length   },
     { id: 'uploaded',  label: 'Uploaded',  count: tabItems.uploaded.length  },
     { id: 'rejected',  label: 'Rejected',  count: tabItems.rejected.length  },
   ]
@@ -613,7 +613,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
         <div className="card p-6 text-center">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             {tab === 'scheduled' ? 'No topics scheduled for generation.'
-            : tab === 'pending'   ? 'No generated posts awaiting approval.'
+            : tab === 'pending'   ? 'All generated posts have been uploaded to WordPress.'
             : tab === 'uploaded'  ? 'No posts uploaded to WordPress yet.'
             : tab === 'rejected'  ? 'No rejected items.'
             : 'No items.'}
@@ -820,7 +820,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                         {/* Post rows */}
                         {item.type === 'post' && (
                           <>
-                            {/* Pending posts: Approve → uploads to WP draft */}
+                            {/* Posts not yet on WP: manual upload fallback */}
                             {item.wpPostId == null && item.status !== 'rejected' && (
                               approving === item.id ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 100 }}>
@@ -841,10 +841,10 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                   type="button"
                                   disabled={!!approving}
                                   onClick={() => approvePost(item)}
-                                  className="btn btn-primary"
+                                  className="btn btn-secondary"
                                   style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
                                 >
-                                  Approve
+                                  Upload to WP
                                 </button>
                               )
                             )}

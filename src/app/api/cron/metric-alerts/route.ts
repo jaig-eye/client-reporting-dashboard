@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
   const clients     = (clientsRes.data ?? []) as { id: string; name: string }[]
 
   const now    = new Date()
+  const today  = now.toISOString().slice(0, 10)
   const d14    = new Date(now.getTime() - windowDays * 86_400_000).toISOString().slice(0, 10)
   const d28    = new Date(now.getTime() - windowDays * 2 * 86_400_000).toISOString().slice(0, 10)
 
@@ -61,9 +62,9 @@ export async function GET(request: NextRequest) {
   for (const client of clients) {
     const [gCurr, mCurr, gPrior, mPrior] = await Promise.all([
       db.from('google_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d14),
+        .eq('client_id', client.id).gte('date', d14).lt('date', today),
       db.from('meta_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d14),
+        .eq('client_id', client.id).gte('date', d14).lt('date', today),
       db.from('google_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
         .eq('client_id', client.id).gte('date', d28).lt('date', d14),
       db.from('meta_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
@@ -87,6 +88,8 @@ export async function GET(request: NextRequest) {
       const pv = extractMetric(prior, key)
       if (cv === 0 && pv === 0) continue
       if (pv === 0) continue   // can't compute % change from zero
+      // Skip CPA/conversions when volume is too low to be meaningful
+      if ((key === 'cpa' || key === 'conversions') && curr.conversions < 10 && prior.conversions < 10) continue
 
       const pct = (cv - pv) / pv
       if (Math.abs(pct) < threshold) continue

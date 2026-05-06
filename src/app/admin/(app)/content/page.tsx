@@ -49,6 +49,7 @@ export default async function ContentPage({
     settingsRes,
     postsRes,
     scheduledTopicsRes,
+    contentSettingsRes,
   ] = await Promise.all([
     // Clients with WP connections
     wpClientIds.length > 0
@@ -63,9 +64,11 @@ export default async function ContentPage({
       .limit(300),
     // All topics for calendar + queue
     db.from('content_topics')
-      .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
+      .select('id, client_id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
+    // posts_per_run per client for approval quota
+    db.from('content_settings').select('client_id, posts_per_run'),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
@@ -132,13 +135,25 @@ export default async function ContentPage({
     suggestedTitle:      (t as Record<string, unknown>).suggested_title      ? String((t as Record<string, unknown>).suggested_title)      : null,
     searchVolume:        (t as Record<string, unknown>).search_volume        != null ? Number((t as Record<string, unknown>).search_volume)        : null,
     keywordDifficulty:   (t as Record<string, unknown>).keyword_difficulty   != null ? Number((t as Record<string, unknown>).keyword_difficulty)   : null,
+    postId:              (t as Record<string, unknown>).post_id              ? String((t as Record<string, unknown>).post_id)              : null,
   }))
 
-  const posts = [...scheduledTopicItems, ...postItems]
+  // posts_per_run per client for the approval quota banner
+  const postsPerRunByClient: Record<string, number> = {}
+  for (const cs of (contentSettingsRes.data ?? []) as { client_id: string; posts_per_run: number | null }[]) {
+    postsPerRunByClient[String(cs.client_id)] = Number(cs.posts_per_run ?? 2)
+  }
 
-  // Calendar items: all topics + posts with a target_publish_date
+  // Exclude topic rows that already have a linked post — the post shows instead
+  const postIdSet = new Set(postItems.map(p => p.id))
+  const posts = [
+    ...scheduledTopicItems.filter(t => !t.postId || !postIdSet.has(t.postId)),
+    ...postItems,
+  ]
+
+  // Calendar items: topics (only those without a linked post) + posts
   const calendarItems: CalendarItem[] = [
-    ...scheduledTopicItems.map(t => ({
+    ...scheduledTopicItems.filter(t => !t.postId || !postIdSet.has(t.postId)).map(t => ({
       id:                 t.id,
       type:               'topic' as const,
       clientId:           t.clientId,
@@ -228,7 +243,7 @@ export default async function ContentPage({
 
       {/* Calendar tab (default) */}
       {activeTab === 'calendar' && (
-        <ContentCalendar items={calendarItems} clients={allClients} />
+        <ContentCalendar items={calendarItems} clients={allClients} postsPerRunByClient={postsPerRunByClient} />
       )}
 
       {/* Queue tab */}

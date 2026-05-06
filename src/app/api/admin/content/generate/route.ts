@@ -593,7 +593,7 @@ Target approximately ${targetLength} words.`
     }
 
     // Auto-upload to WordPress as a draft when a connection is configured
-    if (postId && connectionId && topicData?.target_publish_date) {
+    if (postId && connectionId) {
       try {
         const { data: connRow } = await db
           .from('client_connections')
@@ -609,13 +609,13 @@ Target approximately ${targetLength} words.`
         if (auth?.username && auth?.app_password && config?.site_url) {
           const { publishPost } = await import('@/lib/connectors/wordpress')
           const today           = new Date().toISOString().split('T')[0]
-          const publishDate     = topicData.target_publish_date!
-          const wpStatus        = publishDate > today ? 'future' : 'draft'
+          const publishDate     = topicData?.target_publish_date ?? null
+          const wpStatus        = (publishDate && publishDate > today) ? 'future' : 'draft'
           const wpResult = await publishPost(config.site_url, auth, {
             title:   parsed.title,
             content: parsed.content,
             status:  wpStatus,
-            date:    `${publishDate}T09:00:00`,
+            ...(publishDate ? { date: `${publishDate}T09:00:00` } : {}),
             slug:    parsed.slug || undefined,
             excerpt: parsed.metaDescription || undefined,
             meta: {
@@ -625,11 +625,11 @@ Target approximately ${targetLength} words.`
             },
           })
           await db.from('content_posts').update({
-            wp_post_id:          wpResult.id,
-            wp_status:           wpStatus,
-            wp_site_url:         config.site_url,
-            status:              'draft_saved',
-            target_publish_date: publishDate,
+            wp_post_id:  wpResult.id,
+            wp_status:   wpStatus,
+            wp_site_url: config.site_url,
+            status:      'draft_saved',
+            ...(publishDate ? { target_publish_date: publishDate } : {}),
           }).eq('id', postId)
 
           // Email notification — post uploaded to WordPress
