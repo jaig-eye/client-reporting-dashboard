@@ -814,49 +814,90 @@ export const googleAdsConnector: ConnectorAdapter = {
     const devToken = (auth.developer_token as string | undefined) || undefined
     const mccId    = (config.mcc_customer_id as string | undefined)?.replace(/-/g, '')
 
-    // If we have an MCC ID, query customer_client to get real account names
-    if (mccId) {
-      try {
-        const rows = await runQuery(
-          mccId,
-          mccId,
-          accessToken,
-          `SELECT
-            customer_client.id,
-            customer_client.descriptive_name,
-            customer_client.currency_code,
-            customer_client.manager,
-            customer_client.test_account
-          FROM customer_client
-          WHERE customer_client.manager = FALSE
-            AND customer_client.status = 'ENABLED'`,
-          devToken
-        )
-        const accounts = rows.map(row => {
+    // Helper: query customer_client on a given MCC to get non-manager sub-accounts
+    async function getSubAccounts(parentId: string): Promise<DiscoveredAccount[]> {
+      const rows = await runQuery(
+        parentId, parentId, accessToken!,
+        `SELECT
+          customer_client.id,
+          customer_client.descriptive_name,
+          customer_client.currency_code,
+          customer_client.manager,
+          customer_client.test_account
+        FROM customer_client
+        WHERE customer_client.manager = FALSE
+          AND customer_client.status = 'ENABLED'`,
+        devToken
+      )
+      return rows
+        .map(row => {
           const cc = row.customer_client as Record<string, unknown>
           return {
-            external_id:   String(cc?.id               || ''),
-            external_name: String(cc?.descriptiveName  || cc?.id || ''),
+            external_id:   String(cc?.id              || ''),
+            external_name: String(cc?.descriptiveName || cc?.id || ''),
             metadata: {
               currency:   cc?.currencyCode,
               is_manager: cc?.manager,
               is_test:    cc?.testAccount,
+              mcc_id:     parentId,
             },
           }
-        }).filter(a => a.external_id)
+        })
+        .filter(a => a.external_id)
+    }
+
+    // If we have a configured MCC ID, query it directly first
+    if (mccId) {
+      try {
+        const accounts = await getSubAccounts(mccId)
         if (accounts.length > 0) return accounts
       } catch (e) {
-        console.warn('Google customer_client query failed, falling back:', e)
+        console.warn('[google-ads] customer_client query failed for configured MCC, trying fallback:', e)
       }
     }
 
-    // Fallback: list accessible customers (no names)
-    // Throws with detail if the API is not enabled or token is invalid
-    const customerIds = await listAccessibleCustomers(accessToken, devToken)
-    return customerIds.map(id => ({
-      external_id:   id,
-      external_name: `Google Ads Account (${id})`,
-    }))
+    // No configured MCC (or MCC query failed): use listAccessibleCustomers to find
+    // all top-level accounts the token can access, then query customer_client on each
+    // to discover sub-accounts under any MCC accounts.
+    let customerIds: string[]
+    try {
+      customerIds = await listAccessibleCustomers(accessToken, devToken)
+    } catch (e) {
+      console.warn('[google-ads] listAccessibleCustomers failed:', e)
+      return []
+    }
+
+    const allAccounts: DiscoveredAccount[] = []
+    const seen = new Set<string>()
+
+    for (const cid of customerIds) {
+      try {
+        const subAccounts = await getSubAccounts(cid)
+        if (subAccounts.length > 0) {
+          // This cid is an MCC — collect its sub-accounts
+          for (const a of subAccounts) {
+            if (!seen.has(a.external_id)) {
+              seen.add(a.external_id)
+              allAccounts.push(a)
+            }
+          }
+        } else {
+          // No sub-accounts: treat as a direct (non-MCC) account
+          if (!seen.has(cid)) {
+            seen.add(cid)
+            allAccounts.push({ external_id: cid, external_name: `Google Ads Account (${cid})` })
+          }
+        }
+      } catch {
+        // customer_client query failed (e.g. not a manager account) — include as direct account
+        if (!seen.has(cid)) {
+          seen.add(cid)
+          allAccounts.push({ external_id: cid, external_name: `Google Ads Account (${cid})` })
+        }
+      }
+    }
+
+    return allAccounts
   },
 
   async testConnection(auth: Record<string, unknown>): Promise<boolean> {
