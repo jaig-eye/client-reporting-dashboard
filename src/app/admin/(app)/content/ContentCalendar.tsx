@@ -32,6 +32,7 @@ const MONTH_NAMES = ['January','February','March','April','May','June','July','A
 const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string }> = {
   pending:     { label: 'Awaiting Approval', dot: '#f59e0b', color: '#b45309' },
   scheduled:   { label: 'Scheduled',         dot: '#6366f1', color: '#4338ca' },
+  approved:    { label: 'Approving…',        dot: '#f59e0b', color: '#b45309' },
   generating:  { label: 'Generating',        dot: '#3b82f6', color: '#1d4ed8' },
   generated:   { label: 'Generated',         dot: '#10b981', color: '#065f46' },
   draft_saved: { label: 'On WordPress',      dot: '#10b981', color: '#065f46' },
@@ -98,8 +99,8 @@ export default function ContentCalendar({
     else setMonth(m => m + 1)
   }
 
-  // Pending approval items (all months, for banner)
-  const pendingApproval = items.filter(i => i.type === 'topic' && (i.status === 'pending' || i.status === 'scheduled'))
+  // Pending approval items (all months, for banner) — includes 'approved' as it's transient
+  const pendingApproval = items.filter(i => i.type === 'topic' && ['pending', 'scheduled', 'approved'].includes(i.status))
 
   // Group pending by client
   const pendingByClient = new Map<string, { clientName: string; items: CalendarItem[] }>()
@@ -112,8 +113,8 @@ export default function ContentCalendar({
   // Filter items for timeline — pending/scheduled topics live in the banner only
   const filtered = items.filter(item => {
     if (!item.targetPublishDate) return false
-    // Never show unapproved topics in the timeline
-    if (item.type === 'topic' && (item.status === 'pending' || item.status === 'scheduled')) return false
+    // Never show pre-generation topics in the timeline — they live in the banner
+    if (item.type === 'topic' && ['pending', 'scheduled', 'approved'].includes(item.status)) return false
     const d = new Date(item.targetPublishDate + 'T00:00:00')
     if (d.getFullYear() !== year || d.getMonth() !== month) return false
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false

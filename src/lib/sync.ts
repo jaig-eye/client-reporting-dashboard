@@ -242,6 +242,15 @@ export async function syncClient(
           clientId,
           result.rows as unknown as import('./connectors/google-analytics').GA4RawRow[]
         )
+        if (result.extraRows?.ga4_source_metrics) {
+          const srcCount = await upsertGA4SourceMetrics(
+            db,
+            connection.id,
+            clientId,
+            result.extraRows.ga4_source_metrics as import('./connectors/google-analytics').GA4SourceRow[]
+          )
+          recordCount += srcCount
+        }
       } else if (connection.connector.type === 'google_search_console') {
         // Bypass the pre-fetched result — fetch in 30-day chunks to avoid timeouts
         // on large sites during backfills. Each chunk is upserted immediately.
@@ -956,6 +965,7 @@ export async function upsertGA4Metrics(
     conversions:          r.conversions,
     bounce_rate:          r.bounce_rate,
     avg_session_duration: r.avg_session_duration,
+    engaged_sessions:     r.engaged_sessions ?? 0,
     synced_at:            new Date().toISOString(),
   }))
 
@@ -967,6 +977,43 @@ export async function upsertGA4Metrics(
         ignoreDuplicates: false,
       })
     if (error) console.error(`[sync] ga4_metrics upsert error (batch ${i}):`, error)
+  }
+  return mapped.length
+}
+
+export async function upsertGA4SourceMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-analytics').GA4SourceRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    date:             r.date,
+    source:           r.source,
+    medium:           r.medium,
+    campaign:         r.campaign,
+    sessions:         r.sessions,
+    users:            r.users,
+    new_users:        r.new_users,
+    page_views:       r.page_views,
+    conversions:      r.conversions,
+    engaged_sessions: r.engaged_sessions,
+    synced_at:        new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('ga4_source_metrics')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,date,source,medium,campaign',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] ga4_source_metrics upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }

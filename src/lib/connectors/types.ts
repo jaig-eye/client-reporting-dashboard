@@ -71,6 +71,8 @@ export interface SyncResult {
   rows: RawMetricRow[]
   /** Action types encountered during this sync (Meta only) — accumulated in DB. */
   discoveredActions?: string[]
+  /** Extra rows to upsert into non-standard tables, keyed by table name. */
+  extraRows?: Record<string, unknown[]>
   error?: string
 }
 

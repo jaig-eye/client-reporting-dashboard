@@ -1,0 +1,2 @@
+ALTER TABLE ga4_metrics
+  ADD COLUMN IF NOT EXISTS engaged_sessions INT DEFAULT 0;

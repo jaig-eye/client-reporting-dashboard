@@ -59,7 +59,7 @@ const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }>
   generating: { bg: '#dbeafe', color: '#1e40af', label: 'Generating…' },
   generated:  { bg: '#dbeafe', color: '#1e40af', label: 'Generated'   },
   published:  { bg: '#dcfce7', color: '#166534', label: 'Published'   },
-  draft_saved:{ bg: '#ede9fe', color: '#5b21b6', label: 'In WP'       },
+  draft_saved:{ bg: '#ede9fe', color: '#5b21b6', label: 'On WordPress' },
   rejected:   { bg: '#fee2e2', color: '#991b1b', label: 'Rejected'    },
 }
 
@@ -345,7 +345,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
   ).sort((a, b) => a[1].localeCompare(b[1]))
 
   const isScheduledTab = (i: QueueItem) =>
-    i.type === 'topic' && ['scheduled', 'approved', 'generating'].includes(i.status)
+    i.type === 'topic' && ['scheduled', 'generating'].includes(i.status)
 
   const isPendingTab = (i: QueueItem) =>
     i.type === 'post' && i.wpPostId == null && i.status !== 'rejected'
@@ -536,7 +536,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
     { id: 'all',       label: 'All',       count: tabItems.all.length       },
     { id: 'scheduled', label: 'Scheduled', count: tabItems.scheduled.length },
     { id: 'pending',   label: 'Not in WP', count: tabItems.pending.length   },
-    { id: 'uploaded',  label: 'Uploaded',  count: tabItems.uploaded.length  },
+    { id: 'uploaded',  label: 'On WordPress', count: tabItems.uploaded.length },
     { id: 'rejected',  label: 'Rejected',  count: tabItems.rejected.length  },
   ]
 
@@ -619,6 +619,113 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
             : 'No items.'}
           </p>
         </div>
+      ) : tab === 'scheduled' ? (
+        // ── Grouped cards for Scheduled tab ──────────────────────────────────────
+        (() => {
+          const groups = new Map<string, { clientName: string; items: QueueItem[] }>()
+          for (const item of filtered) {
+            const g = groups.get(item.clientId)
+            if (g) g.items.push(item)
+            else groups.set(item.clientId, { clientName: item.clientName, items: [item] })
+          }
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {Array.from(groups.entries()).map(([clientId, { clientName, items: groupItems }]) => (
+                <div key={clientId} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 16px',
+                    background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)',
+                  }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{clientName}</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+                      {groupItems.length} topic{groupItems.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {groupItems.map(item => {
+                      const isGen  = item.status === 'generating'
+                      const compKey = (item.competitionLevel ?? '').split(/[\s/—–\-]/)[0].toLowerCase()
+                      const comp    = COMPETITION_BADGE[compKey]
+                      const isGenLoading = generating === item.id
+                      const isDelLoading = loading    === item.id
+                      return (
+                        <div key={item.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                          borderRadius: 7, background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle, var(--border))',
+                          cursor: 'pointer',
+                        }} onClick={() => openRationale(item)}>
+                          <span style={{
+                            width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                            background: isGen ? '#3b82f6' : '#6366f1',
+                          }} />
+                          <span style={{
+                            flex: 1, fontSize: '0.8125rem', fontStyle: 'italic',
+                            color: 'var(--text-primary)', overflow: 'hidden',
+                            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }} title={item.topicText ?? undefined}>
+                            {item.topicText ?? item.title ?? item.id}
+                          </span>
+                          {item.targetKeyword && (
+                            <span style={{
+                              fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999,
+                              background: 'var(--bg-muted)', color: 'var(--text-muted)',
+                              flexShrink: 0, maxWidth: 120, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {item.targetKeyword}
+                            </span>
+                          )}
+                          {comp && (
+                            <span style={{
+                              fontSize: '0.625rem', fontWeight: 600, padding: '1px 5px',
+                              borderRadius: 999, background: comp.bg, color: comp.color, flexShrink: 0,
+                            }}>
+                              {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
+                            </span>
+                          )}
+                          {item.targetPublishDate && (
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                              {fmtDate(item.targetPublishDate)}
+                            </span>
+                          )}
+                          {isGen ? (
+                            <span style={{ fontSize: '0.7rem', color: '#3b82f6', flexShrink: 0 }}>Generating…</span>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                disabled={isGenLoading || isDelLoading}
+                                onClick={() => forceGenerate(item)}
+                                style={{
+                                  fontSize: '0.7rem', padding: '2px 8px', borderRadius: 5,
+                                  background: 'none', border: '1px solid var(--border)',
+                                  color: 'var(--text-muted)', cursor: 'pointer',
+                                }}
+                                title="Generate now"
+                              >
+                                {isGenLoading ? '⏳' : '▶ Generate'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDelLoading || isGenLoading}
+                                onClick={() => deleteSingle(item)}
+                                style={{ fontSize: '0.7rem', padding: '2px 5px', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              >
+                                {isDelLoading ? '…' : '✕'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })()
       ) : (
         <div style={{
           border:       '1px solid var(--border, #e5e7eb)',
@@ -635,9 +742,8 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
               <col />
               <col style={{ width: 130 }} />
               <col style={{ width: 108 }} />
-              {tab === 'scheduled' && <col style={{ width: 112 }} />}
               {(tab === 'pending' || tab === 'uploaded') && <col style={{ width: 56 }} />}
-              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : tab === 'scheduled' ? 80 : 200 }} />
+              <col style={{ width: tab === 'uploaded' ? 216 : tab === 'pending' ? 200 : tab === 'rejected' ? 110 : 200 }} />
             </colgroup>
             <thead>
               <tr>
@@ -655,7 +761,6 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                 <th style={thStyle}>Title / Topic</th>
                 <th style={thStyle}>Keyword</th>
                 <th style={thStyle}>Publish Date</th>
-                {tab === 'scheduled' && <th style={thStyle}>Competition</th>}
                 {(tab === 'pending' || tab === 'uploaded') && <th style={{ ...thStyle, textAlign: 'right' }}>Words</th>}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
@@ -734,19 +839,6 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                       {item.targetPublishDate ? fmtDate(item.targetPublishDate) : '—'}
                     </td>
 
-                    {/* Competition — Scheduled tab only */}
-                    {tab === 'scheduled' && (
-                      <td style={tdStyle}>
-                        {comp ? (
-                          <span
-                            title={item.competitionLevel ?? undefined}
-                            style={{ fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: comp.bg, color: comp.color, whiteSpace: 'nowrap' }}
-                          >
-                            {compKey.charAt(0).toUpperCase() + compKey.slice(1)}
-                          </span>
-                        ) : null}
-                      </td>
-                    )}
 
                     {/* Words — Pending/Uploaded tabs only */}
                     {(tab === 'pending' || tab === 'uploaded') && (

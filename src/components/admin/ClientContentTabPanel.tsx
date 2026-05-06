@@ -133,11 +133,18 @@ export default function ClientContentTabPanel({
       {activeTab === 'priority'  && <PriorityTab clientId={clientId} />}
       {activeTab === 'gsc'       && <GscTab data={gscData} isEcom={isEcom} />}
       {activeTab === 'queue'     && (
-        <QueueTab
-          clientId={clientId}
-          posts={posts.filter(p => p.clientId === clientId)}
-          postsPerRun={postsPerRun}
-        />
+        <div style={{ padding: '2rem', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.875rem' }}>
+            Manage topics, posts, and the content queue on the main content page.
+          </p>
+          <a
+            href="/admin/content?tab=queue"
+            className="btn btn-primary"
+            style={{ display: 'inline-block' }}
+          >
+            Open Content Queue →
+          </a>
+        </div>
       )}
     </div>
   )

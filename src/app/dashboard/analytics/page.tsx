@@ -91,8 +91,8 @@ export default async function GA4Page({
     )
   }
 
-  // Fetch GA4 metrics (current + prior period in parallel)
-  const [{ data: rows }, { data: priorRows }] = await Promise.all([
+  // Fetch GA4 metrics (current + prior period + UTM sources in parallel)
+  const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
     db.from('ga4_metrics').select('*')
       .eq('client_id', client.id)
       .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -102,6 +102,10 @@ export default async function GA4Page({
           .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: null }),
+    db.from('ga4_source_metrics')
+      .select('source,medium,campaign,sessions,conversions,engaged_sessions')
+      .eq('client_id', client.id)
+      .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate)),
   ])
 
   const ga4Rows = (rows ?? []) as {
@@ -109,7 +113,11 @@ export default async function GA4Page({
     sessions: number; users: number; new_users: number;
     page_views: number; conversions: number;
     bounce_rate: number; avg_session_duration: number;
+    engaged_sessions?: number;
   }[]
+
+  type SourceRow = { source?: string | null; medium?: string | null; campaign?: string | null; sessions?: number; conversions?: number; engaged_sessions?: number }
+  const utmRows = (srcRows ?? []) as SourceRow[]
 
   // Aggregate totals (all channels combined)
   const totals = ga4Rows.reduce(
@@ -119,10 +127,11 @@ export default async function GA4Page({
       new_users:            acc.new_users            + (r.new_users            ?? 0),
       page_views:           acc.page_views           + (r.page_views           ?? 0),
       conversions:          acc.conversions          + (r.conversions          ?? 0),
+      engaged_sessions:     acc.engaged_sessions     + (r.engaged_sessions     ?? 0),
       bounce_rate_sum:      acc.bounce_rate_sum      + (r.bounce_rate          ?? 0) * (r.sessions ?? 0),
       duration_sum:         acc.duration_sum         + (r.avg_session_duration ?? 0) * (r.sessions ?? 0),
     }),
-    { sessions: 0, users: 0, new_users: 0, page_views: 0, conversions: 0, bounce_rate_sum: 0, duration_sum: 0 }
+    { sessions: 0, users: 0, new_users: 0, page_views: 0, conversions: 0, engaged_sessions: 0, bounce_rate_sum: 0, duration_sum: 0 }
   )
   const avgBounceRate  = totals.sessions > 0 ? totals.bounce_rate_sum / totals.sessions : 0
   const avgDuration    = totals.sessions > 0 ? totals.duration_sum   / totals.sessions : 0
@@ -210,6 +219,28 @@ export default async function GA4Page({
   const channels = Array.from(channelMap.entries())
     .map(([name, v]) => ({ name, ...v, bounce_rate: v.sessions > 0 ? v.bounce_rate_sum / v.sessions : 0 }))
     .sort((a, b) => b.sessions - a.sessions)
+
+  // UTM source/medium breakdown (top 20 by sessions)
+  type UtmAgg = { sessions: number; conversions: number; engaged_sessions: number }
+  const utmMap = new Map<string, UtmAgg>()
+  for (const r of utmRows) {
+    const src  = r.source   ?? '(direct)'
+    const med  = r.medium   ?? '(none)'
+    const camp = r.campaign ?? '(not set)'
+    const key  = `${src}|||${med}|||${camp}`
+    const ex   = utmMap.get(key)
+    if (ex) {
+      ex.sessions         += r.sessions         ?? 0
+      ex.conversions      += r.conversions      ?? 0
+      ex.engaged_sessions += r.engaged_sessions ?? 0
+    } else {
+      utmMap.set(key, { sessions: r.sessions ?? 0, conversions: r.conversions ?? 0, engaged_sessions: r.engaged_sessions ?? 0 })
+    }
+  }
+  const utmRows20 = Array.from(utmMap.entries())
+    .map(([key, v]) => { const [source, medium, campaign] = key.split('|||'); return { source, medium, campaign, ...v } })
+    .sort((a, b) => b.sessions - a.sessions)
+    .slice(0, 20)
 
   const secondaryCards = [
     { label: 'Avg. Session',     value: fmtSec(avgDuration)           },
@@ -349,6 +380,52 @@ export default async function GA4Page({
                 </div>
               </div>
             )}
+
+            {/* UTM source / medium breakdown */}
+            <div className="card p-6">
+              <div className="mb-4">
+                <h2 className="section-title">Traffic by Source / Medium</h2>
+                <p className="section-desc">
+                  {utmRows20.length > 0 ? `Top ${utmRows20.length} source/medium combinations` : 'No UTM/source data synced yet — run a sync to populate.'}
+                </p>
+              </div>
+              {utmRows20.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="data-table" style={{ minWidth: 600 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left' }}>Source</th>
+                        <th style={{ textAlign: 'left' }}>Medium</th>
+                        <th style={{ textAlign: 'left' }}>Campaign</th>
+                        <th style={{ textAlign: 'right' }}>Sessions</th>
+                        <th style={{ textAlign: 'right' }}>Engaged</th>
+                        <th style={{ textAlign: 'right' }}>Eng. Rate</th>
+                        <th style={{ textAlign: 'right' }}>Conversions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {utmRows20.map((r, i) => {
+                        const engRate = r.sessions > 0 ? r.engaged_sessions / r.sessions : 0
+                        const showCampaign = r.campaign !== '(not set)' && r.campaign !== ''
+                        return (
+                          <tr key={i}>
+                            <td style={{ fontWeight: 500 }}>{r.source}</td>
+                            <td style={{ color: 'var(--text-muted)' }}>{r.medium}</td>
+                            <td style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>{showCampaign ? r.campaign : '—'}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.sessions)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.engaged_sessions)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(engRate)}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.conversions > 0 ? fmtNum(r.conversions) : '—'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No UTM/source data synced yet — run a sync to populate.</p>
+              )}
+            </div>
           </>
         )}
       </main>

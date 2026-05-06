@@ -78,6 +78,7 @@ async function runReport(
       { name: 'conversions' },
       { name: 'bounceRate' },
       { name: 'averageSessionDuration' },
+      { name: 'engagedSessions' },
     ],
     limit: 100000,
   }
@@ -116,6 +117,69 @@ async function runReport(
   })
 }
 
+async function runSourceReport(
+  propertyId: string,
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<Record<string, unknown>[]> {
+  const property = propertyId.startsWith('properties/')
+    ? propertyId
+    : `properties/${propertyId}`
+
+  const body = {
+    dateRanges: [{ startDate: dateFrom, endDate: dateTo }],
+    dimensions: [
+      { name: 'date' },
+      { name: 'sessionSource' },
+      { name: 'sessionMedium' },
+      { name: 'sessionCampaignName' },
+    ],
+    metrics: [
+      { name: 'sessions' },
+      { name: 'totalUsers' },
+      { name: 'newUsers' },
+      { name: 'screenPageViews' },
+      { name: 'conversions' },
+      { name: 'engagedSessions' },
+    ],
+    limit: 100000,
+  }
+
+  const res = await fetch(`${DATA_API_BASE}/${property}:runReport`, {
+    method: 'POST',
+    headers: {
+      Authorization:  `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`GA4 Source Report error ${res.status}: ${text}`)
+  }
+
+  const data = await res.json() as {
+    dimensionHeaders?: { name: string }[]
+    metricHeaders?:    { name: string }[]
+    rows?:             { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[]
+  }
+
+  if (!data.rows?.length) return []
+
+  const dimHeaders = (data.dimensionHeaders ?? []).map(h => h.name)
+  const metHeaders = (data.metricHeaders  ?? []).map(h => h.name)
+
+  return data.rows.map(row => {
+    const dims:  Record<string, string> = {}
+    const mets:  Record<string, string> = {}
+    row.dimensionValues.forEach((v, i) => { dims[dimHeaders[i]] = v.value })
+    row.metricValues.forEach(  (v, i) => { mets[metHeaders[i]]  = v.value })
+    return { ...dims, ...mets }
+  })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,6 +194,20 @@ export interface GA4RawRow {
   conversions: number
   bounce_rate: number
   avg_session_duration: number
+  engaged_sessions: number
+}
+
+export interface GA4SourceRow {
+  date:             string
+  source:           string
+  medium:           string
+  campaign:         string
+  sessions:         number
+  users:            number
+  new_users:        number
+  page_views:       number
+  conversions:      number
+  engaged_sessions: number
 }
 
 export const googleAnalyticsConnector: ConnectorAdapter = {
@@ -153,9 +231,12 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
 
     const propertyId = externalId // stored as the GA4 property ID
 
-    const apiRows = await runReport(propertyId, accessToken, dateFrom, dateTo)
+    const [channelApiRows, sourceApiRows] = await Promise.all([
+      runReport(propertyId, accessToken, dateFrom, dateTo),
+      runSourceReport(propertyId, accessToken, dateFrom, dateTo),
+    ])
 
-    const rows: GA4RawRow[] = apiRows.map(r => ({
+    const rows: GA4RawRow[] = channelApiRows.map(r => ({
       date:                 String(r.date || ''),
       channel_group:        String(r.sessionDefaultChannelGroup || 'Direct'),
       sessions:             parseInt(String(r.sessions              || '0'), 10),
@@ -165,10 +246,27 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
       conversions:          parseInt(String(r.conversions           || '0'), 10),
       bounce_rate:          parseFloat(String(r.bounceRate          || '0')),
       avg_session_duration: parseFloat(String(r.averageSessionDuration || '0')),
+      engaged_sessions:     parseInt(String(r.engagedSessions       || '0'), 10),
+    }))
+
+    const sourceRows: GA4SourceRow[] = sourceApiRows.map(r => ({
+      date:             String(r.date || ''),
+      source:           String(r.sessionSource         || '(direct)'),
+      medium:           String(r.sessionMedium         || '(none)'),
+      campaign:         String(r.sessionCampaignName   || '(not set)'),
+      sessions:         parseInt(String(r.sessions         || '0'), 10),
+      users:            parseInt(String(r.totalUsers       || '0'), 10),
+      new_users:        parseInt(String(r.newUsers         || '0'), 10),
+      page_views:       parseInt(String(r.screenPageViews  || '0'), 10),
+      conversions:      parseInt(String(r.conversions      || '0'), 10),
+      engaged_sessions: parseInt(String(r.engagedSessions  || '0'), 10),
     }))
 
     // Cast to RawMetricRow via unknown — GA4 rows are stored separately from ad rows
-    return { rows: rows as unknown as import('./types').RawMetricRow[] }
+    return {
+      rows: rows as unknown as import('./types').RawMetricRow[],
+      extraRows: { ga4_source_metrics: sourceRows },
+    }
   },
 
   async discoverAccounts(auth): Promise<DiscoveredAccount[]> {
