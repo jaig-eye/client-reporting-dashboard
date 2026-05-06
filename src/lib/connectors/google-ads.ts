@@ -814,7 +814,9 @@ export const googleAdsConnector: ConnectorAdapter = {
     const devToken = (auth.developer_token as string | undefined) || undefined
     const mccId    = (config.mcc_customer_id as string | undefined)?.replace(/-/g, '')
 
-    // Helper: query customer_client on a given MCC to get non-manager sub-accounts
+    // Helper: query customer_client on a given MCC to get non-manager sub-accounts.
+    // The Google Ads API JSON response uses camelCase resource names (customerClient,
+    // campaignBudget, etc.) — NOT the snake_case used in GAQL queries.
     async function getSubAccounts(parentId: string): Promise<DiscoveredAccount[]> {
       const rows = await runQuery(
         parentId, parentId, accessToken!,
@@ -829,27 +831,32 @@ export const googleAdsConnector: ConnectorAdapter = {
           AND customer_client.status = 'ENABLED'`,
         devToken
       )
-      return rows
-        .map(row => {
-          const cc = row.customer_client as Record<string, unknown>
-          return {
-            external_id:   String(cc?.id              || ''),
-            external_name: String(cc?.descriptiveName || cc?.id || ''),
-            metadata: {
-              currency:   cc?.currencyCode,
-              is_manager: cc?.manager,
-              is_test:    cc?.testAccount,
-              mcc_id:     parentId,
-            },
-          }
+      const discovered: DiscoveredAccount[] = []
+      for (const row of rows) {
+        // API response key is camelCase: customerClient (not customer_client)
+        const cc = (row.customerClient ?? row.customer_client) as Record<string, unknown> | undefined
+        if (!cc) continue
+        const id = String(cc.id || '')
+        if (!id) continue
+        discovered.push({
+          external_id:   id,
+          external_name: String(cc.descriptiveName || id),
+          metadata: {
+            currency:   cc.currencyCode,
+            is_manager: cc.manager,
+            is_test:    cc.testAccount,
+            mcc_id:     parentId,
+          } as Record<string, unknown>,
         })
-        .filter(a => a.external_id)
+      }
+      return discovered
     }
 
     // If we have a configured MCC ID, query it directly first
     if (mccId) {
       try {
         const accounts = await getSubAccounts(mccId)
+        console.log(`[google-ads] configured MCC ${mccId} returned ${accounts.length} sub-accounts`)
         if (accounts.length > 0) return accounts
       } catch (e) {
         console.warn('[google-ads] customer_client query failed for configured MCC, trying fallback:', e)
@@ -870,9 +877,12 @@ export const googleAdsConnector: ConnectorAdapter = {
     const allAccounts: DiscoveredAccount[] = []
     const seen = new Set<string>()
 
+    console.log(`[google-ads] listAccessibleCustomers returned ${customerIds.length} IDs:`, customerIds)
+
     for (const cid of customerIds) {
       try {
         const subAccounts = await getSubAccounts(cid)
+        console.log(`[google-ads] ${cid} → ${subAccounts.length} sub-accounts`)
         if (subAccounts.length > 0) {
           // This cid is an MCC — collect its sub-accounts
           for (const a of subAccounts) {
@@ -888,8 +898,9 @@ export const googleAdsConnector: ConnectorAdapter = {
             allAccounts.push({ external_id: cid, external_name: `Google Ads Account (${cid})` })
           }
         }
-      } catch {
+      } catch (e) {
         // customer_client query failed (e.g. not a manager account) — include as direct account
+        console.warn(`[google-ads] customer_client failed for ${cid}:`, e)
         if (!seen.has(cid)) {
           seen.add(cid)
           allAccounts.push({ external_id: cid, external_name: `Google Ads Account (${cid})` })
