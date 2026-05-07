@@ -60,6 +60,7 @@ export interface ClientScheduleSettings {
   default_author_id:     number | null
   post_structure:        string
   target_length:         number
+  publish_time:          string | null
 }
 
 export interface ClientBrandDna {

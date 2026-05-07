@@ -19,6 +19,12 @@ interface Topic {
   rationale:           string | null
   competition_level:   string | null
   search_intent:       string | null
+  keyword_opportunity: string | null
+  ranking_strategy:    string | null
+  audience_intent:     string | null
+  why_now:             string | null
+  search_volume:       number | null
+  keyword_difficulty:  number | null
   seo_brief:           Record<string, unknown> | null
   cannibalization_warning?: string | null
 }
@@ -149,6 +155,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   // Topic action states
   const [topicLoading,   setTopicLoading]  = useState<Record<string, boolean>>({})
+  const [rationaleFor,   setRationaleFor]  = useState<Topic | null>(null)
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -178,6 +185,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           default_author_id:     (d.default_author_id      as number  | null) ?? null,
           post_structure:        (d.post_structure          as string)         ?? '',
           target_length:         (d.target_length           as number)         ?? 1500,
+          publish_time:          (d.publish_time            as string  | null) ?? null,
         })
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
@@ -200,7 +208,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     if (!connId) { setAuthors([]); return }
     fetch(`/api/admin/wordpress/authors?connection_id=${connId}`)
       .then(r => r.json())
-      .then((d: Author[] | { error: string }) => { if (Array.isArray(d)) setAuthors(d) })
+      .then((d: { authors?: Author[] } | { error: string }) => {
+        if ('authors' in d && Array.isArray(d.authors)) setAuthors(d.authors)
+      })
       .catch(() => setAuthors([]))
   }, [clientSites])
 
@@ -354,6 +364,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
           </div>
           <div>
+            <Label hint="time posts are scheduled in WordPress">Publish Time</Label>
+            <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
+          </div>
+          <div>
             <Label>Default Author</Label>
             <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
               <option value="">— Default —</option>
@@ -461,53 +475,67 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         </div>
                         {/* Topic rows */}
                         <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
-                          {group.map((t, i) => (
-                            <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: t.status === 'approved' ? 'var(--green-subtle)' : undefined }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <p className="text-sm font-medium" style={{ marginBottom: '0.2rem', lineHeight: 1.35 }}>{t.topic}</p>
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                                  {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
-                                  {t.competition_level && (
-                                    <span className="badge" style={{
-                                      background: t.competition_level.toLowerCase() === 'low' ? 'var(--green-subtle)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)',
-                                      color: t.competition_level.toLowerCase() === 'low' ? 'var(--green)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red)' : 'var(--amber)',
-                                    }}>
-                                      {t.competition_level}
-                                    </span>
-                                  )}
-                                  <span className={STATUS_BADGE[t.status]?.cls ?? 'badge badge-gray'}>{STATUS_BADGE[t.status]?.label ?? t.status}</span>
-                                  {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
-                                    <span className="badge badge-amber">⚠ Overlap</span>
+                          {group.map((t, i) => {
+                            // Extract just Low/Medium/High from competition_level (which may be a full sentence)
+                            const compRaw   = t.competition_level ?? ''
+                            const compLevel = compRaw.match(/^(low|medium|high)/i)?.[1]?.toLowerCase() ?? null
+                            const hasRationale = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
+                            return (
+                              <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: t.status === 'approved' ? 'var(--green-subtle)' : undefined }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p
+                                    className="text-sm font-medium"
+                                    style={{ marginBottom: '0.2rem', lineHeight: 1.35, cursor: hasRationale ? 'pointer' : 'default', color: hasRationale ? 'var(--blue)' : undefined }}
+                                    onClick={() => hasRationale && setRationaleFor(t)}
+                                    title={hasRationale ? 'Click to view SEO analysis' : undefined}
+                                  >
+                                    {t.topic}{hasRationale && <span style={{ fontSize: '0.6875rem', marginLeft: 4, opacity: 0.7 }}>↗</span>}
+                                  </p>
+                                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
+                                    {compLevel && (
+                                      <span className="badge" style={{
+                                        background: compLevel === 'low' ? 'var(--green-subtle)' : compLevel === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)',
+                                        color:      compLevel === 'low' ? 'var(--green)'        : compLevel === 'high' ? 'var(--red)'        : 'var(--amber)',
+                                      }}>
+                                        {compLevel.charAt(0).toUpperCase() + compLevel.slice(1)}
+                                      </span>
+                                    )}
+                                    <span className={STATUS_BADGE[t.status]?.cls ?? 'badge badge-gray'}>{STATUS_BADGE[t.status]?.label ?? t.status}</span>
+                                    {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
+                                      <span className="badge badge-amber">⚠ Overlap</span>
+                                    )}
+                                  </div>
+                                  {/* One-line keyword opportunity preview */}
+                                  {t.keyword_opportunity && (
+                                    <p className="text-xs mt-1" style={{
+                                      color: 'var(--text-muted)',
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 1,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                    }}>{t.keyword_opportunity}</p>
                                   )}
                                 </div>
-                                {t.rationale && (
-                                  <p className="text-xs mt-1" style={{
-                                    color: 'var(--text-muted)',
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden',
-                                  }}>{t.rationale}</p>
-                                )}
-                              </div>
-                              <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                                {t.status !== 'approved' && (
+                                <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
+                                  {t.status !== 'approved' && (
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
+                                      onClick={() => topicAction(t.id, 'approved')}
+                                      disabled={topicLoading[t.id]}
+                                    >✓</button>
+                                  )}
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
-                                    onClick={() => topicAction(t.id, 'approved')}
+                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
+                                    onClick={() => topicAction(t.id, 'rejected')}
                                     disabled={topicLoading[t.id]}
-                                  >✓</button>
-                                )}
-                                <button
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
-                                  onClick={() => topicAction(t.id, 'rejected')}
-                                  disabled={topicLoading[t.id]}
-                                >✕</button>
+                                  >✕</button>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     )
@@ -656,6 +684,42 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           </div>
         </form>
       </dialog>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          RATIONALE POPUP
+      ═══════════════════════════════════════════════════════════════════ */}
+      {rationaleFor && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+          onClick={() => setRationaleFor(null)}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: '0.75rem', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', padding: '1.25rem', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+              <p style={{ fontWeight: 600, fontSize: '0.9375rem', lineHeight: 1.3, flex: 1, marginRight: '1rem' }}>{rationaleFor.topic}</p>
+              <button onClick={() => setRationaleFor(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              {rationaleFor.target_keyword && <span className="badge badge-blue">{rationaleFor.target_keyword}</span>}
+              {rationaleFor.search_intent  && <span className="badge badge-gray">{rationaleFor.search_intent}</span>}
+            </div>
+            {([
+              { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+              { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+              { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
+              { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+              { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+            ] as const).filter(s => rationaleFor[s.key]).map(({ key, label, color, bg }) => (
+              <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 0.375rem 0.375rem 0', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
+                <p style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: '0.1875rem' }}>{label}</p>
+                <p style={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.5 }}>{rationaleFor[key]}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
           TOAST

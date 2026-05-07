@@ -341,7 +341,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -662,7 +662,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
             title:   parsed.title,
             content: parsed.content,
             status:  wpStatus,
-            ...(publishDate ? { date: `${publishDate}T09:00:00` } : {}),
+            ...(publishDate ? { date: `${publishDate}T${(clientSettings?.publish_time as string | null) ?? '09:00'}:00` } : {}),
             slug:    parsed.slug || undefined,
             excerpt: parsed.metaDescription || undefined,
             meta: {
