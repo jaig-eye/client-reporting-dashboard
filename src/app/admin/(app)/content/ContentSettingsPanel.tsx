@@ -69,10 +69,8 @@ function PurgeConfirmModal({ onConfirm, onClose }: { onConfirm: () => void; onCl
 
 export default function ContentSettingsPanel({
   clients: _clients,
-  allSites: _allSites,
 }: {
-  clients:  { id: string; name: string }[]
-  allSites: { connectionId: string; siteUrl: string; siteName: string; clientId: string }[]
+  clients: { id: string; name: string }[]
 }) {
   const [global, setGlobal]             = useState<GlobalSettings>({})
   const [globalSaving, setGlobalSaving] = useState(false)

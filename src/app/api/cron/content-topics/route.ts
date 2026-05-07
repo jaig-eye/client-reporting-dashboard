@@ -89,6 +89,7 @@ export async function GET(request: NextRequest) {
     .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
 
   const topicsGenerated: string[] = []
+  const briefsGenerated:  string[] = []
   const postsTriggered:  string[] = []
 
   for (const row of settingsRows) {
@@ -124,8 +125,32 @@ export async function GET(request: NextRequest) {
     const days           = daysFromNow(nextPublish)
     const publishDateStr = nextPublish.toISOString().split('T')[0]
 
+    // ── Frequency-aware guard: skip topic generation if last run was too recent ──
+    // Prevents a monthly client from generating topics every day the cron fires.
+    const { data: lastTopicRow } = await db
+      .from('content_topics')
+      .select('created_at')
+      .eq('client_id', client_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const lastTopicCreatedAt = (lastTopicRow as { created_at: string } | null)?.created_at ?? null
+
+    const minIntervalDays = (() => {
+      switch (frequency) {
+        case 'monthly': case 'monthly_first': case 'monthly_mid': case 'monthly_end': return 25
+        case 'biweekly': return 12
+        case 'weekly':   return 5
+        default:         return 1
+      }
+    })()
+    const daysSinceLastGen = lastTopicCreatedAt
+      ? (Date.now() - new Date(lastTopicCreatedAt).getTime()) / 86_400_000
+      : Infinity
+    const topicGenDue = daysSinceLastGen >= minIntervalDays
+
     // ── 30 days out: generate topics if none exist for this cycle ─────────
-    if (days <= 30 && days > 0) {
+    if (days <= 30 && days > 0 && topicGenDue) {
       const { data: existing } = await db
         .from('content_topics')
         .select('id')
@@ -154,6 +179,31 @@ export async function GET(request: NextRequest) {
           console.error(`[content-topics cron] Failed to generate topics for client ${client_id}:`, e)
         }
       }
+    }
+
+    // ── Generate SEO briefs for approved topics that don't have one yet ────
+    // Brief enriches the post-generation prompt. If brief generation fails,
+    // post generation still proceeds (falls back to the briefless prompt).
+    if (days <= 30) {
+      const { data: brieflessTopics } = await db
+        .from('content_topics')
+        .select('id')
+        .eq('client_id', client_id)
+        .in('status', ['approved', 'scheduled'])
+        .is('seo_brief', null)
+
+      await Promise.allSettled((brieflessTopics ?? []).map(async (topic) => {
+        try {
+          const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+          const res = await fetch(`${appUrl}/api/admin/content/topics/${topic.id}/brief`, {
+            method:  'POST',
+            headers: { 'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}` },
+          })
+          if (res.ok) briefsGenerated.push(topic.id)
+        } catch (e) {
+          console.error(`[content-topics cron] Brief generation failed for topic ${topic.id}:`, e)
+        }
+      }))
     }
 
     // ── Always: auto-generate posts for all approved topics ──────────────
@@ -196,11 +246,12 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  console.log(`[content-topics cron] topics generated for ${topicsGenerated.length} clients, triggered ${postsTriggered.length} posts`)
+  console.log(`[content-topics cron] topics generated for ${topicsGenerated.length} clients, ${briefsGenerated.length} briefs, triggered ${postsTriggered.length} posts`)
 
   return NextResponse.json({
     ok:              true,
     topicsGenerated: topicsGenerated.length,
+    briefsGenerated: briefsGenerated.length,
     postsTriggered:  postsTriggered.length,
   })
 }

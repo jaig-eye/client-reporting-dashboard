@@ -71,7 +71,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(20),
-    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts,ai_api_key').single(),
     db.from('meta_ads_metrics')
       .select('discovered_actions')
       .eq('client_id', id)
@@ -110,7 +110,9 @@ export default async function ClientDetailPage({
     benchmark_cpm?: number
     benchmark_cpl?: number
     metric_layouts?: MetricLayouts | null
+    ai_api_key?: string | null
   } | null
+  const aiConfigured = !!(agencySettings?.ai_api_key)
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
   const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
   const agencyPurch  = agencySettings?.default_purchase_action ?? 'purchase'
@@ -630,7 +632,7 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
   const monthStart  = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
-  const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, postsData] = await Promise.all([
+  const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, postsData, agencySettingsData] = await Promise.all([
     db.from('client_connections')
       .select('id, external_id, external_name, connector:connectors!inner(type, config)')
       .eq('client_id', clientId).eq('status', 'active').eq('connector.type', 'wordpress'),
@@ -663,7 +665,10 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
       .eq('client_id', clientId)
       .order('generated_at', { ascending: false })
       .limit(200),
+    db.from('agency_settings').select('ai_api_key').single(),
   ])
+
+  const aiConfigured = !!((agencySettingsData.data as { ai_api_key?: string | null } | null)?.ai_api_key)
 
   type WpConn = { id: string; external_id: string; external_name: string | null; connector: { type: string; config: Record<string, unknown> } }
   const sites = ((wpConnData.data ?? []) as unknown as WpConn[]).map(c => ({
@@ -798,14 +803,13 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
       isEcom={isEcom}
       sites={sites}
       contentSettings={settingsData.data as Record<string, unknown> | null}
+      aiConfigured={aiConfigured}
       overviewStats={{
         upcomingTopicsCount: upcomingTopics.filter(t => ['pending','scheduled','approved','generating'].includes(t.status)).length,
         nextPublishDate,
         recentPostsCount,
       }}
       gscData={gscData}
-      posts={posts}
-      postsPerRun={postsPerRun}
     />
   )
 }

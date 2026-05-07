@@ -1,0 +1,628 @@
+'use client'
+
+import { useState, useEffect, useRef, useCallback } from 'react'
+import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Author {
+  id:   number
+  name: string
+}
+
+interface Topic {
+  id:                  string
+  topic:               string
+  target_keyword:      string | null
+  status:              string
+  target_publish_date: string | null
+  rationale:           string | null
+  competition_level:   string | null
+  search_intent:       string | null
+  seo_brief:           Record<string, unknown> | null
+  cannibalization_warning?: string | null
+}
+
+interface Post {
+  id:                  string
+  title:               string | null
+  seo_title:           string | null
+  target_keyword:      string | null
+  status:              string
+  target_publish_date: string | null
+  wp_post_id:          number | null
+  wp_site_url:         string | null
+  published_url:       string | null
+  seo_score:           SeoScore | null
+  generated_at:        string
+}
+
+interface Props {
+  clientId:     string
+  clientName:   string
+  sites:        SiteOption[]
+  aiConfigured: boolean
+  postsPerRun?: number
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const FREQ_OPTS = [
+  { value: 'daily',         label: 'Daily' },
+  { value: 'weekly',        label: 'Weekly' },
+  { value: 'biweekly',      label: 'Every 2 weeks' },
+  { value: 'monthly',       label: 'Monthly (28-day rolling)' },
+  { value: 'monthly_first', label: 'Monthly — 1st of month' },
+  { value: 'monthly_mid',   label: 'Monthly — mid-month (15th)' },
+  { value: 'monthly_end',   label: 'Monthly — end of month (28th)' },
+]
+
+const FREQ_LABEL: Record<string, string> = {
+  daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks',
+  monthly: 'Monthly', monthly_first: 'Monthly (1st)', monthly_mid: 'Monthly (15th)', monthly_end: 'Monthly (28th)',
+}
+
+const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
+  pending:    { label: 'Pending',    cls: 'badge badge-amber'  },
+  approved:   { label: 'Approved',   cls: 'badge badge-green'  },
+  generating: { label: 'Generating', cls: 'badge badge-blue'   },
+  generated:  { label: 'Generated',  cls: 'badge badge-blue'   },
+  scheduled:  { label: 'Scheduled',  cls: 'badge badge-gray'   },
+  rejected:   { label: 'Rejected',   cls: 'badge badge-red'    },
+  draft_saved:{ label: 'On WP',      cls: 'badge badge-green'  },
+  published:  { label: 'Published',  cls: 'badge badge-green'  },
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+}
+
+function scoreColor(s: SeoScore | null): string {
+  if (!s) return 'var(--text-faint)'
+  if (s.overall >= 80) return 'var(--green)'
+  if (s.overall >= 60) return 'var(--amber)'
+  return 'var(--red)'
+}
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+  return (
+    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+      {children}
+      {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
+    </label>
+  )
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
+      style={{ background: checked ? 'var(--blue)' : 'var(--bg-muted)' }}
+    >
+      <span
+        className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
+        style={{ transform: checked ? 'translateX(1rem)' : 'translateX(0)' }}
+      />
+    </button>
+  )
+}
+
+function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+      <h4 className="section-title" style={{ margin: 0 }}>{title}</h4>
+      {action}
+    </div>
+  )
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
+
+export default function ClientScheduleTab({ clientId, clientName, sites, aiConfigured }: Props) {
+  const clientSites = sites.filter(s => s.clientId === clientId)
+
+  // Schedule form state
+  const [schedule,     setSchedule]     = useState<Partial<ClientScheduleSettings>>({})
+  const [authors,      setAuthors]      = useState<Author[]>([])
+  const [schedSaving,  setSchedSaving]  = useState(false)
+  const [schedSaved,   setSchedSaved]   = useState(false)
+  const [schedError,   setSchedError]   = useState('')
+  const [schedLoading, setSchedLoading] = useState(true)
+
+  // Pipeline data
+  const [topics,         setTopics]        = useState<Topic[]>([])
+  const [posts,          setPosts]         = useState<Post[]>([])
+  const [dataLoading,    setDataLoading]   = useState(true)
+  const [postTab,        setPostTab]       = useState<'draft_saved' | 'published' | 'rejected'>('draft_saved')
+
+  // Topic action states
+  const [topicLoading,   setTopicLoading]  = useState<Record<string, boolean>>({})
+
+  // Toast
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
+
+  // Modal ref
+  const modalRef = useRef<HTMLDialogElement>(null)
+  const [modalStartDate, setModalStartDate] = useState(today())
+  const [modalWeeks,     setModalWeeks]     = useState(6)
+  const [generating,     setGenerating]     = useState(false)
+
+  // ── Load schedule settings ─────────────────────────────────────────────────
+  useEffect(() => {
+    setSchedLoading(true)
+    fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
+      .then(r => r.json())
+      .then((d: Record<string, unknown>) => {
+        setSchedule({
+          schedule_frequency:    (d.schedule_frequency    as string  | null) ?? null,
+          schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
+          monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
+          posts_per_run:         (d.posts_per_run          as number)         ?? 2,
+          topics_per_run:        (d.topics_per_run         as number)         ?? 5,
+          weeks_ahead:           (d.weeks_ahead            as number)         ?? 6,
+          schedule_start_date:   (d.schedule_start_date    as string  | null) ?? null,
+          auto_generate:         (d.auto_generate          as boolean)        ?? false,
+          connection_id:         (d.connection_id          as string  | null) ?? null,
+          default_author_id:     (d.default_author_id      as number  | null) ?? null,
+          post_structure:        (d.post_structure          as string)         ?? '',
+          target_length:         (d.target_length           as number)         ?? 1500,
+        })
+        setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
+        setModalWeeks((d.weeks_ahead as number) ?? 6)
+        setSchedLoading(false)
+      })
+      .catch(() => setSchedLoading(false))
+  }, [clientId])
+
+  // ── Load authors when connection changes ───────────────────────────────────
+  useEffect(() => {
+    if (!schedule.connection_id) { setAuthors([]); return }
+    fetch(`/api/admin/wordpress/authors?connection_id=${schedule.connection_id}`)
+      .then(r => r.json())
+      .then((d: Author[] | { error: string }) => { if (Array.isArray(d)) setAuthors(d) })
+      .catch(() => setAuthors([]))
+  }, [schedule.connection_id])
+
+  // ── Load topics and posts ──────────────────────────────────────────────────
+  const loadPipeline = useCallback(() => {
+    setDataLoading(true)
+    Promise.all([
+      fetch(`/api/admin/content/topics?client_id=${clientId}`).then(r => r.json()),
+      fetch(`/api/admin/content/posts?client_id=${clientId}`).then(r => r.json()),
+    ]).then(([topicsData, postsData]) => {
+      setTopics(Array.isArray(topicsData) ? topicsData as Topic[] : [])
+      setPosts(Array.isArray(postsData)   ? postsData   as Post[] : [])
+      setDataLoading(false)
+    }).catch(() => setDataLoading(false))
+  }, [clientId])
+
+  useEffect(() => { loadPipeline() }, [loadPipeline])
+
+  // ── Toast helper ───────────────────────────────────────────────────────────
+  function showToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3800)
+  }
+
+  // ── Schedule save ──────────────────────────────────────────────────────────
+  function setSched<K extends keyof ClientScheduleSettings>(key: K, val: ClientScheduleSettings[K]) {
+    setSchedule(p => ({ ...p, [key]: val }))
+  }
+
+  async function saveSchedule() {
+    setSchedSaving(true); setSchedError(''); setSchedSaved(false)
+    const res = await fetch('/api/admin/content/client-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, ...schedule }),
+    })
+    setSchedSaving(false)
+    if (res.ok) { setSchedSaved(true); setTimeout(() => setSchedSaved(false), 2500) }
+    else { const d = await res.json(); setSchedError(d.error || 'Failed to save') }
+  }
+
+  // ── Topic approve / reject ─────────────────────────────────────────────────
+  async function topicAction(id: string, status: 'approved' | 'rejected') {
+    setTopicLoading(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+    setTopicLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      setTopics(p => p.map(t => t.id === id ? { ...t, status } : t))
+      showToast(status === 'approved' ? 'Topic approved' : 'Topic rejected')
+    } else {
+      showToast('Action failed', 'error')
+    }
+  }
+
+  // ── Generate calendar ──────────────────────────────────────────────────────
+  async function generateCalendar(e: React.FormEvent) {
+    e.preventDefault()
+    setGenerating(true)
+    const res = await fetch('/api/admin/content/calendar/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks }),
+    })
+    const data = await res.json()
+    setGenerating(false)
+    if (res.ok) {
+      modalRef.current?.close()
+      showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
+      loadPipeline()
+    } else {
+      showToast(data.error || 'Generation failed', 'error')
+    }
+  }
+
+  // ── Derived data ───────────────────────────────────────────────────────────
+  const pendingTopics  = topics.filter(t => t.status === 'pending')
+  const approvedTopics = topics.filter(t => t.status === 'approved')
+  const upcomingTopics = topics.filter(t => ['scheduled', 'generating'].includes(t.status))
+  const postsForTab    = posts.filter(p => p.status === postTab)
+
+  const approvedCount  = approvedTopics.length
+  const postsPerRun    = schedule.posts_per_run ?? 2
+  const quotaPct       = Math.min(100, (approvedCount / postsPerRun) * 100)
+
+  const freqSummary    = schedule.schedule_frequency
+    ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · ${postsPerRun} post${postsPerRun !== 1 ? 's' : ''}/run`
+    : `${postsPerRun} post${postsPerRun !== 1 ? 's' : ''}/run`
+
+  const willCreate     = Math.min(modalWeeks * postsPerRun, 50)
+  const showDayPicker  = schedule.schedule_frequency === 'weekly' || schedule.schedule_frequency === 'biweekly'
+
+  if (schedLoading) {
+    return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION A — SCHEDULE CONFIGURATION
+      ═══════════════════════════════════════════════════════════════════ */}
+      <div className="card p-6">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <div>
+            <h3 className="section-title" style={{ marginBottom: 0 }}>Schedule Configuration</h3>
+            <p className="section-desc" style={{ marginTop: '0.125rem' }}>Controls how often content is generated and published for this client.</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+            <Toggle checked={schedule.auto_generate ?? false} onChange={v => setSched('auto_generate', v)} />
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{schedule.auto_generate ? 'Auto-generate On' : 'Auto-generate Off'}</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <Label>Start Date</Label>
+            <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />
+          </div>
+          <div>
+            <Label>Frequency</Label>
+            <select className="input" value={schedule.schedule_frequency ?? ''} onChange={e => setSched('schedule_frequency', e.target.value || null)}>
+              <option value="">Use global default</option>
+              {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          {showDayPicker && (
+            <div>
+              <Label>Day of Week</Label>
+              <select className="input" value={schedule.schedule_day_of_week ?? 1} onChange={e => setSched('schedule_day_of_week', Number(e.target.value))}>
+                {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <Label hint="topic ideas per cycle">Topics per Run</Label>
+            <input className="input" type="number" min={1} max={20} value={schedule.topics_per_run ?? 5} onChange={e => setSched('topics_per_run', Number(e.target.value))} />
+          </div>
+          <div>
+            <Label hint="posts that must be approved per cycle">Posts per Run</Label>
+            <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
+          </div>
+          <div>
+            <Label hint="how far ahead to plan topics">Weeks Ahead</Label>
+            <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
+          </div>
+          <div>
+            <Label>Target Word Count</Label>
+            <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
+          </div>
+          <div>
+            <Label>WordPress Site</Label>
+            <select className="input" value={schedule.connection_id ?? ''} onChange={e => setSched('connection_id', e.target.value || null)}>
+              <option value="">— Select site —</option>
+              {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Default Author</Label>
+            <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)} disabled={!schedule.connection_id}>
+              <option value="">— Default —</option>
+              {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '1rem' }}>
+          <Label hint="appended to global post structure for this client">Custom Post Structure</Label>
+          <textarea
+            className="input"
+            rows={3}
+            style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+            value={schedule.post_structure ?? ''}
+            onChange={e => setSched('post_structure', e.target.value)}
+            placeholder="Leave blank to use global default"
+          />
+        </div>
+
+        <div className="flex items-center gap-3" style={{ marginTop: '1rem' }}>
+          <button className="btn btn-primary" onClick={saveSchedule} disabled={schedSaving}>
+            {schedSaving ? 'Saving…' : 'Save Schedule'}
+          </button>
+          {schedSaved  && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {schedError  && <span className="text-xs" style={{ color: 'var(--red)' }}>{schedError}</span>}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION B — CONTENT CALENDAR (Generate + Pipeline)
+      ═══════════════════════════════════════════════════════════════════ */}
+      <div className="card p-6">
+        <SectionHeader
+          title="Content Calendar"
+          action={
+            aiConfigured ? (
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
+                onClick={() => modalRef.current?.showModal()}
+              >
+                Generate Topics →
+              </button>
+            ) : (
+              <span className="text-xs" style={{ color: 'var(--text-faint)' }}>AI not configured</span>
+            )
+          }
+        />
+
+        {/* Pending Approval */}
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
+            <span className="text-sm font-medium">Pending Approval <span style={{ color: 'var(--text-faint)' }}>({pendingTopics.length})</span></span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{approvedCount}/{postsPerRun} approved</span>
+          </div>
+          <div className="quota-bar"><div className="quota-bar__fill" style={{ width: `${quotaPct}%` }} /></div>
+
+          {dataLoading ? (
+            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          ) : pendingTopics.length === 0 ? (
+            <p className="text-sm mt-2" style={{ color: 'var(--text-faint)' }}>
+              {topics.length === 0 ? `No topics yet — click "Generate Topics" to create your first content calendar.` : 'No topics pending approval.'}
+            </p>
+          ) : (
+            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden', marginTop: '0.5rem' }}>
+              {pendingTopics.map((t, i) => (
+                <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < pendingTopics.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p className="text-sm font-medium" style={{ marginBottom: '0.2rem', lineHeight: 1.35 }}>{t.topic}</p>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
+                      {t.competition_level && (
+                        <span className="badge" style={{ background: t.competition_level.toLowerCase() === 'low' ? 'var(--green-subtle)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)', color: t.competition_level.toLowerCase() === 'low' ? 'var(--green)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red)' : 'var(--amber)' }}>
+                          {t.competition_level}
+                        </span>
+                      )}
+                      {t.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(t.target_publish_date)}</span>}
+                      {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
+                        <span className="badge badge-amber">⚠ Overlap</span>
+                      )}
+                    </div>
+                    {t.rationale && <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.rationale}</p>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
+                      onClick={() => topicAction(t.id, 'approved')}
+                      disabled={topicLoading[t.id]}
+                    >✓</button>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
+                      onClick={() => topicAction(t.id, 'rejected')}
+                      disabled={topicLoading[t.id]}
+                    >✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Upcoming Queue */}
+        {(approvedTopics.length > 0 || upcomingTopics.length > 0) && (
+          <div style={{ marginBottom: '1.5rem' }}>
+            <span className="text-sm font-medium" style={{ display: 'block', marginBottom: '0.5rem' }}>
+              Upcoming <span style={{ color: 'var(--text-faint)' }}>({approvedTopics.length + upcomingTopics.length})</span>
+            </span>
+            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
+              {[...approvedTopics, ...upcomingTopics].map((t, i, arr) => {
+                const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.pending
+                const hasBrief = Boolean(t.seo_brief)
+                return (
+                  <div key={t.id} style={{ padding: '0.625rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < arr.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                    <span style={{ fontSize: '0.875rem', width: 18, textAlign: 'center' }}>
+                      {t.status === 'generating' ? '⏳' : hasBrief ? '📋' : '○'}
+                    </span>
+                    <span className="text-sm" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</span>
+                    {t.target_keyword && <span className="badge badge-gray" style={{ flexShrink: 0 }}>{t.target_keyword}</span>}
+                    {t.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→ {fmtDate(t.target_publish_date)}</span>}
+                    <span className={badge.cls} style={{ flexShrink: 0 }}>{badge.label}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>📋 brief ready · ⏳ generating · ○ approved</p>
+          </div>
+        )}
+
+        {/* Posts */}
+        <div>
+          <span className="text-sm font-medium" style={{ display: 'block', marginBottom: '0.5rem' }}>Posts</span>
+          <div className="pipeline-tabs">
+            {(['draft_saved', 'published', 'rejected'] as const).map(tab => (
+              <button
+                key={tab}
+                className={`pipeline-tab${postTab === tab ? ' active' : ''}`}
+                onClick={() => setPostTab(tab)}
+              >
+                {tab === 'draft_saved' ? 'On WordPress' : tab === 'published' ? 'Published' : 'Rejected'}
+                {' '}
+                <span style={{ color: postTab === tab ? 'var(--blue)' : 'var(--text-faint)' }}>
+                  ({posts.filter(p => p.status === tab).length})
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {dataLoading ? (
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          ) : postsForTab.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
+              {postTab === 'draft_saved' ? 'No posts on WordPress yet. Approved topics will be automatically uploaded after generation.' :
+               postTab === 'published'   ? 'No published posts yet.' :
+               'No rejected posts.'}
+            </p>
+          ) : (
+            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
+              {postsForTab.map((p, i) => {
+                const wpUrl = p.status === 'published' ? p.published_url : (p.wp_site_url && p.wp_post_id ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}` : null)
+                return (
+                  <div key={p.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < postsForTab.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p className="text-sm font-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.125rem' }}>{p.title ?? '(untitled)'}</p>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        {p.target_keyword && <span className="badge badge-gray">{p.target_keyword}</span>}
+                        {p.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(p.target_publish_date)}</span>}
+                      </div>
+                    </div>
+                    {p.seo_score && (
+                      <span className="text-xs font-semibold" style={{ color: scoreColor(p.seo_score), flexShrink: 0 }}>
+                        SEO: {p.seo_score.overall}
+                      </span>
+                    )}
+                    {wpUrl && (
+                      <a href={wpUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', flexShrink: 0 }}>
+                        View ↗
+                      </a>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION C — MANUAL POST EDITOR (collapsed)
+      ═══════════════════════════════════════════════════════════════════ */}
+      <details className="card" style={{ overflow: 'hidden' }}>
+        <summary className="p-5 cursor-pointer font-semibold text-sm" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
+          ▸ Manual Post Editor
+        </summary>
+        <div className="p-5 pt-0" style={{ borderTop: '1px solid var(--border)' }}>
+          {aiConfigured ? (
+            <ManualPostStub clientId={clientId} clientName={clientName} sites={clientSites} />
+          ) : (
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Configure an AI provider in Agency Settings to use the manual editor.</p>
+          )}
+        </div>
+      </details>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          GENERATE MODAL
+      ═══════════════════════════════════════════════════════════════════ */}
+      <dialog ref={modalRef} className="content-modal">
+        <form onSubmit={generateCalendar}>
+          <div className="modal-header">
+            <span className="font-semibold text-sm">Generate SEO Content Calendar</span>
+            <button type="button" onClick={() => modalRef.current?.close()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
+          </div>
+          <div className="modal-body">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+              <div>
+                <Label>Start Date</Label>
+                <input className="input" type="date" style={{ width: '100%' }} value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} required />
+              </div>
+              <div>
+                <Label>Weeks Ahead</Label>
+                <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
+              </div>
+              <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+                <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
+                  <strong>Using:</strong> {freqSummary}
+                </p>
+                <p className="text-xs" style={{ color: 'var(--blue)' }}>
+                  <strong>Will create:</strong> {willCreate} topic{willCreate !== 1 ? 's' : ''}
+                </p>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => modalRef.current?.close()}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={generating}>
+                {generating ? 'Generating…' : 'Generate →'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </dialog>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          TOAST
+      ═══════════════════════════════════════════════════════════════════ */}
+      {toast && (
+        <div id="content-toast-container">
+          <div className={`content-toast content-toast--${toast.type}`}>{toast.msg}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Manual Post Stub ──────────────────────────────────────────────────────────
+// Lazy-loads the full ContentEditor from the content page to avoid a heavy
+// import at the top of this component.
+
+function ManualPostStub({ clientId, clientName, sites }: { clientId: string; clientName: string; sites: SiteOption[] }) {
+  const [show, setShow] = useState(false)
+  if (!show) {
+    return (
+      <div style={{ padding: '1rem 0' }}>
+        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Write or generate a one-off post for {clientName} without going through the topic → approval flow.</p>
+        <button className="btn btn-secondary" onClick={() => setShow(true)}>Open Editor</button>
+      </div>
+    )
+  }
+  // Lazy import to keep initial bundle light
+  const ContentEditorWrapper = require('@/app/admin/(app)/content/ContentEditor').default
+  return <ContentEditorWrapper sites={sites} aiConfigured={true} preselectedClientId={clientId} />
+}

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
+import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
+import type { SeoBrief } from '@/lib/content/types'
 
 export const maxDuration = 300
 
@@ -308,7 +310,7 @@ export async function POST(request: NextRequest) {
   const agency   = agencySettings.agency_name || 'the agency'
 
   // ── Resolve effective client_id and topic data ─────────────────────────────
-  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null; target_publish_date: string | null; search_intent: string | null; secondary_keywords: string | null }
+  type TopicData = { id: string; topic: string; rationale: string | null; target_keyword: string | null; page_to_support: string | null; target_publish_date: string | null; search_intent: string | null; secondary_keywords: string | null; seo_brief: SeoBrief | null }
 
   let effectiveClientId = client_id ?? null
   let topicData: TopicData | null = null
@@ -316,7 +318,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief')
       .eq('id', topic_id)
       .single()
     if (topicErr || !topic) {
@@ -481,6 +483,35 @@ export async function POST(request: NextRequest) {
       manualLinks.forEach(l => internalLinkLines.push(`  - ${l.url}${l.label ? `  (${l.label})` : ''}`))
     }
 
+    const brief = topicData.seo_brief
+    const briefLines: string[] = []
+    if (brief) {
+      if (brief.h2_outline?.length > 0) {
+        briefLines.push(`\nRequired H2 structure (follow this outline — expand each section):\n${brief.h2_outline.map((h, i) => `  ${i + 1}. ${h}`).join('\n')}`)
+      }
+      if (brief.internal_link_targets?.length > 0) {
+        briefLines.push(`\nRequired internal links (must appear in the post with contextually natural anchor text):\n${brief.internal_link_targets.map(u => `  - ${u}`).join('\n')}`)
+      }
+      if (brief.faq_opportunities?.length > 0) {
+        briefLines.push(`\nInclude a FAQ section addressing these questions:\n${brief.faq_opportunities.map(q => `  - ${q}`).join('\n')}`)
+      }
+      if (brief.local_seo_angle) {
+        briefLines.push(`\nLocal SEO angle to weave in: ${brief.local_seo_angle}`)
+      }
+      if (brief.cta_text) {
+        briefLines.push(`\nClosing CTA to use: ${brief.cta_text}`)
+      }
+      if (brief.unique_angle) {
+        briefLines.push(`\nUnique content angle: ${brief.unique_angle}`)
+      }
+      if (brief.meta_description) {
+        briefLines.push(`\nTarget meta description (150–160 chars): ${brief.meta_description}`)
+      }
+      if (brief.schema_type) {
+        briefLines.push(`\nContent schema type: ${brief.schema_type}`)
+      }
+    }
+
     userPrompt = `Write a detailed, SEO-optimized blog post on the following topic:
 
 Title: ${topicData.topic}
@@ -488,8 +519,9 @@ Target keyword: ${topicData.target_keyword || 'derive from topic'}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
+${briefLines.length > 0 ? briefLines.join('\n') : ''}
 
-Target approximately ${targetLength} words.`
+Target approximately ${brief?.word_count_target ?? targetLength} words.`
   } else if (prompt) {
     // Manual prompt-based generation
     userPrompt = prompt
@@ -527,6 +559,18 @@ Target approximately ${targetLength} words.`
         .maybeSingle()
       connectionId = (fallbackConn as { id: string } | null)?.id ?? null
     }
+    const wc     = computeWordCount(parsed.content)
+    const brief  = topicData?.seo_brief ?? null
+    const seoScore = scoreSeoPost({
+      html:         parsed.content,
+      title:        parsed.title,
+      metaDesc:     parsed.metaDescription || null,
+      slug:         parsed.slug || null,
+      wordCount:    wc,
+      targetLength: (clientSettings?.target_length as number | null) ?? 1500,
+      brief,
+    })
+
     const postRow = {
       client_id:           effectiveClientId,
       connection_id:       connectionId,
@@ -540,13 +584,16 @@ Target approximately ${targetLength} words.`
       focus_topic:         topicData?.topic ?? null,
       topic_rationale:     topicData?.rationale ?? null,
       suggested_tags:      parsed.suggestedTags,
-      word_count:          computeWordCount(parsed.content),
+      word_count:          wc,
       heading_count:       computeHeadingCount(parsed.content),
       internal_links:      computeInternalLinks(parsed.content),
       generated_by:        topic_id ? 'topic' : 'manual',
       ai_model:            model,
       prompt_used:         userPrompt,
       target_publish_date: topicData?.target_publish_date ?? null,
+      seo_score:           seoScore,
+      schema_type:         brief?.schema_type ?? null,
+      excerpt:             parsed.metaDescription || null,
     }
     const { data: savedPost, error: insertError } = await db.from('content_posts').insert(postRow).select('id').single()
     postId = savedPost?.id ?? null
@@ -622,6 +669,8 @@ Target approximately ${targetLength} words.`
               rank_math_title:          parsed.seoTitle        || parsed.title,
               rank_math_description:    parsed.metaDescription || '',
               rank_math_focus_keyword:  parsed.focusKeyword    || '',
+              ...(brief?.schema_type ? { _schema_type: brief.schema_type } : {}),
+              ...(brief?.alt_text    ? { _featured_image_alt: brief.alt_text } : {}),
             },
           })
           await db.from('content_posts').update({
