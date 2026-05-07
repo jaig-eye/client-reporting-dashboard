@@ -186,14 +186,23 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       .catch(() => setSchedLoading(false))
   }, [clientId])
 
-  // ── Load authors when connection changes ───────────────────────────────────
+  // ── Auto-set connection_id from the client's only site ────────────────────
   useEffect(() => {
-    if (!schedule.connection_id) { setAuthors([]); return }
-    fetch(`/api/admin/wordpress/authors?connection_id=${schedule.connection_id}`)
+    if (!schedule.connection_id && clientSites[0]?.connectionId) {
+      setSched('connection_id', clientSites[0].connectionId)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientSites])
+
+  // ── Load authors from first connected site ─────────────────────────────────
+  useEffect(() => {
+    const connId = clientSites[0]?.connectionId
+    if (!connId) { setAuthors([]); return }
+    fetch(`/api/admin/wordpress/authors?connection_id=${connId}`)
       .then(r => r.json())
       .then((d: Author[] | { error: string }) => { if (Array.isArray(d)) setAuthors(d) })
       .catch(() => setAuthors([]))
-  }, [schedule.connection_id])
+  }, [clientSites])
 
   // ── Load topics and posts ──────────────────────────────────────────────────
   const loadPipeline = useCallback(() => {
@@ -276,15 +285,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const upcomingTopics = topics.filter(t => ['scheduled', 'generating'].includes(t.status))
   const postsForTab    = posts.filter(p => p.status === postTab)
 
-  const approvedCount  = approvedTopics.length
-  const postsPerRun    = schedule.posts_per_run ?? 2
-  const quotaPct       = Math.min(100, (approvedCount / postsPerRun) * 100)
+  const postsPerRun    = schedule.posts_per_run  ?? 2
+  const topicsPerRun   = schedule.topics_per_run ?? 5
 
   const freqSummary    = schedule.schedule_frequency
-    ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · ${postsPerRun} post${postsPerRun !== 1 ? 's' : ''}/run`
-    : `${postsPerRun} post${postsPerRun !== 1 ? 's' : ''}/run`
+    ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · ${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
+    : `${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
 
-  const willCreate     = Math.min(modalWeeks * postsPerRun, 50)
+  const willCreate     = Math.min(modalWeeks * topicsPerRun, 50)
   const showDayPicker  = schedule.schedule_frequency === 'weekly' || schedule.schedule_frequency === 'biweekly'
 
   if (schedLoading) {
@@ -346,15 +354,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
           </div>
           <div>
-            <Label>WordPress Site</Label>
-            <select className="input" value={schedule.connection_id ?? ''} onChange={e => setSched('connection_id', e.target.value || null)}>
-              <option value="">— Select site —</option>
-              {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName}</option>)}
-            </select>
-          </div>
-          <div>
             <Label>Default Author</Label>
-            <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)} disabled={!schedule.connection_id}>
+            <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
               <option value="">— Default —</option>
               {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
@@ -403,59 +404,119 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           }
         />
 
-        {/* Pending Approval */}
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
-            <span className="text-sm font-medium">Pending Approval <span style={{ color: 'var(--text-faint)' }}>({pendingTopics.length})</span></span>
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{approvedCount}/{postsPerRun} approved</span>
-          </div>
-          <div className="quota-bar"><div className="quota-bar__fill" style={{ width: `${quotaPct}%` }} /></div>
+        {/* Pending Approval — grouped by publish date */}
+        {(() => {
+          const allPending = topics.filter(t => ['pending', 'approved'].includes(t.status))
+          // Group by publish date (undefined → 'unscheduled')
+          const groups = new Map<string, Topic[]>()
+          for (const t of allPending) {
+            const key = t.target_publish_date ?? 'unscheduled'
+            const arr = groups.get(key) ?? []
+            arr.push(t)
+            groups.set(key, arr)
+          }
+          const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+            if (a === 'unscheduled') return 1
+            if (b === 'unscheduled') return -1
+            return a.localeCompare(b)
+          })
 
-          {dataLoading ? (
-            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Loading…</p>
-          ) : pendingTopics.length === 0 ? (
-            <p className="text-sm mt-2" style={{ color: 'var(--text-faint)' }}>
-              {topics.length === 0 ? `No topics yet — click "Generate Topics" to create your first content calendar.` : 'No topics pending approval.'}
-            </p>
-          ) : (
-            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden', marginTop: '0.5rem' }}>
-              {pendingTopics.map((t, i) => (
-                <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < pendingTopics.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p className="text-sm font-medium" style={{ marginBottom: '0.2rem', lineHeight: 1.35 }}>{t.topic}</p>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                      {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
-                      {t.competition_level && (
-                        <span className="badge" style={{ background: t.competition_level.toLowerCase() === 'low' ? 'var(--green-subtle)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)', color: t.competition_level.toLowerCase() === 'low' ? 'var(--green)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red)' : 'var(--amber)' }}>
-                          {t.competition_level}
-                        </span>
-                      )}
-                      {t.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(t.target_publish_date)}</span>}
-                      {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
-                        <span className="badge badge-amber">⚠ Overlap</span>
-                      )}
-                    </div>
-                    {t.rationale && <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.rationale}</p>}
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
-                      onClick={() => topicAction(t.id, 'approved')}
-                      disabled={topicLoading[t.id]}
-                    >✓</button>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
-                      onClick={() => topicAction(t.id, 'rejected')}
-                      disabled={topicLoading[t.id]}
-                    >✕</button>
-                  </div>
+          return (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <span className="text-sm font-medium">
+                  Pending Approval{' '}
+                  <span style={{ color: 'var(--text-faint)' }}>({allPending.length})</span>
+                </span>
+              </div>
+
+              {dataLoading ? (
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+              ) : allPending.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
+                  {topics.length === 0
+                    ? 'No topics yet — click "Generate Topics" to create your first content calendar.'
+                    : 'No topics pending approval.'}
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {sortedKeys.map(dateKey => {
+                    const group        = groups.get(dateKey)!
+                    const approvedInGroup = group.filter(t => t.status === 'approved').length
+                    const slotPct      = Math.min(100, (approvedInGroup / postsPerRun) * 100)
+                    const slotReady    = approvedInGroup >= postsPerRun
+                    return (
+                      <div key={dateKey}>
+                        {/* Slot header */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                          <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
+                            {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
+                          </span>
+                          <span className="text-xs" style={{ color: slotReady ? 'var(--green)' : 'var(--text-muted)' }}>
+                            {approvedInGroup}/{postsPerRun} approved{slotReady ? ' ✓' : ''}
+                          </span>
+                        </div>
+                        <div className="quota-bar" style={{ marginBottom: '0.375rem' }}>
+                          <div className="quota-bar__fill" style={{ width: `${slotPct}%`, background: slotReady ? 'var(--green)' : 'var(--blue)' }} />
+                        </div>
+                        {/* Topic rows */}
+                        <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
+                          {group.map((t, i) => (
+                            <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: t.status === 'approved' ? 'var(--green-subtle)' : undefined }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <p className="text-sm font-medium" style={{ marginBottom: '0.2rem', lineHeight: 1.35 }}>{t.topic}</p>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                  {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
+                                  {t.competition_level && (
+                                    <span className="badge" style={{
+                                      background: t.competition_level.toLowerCase() === 'low' ? 'var(--green-subtle)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)',
+                                      color: t.competition_level.toLowerCase() === 'low' ? 'var(--green)' : t.competition_level.toLowerCase() === 'high' ? 'var(--red)' : 'var(--amber)',
+                                    }}>
+                                      {t.competition_level}
+                                    </span>
+                                  )}
+                                  <span className={STATUS_BADGE[t.status]?.cls ?? 'badge badge-gray'}>{STATUS_BADGE[t.status]?.label ?? t.status}</span>
+                                  {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
+                                    <span className="badge badge-amber">⚠ Overlap</span>
+                                  )}
+                                </div>
+                                {t.rationale && (
+                                  <p className="text-xs mt-1" style={{
+                                    color: 'var(--text-muted)',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                  }}>{t.rationale}</p>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
+                                {t.status !== 'approved' && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
+                                    onClick={() => topicAction(t.id, 'approved')}
+                                    disabled={topicLoading[t.id]}
+                                  >✓</button>
+                                )}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
+                                  onClick={() => topicAction(t.id, 'rejected')}
+                                  disabled={topicLoading[t.id]}
+                                >✕</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
+          )
+        })()}
 
         {/* Upcoming Queue */}
         {(approvedTopics.length > 0 || upcomingTopics.length > 0) && (

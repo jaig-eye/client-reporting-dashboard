@@ -335,10 +335,14 @@ function TimelineRow({
         animation: item.status === 'generating' ? 'pulse 1.5s ease-in-out infinite' : 'none',
       }} />
 
-      {/* Client name */}
-      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0, minWidth: 80 }}>
-        {item.clientName}
-      </span>
+      {/* Client name — links to their content schedule */}
+      <a
+        href={`/admin/clients/${item.clientId}?tab=content`}
+        onClick={e => e.stopPropagation()}
+        style={{ fontSize: '0.75rem', color: 'var(--blue)', flexShrink: 0, minWidth: 80, textDecoration: 'none', fontWeight: 500 }}
+      >
+        {item.clientName} ↗
+      </a>
 
       <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem', flexShrink: 0 }}>—</span>
 
