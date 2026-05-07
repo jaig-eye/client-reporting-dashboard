@@ -284,12 +284,15 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     try {
       const firstTopicId = (saved as { id: string }[] | null)?.[0]?.id ?? ''
       const appUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+      const dateLabel = targetPublishDate
+        ? ` for <strong>${new Date(targetPublishDate + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</strong>`
+        : ''
       await sendEmail({
         to:      notifEmail,
-        subject: `[${agencyName}] Topics ready for review — ${clientName}`,
-        html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong> and are waiting for your review.</p>
+        subject: `[${agencyName}] Topics ready for review — ${clientName}${targetPublishDate ? ` (${targetPublishDate})` : ''}`,
+        html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong>${dateLabel} and are waiting for your review.</p>
                <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${[t.keyword_opportunity, t.ranking_strategy].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>
-               <p><a href="${appUrl}/admin/content${firstTopicId ? `?highlight=${firstTopicId}` : ''}">Review Topics →</a></p>`,
+               <p><a href="${appUrl}/admin/clients/${clientId}?tab=content">Review &amp; Approve Topics →</a></p>`,
       })
     } catch (emailErr) {
       console.error('[generateTopics] email error:', emailErr)

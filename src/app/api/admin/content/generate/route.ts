@@ -686,18 +686,21 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
           if (notifEmail && agencySettings.notify_post_uploaded) {
             const agencyName = agencySettings.agency_name || 'Agency Dashboard'
             const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-            const dateLabel  = publishDate ? ` — publishes ${publishDate}` : ''
             try {
               let clientName = ''
               if (effectiveClientId) {
                 const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
                 clientName = (cl as { name?: string } | null)?.name ?? ''
               }
+              const wpPostUrl = wpResult.id && config?.site_url
+                ? `${String(config.site_url).replace(/\/$/, '')}/?p=${wpResult.id}`
+                : null
               await sendEmail({
                 to:      notifEmail,
-                subject: `[${agencyName}] Post uploaded to WordPress: ${parsed.title}`,
-                html: `<p>A post for <strong>${clientName || 'a client'}</strong> has been uploaded to WordPress as a draft: <strong>${parsed.title}</strong>${dateLabel}.</p>
-                       <p><a href="${appUrl}/admin/content?tab=queue&highlight=${postId}">View Post →</a></p>`,
+                subject: `[${agencyName}] Post on WordPress${publishDate ? ` — ${publishDate}` : ''}: ${parsed.title}`,
+                html: `<p>A post for <strong>${clientName || 'a client'}</strong> has been uploaded to WordPress${publishDate ? ` and scheduled for <strong>${publishDate}</strong>` : ' as a draft'}: <strong>${parsed.title}</strong>.</p>
+                       ${wpPostUrl ? `<p><a href="${wpPostUrl}">Preview on WordPress →</a></p>` : ''}
+                       <p><a href="${appUrl}/admin/clients/${effectiveClientId ?? ''}?tab=content">View in Dashboard →</a></p>`,
               })
             } catch (emailErr) {
               console.error('[generate] WP-upload email error:', emailErr)

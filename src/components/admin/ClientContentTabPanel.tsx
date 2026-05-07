@@ -176,10 +176,7 @@ function OverviewTab({ clientId, settings, stats }: {
           {!!s?.publish_time   && <InfoRow label="Publish Time" value={String(s.publish_time)} />}
           <InfoRow label="Posts / Run"   value={String(s?.posts_per_run ?? 1)} />
           <InfoRow label="Topics / Run"  value={String(s?.topics_per_run ?? 5)} />
-          <InfoRow label="Weeks Ahead"   value={String(s?.weeks_ahead ?? 4)} />
-          {s?.generate_lead_days != null && (
-            <InfoRow label="Lead Days" value={String(s.generate_lead_days)} />
-          )}
+          <InfoRow label="Weeks Ahead"   value={String(s?.weeks_ahead ?? 1)} />
           <InfoRow label="Auto-generate" value={s?.auto_generate ? 'On' : 'Off'} />
         </div>
       </div>
