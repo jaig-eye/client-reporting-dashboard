@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await db
     .from('content_posts')
-    .select('id, client_id, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url')
+    .select('id, client_id, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -47,9 +47,12 @@ export async function GET(request: NextRequest) {
     headingCount:    (p.heading_count as number) ?? null,
     internalLinks:   (p.internal_links as number) ?? null,
     publishedUrl:    p.published_url  ? String(p.published_url)  : null,
-    wpAuthorId:      p.wp_author_id   ? Number(p.wp_author_id)   : null,
-    wpPostId:        p.wp_post_id     ? Number(p.wp_post_id)     : null,
-    wpSiteUrl:       p.wp_site_url    ? String(p.wp_site_url)    : null,
+    wpAuthorId:        p.wp_author_id       ? Number(p.wp_author_id)       : null,
+    wpPostId:          p.wp_post_id         ? Number(p.wp_post_id)         : null,
+    wpSiteUrl:         p.wp_site_url        ? String(p.wp_site_url)        : null,
+    bcPostId:          p.bc_post_id         ? Number(p.bc_post_id)         : null,
+    bcStoreHash:       p.bc_store_hash      ? String(p.bc_store_hash)      : null,
+    featuredImageUrl:  p.featured_image_url ? String(p.featured_image_url) : null,
   })
 }
 
@@ -67,15 +70,17 @@ export async function PATCH(request: NextRequest) {
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
   const body = await request.json() as {
-    title?:         string
-    seoTitle?:      string
-    content?:       string
-    metaDescription?: string
-    slug?:          string
-    targetKeyword?: string
-    suggestedTags?: string[]
-    connectionId?:  string | null
-    wpAuthorId?:    number | null
+    title?:            string
+    seoTitle?:         string
+    content?:          string
+    metaDescription?:  string
+    slug?:             string
+    targetKeyword?:    string
+    suggestedTags?:    string[]
+    connectionId?:     string | null
+    wpAuthorId?:       number | null
+    featuredImageUrl?: string | null
+    status?:           string
   }
 
   const updates: Record<string, unknown> = {}
@@ -91,8 +96,10 @@ export async function PATCH(request: NextRequest) {
   if (body.slug            !== undefined) updates.slug               = body.slug
   if (body.targetKeyword   !== undefined) updates.target_keyword     = body.targetKeyword
   if (body.suggestedTags   !== undefined) updates.suggested_tags     = body.suggestedTags
-  if (body.connectionId    !== undefined) updates.connection_id      = body.connectionId
-  if (body.wpAuthorId      !== undefined) updates.wp_author_id       = body.wpAuthorId
+  if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId
+  if (body.wpAuthorId        !== undefined) updates.wp_author_id       = body.wpAuthorId
+  if (body.featuredImageUrl  !== undefined) updates.featured_image_url = body.featuredImageUrl
+  if (body.status            !== undefined) updates.status             = body.status
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: true })

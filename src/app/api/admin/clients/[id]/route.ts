@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function PATCH(
   request: NextRequest,
@@ -44,6 +45,9 @@ export async function PATCH(
   revalidatePath(`/admin/clients/${id}`)
   revalidatePath('/admin/clients')
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'client', { resourceId: id, clientId: id, meta: { fields: Object.keys(patch) } })
+
   return NextResponse.json(data)
 }
 
@@ -66,9 +70,14 @@ export async function DELETE(
   await db.from('meta_ads_metrics').delete().eq('client_id', id)
   await db.from('client_connections').delete().eq('client_id', id)
 
+  const { data: clientRow } = await db.from('clients').select('name').eq('id', id).single()
   const { error } = await db.from('clients').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   revalidatePath('/admin/clients')
+
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'client', { resourceId: id, meta: { name: (clientRow as { name?: string } | null)?.name } })
+
   return NextResponse.json({ success: true })
 }

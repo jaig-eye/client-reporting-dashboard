@@ -40,11 +40,12 @@ export interface ContentItem {
 }
 
 export interface SiteOption {
-  connectionId: string
-  siteUrl:      string
-  siteName:     string
-  clientId:     string
-  clientName:   string
+  connectionId:  string
+  siteUrl:       string
+  siteName:      string
+  clientId:      string
+  clientName:    string
+  connectorType?: string
 }
 
 export interface ClientScheduleSettings {

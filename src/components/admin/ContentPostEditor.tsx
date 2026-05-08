@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from 'react'
 
 interface Site {
-  connectionId: string
-  siteUrl:      string
-  siteName:     string
-  clientId:     string
-  clientName:   string
+  connectionId:  string
+  siteUrl:       string
+  siteName:      string
+  clientId:      string
+  clientName:    string
+  connectorType?: string
 }
 
 interface UpdatedPost {
@@ -49,6 +50,9 @@ interface PostDetail {
   wpAuthorId:       number | null
   wpPostId:         number | null
   wpSiteUrl:        string | null
+  bcPostId:         number | null
+  bcStoreHash:      string | null
+  featuredImageUrl: string | null
 }
 
 interface Author {
@@ -144,6 +148,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [authorId,     setAuthorId]     = useState<number | null>(null)
   const [connectionId, setConnectionId] = useState<string>(defaultConnectionId ?? '')
 
+  // Featured image
+  const [featuredImageUrl, setFeaturedImageUrl] = useState('')
+
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
   const [showEditNotes, setShowEditNotes] = useState(false)
@@ -173,6 +180,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? null)
+        setFeaturedImageUrl(data.featuredImageUrl ?? '')
         if (!connectionId && defaultConnectionId) setConnectionId(defaultConnectionId)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load')
@@ -252,36 +260,54 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     setApproving(true)
     setError('')
     try {
-      // 1. Save all in-drawer edits to DB first
+      // 1. Save all in-drawer edits to DB first (including featured image URL)
       const saveRes = await fetch(`/api/admin/content/post?id=${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags, connectionId: connectionId || null,
-          wpAuthorId: authorId,
+          wpAuthorId: authorId, featuredImageUrl: featuredImageUrl || null,
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
 
-      // 2. Upload to WordPress as draft
-      const approveRes = await fetch(`/api/admin/content/posts/${postId}/approve`, {
-        method: 'POST',
-      })
-      if (!approveRes.ok) throw new Error((await approveRes.json()).error || 'Failed to upload to WordPress')
-      const result = await approveRes.json() as { wp_post_id: number; wp_edit_url: string }
+      // 2. Determine active site connection
+      const activeSite = connectionId ? sites.find(s => s.connectionId === connectionId) : null
+      const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
+
+      // 3. Confirm dialog
+      const confirmMsg = activeSite
+        ? `This will push "${title || 'this post'}" to ${activeSite.siteName} as a draft. Continue?`
+        : `No site connected — the post will be marked approved but not pushed anywhere. Continue?`
+      if (!window.confirm(confirmMsg)) {
+        setApproving(false)
+        return
+      }
+
+      // 4. Fire-and-forget upload (or just update status if no connection)
+      if (activeSite) {
+        const route = isBigCommerce
+          ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
+          : `/api/admin/content/posts/${postId}/approve`
+        fetch(route, { method: 'POST' }).catch(e => console.error('[handleApprove]', e))
+      } else {
+        fetch(`/api/admin/content/post?id=${postId}`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status: 'draft_saved' }),
+        }).catch(e => console.error('[handleApprove status]', e))
+      }
 
       onUpdate({
         id: postId, status: 'draft_saved',
         title: title || null, targetKeyword: targetKeyword || null,
         wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
         publishedUrl: post?.publishedUrl ?? null,
-        wpPostId: result.wp_post_id, wpSiteUrl: post?.wpSiteUrl ?? null,
       })
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve')
-    } finally {
       setApproving(false)
     }
   }
@@ -349,7 +375,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     color: 'var(--text-muted)', marginBottom: '0.25rem',
   }
 
-  const isOnWP = post?.status === 'draft_saved' || post?.status === 'published'
+  const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
 
   // ── Preview srcdoc ──────────────────────────────────────────────────────────
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
@@ -449,12 +475,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               </p>
             )}
 
-            {/* On WordPress banner */}
-            {isOnWP && (
+            {/* On Site banner */}
+            {isOnSite && (
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>
-                    ✓ On WordPress
+                    ✓ On Site
                   </span>
                   {post?.wpPostId && post?.wpSiteUrl && (
                     <a
@@ -466,6 +492,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       Edit in WordPress ↗
                     </a>
                   )}
+                  {post?.bcPostId && post?.bcStoreHash && (
+                    <a
+                      href={`https://store-${post.bcStoreHash}.mybigcommerce.com/manage/site/content`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}
+                    >
+                      Edit in BigCommerce ↗
+                    </a>
+                  )}
                   {post?.publishedUrl && (
                     <a href={post.publishedUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>
                       View post ↗
@@ -473,14 +509,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   )}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been saved to WordPress as a draft. Edit and publish directly in WordPress.
+                  This post has been saved to your site as a draft. Edit and publish it directly in the CMS.
                 </p>
               </div>
             )}
 
-            {/* WordPress site selector */}
+            {/* Site connection selector */}
             <div className="mb-4">
-              <label style={labelStyle}>WordPress Site</label>
+              <label style={labelStyle}>Site Connection</label>
               <select value={connectionId} onChange={e => setConnectionId(e.target.value)} style={inputStyle}>
                 <option value="">— Select a site —</option>
                 {sites.map(s => (
@@ -632,6 +668,28 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               />
             </div>
 
+            {/* Featured image */}
+            <div className="mb-4">
+              <label style={labelStyle}>Featured Image URL</label>
+              <input
+                type="url"
+                value={featuredImageUrl}
+                onChange={e => setFeaturedImageUrl(e.target.value)}
+                style={inputStyle}
+                placeholder="https://…"
+              />
+              {featuredImageUrl && (
+                <img
+                  src={featuredImageUrl}
+                  alt="Featured image preview"
+                  style={{ maxHeight: 120, marginTop: 8, borderRadius: 4, objectFit: 'cover', maxWidth: '100%' }}
+                />
+              )}
+              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: '0.25rem' }}>
+                Will be uploaded to the site as the post&apos;s featured image when approved.
+              </p>
+            </div>
+
             {/* SEO checklist */}
             <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
               <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', marginBottom: '0.5rem' }}>
@@ -729,9 +787,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         {/* Footer actions */}
         {!loading && (
           <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {post?.status === 'pending' && !isOnWP && (
+            {!isOnSite && (
               <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-                {approving ? 'Uploading…' : 'Approve & Upload'}
+                {approving ? 'Saving…' : 'Approve →'}
               </button>
             )}
             <div style={{ flex: 1 }} />

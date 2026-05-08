@@ -38,7 +38,63 @@ const STATUS_BADGE: Record<string, string> = {
 
 const PER_PAGE = 50
 
+interface ActivityRow {
+  id:            string
+  user_name:     string
+  action:        string
+  resource_type: string
+  resource_id:   string | null
+  client_name:   string | null
+  meta:          Record<string, unknown>
+  created_at:    string
+}
+
+const ACTION_BADGE: Record<string, string> = {
+  created:    'badge-green',
+  updated:    'badge-blue',
+  deleted:    'badge-red',
+  approved:   'badge-green',
+  rejected:   'badge-red',
+  generated:  'badge-blue',
+  logged_in:  'badge-gray',
+  paused:     'badge-amber',
+  resumed:    'badge-green',
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const m    = Math.floor(diff / 60000)
+  if (m < 1)   return 'just now'
+  if (m < 60)  return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24)  return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+function metaSummary(meta: Record<string, unknown>): string {
+  if (!meta || typeof meta !== 'object') return ''
+  const parts: string[] = []
+  if (meta.title)  parts.push(String(meta.title))
+  if (meta.name)   parts.push(String(meta.name))
+  if (meta.count)  parts.push(`Count: ${meta.count}`)
+  if (meta.amount_af) parts.push(`$${meta.amount_af}`)
+  return parts.join(' · ')
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/).map(w => w[0]?.toUpperCase() ?? '').join('').slice(0, 2)
+}
+
+function avatarColor(name: string): string {
+  let h = 0
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360
+  return `hsl(${h},55%,45%)`
+}
+
 export default function SystemPage() {
+  const [activeTab,     setActiveTab]     = useState<'sync' | 'activity'>('sync')
+
+  // Sync log state
   const [jobs,          setJobs]          = useState<SyncJob[]>([])
   const [total,         setTotal]         = useState(0)
   const [page,          setPage]          = useState(1)
@@ -50,6 +106,33 @@ export default function SystemPage() {
   const [syncResults,   setSyncResults]   = useState<GlobalSyncResult[] | null>(null)
   const [syncError,     setSyncError]     = useState('')
   const [clearingStuck, setClearingStuck] = useState(false)
+
+  // Activity log state
+  const [actLogs,       setActLogs]       = useState<ActivityRow[]>([])
+  const [actTotal,      setActTotal]      = useState(0)
+  const [actPage,       setActPage]       = useState(1)
+  const [actLoading,    setActLoading]    = useState(false)
+  const [actResType,    setActResType]    = useState('')
+  const [actAction,     setActAction]     = useState('')
+
+  const fetchActivity = useCallback(async (p: number, resType: string, action: string) => {
+    setActLoading(true)
+    try {
+      const params = new URLSearchParams({ page: String(p), per_page: '50' })
+      if (resType) params.set('resource_type', resType)
+      if (action)  params.set('action', action)
+      const res  = await fetch(`/api/admin/activity?${params}`)
+      const data = await res.json()
+      setActLogs(data.logs ?? [])
+      setActTotal(data.total ?? 0)
+    } finally {
+      setActLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'activity') fetchActivity(actPage, actResType, actAction)
+  }, [activeTab, actPage, actResType, actAction, fetchActivity])
 
   const fetchJobs = useCallback(async (p: number) => {
     setLoading(true)
@@ -118,13 +201,152 @@ export default function SystemPage() {
   const runningCount = jobs.filter(j => j.status === 'running').length
   const totalPages   = Math.ceil(total / PER_PAGE)
 
+  const actTotalPages = Math.ceil(actTotal / 50)
+
   return (
     <div>
-      <div className="page-header mb-6">
+      <div className="page-header mb-4">
         <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>System</h1>
-        <p className="section-desc mt-0.5">Sync logs, global backfill, and diagnostics.</p>
+        <p className="section-desc mt-0.5">Sync logs, activity history, and diagnostics.</p>
       </div>
 
+      {/* Tab switcher */}
+      <div className="flex gap-1 mb-5" style={{ borderBottom: '2px solid var(--border)', paddingBottom: '0' }}>
+        {(['sync', 'activity'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className="text-sm font-medium px-4 py-2"
+            style={{
+              borderBottom: activeTab === tab ? '2px solid var(--blue)' : '2px solid transparent',
+              marginBottom: '-2px',
+              color: activeTab === tab ? 'var(--blue)' : 'var(--text-muted)',
+              background: 'none',
+              cursor: 'pointer', transition: 'color 0.15s',
+            }}
+          >
+            {tab === 'sync' ? 'Sync Logs' : 'Activity Log'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'activity' && (
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h2 className="section-title">Activity Log</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={actResType}
+                onChange={e => { setActResType(e.target.value); setActPage(1) }}
+                className="input"
+                style={{ fontSize: '0.8125rem', padding: '0.25rem 0.5rem', height: 'auto' }}
+              >
+                <option value="">All Resources</option>
+                {['client','topic','post','ledger_entry','connector','connection','content_settings','calendar','user'].map(r => (
+                  <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+              <select
+                value={actAction}
+                onChange={e => { setActAction(e.target.value); setActPage(1) }}
+                className="input"
+                style={{ fontSize: '0.8125rem', padding: '0.25rem 0.5rem', height: 'auto' }}
+              >
+                <option value="">All Actions</option>
+                {['created','updated','deleted','approved','rejected','generated','logged_in'].map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {actLoading ? (
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          ) : actLogs.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No activity recorded yet.</p>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>User</th>
+                      <th>Action</th>
+                      <th>Resource</th>
+                      <th>Client</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {actLogs.map(log => (
+                      <tr key={log.id}>
+                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }} title={new Date(log.created_at).toLocaleString()}>
+                          {relativeTime(log.created_at)}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{
+                              width: 24, height: 24, borderRadius: '50%',
+                              background: avatarColor(log.user_name),
+                              color: '#fff', fontSize: '0.6875rem', fontWeight: 700,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              flexShrink: 0,
+                            }}>
+                              {initials(log.user_name)}
+                            </div>
+                            <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{log.user_name}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${ACTION_BADGE[log.action] ?? 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                          {log.resource_type}
+                          {log.resource_id && (
+                            <span style={{ color: 'var(--text-faint)', marginLeft: 4, fontSize: '0.6875rem' }}>
+                              {log.resource_id.slice(0, 8)}…
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
+                          {log.client_name ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                        </td>
+                        <td className="text-xs max-w-[200px] truncate" style={{ color: 'var(--text-muted)' }} title={metaSummary(log.meta)}>
+                          {metaSummary(log.meta)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {actTotal > 50 && (
+                <div className="flex items-center justify-between mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {((actPage - 1) * 50) + 1}–{Math.min(actPage * 50, actTotal)} of {actTotal.toLocaleString()}
+                  </span>
+                  <div className="flex gap-2">
+                    <button className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.25rem 0.625rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                      disabled={actPage === 1} onClick={() => setActPage(p => p - 1)}>
+                      <CaretLeft size={14} /> Prev
+                    </button>
+                    <button className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.25rem 0.625rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                      disabled={actPage >= actTotalPages} onClick={() => setActPage(p => p + 1)}>
+                      Next <CaretRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'sync' && (
+      <>
       {/* ── Global Backfill ────────────────────────────────────────────── */}
       <div className="card p-5 mb-5">
         <h2 className="section-title mb-1">Global Historical Sync</h2>
@@ -354,6 +576,8 @@ export default function SystemPage() {
           </>
         )}
       </div>
+      </>
+      )}
     </div>
   )
 }

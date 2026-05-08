@@ -27,7 +27,8 @@ export async function PATCH(
   for (const key of allowed) {
     if (key in body) update[key] = body[key]
   }
-  if (body.email) update.email = (body.email as string).toLowerCase().trim()
+  if (body.email)    update.email    = (body.email as string).toLowerCase().trim()
+  if ('username' in body) update.username = body.username ? (body.username as string).toLowerCase().trim() : null
   if (body.password) {
     if ((body.password as string).length < 8) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })

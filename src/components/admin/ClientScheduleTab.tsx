@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
+import ContentPostEditor from '@/components/admin/ContentPostEditor'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ interface Post {
   target_publish_date: string | null
   wp_post_id:          number | null
   wp_site_url:         string | null
+  bc_post_id:          number | null
+  bc_store_hash:       string | null
   published_url:       string | null
   seo_score:           SeoScore | null
   generated_at:        string
@@ -76,7 +79,8 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   generated:  { label: 'Generated',  cls: 'badge badge-blue'   },
   scheduled:  { label: 'Scheduled',  cls: 'badge badge-gray'   },
   rejected:   { label: 'Rejected',   cls: 'badge badge-red'    },
-  draft_saved:{ label: 'On WP',      cls: 'badge badge-green'  },
+  draft_saved:{ label: 'On Site',     cls: 'badge badge-green'  },
+  for_review: { label: 'For Review',  cls: 'badge badge-amber'  },
   published:  { label: 'Published',  cls: 'badge badge-green'  },
 }
 
@@ -157,7 +161,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [topicLoading,   setTopicLoading]  = useState<Record<string, boolean>>({})
   const [rationaleFor,   setRationaleFor]  = useState<Topic | null>(null)
   const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
-  const [postGenerating, setPostGenerating] = useState<Record<string, boolean>>({})
+  const [reviewPost,     setReviewPost]    = useState<Post | null>(null)
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -286,39 +290,31 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }
   }
 
-  // ── Force-generate a post from an approved topic ──────────────────────────
-  async function generatePost(topicId: string) {
-    setPostGenerating(p => ({ ...p, [topicId]: true }))
-    const res = await fetch('/api/admin/content/generate', {
+  // ── Force-generate a post from an approved topic (fire-and-forget) ────────
+  function generatePost(topicId: string) {
+    setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'generating' } : t))
+    showToast('Post generation started — check back shortly', 'info')
+    fetch('/api/admin/content/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic_id: topicId }),
-    })
-    setPostGenerating(p => ({ ...p, [topicId]: false }))
-    if (res.ok) {
-      showToast('Post generation started')
-      loadPipeline()
-    } else {
-      const d = await res.json()
-      showToast(d.error || 'Generation failed', 'error')
-    }
+      body: JSON.stringify({ topic_id: topicId, suppress_email: true }),
+    }).catch(e => console.error('[generatePost]', e))
   }
 
-  // ── Force-generate all approved topics in a date slot ─────────────────────
-  async function generateForSlot(dateKey: string, group: Topic[]) {
+  // ── Force-generate all approved topics in a date slot (fire-and-forget) ───
+  function generateForSlot(dateKey: string, group: Topic[]) {
     const approved = group.filter(t => t.status === 'approved')
     if (!approved.length) return
     setSlotGenerating(p => ({ ...p, [dateKey]: true }))
-    for (const t of approved) {
-      await fetch('/api/admin/content/generate', {
+    setTopics(prev => prev.map(t => approved.find(a => a.id === t.id) ? { ...t, status: 'generating' } : t))
+    showToast(`Generating ${approved.length} post${approved.length !== 1 ? 's' : ''}… check back shortly`, 'info')
+    Promise.all(approved.map(t =>
+      fetch('/api/admin/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic_id: t.id }),
-      })
-    }
-    setSlotGenerating(p => ({ ...p, [dateKey]: false }))
-    showToast(`Generating ${approved.length} post${approved.length !== 1 ? 's' : ''}…`)
-    loadPipeline()
+        body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
+      }).catch(e => console.error('[generateForSlot]', e))
+    )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
   }
 
   // ── Generate calendar ──────────────────────────────────────────────────────
@@ -342,9 +338,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   }
 
   // ── Derived data ───────────────────────────────────────────────────────────
-  const pendingTopics  = topics.filter(t => t.status === 'pending')
-  const approvedTopics = topics.filter(t => t.status === 'approved')
-  const upcomingTopics = topics.filter(t => ['scheduled', 'generating'].includes(t.status))
+  const forReviewPosts = posts.filter(p => p.status === 'for_review')
   const postsForTab    = posts.filter(p => p.status === postTab)
 
   const postsPerRun    = schedule.posts_per_run  ?? 2
@@ -470,9 +464,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           }
         />
 
-        {/* Pending Approval — grouped by publish date */}
+        {/* Active Topics — grouped by publish date */}
         {(() => {
-          const allPending = topics.filter(t => ['pending', 'approved'].includes(t.status))
+          const allPending = topics.filter(t => ['pending', 'approved', 'scheduled', 'generating'].includes(t.status))
           // Group by publish date (undefined → 'unscheduled')
           const groups = new Map<string, Topic[]>()
           for (const t of allPending) {
@@ -491,7 +485,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <div style={{ marginBottom: '1.5rem' }}>
               <div style={{ marginBottom: '0.75rem' }}>
                 <span className="text-sm font-medium">
-                  Pending Approval{' '}
+                  Active Topics{' '}
                   <span style={{ color: 'var(--text-faint)' }}>({allPending.length})</span>
                 </span>
               </div>
@@ -583,7 +577,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   )}
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                                  {t.status !== 'approved' && (
+                                  {t.status === 'approved' && (
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', color: 'var(--blue)' }}
+                                      onClick={() => generatePost(t.id)}
+                                      title="Force-generate this post now"
+                                    >▶</button>
+                                  )}
+                                  {t.status === 'generating' && (
+                                    <span className="text-xs" style={{ color: 'var(--blue)', padding: '0.25rem 0.5rem' }}>⏳</span>
+                                  )}
+                                  {!['approved', 'generating', 'scheduled'].includes(t.status) && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
@@ -591,19 +596,23 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       disabled={topicLoading[t.id]}
                                     >✓</button>
                                   )}
-                                  <button
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
-                                    onClick={() => regenerateTopic(t.id)}
-                                    disabled={topicLoading[t.id]}
-                                    title="Generate a different topic idea for this slot"
-                                  >↻</button>
-                                  <button
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
-                                    onClick={() => topicAction(t.id, 'rejected')}
-                                    disabled={topicLoading[t.id]}
-                                  >✕</button>
+                                  {!['generating', 'scheduled'].includes(t.status) && (
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
+                                      onClick={() => regenerateTopic(t.id)}
+                                      disabled={topicLoading[t.id]}
+                                      title="Generate a different topic idea for this slot"
+                                    >↻</button>
+                                  )}
+                                  {!['generating', 'scheduled'].includes(t.status) && (
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
+                                      onClick={() => topicAction(t.id, 'rejected')}
+                                      disabled={topicLoading[t.id]}
+                                    >✕</button>
+                                  )}
                                 </div>
                               </div>
                             )
@@ -618,39 +627,39 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           )
         })()}
 
-        {/* Upcoming Queue */}
-        {(approvedTopics.length > 0 || upcomingTopics.length > 0) && (
+        {/* For Review — generated posts awaiting manual approval */}
+        {forReviewPosts.length > 0 && (
           <div style={{ marginBottom: '1.5rem' }}>
-            <span className="text-sm font-medium" style={{ display: 'block', marginBottom: '0.5rem' }}>
-              Upcoming <span style={{ color: 'var(--text-faint)' }}>({approvedTopics.length + upcomingTopics.length})</span>
-            </span>
+            <div style={{ marginBottom: '0.5rem' }}>
+              <span className="text-sm font-medium">
+                For Review{' '}
+                <span style={{ color: 'var(--text-faint)' }}>({forReviewPosts.length})</span>
+              </span>
+            </div>
             <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
-              {[...approvedTopics, ...upcomingTopics].map((t, i, arr) => {
-                const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.pending
-                const hasBrief = Boolean(t.seo_brief)
-                return (
-                  <div key={t.id} style={{ padding: '0.625rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < arr.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                    <span style={{ fontSize: '0.875rem', width: 18, textAlign: 'center' }}>
-                      {t.status === 'generating' ? '⏳' : hasBrief ? '📋' : '○'}
-                    </span>
-                    <span className="text-sm" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</span>
-                    {t.target_keyword && <span className="badge badge-gray" style={{ flexShrink: 0 }}>{t.target_keyword}</span>}
-                    {t.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→ {fmtDate(t.target_publish_date)}</span>}
-                    <span className={badge.cls} style={{ flexShrink: 0 }}>{badge.label}</span>
-                    {t.status === 'approved' && (
-                      <button
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', flexShrink: 0, color: 'var(--blue)' }}
-                        onClick={() => generatePost(t.id)}
-                        disabled={postGenerating[t.id]}
-                        title="Force-generate this post now"
-                      >
-                        {postGenerating[t.id] ? '…' : '▶'}
-                      </button>
-                    )}
+              {forReviewPosts.map((p, i) => (
+                <div key={p.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < forReviewPosts.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: 'var(--amber-subtle)' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p className="text-sm font-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.125rem' }}>{p.title ?? '(generating…)'}</p>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {p.target_keyword && <span className="badge badge-gray">{p.target_keyword}</span>}
+                      {p.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(p.target_publish_date)}</span>}
+                      {p.seo_score && (
+                        <span className="text-xs font-semibold" style={{ color: scoreColor(p.seo_score) }}>
+                          SEO: {p.seo_score.overall}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                )
-              })}
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.75rem', padding: '0.3125rem 0.75rem', flexShrink: 0 }}
+                    onClick={() => setReviewPost(p)}
+                  >
+                    Review &amp; Approve
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -665,7 +674,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 className={`pipeline-tab${postTab === tab ? ' active' : ''}`}
                 onClick={() => setPostTab(tab)}
               >
-                {tab === 'draft_saved' ? 'On WordPress' : tab === 'published' ? 'Published' : 'Rejected'}
+                {tab === 'draft_saved' ? 'On Site' : tab === 'published' ? 'Published' : 'Rejected'}
                 {' '}
                 <span style={{ color: postTab === tab ? 'var(--blue)' : 'var(--text-faint)' }}>
                   ({posts.filter(p => p.status === tab).length})
@@ -678,14 +687,21 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
           ) : postsForTab.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
-              {postTab === 'draft_saved' ? 'No posts on WordPress yet. Approved topics will be automatically uploaded after generation.' :
+              {postTab === 'draft_saved' ? 'No posts on site yet. Approve a post from the "For Review" section to push it to your connected site.' :
                postTab === 'published'   ? 'No published posts yet.' :
                'No rejected posts.'}
             </p>
           ) : (
             <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
               {postsForTab.map((p, i) => {
-                const wpUrl = p.status === 'published' ? p.published_url : (p.wp_site_url && p.wp_post_id ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}` : null)
+                const siteUrl = p.status === 'published'
+                  ? p.published_url
+                  : p.wp_post_id && p.wp_site_url
+                    ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}`
+                    : p.bc_post_id && p.bc_store_hash
+                      ? `https://store-${p.bc_store_hash}.mybigcommerce.com/manage/site/content`
+                      : null
+                const siteLabel = p.bc_post_id && !p.wp_post_id ? 'Edit ↗' : 'View ↗'
                 return (
                   <div key={p.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < postsForTab.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -700,9 +716,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         SEO: {p.seo_score.overall}
                       </span>
                     )}
-                    {wpUrl && (
-                      <a href={wpUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', flexShrink: 0 }}>
-                        View ↗
+                    {siteUrl && (
+                      <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', flexShrink: 0 }}>
+                        {siteLabel}
                       </a>
                     )}
                   </div>
@@ -810,6 +826,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         <div id="content-toast-container">
           <div className={`content-toast content-toast--${toast.type}`}>{toast.msg}</div>
         </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          POST REVIEW EDITOR
+      ═══════════════════════════════════════════════════════════════════ */}
+      {reviewPost && (
+        <ContentPostEditor
+          postId={reviewPost.id}
+          defaultConnectionId={schedule.connection_id ?? null}
+          sites={clientSites}
+          onClose={() => setReviewPost(null)}
+          onUpdate={() => { setReviewPost(null); loadPipeline() }}
+        />
       )}
     </div>
   )

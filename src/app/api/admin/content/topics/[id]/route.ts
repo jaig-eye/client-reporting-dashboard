@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function PATCH(
   request: NextRequest,
@@ -74,6 +75,15 @@ export async function PATCH(
     }
   }
 
+  const adminSession = await getAdminSession()
+  if (patch.status === 'approved' || patch.status === 'rejected') {
+    logActivity(adminSession, patch.status, 'topic', {
+      resourceId: id,
+      clientId: topic.client_id,
+      meta: { target_publish_date: topic.target_publish_date },
+    })
+  }
+
   return NextResponse.json(data)
 }
 
@@ -90,5 +100,7 @@ export async function DELETE(
   const db = createAdminClient()
   const { error } = await db.from('content_topics').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'topic', { resourceId: id })
   return NextResponse.json({ ok: true })
 }

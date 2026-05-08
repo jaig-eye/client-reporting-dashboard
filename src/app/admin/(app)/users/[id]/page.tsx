@@ -23,7 +23,7 @@ export default async function EditUserPage({
   const db = createAdminClient()
   const { data } = await db
     .from('users')
-    .select('id, name, email, role, is_active, avatar_url, created_at')
+    .select('id, name, email, username, role, is_active, avatar_url, created_at')
     .eq('id', id)
     .single()
 

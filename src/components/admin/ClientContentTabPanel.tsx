@@ -53,7 +53,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'sitemap',   label: 'Sitemap'           },
   { id: 'priority',  label: 'Priority Pages'    },
   { id: 'gsc',       label: 'GSC Insights'      },
-  { id: 'schedule',  label: 'Content Schedule'  },
+  { id: 'schedule',  label: 'Schedule'           },
 ]
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ export default function ClientContentTabPanel({
 
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
-    const params = new URLSearchParams(searchParams.toString())
+    const params = new URLSearchParams(window.location.search)
     params.set('subtab', id)
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }

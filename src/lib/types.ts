@@ -425,6 +425,7 @@ export interface User {
   id: string
   name: string
   email: string
+  username?: string | null
   avatar_url?: string
   role: UserRole
   is_active: boolean

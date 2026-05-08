@@ -2,10 +2,12 @@
 
 // Admin Login — /admin
 // Super admin: leave email blank, enter master password.
-// Regular admin: enter email + password set by super admin.
+// Regular admin: enter email/username + password.
 
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState, useEffect, lazy } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+
+const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
 
 function AdminLoginForm() {
   const router       = useRouter()
@@ -49,9 +51,11 @@ function AdminLoginForm() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: 'var(--bg-base)' }}
+      style={{ background: 'var(--bg-base)', position: 'relative' }}
     >
-      <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
+      <Suspense fallback={null}><LoginCanvas /></Suspense>
+
+      <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)', position: 'relative', zIndex: 1 }}>
         <div className="mb-6">
           <div className="mb-3">
             {branding.agency_logo_url ? (
@@ -80,25 +84,32 @@ function AdminLoginForm() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Email
+              Email or username
               <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
-                — leave blank to sign in as super admin
+                — leave blank for super admin
               </span>
             </label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              autoComplete="email"
+              autoComplete="username"
               className="input"
-              placeholder="admin@agency.com"
+              placeholder="admin@agency.com or username"
             />
           </div>
 
           <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                Password
+              </label>
+              {!isSuperAdmin && (
+                <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
+                  Forgot password?
+                </a>
+              )}
+            </div>
             <input
               type="password"
               value={password}

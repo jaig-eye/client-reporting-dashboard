@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
@@ -22,5 +24,9 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'created', 'client', { resourceId: data.id, clientId: data.id, clientName: name, meta: { name, slug } })
+
   return NextResponse.json(data)
 }

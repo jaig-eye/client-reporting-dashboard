@@ -215,6 +215,36 @@ export async function ensureTagIds(
   return ids
 }
 
+/**
+ * Download an image from a URL and upload it to the WordPress Media Library.
+ * Returns the WP media item ID, which can be used as `featured_media` in publishPost.
+ */
+export async function uploadMediaToWordPress(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  imageUrl: string,
+  altText?: string
+): Promise<number> {
+  const imgRes = await fetch(imageUrl)
+  if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`)
+  const buffer  = Buffer.from(await imgRes.arrayBuffer())
+  const mime    = imgRes.headers.get('content-type') ?? 'image/jpeg'
+  const ext     = mime.split('/')[1]?.replace(/;.*$/, '') ?? 'jpg'
+
+  const formData = new FormData()
+  formData.append('file', new Blob([buffer], { type: mime }), `featured.${ext}`)
+  if (altText) formData.append('alt_text', altText)
+
+  const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
+    method:  'POST',
+    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+    body:    formData,
+  })
+  if (!res.ok) throw new Error(`WP media upload failed: ${await res.text()}`)
+  const data = (await res.json()) as Record<string, unknown>
+  return Number(data.id)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter (minimal — WP is primarily a write connector)
 // ─────────────────────────────────────────────────────────────────────────────

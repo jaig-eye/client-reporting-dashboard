@@ -13,6 +13,7 @@ export default function EditUserForm({ user }: { user: User }) {
   const [form, setForm] = useState({
     name:      user.name,
     email:     user.email,
+    username:  user.username ?? '',
     role:      user.role as 'admin' | 'viewer',
     is_active: user.is_active,
   })
@@ -95,6 +96,22 @@ export default function EditUserForm({ user }: { user: User }) {
             required
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+            Username
+            <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
+              — optional, for login shortcut
+            </span>
+          </label>
+          <input
+            className="input"
+            type="text"
+            placeholder="e.g. rob"
+            value={form.username}
+            onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
           />
         </div>
 

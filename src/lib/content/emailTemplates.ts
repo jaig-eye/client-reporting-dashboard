@@ -44,7 +44,16 @@ function tableRow(cells: string[], isAlt: boolean): string {
 }
 
 function ctaButton(label: string, href: string): string {
-  return `<a href="${href}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:6px;font-size:14px;font-weight:600;margin-top:24px;">${label}</a>`
+  return `
+    <table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;">
+      <tr>
+        <td style="background:#2563eb;border-radius:6px;" align="center">
+          <a href="${href}" style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+            ${label}
+          </a>
+        </td>
+      </tr>
+    </table>`
 }
 
 // ── Topics email ───────────────────────────────────────────────────────────────
@@ -52,7 +61,7 @@ function ctaButton(label: string, href: string): string {
 export function buildTopicsEmail(opts: {
   agencyName:  string
   clientName:  string
-  topics:      Array<{ topic: string; target_keyword: string | null; target_publish_date: string | null }>
+  topics:      Array<{ topic: string; target_keyword: string | null; target_publish_date: string | null; keyword_opportunity?: string | null }>
   clientLink:  string
 }): string {
   const { agencyName, clientName, topics, clientLink } = opts
@@ -64,13 +73,18 @@ export function buildTopicsEmail(opts: {
     ? `Generated for ${dates.length} upcoming publish date${dates.length !== 1 ? 's' : ''}.`
     : ''
 
-  const tableRows = topics.map((t, i) => tableRow([
-    `<strong style="color:#111827;">${t.topic}</strong>`,
-    t.target_keyword
-      ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${t.target_keyword}</span>`
-      : '<span style="color:#9ca3af;">—</span>',
-    `<span style="color:#6b7280;">${fmtDate(t.target_publish_date)}</span>`,
-  ], i % 2 === 1)).join('')
+  const tableRows = topics.map((t, i) => {
+    const oppHint = t.keyword_opportunity
+      ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px;">${t.keyword_opportunity}</div>`
+      : ''
+    return tableRow([
+      `<strong style="color:#111827;font-size:13px;">${t.topic}</strong>${oppHint}`,
+      t.target_keyword
+        ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${t.target_keyword}</span>`
+        : '<span style="color:#9ca3af;">—</span>',
+      `<span style="color:#6b7280;">${fmtDate(t.target_publish_date)}</span>`,
+    ], i % 2 === 1)
+  }).join('')
 
   const body = `
     <h2 style="margin:0 0 4px;font-size:17px;font-weight:700;color:#111827;">
@@ -137,4 +151,24 @@ export function buildPostsEmail(opts: {
   `
 
   return wrapper(agencyName, clientName, body)
+}
+
+// ── Password reset email ───────────────────────────────────────────────────────
+
+export function buildPasswordResetEmail(opts: {
+  agencyName: string
+  resetLink:  string
+}): string {
+  const { agencyName, resetLink } = opts
+
+  const body = `
+    <h2 style="margin:0 0 8px;font-size:17px;font-weight:700;color:#111827;">Reset your password</h2>
+    <p style="margin:0 0 20px;font-size:14px;color:#6b7280;">
+      You requested a password reset. Click the button below — this link expires in <strong>1 hour</strong>.<br>
+      If you did not request this, you can safely ignore this email.
+    </p>
+    ${ctaButton('Reset Password &rarr;', resetLink)}
+  `
+
+  return wrapper(agencyName, 'Password Reset', body)
 }

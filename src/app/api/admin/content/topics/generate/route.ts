@@ -6,8 +6,9 @@
 import { NextRequest, NextResponse }      from 'next/server'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { isAdminAuthed }                  from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
+import { logActivity }                    from '@/lib/activity'
 
 export const maxDuration = 300
 
@@ -25,11 +26,14 @@ export async function POST(request: NextRequest) {
   }
 
   const db     = createAdminClient()
-  const result = await generateTopicsForClient(db, client_id, count, target_publish_date)
+  const result = await generateTopicsForClient(db, client_id, count, target_publish_date, { suppressEmail: true })
 
   if (result.error) {
     return NextResponse.json({ error: result.error }, { status: result.error.includes('AI not configured') ? 400 : 500 })
   }
+
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'generated', 'topics', { clientId: client_id, meta: { count: result.count } })
 
   return NextResponse.json({ topics: result.topics, count: result.count })
 }

@@ -6,8 +6,9 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
-import { publishPost, ensureTagIds } from '@/lib/connectors/wordpress'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { publishPost, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
+import { logActivity } from '@/lib/activity'
 
 export async function POST(
   _request: NextRequest,
@@ -23,7 +24,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, wp_post_id')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, wp_post_id, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -81,12 +82,27 @@ export async function POST(
     const tags   = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
     const tagIds = tags.length > 0 ? await ensureTagIds(siteUrl, auth, tags) : []
 
+    // Upload featured image to WP media library (non-fatal if it fails)
+    let featuredMediaId: number | undefined
+    if (p.featured_image_url) {
+      try {
+        featuredMediaId = await uploadMediaToWordPress(
+          siteUrl, auth,
+          String(p.featured_image_url),
+          p.title ? String(p.title) : undefined
+        )
+      } catch (e) {
+        console.error('[approve] featured image upload failed:', e)
+      }
+    }
+
     const result = await publishPost(siteUrl, auth, {
-      title:   String(p.title ?? ''),
-      content: String(p.content ?? ''),
-      status:  'draft',
-      slug:    p.slug ? String(p.slug) : undefined,
-      tags:    tagIds.length > 0 ? tagIds : undefined,
+      title:          String(p.title ?? ''),
+      content:        String(p.content ?? ''),
+      status:         'draft',
+      slug:           p.slug ? String(p.slug) : undefined,
+      tags:           tagIds.length > 0 ? tagIds : undefined,
+      featured_media: featuredMediaId,
       meta: {
         rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
         rank_math_description:   p.meta_description ? String(p.meta_description) : '',
@@ -100,6 +116,13 @@ export async function POST(
       wp_status:   'draft',
       status:      'draft_saved',
     }).eq('id', id)
+
+    const adminSession = await getAdminSession()
+    logActivity(adminSession, 'approved', 'post', {
+      resourceId: id,
+      clientId: String(p.client_id),
+      meta: { title: p.title, site: siteUrl, wp_post_id: result.id },
+    })
 
     return NextResponse.json({
       wp_post_id:  result.id,

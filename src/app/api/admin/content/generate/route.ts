@@ -575,7 +575,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
     const postRow = {
       client_id:           effectiveClientId,
       connection_id:       connectionId,
-      status:              'pending',
+      status:              'for_review',
       title:               parsed.title,
       seo_title:           parsed.seoTitle || parsed.title,
       content:             parsed.content,
@@ -640,79 +640,6 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
       }
     }
 
-    // Auto-upload to WordPress as a draft when a connection is configured
-    if (postId && connectionId) {
-      try {
-        const { data: connRow } = await db
-          .from('client_connections')
-          .select('connector:connectors(auth, config)')
-          .eq('id', connectionId)
-          .single()
-
-        type ConnRow = { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } | null }
-        const conn   = connRow as unknown as ConnRow | null
-        const auth   = conn?.connector?.auth   as { username: string; app_password: string } | undefined
-        const config = conn?.connector?.config as { site_url: string } | undefined
-
-        if (auth?.username && auth?.app_password && config?.site_url) {
-          const { publishPost } = await import('@/lib/connectors/wordpress')
-          const today           = new Date().toISOString().split('T')[0]
-          const publishDate     = topicData?.target_publish_date ?? null
-          const wpStatus        = (publishDate && publishDate > today) ? 'future' : 'draft'
-          const wpResult = await publishPost(config.site_url, auth, {
-            title:   parsed.title,
-            content: parsed.content,
-            status:  wpStatus,
-            ...(publishDate ? { date: `${publishDate}T${(clientSettings?.publish_time as string | null) ?? '09:00'}:00` } : {}),
-            slug:    parsed.slug || undefined,
-            excerpt: parsed.metaDescription || undefined,
-            meta: {
-              rank_math_title:          parsed.seoTitle        || parsed.title,
-              rank_math_description:    parsed.metaDescription || '',
-              rank_math_focus_keyword:  parsed.focusKeyword    || '',
-              ...(brief?.schema_type ? { _schema_type: brief.schema_type } : {}),
-              ...(brief?.alt_text    ? { _featured_image_alt: brief.alt_text } : {}),
-            },
-          })
-          await db.from('content_posts').update({
-            wp_post_id:  wpResult.id,
-            wp_status:   wpStatus,
-            wp_site_url: config.site_url,
-            status:      'draft_saved',
-            ...(publishDate ? { target_publish_date: publishDate } : {}),
-          }).eq('id', postId)
-
-          // Email notification — post uploaded to WordPress (skipped in cron batch flow)
-          const notifEmail = agencySettings.notification_email as string | null
-          if (!suppress_email && notifEmail && agencySettings.notify_post_uploaded) {
-            const agencyName = agencySettings.agency_name || 'Agency Dashboard'
-            const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-            try {
-              let clientName = ''
-              if (effectiveClientId) {
-                const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
-                clientName = (cl as { name?: string } | null)?.name ?? ''
-              }
-              const wpPostUrl = wpResult.id && config?.site_url
-                ? `${String(config.site_url).replace(/\/$/, '')}/?p=${wpResult.id}`
-                : null
-              await sendEmail({
-                to:      notifEmail,
-                subject: `[${agencyName}] Post on WordPress${publishDate ? ` — ${publishDate}` : ''}: ${parsed.title}`,
-                html: `<p>A post for <strong>${clientName || 'a client'}</strong> has been uploaded to WordPress${publishDate ? ` and scheduled for <strong>${publishDate}</strong>` : ' as a draft'}: <strong>${parsed.title}</strong>.</p>
-                       ${wpPostUrl ? `<p><a href="${wpPostUrl}">Preview on WordPress →</a></p>` : ''}
-                       <p><a href="${appUrl}/admin/clients/${effectiveClientId ?? ''}?tab=content">View in Dashboard →</a></p>`,
-              })
-            } catch (emailErr) {
-              console.error('[generate] WP-upload email error:', emailErr)
-            }
-          }
-        }
-      } catch (wpErr) {
-        console.error('[generate] WP auto-draft failed:', wpErr)
-        // Leave post as 'pending' — do not rethrow
-      }
-    }
   }
 
   return NextResponse.json({ ...parsed, post_id: postId })

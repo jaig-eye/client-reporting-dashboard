@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { hashPassword } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -32,21 +33,28 @@ export async function POST(request: NextRequest) {
     return res
   }
 
-  // ── Regular user path: email + password ────────────────────────────────────
-  const db = createAdminClient()
-  const { data: user } = await db
-    .from('users')
-    .select('id, role, password_hash, is_active')
-    .eq('email', email.toLowerCase().trim())
-    .eq('is_active', true)
-    .single()
+  // ── Regular user path: email or username + password ───────────────────────
+  const db         = createAdminClient()
+  const identifier = email.toLowerCase().trim()
+  const isEmail    = identifier.includes('@')
+
+  const { data: user } = isEmail
+    ? await db.from('users').select('id, role, password_hash, is_active, email, name')
+        .eq('email', identifier).eq('is_active', true).maybeSingle()
+    : await db.from('users').select('id, role, password_hash, is_active, email, name')
+        .ilike('username', identifier).eq('is_active', true).maybeSingle()
 
   if (!user || user.password_hash !== hashPassword(password)) {
-    return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
   // Record login time (fire-and-forget)
   db.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id)
+
+  logActivity(
+    { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
+    'logged_in', 'user', { resourceId: user.id, meta: { email: user.email } }
+  )
 
   const res = NextResponse.json({ ok: true, role: user.role })
   res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)

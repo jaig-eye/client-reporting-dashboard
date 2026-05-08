@@ -2,6 +2,7 @@
 // Tabbed management page: General / Data Sources / Performance / Content / Advanced
 
 import { unstable_noStore as noStore } from 'next/cache'
+import { Suspense } from 'react'
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
@@ -636,7 +637,7 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, postsData, agencySettingsData] = await Promise.all([
     db.from('client_connections')
       .select('id, external_id, external_name, connector:connectors!inner(type, config)')
-      .eq('client_id', clientId).eq('status', 'active').eq('connector.type', 'wordpress'),
+      .eq('client_id', clientId).eq('status', 'active').in('connector.type', ['wordpress', 'bigcommerce']),
     db.from('content_settings')
       .select('schedule_frequency, schedule_day_of_week, posts_per_run, topics_per_run, weeks_ahead, generate_lead_days, publish_time, auto_generate')
       .eq('client_id', clientId).maybeSingle(),
@@ -673,9 +674,10 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
 
   type WpConn = { id: string; external_id: string; external_name: string | null; connector: { type: string; config: Record<string, unknown> } }
   const sites = ((wpConnData.data ?? []) as unknown as WpConn[]).map(c => ({
-    connectionId: c.id,
-    siteUrl:      c.external_id || String((c.connector.config as Record<string, string>).site_url ?? ''),
-    siteName:     c.external_name || (() => { try { return new URL(c.external_id || '').hostname } catch { return c.external_id || 'unknown' } })(),
+    connectionId:  c.id,
+    connectorType: c.connector.type,
+    siteUrl:       c.external_id || String((c.connector.config as Record<string, string>).site_url ?? ''),
+    siteName:      c.external_name || (() => { try { return new URL(c.external_id || '').hostname } catch { return c.external_id || 'unknown' } })(),
     clientId,
     clientName,
   }))
@@ -798,21 +800,23 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   const postsPerRun = Number((settingsData.data as Record<string, unknown> | null)?.posts_per_run ?? 2)
 
   return (
-    <ClientContentTabPanel
-      clientId={clientId}
-      clientName={clientName}
-      isEcom={isEcom}
-      sites={sites}
-      contentSettings={settingsData.data as Record<string, unknown> | null}
-      aiConfigured={aiConfigured}
-      overviewStats={{
-        upcomingTopicsCount: upcomingTopics.filter(t => ['pending','scheduled','approved','generating'].includes(t.status)).length,
-        nextPublishDate,
-        recentPostsCount,
-      }}
-      gscData={gscData}
-      initialSubTab={initialSubTab}
-    />
+    <Suspense fallback={null}>
+      <ClientContentTabPanel
+        clientId={clientId}
+        clientName={clientName}
+        isEcom={isEcom}
+        sites={sites}
+        contentSettings={settingsData.data as Record<string, unknown> | null}
+        aiConfigured={aiConfigured}
+        overviewStats={{
+          upcomingTopicsCount: upcomingTopics.filter(t => ['pending','scheduled','approved','generating'].includes(t.status)).length,
+          nextPublishDate,
+          recentPostsCount,
+        }}
+        gscData={gscData}
+        initialSubTab={initialSubTab}
+      />
+    </Suspense>
   )
 }
 

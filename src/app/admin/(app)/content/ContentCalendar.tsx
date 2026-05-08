@@ -35,7 +35,8 @@ const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string 
   approved:    { label: 'Approved',           dot: '#f59e0b', color: '#b45309' },
   generating:  { label: 'Generating',        dot: '#3b82f6', color: '#1d4ed8' },
   generated:   { label: 'Generated',         dot: '#10b981', color: '#065f46' },
-  draft_saved: { label: 'On WordPress',      dot: '#10b981', color: '#065f46' },
+  for_review:  { label: 'For Review',         dot: '#f97316', color: '#c2410c' },
+  draft_saved: { label: 'On Site',           dot: '#10b981', color: '#065f46' },
   published:   { label: 'Published',         dot: '#059669', color: '#065f46' },
   rejected:    { label: 'Rejected',          dot: '#ef4444', color: '#991b1b' },
 }
@@ -101,6 +102,7 @@ export default function ContentCalendar({
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
     if (statusFilter === 'generating' && item.status !== 'generating') return false
     if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
+    if (statusFilter === 'for_review' && item.status !== 'for_review') return false
     if (statusFilter === 'draft_saved' && item.status !== 'draft_saved') return false
     if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
     if (statusFilter === 'all'        && item.status === 'rejected') return false
@@ -159,8 +161,9 @@ export default function ContentCalendar({
           {[
             { id: 'all',        label: 'All'         },
             { id: 'approved',   label: 'Approved'    },
+            { id: 'for_review', label: 'For Review'  },
             { id: 'generating', label: 'Generating'  },
-            { id: 'draft_saved',label: 'On WordPress'},
+            { id: 'draft_saved',label: 'On Site'     },
             { id: 'rejected',   label: 'Rejected'    },
           ].map(t => (
             <button key={t.id} style={tabStyle(statusFilter === t.id)} onClick={() => setStatusFilter(t.id)}>

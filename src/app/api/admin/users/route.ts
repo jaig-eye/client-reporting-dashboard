@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Super admin access required' }, { status: 403 })
   }
 
-  const { name, email, password, role } = await req.json()
+  const { name, email, password, role, username } = await req.json()
 
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
@@ -34,10 +34,11 @@ export async function POST(req: NextRequest) {
     .from('users')
     .insert({
       name,
-      email: email.toLowerCase().trim(),
+      email:         email.toLowerCase().trim(),
       password_hash: hashPassword(password),
-      role: role ?? 'admin',
-      is_active: true,
+      role:          role ?? 'admin',
+      is_active:     true,
+      ...(username ? { username: username.toLowerCase().trim() } : {}),
     })
     .select('id, name, email, role, is_active, created_at')
     .single()
