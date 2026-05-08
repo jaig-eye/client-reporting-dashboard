@@ -144,17 +144,18 @@ export default function ContentSettingsPanel({
         </div>
 
         <div>
-          <Label hint="base template applied to all AI-generated posts">Default Post Structure</Label>
+          <Label hint="appended to the AI system prompt on every generation">Default Post Structure</Label>
           <textarea
             className="input"
             rows={6}
             style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
             value={global.post_structure ?? ''}
             onChange={e => setGlobal({ post_structure: e.target.value })}
-            placeholder="e.g. H2: Introduction&#10;H2: Main body (3–4 sections)&#10;H2: FAQ&#10;H2: Conclusion + CTA"
+            placeholder={`e.g.\nH2: Introduction\nH2: Main body (3–4 sections)\nH2: FAQ\nH2: Conclusion + CTA\n\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite experience, credentials, or named expertise naturally.`}
           />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            Client-specific post structures are appended on top of this template, not replaced.
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            This text is appended to the master writing prompt on every generation — for all clients.
+            Per-client overrides are added on top. Priority pages, excluded pages, and always-included links from each client's Brand DNA are auto-injected as context; use this field to give the AI agency-wide instructions for how to use them.
           </p>
         </div>
 

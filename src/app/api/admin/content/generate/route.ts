@@ -206,11 +206,24 @@ function buildSystemPrompt(
   "suggestedTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
 }`
 
+  // Rules for using injected client context — always present when context exists.
+  // Priority pages, excluded pages, always-include links, and brand signals are
+  // injected as raw context strings; these rules tell the AI how to act on them.
+  const contextRules = clientContext ? `
+How to use the client context above — MUST follow every rule:
+- E-E-A-T: weave the business's background, services, geographic focus, and expertise naturally into the copy. Reference specific offerings, years in business, credentials, or named staff where contextually relevant to build real-world authority.
+- Brand voice: adopt the tone and style described in the client context for the entire post — headings, body copy, and CTA alike.
+- Priority pages: include internal links to at least 2 of the priority pages listed in the context. Anchor text must be descriptive and contextually natural — never generic ("click here").
+- Excluded pages: never link to, cite, or reference any URL listed under excluded pages.
+- Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
+- Available site pages: when linking internally for SEO value, prefer URLs from the available site pages list over invented paths.` : ''
+
   if (masterPreamble) {
     return `${masterPreamble}
 
 ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
+${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
 ${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
   }
@@ -219,6 +232,7 @@ ${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : 
 
 ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
+${contextRules}
 Your writing demonstrates E-E-A-T (Experience, Expertise, Authority, Trustworthiness).
 
 Topic strategy:

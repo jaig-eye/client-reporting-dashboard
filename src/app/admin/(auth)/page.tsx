@@ -15,6 +15,8 @@ function AdminLoginForm() {
   const returnUrl    = searchParams.get('returnUrl') ?? '/admin/dashboard'
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
+  const [code,     setCode]     = useState('')
+  const [step,     setStep]     = useState<'password' | 'code'>('password')
   const [error,    setError]    = useState('')
   const [loading,  setLoading]  = useState(false)
   const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
@@ -34,18 +36,28 @@ function AdminLoginForm() {
     e.preventDefault()
     setLoading(true)
     setError('')
+    const body: Record<string, string> = { password }
+    if (email.trim()) body.email = email.trim()
+    if (step === 'code') body.code = code
+
     const res = await fetch('/api/auth/admin-login', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email: email.trim() || undefined, password }),
+      body:    JSON.stringify(body),
     })
+    const data = await res.json().catch(() => ({}))
+
+    if (res.ok && data.step === 'code') {
+      setStep('code')
+      setLoading(false)
+      return
+    }
     if (res.ok) {
       router.push(returnUrl)
-    } else {
-      const d = await res.json().catch(() => ({}))
-      setError(d.error || 'Invalid credentials')
-      setLoading(false)
+      return
     }
+    setError(data.error || 'Invalid credentials')
+    setLoading(false)
   }
 
   return (
@@ -81,69 +93,122 @@ function AdminLoginForm() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Email or username
-              <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
-                — leave blank for super admin
-              </span>
-            </label>
-            <input
-              type="text"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              autoComplete="username"
-              className="input"
-              placeholder="admin@agency.com or username"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                Password
+        {step === 'code' ? (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                Login code
               </label>
-              {!isSuperAdmin && (
-                <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
-                  Forgot password?
-                </a>
-              )}
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+                required
+                autoFocus
+                autoComplete="one-time-code"
+                className="input"
+                style={{ letterSpacing: '0.2em', fontSize: '1.25rem', textAlign: 'center' }}
+                placeholder="000000"
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                Check support@golaunchlocal.com — code expires in 10 minutes.
+              </p>
             </div>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              className="input"
-              placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
-            />
-          </div>
 
-          {error && (
-            <div
-              className="rounded-lg px-3 py-2 text-sm"
-              style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+            {error && (
+              <div
+                className="rounded-lg px-3 py-2 text-sm"
+                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || code.length !== 6}
+              className="btn btn-primary w-full justify-center"
+              style={{ padding: '0.625rem' }}
             >
-              {error}
-            </div>
-          )}
+              {loading ? 'Verifying…' : 'Verify code'}
+            </button>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn btn-primary w-full justify-center"
-            style={{ padding: '0.625rem' }}
-          >
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+            <button
+              type="button"
+              onClick={() => { setStep('password'); setCode(''); setError('') }}
+              className="btn btn-secondary w-full justify-center"
+              style={{ padding: '0.625rem' }}
+            >
+              ← Back
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                Email or username
+              </label>
+              <input
+                type="text"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                autoComplete="username"
+                className="input"
+                placeholder="admin@agency.com or username"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                  Password
+                </label>
+                {!isSuperAdmin && (
+                  <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
+                    Forgot password?
+                  </a>
+                )}
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                className="input"
+                placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
+              />
+            </div>
+
+            {error && (
+              <div
+                className="rounded-lg px-3 py-2 text-sm"
+                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn btn-primary w-full justify-center"
+              style={{ padding: '0.625rem' }}
+            >
+              {loading ? 'Sending code…' : 'Sign in'}
+            </button>
+          </form>
+        )}
 
         <p className="text-xs mt-5 text-center" style={{ color: 'var(--text-faint)' }}>
-          {isSuperAdmin
-            ? 'Super admin mode — full access'
-            : 'Enter your agency email and password'}
+          {step === 'code'
+            ? 'Super admin — two-step verification'
+            : isSuperAdmin
+              ? 'Super admin mode — full access'
+              : 'Enter your agency email and password'}
         </p>
       </div>
     </div>

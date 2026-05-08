@@ -12,8 +12,9 @@ export async function middleware(request: NextRequest) {
     // Token is validated in the page itself against the DB
   }
 
-  // Protect /admin/* — /admin itself is the login page (unauthenticated access allowed)
-  if (pathname.startsWith('/admin') && pathname !== '/admin') {
+  // Protect /admin/* — login, forgot-password, and reset-password are public
+  const publicAdminPaths = ['/admin', '/admin/forgot-password', '/admin/reset-password']
+  if (pathname.startsWith('/admin') && !publicAdminPaths.includes(pathname)) {
     const session = request.cookies.get('admin_session')?.value
     if (!session || session !== process.env.ADMIN_PASSWORD) {
       const loginUrl = new URL('/admin', request.url)

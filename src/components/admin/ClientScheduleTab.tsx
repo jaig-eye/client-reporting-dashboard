@@ -423,15 +423,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         </div>
 
         <div style={{ marginTop: '1rem' }}>
-          <Label hint="appended to global post structure for this client">Custom Post Structure</Label>
+          <Label hint="appended to the AI system prompt for this client">Custom Post Structure</Label>
           <textarea
             className="input"
-            rows={3}
+            rows={5}
             style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
             value={schedule.post_structure ?? ''}
             onChange={e => setSched('post_structure', e.target.value)}
-            placeholder="Leave blank to use global default"
+            placeholder={`e.g.\nAlways link to at least 2 priority pages listed in the context.\nNever link to excluded pages.\nInclude E-E-A-T signals: cite the business's years of experience, named staff expertise, or accreditations where natural.\nUse always-included links in the body with descriptive anchor text — never raw URLs.`}
           />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            This text is appended to the master writing prompt on every generation.
+            Priority pages, excluded pages, and always-included links from Brand DNA are already injected as context — use this field to give the AI explicit instructions on how to use them (E-E-A-T signals, linking rules, section boilerplate, CTA style, etc.).
+          </p>
         </div>
 
         <div className="flex items-center gap-3" style={{ marginTop: '1rem' }}>

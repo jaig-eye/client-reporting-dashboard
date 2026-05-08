@@ -41,6 +41,18 @@ export default function AccessPage() {
         <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
           Please use the dashboard link provided by your agency. If you believe this is an error, contact your account manager.
         </p>
+        <a
+          href="/admin"
+          style={{
+            display: 'inline-block',
+            marginTop: '1.5rem',
+            fontSize: '0.75rem',
+            color: 'var(--text-faint)',
+            textDecoration: 'none',
+          }}
+        >
+          Agency login →
+        </a>
       </div>
     </div>
   )
