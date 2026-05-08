@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect }         from 'react'
-import ClientContentSettingsForm       from './ClientContentSettingsForm'
-import ClientSitemapTab                from './ClientSitemapTab'
-import ClientScheduleTab               from './ClientScheduleTab'
-import type { SiteOption }             from '@/lib/content/types'
+import { useState, useEffect }                        from 'react'
+import { useRouter, usePathname, useSearchParams }    from 'next/navigation'
+import ClientContentSettingsForm                      from './ClientContentSettingsForm'
+import ClientSitemapTab                               from './ClientSitemapTab'
+import ClientScheduleTab                              from './ClientScheduleTab'
+import type { SiteOption }                            from '@/lib/content/types'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -39,8 +40,9 @@ interface Props {
     nextPublishDate:     string | null
     recentPostsCount:    number
   }
-  gscData:      GscData
-  postsPerRun?: number
+  gscData:        GscData
+  postsPerRun?:   number
+  initialSubTab?: string
 }
 
 type SubTab = 'overview' | 'brand-dna' | 'sitemap' | 'priority' | 'gsc' | 'schedule'
@@ -57,9 +59,23 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ClientContentTabPanel({
-  clientId, clientName, isEcom, sites, contentSettings, aiConfigured, overviewStats, gscData,
+  clientId, clientName, isEcom, sites, contentSettings, aiConfigured, overviewStats, gscData, initialSubTab,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<SubTab>('overview')
+  const router       = useRouter()
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+
+  const validSubTab = (s: string | undefined | null): SubTab =>
+    SUB_TABS.some(t => t.id === s) ? (s as SubTab) : 'overview'
+
+  const [activeTab, setActiveTab] = useState<SubTab>(validSubTab(initialSubTab))
+
+  function handleTabChange(id: SubTab) {
+    setActiveTab(id)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('subtab', id)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: '0.375rem 0.875rem',
@@ -81,9 +97,9 @@ export default function ClientContentTabPanel({
   return (
     <div>
       {/* Sub-tab nav */}
-      <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>
+      <div className="no-scrollbar" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>
         {SUB_TABS.map(tab => (
-          <button key={tab.id} style={tabStyle(activeTab === tab.id)} onClick={() => setActiveTab(tab.id)}>
+          <button key={tab.id} style={tabStyle(activeTab === tab.id)} onClick={() => handleTabChange(tab.id)}>
             {tab.label}
           </button>
         ))}
@@ -93,7 +109,7 @@ export default function ClientContentTabPanel({
       {activeTab === 'brand-dna' && <ClientContentSettingsForm clientId={clientId} sites={sites} />}
       {activeTab === 'sitemap'   && <ClientSitemapTab clientId={clientId} />}
       {activeTab === 'priority'  && <PriorityTab clientId={clientId} />}
-      {activeTab === 'gsc'       && <GscTab data={gscData} isEcom={isEcom} />}
+      {activeTab === 'gsc'       && <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />}
       {activeTab === 'schedule'  && (
         <ClientScheduleTab
           clientId={clientId}
@@ -413,11 +429,27 @@ function GscSection({
   )
 }
 
-function GscTab({ data, isEcom: _isEcom }: { data: GscData; isEcom: boolean }) {
-  const [search, setSearch] = useState('')
+function GscTab({ data, isEcom: _isEcom, clientId }: { data: GscData; isEcom: boolean; clientId: string }) {
+  const router           = useRouter()
+  const [search, setSearch]       = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    try {
+      await fetch('/api/admin/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, days: 3 }),
+      })
+      router.refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <div>
@@ -428,16 +460,27 @@ function GscTab({ data, isEcom: _isEcom }: { data: GscData; isEcom: boolean }) {
             28-day data. Keywords ranked below position 20 are the strongest candidates for new articles.
           </p>
         </div>
-        {!isEmpty && (
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Filter keywords or pages…"
-            className="input"
-            style={{ marginLeft: 'auto', maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
-          />
-        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Sync latest GSC data and reload"
+          >
+            {refreshing ? 'Syncing…' : '↻ Refresh'}
+          </button>
+          {!isEmpty && (
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Filter keywords or pages…"
+              className="input"
+              style={{ maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+            />
+          )}
+        </div>
       </div>
 
       {isEmpty ? (

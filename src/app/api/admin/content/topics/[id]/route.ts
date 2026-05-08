@@ -44,10 +44,10 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Auto-reject remaining pending/scheduled topics once the approval quota is reached
+  // Auto-reject remaining topics for the same publish date once the slot quota is filled.
+  // Scoped to target_publish_date so approving week-1 topics never affects week-2 topics.
   const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
-  if (patch.status === 'approved') {
-    // Resolve posts_per_run: client-specific setting falls back to global
+  if (patch.status === 'approved' && topic.target_publish_date) {
     const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
       db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),
       db.from('content_settings').select('posts_per_run').is('client_id', null).maybeSingle(),
@@ -56,11 +56,11 @@ export async function PATCH(
       ?? (globalCfg as { posts_per_run: number } | null)?.posts_per_run
       ?? 1
 
-    // Count all approved/in-progress topics for this client regardless of date
     const { count: approvedCount } = await db
       .from('content_topics')
       .select('id', { count: 'exact', head: true })
       .eq('client_id', topic.client_id)
+      .eq('target_publish_date', topic.target_publish_date)
       .in('status', ['approved', 'generating', 'generated'])
 
     if ((approvedCount ?? 0) >= postsNeeded) {
@@ -68,6 +68,7 @@ export async function PATCH(
         .from('content_topics')
         .update({ status: 'rejected' })
         .eq('client_id', topic.client_id)
+        .eq('target_publish_date', topic.target_publish_date)
         .in('status', ['pending', 'scheduled'])
         .neq('id', id)
     }

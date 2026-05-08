@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
     html?: string
     text?: string
     to?: string
+    clientId?: string
     // Context fields for built-in notification types
     clientName?: string
     topicCount?: number
@@ -43,6 +44,10 @@ export async function POST(request: NextRequest) {
   }
 
   const agencyName = (settings?.agency_name as string | null) ?? 'Agency Dashboard'
+  const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const clientLink = body.clientId
+    ? `${appUrl}/admin/clients/${body.clientId}?tab=content&subtab=schedule`
+    : `${appUrl}/admin/content`
 
   // Build subject + html for well-known notification types
   let subject = body.subject ?? 'Notification'
@@ -56,20 +61,20 @@ export async function POST(request: NextRequest) {
     const count  = body.topicCount ?? 0
     subject = `[${agencyName}] Topics ready for review — ${client}`
     html    = `<p><strong>${count} new topic idea${count !== 1 ? 's' : ''}</strong> have been generated for <strong>${client}</strong> and are waiting for your review.</p>
-               <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/admin/content?tab=topics">Review Topics →</a></p>`
+               <p><a href="${clientLink}">Review &amp; Approve Topics →</a></p>`
   } else if (body.type === 'post_generated') {
     const title = body.postTitle ?? 'a post'
     const date  = body.publishDate ? ` — publishes ${body.publishDate}` : ''
     subject = `[${agencyName}] Post ready for review: ${title}`
     html    = `<p>A new post has been generated and is ready for review: <strong>${title}</strong>${date}.</p>
-               <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/admin/content?tab=queue">Review in Queue →</a></p>`
+               <p><a href="${clientLink}">Review Post →</a></p>`
   } else if (body.type === 'approval_needed') {
     const title = body.postTitle ?? 'a post'
     const date  = body.publishDate ?? 'soon'
     subject = `[${agencyName}] Action needed — approve before ${date}: ${title}`
     html    = `<p>A post is scheduled to publish on <strong>${date}</strong> but has not yet been approved: <strong>${title}</strong>.</p>
                <p>Please review and approve it before the publish date.</p>
-               <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/admin/content?tab=queue">Review in Queue →</a></p>`
+               <p><a href="${clientLink}">Review Post →</a></p>`
   }
 
   // If caller passed custom html directly, use that

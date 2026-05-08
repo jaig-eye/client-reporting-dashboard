@@ -50,12 +50,13 @@ export default async function ClientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ connected?: string; synced?: string; error?: string; tab?: string }>
+  searchParams: Promise<{ connected?: string; synced?: string; error?: string; tab?: string; subtab?: string }>
 }) {
   noStore()
   const { id } = await params
   const sp = await searchParams
-  const activeTab = TABS.find(t => t.id === sp.tab)?.id ?? 'general'
+  const activeTab    = TABS.find(t => t.id === sp.tab)?.id ?? 'general'
+  const initialSubTab = sp.subtab ?? 'overview'
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
@@ -492,7 +493,7 @@ export default async function ClientDetailPage({
 
       {/* ── CONTENT ──────────────────────────────────────────────── */}
       {activeTab === 'content' && (
-        <ContentTabSection clientId={id} clientName={client.name} isEcom={client.layout_type === 'ecom'} />
+        <ContentTabSection clientId={id} clientName={client.name} isEcom={client.layout_type === 'ecom'} initialSubTab={initialSubTab} />
       )}
 
       {/* ── AD FUEL ──────────────────────────────────────────────── */}
@@ -626,7 +627,7 @@ export default async function ClientDetailPage({
 
 // ─── Content tab server component ────────────────────────────────────────────
 
-async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: string; clientName: string; isEcom: boolean }) {
+async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }: { clientId: string; clientName: string; isEcom: boolean; initialSubTab: string }) {
   const db = createAdminClient()
 
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
@@ -727,10 +728,10 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
     }).slice(0, limit)
 
   const gscData: GscData = {
-    quickWins:  sortSection(aggRows.filter(r => r.position >= 5  && r.position <= 10 && r.impressions > 15 && r.ctr < 0.15), 25),
-    growth:     sortSection(aggRows.filter(r => r.position > 10  && r.position <= 20 && r.impressions > 10), 25),
-    lowCtr:     sortSection(aggRows.filter(r => r.position >= 1  && r.position <= 5  && r.impressions > 20 && r.ctr < 0.06), 25),
-    highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 50), 25),
+    quickWins:  sortSection(aggRows.filter(r => r.position >= 5  && r.position <= 10 && r.impressions > 5  && r.ctr < 0.15), 50),
+    growth:     sortSection(aggRows.filter(r => r.position > 10  && r.position <= 20 && r.impressions > 3), 50),
+    lowCtr:     sortSection(aggRows.filter(r => r.position >= 1  && r.position <= 5  && r.impressions > 8  && r.ctr < 0.06), 50),
+    highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 20), 50),
   }
 
   // Topics + posts for queue tab
@@ -810,6 +811,7 @@ async function ContentTabSection({ clientId, clientName, isEcom }: { clientId: s
         recentPostsCount,
       }}
       gscData={gscData}
+      initialSubTab={initialSubTab}
     />
   )
 }

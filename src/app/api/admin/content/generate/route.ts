@@ -632,7 +632,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
           to:      notifEmail,
           subject: `[${agencyName}] Post ready for review: ${parsed.title}`,
           html: `<p>A new post has been generated for <strong>${clientName || 'a client'}</strong> and is ready for review: <strong>${parsed.title}</strong>${dateLabel}.</p>
-                 <p><a href="${appUrl}/admin/content?tab=queue&highlight=${postId}">Review Post →</a></p>`,
+                 <p><a href="${appUrl}/admin/clients/${effectiveClientId}?tab=content&amp;subtab=schedule">Review Post →</a></p>`,
         })
       } catch (emailErr) {
         console.error('[generate] email error:', emailErr)

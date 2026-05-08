@@ -52,7 +52,9 @@ interface ReportData {
   generatedAt: string
   crmName: string
   ga4: { sessions: number; users: number; newUsers: number; avgDuration: number } | null
-  ghl: { contacts: number; calls: number; forms: number; emailsSent: number; smsSent: number } | null
+  ga4Prior: { sessions: number; users: number; newUsers: number; avgDuration: number } | null
+  ghl: { contacts: number; calls: number; forms: number } | null
+  ghlPrior: { contacts: number; calls: number; forms: number } | null
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -116,7 +118,7 @@ export async function GET(req: Request) {
     undefined
   )
 
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, ga4Res, ghlRes] = await Promise.all([
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, ga4Res, ghlRes, ga4PriorRes, ghlPriorRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -152,9 +154,20 @@ export async function GET(req: Request) {
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     hasGHL
-      ? db.from('ghl_metrics').select('contacts_created, total_calls, forms_submitted, emails_sent, sms_sent')
+      ? db.from('ghl_metrics').select('contacts_created, total_calls, forms_submitted')
           .eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    showCompare && hasGA4
+      ? db.from('ga4_metrics').select('sessions, users, new_users, avg_session_duration')
+          .eq('client_id', client.id)
+          .is('channel_group', null)
+          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    showCompare && hasGHL
+      ? db.from('ghl_metrics').select('contacts_created, total_calls, forms_submitted')
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
@@ -250,24 +263,32 @@ export async function GET(req: Request) {
 
   // Process GA4 data
   type GA4Row = { sessions: number; users: number; new_users: number; avg_session_duration: number }
-  const ga4Rows = (ga4Res.data ?? []) as GA4Row[]
-  const ga4Data = ga4Rows.length > 0 ? {
-    sessions:    ga4Rows.reduce((s, r) => s + (Number(r.sessions) || 0), 0),
-    users:       ga4Rows.reduce((s, r) => s + (Number(r.users) || 0), 0),
-    newUsers:    ga4Rows.reduce((s, r) => s + (Number(r.new_users) || 0), 0),
-    avgDuration: ga4Rows.reduce((s, r) => s + (Number(r.avg_session_duration) || 0), 0) / ga4Rows.length,
-  } : null
+  function sumGA4(rows: GA4Row[]) {
+    return rows.length > 0 ? {
+      sessions:    rows.reduce((s, r) => s + (Number(r.sessions) || 0), 0),
+      users:       rows.reduce((s, r) => s + (Number(r.users) || 0), 0),
+      newUsers:    rows.reduce((s, r) => s + (Number(r.new_users) || 0), 0),
+      avgDuration: rows.reduce((s, r) => s + (Number(r.avg_session_duration) || 0), 0) / rows.length,
+    } : null
+  }
+  const ga4Rows      = (ga4Res.data      ?? []) as GA4Row[]
+  const ga4PriorRows = (ga4PriorRes.data ?? []) as GA4Row[]
+  const ga4Data      = sumGA4(ga4Rows)
+  const ga4PriorData = sumGA4(ga4PriorRows)
 
   // Process GHL data
-  type GHLRow = { contacts_created: number; total_calls: number; forms_submitted: number; emails_sent: number; sms_sent: number }
-  const ghlRows = (ghlRes.data ?? []) as GHLRow[]
-  const ghlData = ghlRows.length > 0 ? {
-    contacts:   ghlRows.reduce((s, r) => s + (Number(r.contacts_created) || 0), 0),
-    calls:      ghlRows.reduce((s, r) => s + (Number(r.total_calls) || 0), 0),
-    forms:      ghlRows.reduce((s, r) => s + (Number(r.forms_submitted) || 0), 0),
-    emailsSent: ghlRows.reduce((s, r) => s + (Number(r.emails_sent) || 0), 0),
-    smsSent:    ghlRows.reduce((s, r) => s + (Number(r.sms_sent) || 0), 0),
-  } : null
+  type GHLRow = { contacts_created: number; total_calls: number; forms_submitted: number }
+  function sumGHL(rows: GHLRow[]) {
+    return rows.length > 0 ? {
+      contacts: rows.reduce((s, r) => s + (Number(r.contacts_created) || 0), 0),
+      calls:    rows.reduce((s, r) => s + (Number(r.total_calls) || 0), 0),
+      forms:    rows.reduce((s, r) => s + (Number(r.forms_submitted) || 0), 0),
+    } : null
+  }
+  const ghlRows      = (ghlRes.data      ?? []) as GHLRow[]
+  const ghlPriorRows = (ghlPriorRes.data ?? []) as GHLRow[]
+  const ghlData      = sumGHL(ghlRows)
+  const ghlPriorData = sumGHL(ghlPriorRows)
 
   const data: ReportData = {
     agencyName:    settings.agency_name ?? 'Your Agency',
@@ -284,7 +305,9 @@ export async function GET(req: Request) {
     generatedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     crmName: (settings.crm_name as string | undefined) ?? 'GoHighLevel',
     ga4: ga4Data,
+    ga4Prior: ga4PriorData,
     ghl: ghlData,
+    ghlPrior: ghlPriorData,
   }
 
   // ─── Route to correct template ──────────────────────────────────────────
@@ -470,11 +493,9 @@ function generatePrintHtml(d: ReportData, hidden: Set<string>): string {
     <div style="font-size:0.7rem;font-weight:700;color:#9ca3af;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;">CRM Activity (${escHtml(d.crmName)})</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;">
       ${[
-        { label: 'New Contacts', value: fmtNum(d.ghl.contacts),   accent: '#10b981' },
-        { label: 'Calls',        value: fmtNum(d.ghl.calls),      accent: '#3b82f6' },
-        { label: 'Forms',        value: fmtNum(d.ghl.forms),      accent: '#8b5cf6' },
-        { label: 'Emails Sent',  value: fmtNum(d.ghl.emailsSent), accent: '#f59e0b' },
-        { label: 'SMS Sent',     value: fmtNum(d.ghl.smsSent),    accent: '#f97316' },
+        { label: 'New Contacts', value: fmtNum(d.ghl.contacts), accent: '#10b981' },
+        { label: 'Calls',        value: fmtNum(d.ghl.calls),    accent: '#3b82f6' },
+        { label: 'Forms',        value: fmtNum(d.ghl.forms),    accent: '#8b5cf6' },
       ].map(k => `<div style="background:#fff;border:1px solid #e2e6ec;border-top:3px solid ${k.accent};border-radius:8px;padding:14px 16px;">
         <div style="font-size:0.65rem;font-weight:700;color:#9ca3af;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">${k.label}</div>
         <div style="font-size:1.25rem;font-weight:700;color:#111827;">${k.value}</div>
@@ -505,7 +526,6 @@ function generatePrintHtml(d: ReportData, hidden: Set<string>): string {
 
 function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
   const BLUE      = '#2563eb'
-  const NAVY      = '#0f172a'
   const BG        = '#f1f3f6'
   const WHITE     = '#ffffff'
   const BORDER    = '#e2e6ec'
@@ -550,11 +570,11 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
           </td>`).join('')
 
   // Secondary metrics as mini-cards (same style as primary KPIs)
-  const secondaryKpis: { label: string; value: string; color: string }[] = []
-  if (!hidden.has('conv_rate')) secondaryKpis.push({ label: 'Conv. Rate',  value: fmtPct(d.convRate),                                          color: '#06b6d4' })
-  if (!hidden.has('cpm'))       secondaryKpis.push({ label: 'CPM',         value: fmtCurrency(d.current.cpm),                                  color: '#f59e0b' })
-  if (!hidden.has('impressions')) secondaryKpis.push({ label: 'Impressions', value: fmtNum(d.current.impressions),                             color: '#6366f1' })
-  if (!hidden.has('cpc') && d.current.cpc > 0) secondaryKpis.push({ label: 'Avg. CPC', value: fmtCurrency(d.current.cpc),                    color: '#f97316' })
+  const secondaryKpis: { label: string; value: string; delta: string; color: string }[] = []
+  if (!hidden.has('conv_rate')) secondaryKpis.push({ label: 'Conv. Rate',  value: fmtPct(d.convRate),           delta: deltaSpan(d.convRate, d.priorConvRate),                   color: '#06b6d4' })
+  if (!hidden.has('cpm'))       secondaryKpis.push({ label: 'CPM',         value: fmtCurrency(d.current.cpm),   delta: deltaSpan(d.current.cpm, d.prior?.cpm, true),             color: '#f59e0b' })
+  if (!hidden.has('impressions')) secondaryKpis.push({ label: 'Impressions', value: fmtNum(d.current.impressions), delta: deltaSpan(d.current.impressions, d.prior?.impressions), color: '#6366f1' })
+  if (!hidden.has('cpc') && d.current.cpc > 0) secondaryKpis.push({ label: 'Avg. CPC', value: fmtCurrency(d.current.cpc), delta: deltaSpan(d.current.cpc, d.prior?.cpc, true),  color: '#f97316' })
 
   const secCellWidth = secondaryKpis.length > 0 ? Math.floor(560 / Math.min(secondaryKpis.length, 4)) : 140
   const secondaryHtml = secondaryKpis.length > 0 ? `
@@ -565,7 +585,7 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr><td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
                   <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
-                  <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                  <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}${k.delta}</div>
                 </td></tr>
               </table>
             </td>`).join('')}
@@ -625,17 +645,17 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
 
         <!-- ── Header ─────────────────────────────────── -->
         <tr>
-          <td style="background-color:${NAVY};padding:24px 28px;border-radius:8px 8px 0 0;">
+          <td style="background-color:${WHITE};padding:24px 28px;border-radius:8px 8px 0 0;border-bottom:1px solid ${BORDER};">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td valign="middle">
                   ${d.agencyLogoUrl
-                    ? `<img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="40" style="display:block;max-height:40px;max-width:180px;object-fit:contain;background:#fff;padding:6px 10px;border-radius:4px;" />`
-                    : `<span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:#fff;">${escHtml(d.agencyName)}</span>`}
+                    ? `<img src="${escHtml(d.agencyLogoUrl)}" alt="${escHtml(d.agencyName)}" height="40" style="display:block;max-height:40px;max-width:180px;object-fit:contain;" />`
+                    : `<span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;color:${BLUE};">${escHtml(d.agencyName)}</span>`}
                 </td>
                 <td valign="middle" align="right">
-                  <div style="font-family:Arial,sans-serif;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">Performance Report</div>
-                  <div style="font-family:Arial,sans-serif;font-size:13px;font-weight:600;color:#fff;margin-top:3px;">${escHtml(d.clientName)}</div>
+                  <div style="font-family:Arial,sans-serif;font-size:11px;color:${MUTED};text-transform:uppercase;letter-spacing:0.06em;">Performance Report</div>
+                  <div style="font-family:Arial,sans-serif;font-size:13px;font-weight:600;color:${PRIMARY};margin-top:3px;">${escHtml(d.clientName)}</div>
                 </td>
               </tr>
             </table>
@@ -648,7 +668,6 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
             <span style="font-family:Arial,sans-serif;font-size:12px;color:rgba(255,255,255,0.9);font-weight:500;">
               ${fmtDateLabel(d.fromDate)} &ndash; ${fmtDateLabel(d.toDate)}${compareSubline}
             </span>
-            ${d.syncedAt ? `<span style="font-family:Arial,sans-serif;font-size:11px;color:rgba(255,255,255,0.6);margin-left:16px;">Updated ${d.syncedAt}</span>` : ''}
           </td>
         </tr>
 
@@ -707,15 +726,15 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
             <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${FAINT};letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">Website Traffic (GA4)</div>
             <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
               ${[
-                { label: 'Sessions',         value: fmtNum(d.ga4.sessions),    color: '#10b981' },
-                { label: 'Users',            value: fmtNum(d.ga4.users),       color: '#3b82f6' },
-                { label: 'New Users',        value: fmtNum(d.ga4.newUsers),    color: '#8b5cf6' },
-                { label: 'Avg. Session',     value: `${Math.floor(d.ga4.avgDuration / 60)}m ${Math.round(d.ga4.avgDuration % 60)}s`, color: '#f59e0b' },
+                { label: 'Sessions',     value: fmtNum(d.ga4.sessions),    delta: deltaSpan(d.ga4.sessions, d.ga4Prior?.sessions),       color: '#10b981' },
+                { label: 'Users',        value: fmtNum(d.ga4.users),       delta: deltaSpan(d.ga4.users, d.ga4Prior?.users),             color: '#3b82f6' },
+                { label: 'New Users',    value: fmtNum(d.ga4.newUsers),    delta: deltaSpan(d.ga4.newUsers, d.ga4Prior?.newUsers),       color: '#8b5cf6' },
+                { label: 'Avg. Session', value: `${Math.floor(d.ga4.avgDuration / 60)}m ${Math.round(d.ga4.avgDuration % 60)}s`, delta: deltaSpan(d.ga4.avgDuration, d.ga4Prior?.avgDuration), color: '#f59e0b' },
               ].map(k => `<td width="140" valign="top" style="padding:0 6px 0 0;">
                 <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
                   <td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
                     <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
-                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}${k.delta}</div>
                   </td>
                 </tr></table>
               </td>`).join('')}
@@ -731,16 +750,14 @@ function generateEmailHtml(d: ReportData, hidden: Set<string>): string {
             <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${FAINT};letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">CRM Activity (${escHtml(d.crmName)})</div>
             <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
               ${[
-                { label: 'New Contacts', value: fmtNum(d.ghl.contacts),   color: '#10b981' },
-                { label: 'Calls',        value: fmtNum(d.ghl.calls),      color: '#3b82f6' },
-                { label: 'Forms',        value: fmtNum(d.ghl.forms),      color: '#8b5cf6' },
-                { label: 'Emails Sent',  value: fmtNum(d.ghl.emailsSent), color: '#f59e0b' },
-                { label: 'SMS Sent',     value: fmtNum(d.ghl.smsSent),    color: '#f97316' },
-              ].map(k => `<td width="112" valign="top" style="padding:0 6px 0 0;">
+                { label: 'New Contacts', value: fmtNum(d.ghl.contacts), delta: deltaSpan(d.ghl.contacts, d.ghlPrior?.contacts), color: '#10b981' },
+                { label: 'Calls',        value: fmtNum(d.ghl.calls),    delta: deltaSpan(d.ghl.calls, d.ghlPrior?.calls),       color: '#3b82f6' },
+                { label: 'Forms',        value: fmtNum(d.ghl.forms),    delta: deltaSpan(d.ghl.forms, d.ghlPrior?.forms),       color: '#8b5cf6' },
+              ].map(k => `<td width="186" valign="top" style="padding:0 6px 0 0;">
                 <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
                   <td style="background:${WHITE};border:1px solid ${BORDER};border-top:3px solid ${k.color};border-radius:6px;padding:10px 12px;">
                     <div style="font-family:Arial,sans-serif;font-size:10px;font-weight:700;color:${MUTED};letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">${k.label}</div>
-                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}</div>
+                    <div style="font-family:Arial,sans-serif;font-size:16px;font-weight:700;color:${PRIMARY};line-height:1.1;">${k.value}${k.delta}</div>
                   </td>
                 </tr></table>
               </td>`).join('')}

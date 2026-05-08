@@ -156,6 +156,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Topic action states
   const [topicLoading,   setTopicLoading]  = useState<Record<string, boolean>>({})
   const [rationaleFor,   setRationaleFor]  = useState<Topic | null>(null)
+  const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
+  const [postGenerating, setPostGenerating] = useState<Record<string, boolean>>({})
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -252,6 +254,21 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     else { const d = await res.json(); setSchedError(d.error || 'Failed to save') }
   }
 
+  // ── Topic regenerate ──────────────────────────────────────────────────────
+  async function regenerateTopic(id: string) {
+    setTopicLoading(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}/regenerate`, { method: 'POST' })
+    setTopicLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      const updated = await res.json() as Topic
+      setTopics(p => p.map(t => t.id === id ? { ...t, ...updated } : t))
+      showToast('New idea generated')
+    } else {
+      const d = await res.json()
+      showToast(d.error || 'Regeneration failed', 'error')
+    }
+  }
+
   // ── Topic approve / reject ─────────────────────────────────────────────────
   async function topicAction(id: string, status: 'approved' | 'rejected') {
     setTopicLoading(p => ({ ...p, [id]: true }))
@@ -267,6 +284,41 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     } else {
       showToast('Action failed', 'error')
     }
+  }
+
+  // ── Force-generate a post from an approved topic ──────────────────────────
+  async function generatePost(topicId: string) {
+    setPostGenerating(p => ({ ...p, [topicId]: true }))
+    const res = await fetch('/api/admin/content/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic_id: topicId }),
+    })
+    setPostGenerating(p => ({ ...p, [topicId]: false }))
+    if (res.ok) {
+      showToast('Post generation started')
+      loadPipeline()
+    } else {
+      const d = await res.json()
+      showToast(d.error || 'Generation failed', 'error')
+    }
+  }
+
+  // ── Force-generate all approved topics in a date slot ─────────────────────
+  async function generateForSlot(dateKey: string, group: Topic[]) {
+    const approved = group.filter(t => t.status === 'approved')
+    if (!approved.length) return
+    setSlotGenerating(p => ({ ...p, [dateKey]: true }))
+    for (const t of approved) {
+      await fetch('/api/admin/content/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: t.id }),
+      })
+    }
+    setSlotGenerating(p => ({ ...p, [dateKey]: false }))
+    showToast(`Generating ${approved.length} post${approved.length !== 1 ? 's' : ''}…`)
+    loadPipeline()
   }
 
   // ── Generate calendar ──────────────────────────────────────────────────────
@@ -466,9 +518,22 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
                             {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
                           </span>
-                          <span className="text-xs" style={{ color: slotReady ? 'var(--green)' : 'var(--text-muted)' }}>
-                            {approvedInGroup}/{postsPerRun} approved{slotReady ? ' ✓' : ''}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span className="text-xs" style={{ color: slotReady ? 'var(--green)' : 'var(--text-muted)' }}>
+                              {approvedInGroup}/{postsPerRun} approved{slotReady ? ' ✓' : ''}
+                            </span>
+                            {slotReady && (
+                              <button
+                                className="btn btn-secondary"
+                                style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', color: 'var(--blue)' }}
+                                onClick={() => generateForSlot(dateKey, group)}
+                                disabled={slotGenerating[dateKey]}
+                                title="Force-generate posts for this slot now"
+                              >
+                                {slotGenerating[dateKey] ? '…' : '▶ Generate'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div className="quota-bar" style={{ marginBottom: '0.375rem' }}>
                           <div className="quota-bar__fill" style={{ width: `${slotPct}%`, background: slotReady ? 'var(--green)' : 'var(--blue)' }} />
@@ -528,6 +593,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   )}
                                   <button
                                     className="btn btn-secondary"
+                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
+                                    onClick={() => regenerateTopic(t.id)}
+                                    disabled={topicLoading[t.id]}
+                                    title="Generate a different topic idea for this slot"
+                                  >↻</button>
+                                  <button
+                                    className="btn btn-secondary"
                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
                                     onClick={() => topicAction(t.id, 'rejected')}
                                     disabled={topicLoading[t.id]}
@@ -565,6 +637,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     {t.target_keyword && <span className="badge badge-gray" style={{ flexShrink: 0 }}>{t.target_keyword}</span>}
                     {t.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→ {fmtDate(t.target_publish_date)}</span>}
                     <span className={badge.cls} style={{ flexShrink: 0 }}>{badge.label}</span>
+                    {t.status === 'approved' && (
+                      <button
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', flexShrink: 0, color: 'var(--blue)' }}
+                        onClick={() => generatePost(t.id)}
+                        disabled={postGenerating[t.id]}
+                        title="Force-generate this post now"
+                      >
+                        {postGenerating[t.id] ? '…' : '▶'}
+                      </button>
+                    )}
                   </div>
                 )
               })}

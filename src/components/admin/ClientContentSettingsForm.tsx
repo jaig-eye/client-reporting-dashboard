@@ -85,6 +85,11 @@ export default function ClientContentSettingsForm({
   const [saved,       setSaved]       = useState(false)
   const [error,       setError]       = useState('')
   const [loading,     setLoading]     = useState(true)
+  const [aiLoading,   setAiLoading]   = useState(false)
+  const [aiError,     setAiError]     = useState('')
+  const [aiSuggested, setAiSuggested] = useState(false)
+  const [siteUrlInput, setSiteUrlInput] = useState('')
+  const [showSiteInput, setShowSiteInput] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -134,6 +139,39 @@ export default function ClientContentSettingsForm({
   }
   function removeManualLink(i: number)             { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
+  async function autoFill(siteUrl?: string) {
+    setAiLoading(true); setAiError(''); setAiSuggested(false)
+    const res = await fetch('/api/admin/content/generate-brand-dna', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, ...(siteUrl ? { site_url: siteUrl } : {}) }),
+    })
+    setAiLoading(false)
+    if (res.status === 422) {
+      setShowSiteInput(true)
+      return
+    }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setAiError((d as { error?: string }).error || 'Auto-fill failed')
+      return
+    }
+    const d = await res.json() as {
+      business_background: string; services: string
+      target_audience: string; geographic_focus: string; brand_voice: string
+    }
+    setForm(prev => ({
+      ...prev,
+      business_background: d.business_background || prev.business_background,
+      services:            d.services            || prev.services,
+      target_audience:     d.target_audience     || prev.target_audience,
+      geographic_focus:    d.geographic_focus    || prev.geographic_focus,
+      brand_voice:         d.brand_voice         || prev.brand_voice,
+    }))
+    setAiSuggested(true)
+    setShowSiteInput(false)
+  }
+
   async function save() {
     setSaving(true); setError(''); setSaved(false)
     const res = await fetch('/api/admin/content/client-settings', {
@@ -159,8 +197,61 @@ export default function ClientContentSettingsForm({
 
       {/* ── Business Context ─────────────────────────────────────────────── */}
       <div className="card p-6 space-y-4">
-        <h3 className="section-title">Business Context</h3>
-        <p className="section-desc">Used to give the AI background on this client&rsquo;s business for content generation.</p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <h3 className="section-title" style={{ marginBottom: 2 }}>Business Context</h3>
+            <p className="section-desc" style={{ margin: 0 }}>Used to give the AI background on this client&rsquo;s business for content generation.</p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+            onClick={() => autoFill()}
+            disabled={aiLoading}
+          >
+            {aiLoading ? 'Analyzing…' : '✦ Auto-fill with AI'}
+          </button>
+        </div>
+
+        {/* Site URL input — shown when no WordPress connection found */}
+        {showSiteInput && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              className="input"
+              style={{ flex: 1 }}
+              placeholder="https://yourdomain.com"
+              value={siteUrlInput}
+              onChange={e => setSiteUrlInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
+              onClick={() => autoFill(siteUrlInput)}
+              disabled={aiLoading || !siteUrlInput.trim()}
+            >
+              {aiLoading ? 'Analyzing…' : 'Analyze Site'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+              onClick={() => setShowSiteInput(false)}
+            >✕</button>
+          </div>
+        )}
+
+        {/* AI suggestion banner */}
+        {aiSuggested && (
+          <div style={{ background: '#fefce8', border: '1px solid #fde047', borderRadius: 6, padding: '0.625rem 0.875rem', fontSize: '0.8125rem', color: '#854d0e' }}>
+            ✦ AI-generated suggestions applied — review each field before saving.
+          </div>
+        )}
+        {aiError && (
+          <div style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', borderRadius: 6, padding: '0.5rem 0.75rem', fontSize: '0.8125rem', color: 'var(--red)' }}>
+            {aiError}
+          </div>
+        )}
 
         <div>
           <Label hint="What does this business do?">Business Background</Label>
