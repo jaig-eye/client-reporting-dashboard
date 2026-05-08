@@ -282,10 +282,11 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json()
-  const { prompt, client_id, topic_id } = body as {
-    prompt?:    string
-    client_id?: string
-    topic_id?:  string
+  const { prompt, client_id, topic_id, suppress_email } = body as {
+    prompt?:         string
+    client_id?:      string
+    topic_id?:       string
+    suppress_email?: boolean
   }
 
   if (!prompt && !topic_id) {
@@ -615,9 +616,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
         .eq('id', topic_id)
     }
 
-    // Email notification — post generated
+    // Email notification — post generated (skipped when called from the cron batch flow)
     const notifEmail = agencySettings.notification_email as string | null
-    if (postId && notifEmail && agencySettings.notify_post_generated) {
+    if (!suppress_email && postId && notifEmail && agencySettings.notify_post_generated) {
       const agencyName  = agencySettings.agency_name || 'Agency Dashboard'
       const appUrl      = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
       const publishDate = topicData?.target_publish_date ?? null
@@ -681,9 +682,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
             ...(publishDate ? { target_publish_date: publishDate } : {}),
           }).eq('id', postId)
 
-          // Email notification — post uploaded to WordPress
+          // Email notification — post uploaded to WordPress (skipped in cron batch flow)
           const notifEmail = agencySettings.notification_email as string | null
-          if (notifEmail && agencySettings.notify_post_uploaded) {
+          if (!suppress_email && notifEmail && agencySettings.notify_post_uploaded) {
             const agencyName = agencySettings.agency_name || 'Agency Dashboard'
             const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
             try {

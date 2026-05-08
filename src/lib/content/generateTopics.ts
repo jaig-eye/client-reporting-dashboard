@@ -35,8 +35,15 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
   }
 }
 
+export interface TopicSummary {
+  id:                  string
+  topic:               string
+  target_keyword:      string | null
+  target_publish_date: string | null
+}
+
 export interface GenerateTopicsResult {
-  topics:     Array<{ id: string }>
+  topics:     TopicSummary[]
   clientName: string
   count:      number
   error?:     string
@@ -47,6 +54,7 @@ export async function generateTopicsForClient(
   clientId: string,
   count:    number,
   targetPublishDate?: string,
+  opts?: { suppressEmail?: boolean },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
@@ -277,28 +285,36 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     return { topics: [], clientName, count: 0, error: insertError.message }
   }
 
-  // ── Email notification ─────────────────────────────────────────────────────
-  const notifEmail = settings.notification_email as string | null
-  if (notifEmail && (settings.notify_topics_created || settings.notify_topic_ready)) {
-    const agencyName = settings.agency_name ?? 'Agency Dashboard'
-    try {
-      const firstTopicId = (saved as { id: string }[] | null)?.[0]?.id ?? ''
-      const appUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-      const dateLabel = targetPublishDate
-        ? ` for <strong>${new Date(targetPublishDate + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</strong>`
-        : ''
-      await sendEmail({
-        to:      notifEmail,
-        subject: `[${agencyName}] Topics ready for review — ${clientName}${targetPublishDate ? ` (${targetPublishDate})` : ''}`,
-        html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong>${dateLabel} and are waiting for your review.</p>
-               <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${[t.keyword_opportunity, t.ranking_strategy].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>
-               <p><a href="${appUrl}/admin/clients/${clientId}?tab=content&amp;subtab=schedule">Review &amp; Approve Topics →</a></p>`,
-      })
-    } catch (emailErr) {
-      console.error('[generateTopics] email error:', emailErr)
+  const savedTopics = ((saved ?? []) as Array<{ id: string; topic: string; target_keyword: string | null }>)
+    .map(r => ({
+      id:                  r.id,
+      topic:               r.topic,
+      target_keyword:      r.target_keyword ?? null,
+      target_publish_date: targetPublishDate ?? null,
+    }))
+
+  // ── Email notification (skipped when called from the cron batch flow) ───────
+  if (!opts?.suppressEmail) {
+    const notifEmail = settings.notification_email as string | null
+    if (notifEmail && (settings.notify_topics_created || settings.notify_topic_ready)) {
+      const agencyName = settings.agency_name ?? 'Agency Dashboard'
+      try {
+        const appUrl    = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+        const dateLabel = targetPublishDate
+          ? ` for <strong>${new Date(targetPublishDate + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</strong>`
+          : ''
+        await sendEmail({
+          to:      notifEmail,
+          subject: `[${agencyName}] Topics ready for review — ${clientName}${targetPublishDate ? ` (${targetPublishDate})` : ''}`,
+          html: `<p><strong>${topics.length} new topic idea${topics.length !== 1 ? 's' : ''}</strong> have been generated for <strong>${clientName}</strong>${dateLabel} and are waiting for your review.</p>
+                 <ul>${topics.map(t => `<li><strong>${t.topic}</strong><br/><small>${[t.keyword_opportunity, t.ranking_strategy].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>
+                 <p><a href="${appUrl}/admin/clients/${clientId}?tab=content&amp;subtab=schedule">Review &amp; Approve Topics →</a></p>`,
+        })
+      } catch (emailErr) {
+        console.error('[generateTopics] email error:', emailErr)
+      }
     }
   }
 
-  const savedTopics = (saved ?? []) as { id: string }[]
   return { topics: savedTopics, clientName, count: savedTopics.length }
 }

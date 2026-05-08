@@ -159,6 +159,11 @@ export default function ClientContentSettingsForm({
     const d = await res.json() as {
       business_background: string; services: string
       target_audience: string; geographic_focus: string; brand_voice: string
+      years_in_business?: string; review_count?: string; licenses?: string
+      insurance?: string; awards?: string; owner_details?: string
+      team_experience?: string; guarantees?: string; brands_used?: string
+      financing_options?: string; warranties?: string; emergency_availability?: boolean
+      case_studies?: string; before_after_proof?: string; common_objections?: string
     }
     setForm(prev => ({
       ...prev,
@@ -168,6 +173,20 @@ export default function ClientContentSettingsForm({
       geographic_focus:    d.geographic_focus    || prev.geographic_focus,
       brand_voice:         d.brand_voice         || prev.brand_voice,
     }))
+    // Merge any E-E-A-T signals the AI found — only overwrite non-empty values
+    const EEAT_KEYS: (keyof EeatData)[] = [
+      'years_in_business','review_count','licenses','insurance','awards',
+      'owner_details','team_experience','guarantees','brands_used','financing_options',
+      'warranties','emergency_availability','case_studies','before_after_proof','common_objections',
+    ]
+    const eeatUpdate: Partial<EeatData> = {}
+    for (const k of EEAT_KEYS) {
+      const v = (d as Record<string, unknown>)[k]
+      if (v !== undefined && v !== null && v !== '') {
+        (eeatUpdate as Record<string, unknown>)[k] = v
+      }
+    }
+    if (Object.keys(eeatUpdate).length > 0) setEeat(prev => ({ ...prev, ...eeatUpdate }))
     setAiSuggested(true)
     setShowSiteInput(false)
   }

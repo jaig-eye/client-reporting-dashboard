@@ -103,6 +103,7 @@ export default function ContentCalendar({
     if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
     if (statusFilter === 'draft_saved' && item.status !== 'draft_saved') return false
     if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
+    if (statusFilter === 'all'        && item.status === 'rejected') return false
     return true
   })
 

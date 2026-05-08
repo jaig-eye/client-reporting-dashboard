@@ -1,5 +1,5 @@
 // POST /api/admin/content/generate-brand-dna
-// Fetches a client's website and uses AI to auto-fill Brand DNA fields.
+// Fetches a client's website and uses AI to auto-fill Brand DNA + E-E-A-T fields.
 // Body: { client_id: string, site_url?: string }
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -10,11 +10,28 @@ import { isAdminAuthed }             from '@/lib/auth'
 export const maxDuration = 60
 
 interface BrandDnaResult {
+  // Brand DNA (always returned)
   business_background: string
   services:            string
   target_audience:     string
   geographic_focus:    string
   brand_voice:         string
+  // E-E-A-T signals (omitted if not found on site)
+  years_in_business?:      string
+  review_count?:           string
+  licenses?:               string
+  insurance?:              string
+  awards?:                 string
+  owner_details?:          string
+  team_experience?:        string
+  guarantees?:             string
+  brands_used?:            string
+  financing_options?:      string
+  warranties?:             string
+  emergency_availability?: boolean
+  case_studies?:           string
+  before_after_proof?:     string
+  common_objections?:      string
 }
 
 async function fetchPageText(url: string): Promise<string> {
@@ -25,7 +42,6 @@ async function fetchPageText(url: string): Promise<string> {
     })
     if (!res.ok) return ''
     const html = await res.text()
-    // Strip tags, collapse whitespace, truncate
     return html
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -68,17 +84,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'site_url_required' }, { status: 422 })
   }
 
-  // Ensure URL has a protocol
   if (!/^https?:\/\//i.test(siteUrl)) siteUrl = `https://${siteUrl}`
   const base = siteUrl.replace(/\/$/, '')
 
-  // Fetch homepage + common supporting pages
-  const [home, about, services] = await Promise.all([
+  // Fetch homepage + about + services + contact for full context
+  const [home, about, services, contact] = await Promise.all([
     fetchPageText(base),
     fetchPageText(`${base}/about`),
     fetchPageText(`${base}/services`),
+    fetchPageText(`${base}/contact`),
   ])
-  const content = [home, about, services].filter(Boolean).join('\n\n').slice(0, 4000)
+  const content = [home, about, services, contact].filter(Boolean).join('\n\n').slice(0, 6000)
 
   if (!content.trim()) {
     return NextResponse.json({ error: 'Could not fetch website content. Check the URL and try again.' }, { status: 422 })
@@ -98,15 +114,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'AI not configured — add an API key in Agency Settings' }, { status: 400 })
   }
 
-  const prompt = `Analyze the following website content and return a JSON object with exactly these keys.
+  const prompt = `Analyze the following website content and return a JSON object with the keys below.
 Return ONLY valid JSON — no markdown fences, no explanation.
 
+Required keys (always include these):
 {
   "business_background": "1–3 sentences describing what this business does and who it serves",
   "services": "comma-separated list of the main services or products offered",
   "target_audience": "describe the typical customer (e.g. homeowners in Dallas, small business owners)",
   "geographic_focus": "primary city, region, or state served — or 'nationwide' if applicable",
   "brand_voice": "2–4 words describing the tone (e.g. professional and trustworthy, friendly and approachable)"
+}
+
+Optional trust & credibility keys — include only if the information is clearly stated on the site. Do NOT guess or invent values. Omit keys you cannot confidently determine:
+{
+  "years_in_business": "number of years or a phrase like 'Since 2008' or '15+ years'",
+  "review_count": "e.g. '200+ Google reviews, 4.9 stars' or '500 five-star reviews'",
+  "licenses": "license types, numbers, or certifications mentioned (e.g. 'Licensed & Insured, TX #12345')",
+  "insurance": "insurance or bonding information mentioned",
+  "awards": "any awards, recognitions, or 'Best of' mentions",
+  "owner_details": "owner or founder name and brief background if mentioned",
+  "team_experience": "team size or collective experience mentioned (e.g. '30+ years combined experience')",
+  "guarantees": "any service guarantees or satisfaction promises",
+  "brands_used": "notable product brands, equipment, or materials used",
+  "financing_options": "financing or payment plan options offered",
+  "warranties": "warranty terms mentioned",
+  "emergency_availability": true if 24/7 availability or emergency service is mentioned (boolean),
+  "case_studies": "notable projects, success stories, or case studies mentioned",
+  "before_after_proof": "any mentions of before/after photos, results, or transformations",
+  "common_objections": "FAQs, common concerns, or objections addressed on the site"
 }
 
 Website content:
@@ -120,7 +156,7 @@ ${content}`
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({
           model,
-          max_tokens: 512,
+          max_tokens: 1024,
           messages: [{ role: 'user', content: prompt }],
         }),
       })
@@ -141,7 +177,6 @@ ${content}`
     return NextResponse.json({ error: `AI error: ${err}` }, { status: 500 })
   }
 
-  // Parse JSON from response
   let result: BrandDnaResult
   try {
     const stripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()

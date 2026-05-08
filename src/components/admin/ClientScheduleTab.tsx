@@ -652,7 +652,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 )
               })}
             </div>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>📋 brief ready · ⏳ generating · ○ approved</p>
           </div>
         )}
 
