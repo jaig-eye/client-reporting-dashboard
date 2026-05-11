@@ -1,9 +1,11 @@
 // POST /api/admin/content/topics/generate
 // Generates topic ideas for a client using GSC data + AI.
+// Returns immediately; generation runs in background via waitUntil.
 //
 // Body: { client_id, count?, target_publish_date? }
 
 import { NextRequest, NextResponse }      from 'next/server'
+import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -25,15 +27,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'client_id required' }, { status: 400 })
   }
 
-  const db     = createAdminClient()
-  const result = await generateTopicsForClient(db, client_id, count, target_publish_date, { suppressEmail: true })
-
-  if (result.error) {
-    return NextResponse.json({ error: result.error }, { status: result.error.includes('AI not configured') ? 400 : 500 })
-  }
-
+  const db           = createAdminClient()
   const adminSession = await getAdminSession()
-  logActivity(adminSession, 'generated', 'topics', { clientId: client_id, meta: { count: result.count } })
 
-  return NextResponse.json({ topics: result.topics, count: result.count })
+  // Return immediately — generation runs in background
+  waitUntil(
+    generateTopicsForClient(db, client_id, count, target_publish_date, { suppressEmail: true })
+      .then(result => {
+        if (!result.error) {
+          logActivity(adminSession, 'generated', 'topics', { clientId: client_id, meta: { count: result.count } })
+        }
+      })
+  )
+
+  return NextResponse.json({ ok: true, queued: true })
 }

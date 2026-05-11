@@ -70,9 +70,6 @@ export default function ClientContentTabPanel({
 
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
-    const params = new URLSearchParams(window.location.search)
-    params.set('subtab', id)
-    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
   }
 
   const tabStyle = (active: boolean): React.CSSProperties => ({

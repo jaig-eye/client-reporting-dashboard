@@ -330,8 +330,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setGenerating(false)
     if (res.ok) {
       setCalendarModalOpen(false)
-      showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
-      loadPipeline()
+      if (data.queued) {
+        showToast(`Topics are generating in the background across ${data.slots?.length ?? modalWeeks} publish dates — check back shortly`, 'info')
+        setTimeout(() => loadPipeline(), 5000)
+      } else {
+        showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
+        loadPipeline()
+      }
     } else {
       showToast(data.error || 'Generation failed', 'error')
     }

@@ -7,6 +7,7 @@
 // Returns: { count, client_name, slots: string[] }
 
 import { NextRequest, NextResponse }      from 'next/server'
+import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
 import { isAdminAuthed }                  from '@/lib/auth'
@@ -34,45 +35,35 @@ export async function POST(request: NextRequest) {
     .eq('client_id', client_id)
     .maybeSingle()
 
-  const topicsPerRun  = (schedule?.topics_per_run  ?? 5)  // ideas generated per slot
-  const frequency     = (schedule?.schedule_frequency ?? 'weekly')
-  const dayOfWeek     = (schedule?.schedule_day_of_week ?? 1) // 0=Sun
-  const weeksAhead    = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
-  const anchor        = start_date ? new Date(start_date) : new Date()
+  const topicsPerRun = (schedule?.topics_per_run  ?? 5)
+  const frequency    = (schedule?.schedule_frequency ?? 'weekly')
+  const dayOfWeek    = (schedule?.schedule_day_of_week ?? 1)
+  const weeksAhead   = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
+  const anchor       = start_date ? new Date(start_date) : new Date()
 
-  // ── Compute publish slots ──────────────────────────────────────────────────
+  // ── Compute publish slots synchronously ────────────────────────────────────
   const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek })
-
   const count = Math.min(slots.length * topicsPerRun, 50)
 
   if (count === 0) {
     return NextResponse.json({ error: 'No publish slots computed for the given parameters' }, { status: 400 })
   }
 
-  // ── Generate topics (first pass — no publish dates) ───────────────────────
-  const result = await generateTopicsForClient(db, client_id, count)
+  // ── Generate topics + assign dates in background ───────────────────────────
+  waitUntil(
+    (async () => {
+      const result = await generateTopicsForClient(db, client_id, count)
+      if (result.error || !result.topics.length) return
+      const topicIds = result.topics.map(t => t.id)
+      await Promise.all(topicIds.map(async (id, i) => {
+        const slotIndex   = Math.floor(i / topicsPerRun)
+        const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
+        await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', id)
+      }))
+    })()
+  )
 
-  if (result.error || !result.topics.length) {
-    return NextResponse.json({ error: result.error ?? 'No topics generated' }, { status: 500 })
-  }
-
-  // ── Assign publish dates across slots ─────────────────────────────────────
-  // Distribute topics_per_run ideas per slot so each batch has enough options
-  const topicIds = result.topics.map(t => t.id)
-  await Promise.all(topicIds.map(async (id, i) => {
-    const slotIndex   = Math.floor(i / topicsPerRun)
-    const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
-    await db
-      .from('content_topics')
-      .update({ target_publish_date: publishDate })
-      .eq('id', id)
-  }))
-
-  return NextResponse.json({
-    count:       result.count,
-    client_name: result.clientName,
-    slots,
-  })
+  return NextResponse.json({ ok: true, queued: true, slots })
 }
 
 // ── Slot computation ───────────────────────────────────────────────────────
