@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 
@@ -166,8 +166,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
 
-  // Modal ref
-  const modalRef = useRef<HTMLDialogElement>(null)
+  // Calendar modal
+  const [calendarModalOpen, setCalendarModalOpen] = useState(false)
   const [modalStartDate, setModalStartDate] = useState(today())
   const [modalWeeks,     setModalWeeks]     = useState(6)
   const [generating,     setGenerating]     = useState(false)
@@ -329,7 +329,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const data = await res.json()
     setGenerating(false)
     if (res.ok) {
-      modalRef.current?.close()
+      setCalendarModalOpen(false)
       showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
       loadPipeline()
     } else {
@@ -458,7 +458,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <button
                 className="btn btn-primary"
                 style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
-                onClick={() => modalRef.current?.showModal()}
+                onClick={() => setCalendarModalOpen(true)}
               >
                 Generate Topics →
               </button>
@@ -592,7 +592,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   {t.status === 'generating' && (
                                     <span className="text-xs" style={{ color: 'var(--blue)', padding: '0.25rem 0.5rem' }}>⏳</span>
                                   )}
-                                  {!['approved', 'generating', 'scheduled'].includes(t.status) && (
+                                  {!['approved', 'generating'].includes(t.status) && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
@@ -600,7 +600,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       disabled={topicLoading[t.id]}
                                     >✓</button>
                                   )}
-                                  {!['generating', 'scheduled'].includes(t.status) && (
+                                  {t.status !== 'generating' && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
@@ -609,7 +609,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       title="Generate a different topic idea for this slot"
                                     >↻</button>
                                   )}
-                                  {!['generating', 'scheduled'].includes(t.status) && (
+                                  {t.status !== 'generating' && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
@@ -752,40 +752,48 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       {/* ═══════════════════════════════════════════════════════════════════
           GENERATE MODAL
       ═══════════════════════════════════════════════════════════════════ */}
-      <dialog ref={modalRef} className="content-modal">
-        <form onSubmit={generateCalendar}>
-          <div className="modal-header">
-            <span className="font-semibold text-sm">Generate SEO Content Calendar</span>
-            <button type="button" onClick={() => modalRef.current?.close()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
-          </div>
-          <div className="modal-body">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div>
-                <Label>Start Date</Label>
-                <input className="input" type="date" style={{ width: '100%' }} value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} required />
-              </div>
-              <div>
-                <Label>Weeks Ahead</Label>
-                <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
-              </div>
-              <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
-                <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
-                  <strong>Using:</strong> {freqSummary}
-                </p>
-                <p className="text-xs" style={{ color: 'var(--blue)' }}>
-                  <strong>Will create:</strong> {willCreate} topic{willCreate !== 1 ? 's' : ''}
-                </p>
-              </div>
+      {calendarModalOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+          onClick={() => setCalendarModalOpen(false)}
+        >
+          <div
+            style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
+              <span className="font-semibold text-sm">Generate SEO Content Calendar</span>
+              <button type="button" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
             </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => modalRef.current?.close()}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={generating}>
-                {generating ? 'Generating…' : 'Generate →'}
-              </button>
-            </div>
+            <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+                <div>
+                  <Label>Start Date</Label>
+                  <input className="input" type="date" style={{ width: '100%' }} value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} required />
+                </div>
+                <div>
+                  <Label>Weeks Ahead</Label>
+                  <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
+                </div>
+                <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+                  <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
+                    <strong>Using:</strong> {freqSummary}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--blue)' }}>
+                    <strong>Will create:</strong> {willCreate} topic{willCreate !== 1 ? 's' : ''}
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={generating}>
+                  {generating ? 'Generating…' : 'Generate →'}
+                </button>
+              </div>
+            </form>
           </div>
-        </form>
-      </dialog>
+        </div>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
           RATIONALE POPUP

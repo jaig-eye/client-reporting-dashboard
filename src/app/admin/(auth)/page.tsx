@@ -198,7 +198,7 @@ function AdminLoginForm() {
               className="btn btn-primary w-full justify-center"
               style={{ padding: '0.625rem' }}
             >
-              {loading ? 'Sending code…' : 'Sign in'}
+              {loading ? (isSuperAdmin ? 'Sending code…' : 'Signing in…') : 'Sign in'}
             </button>
           </form>
         )}

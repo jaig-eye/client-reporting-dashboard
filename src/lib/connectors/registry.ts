@@ -23,6 +23,7 @@ import { googleBusinessProfileConnector } from './google-business-profile'
 import { ghlConnector } from './ghl'
 import { wordpressConnector } from './wordpress'
 import { ahrefsConnector } from './ahrefs'
+import { bigcommerceConnector } from './bigcommerce'
 import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo, GhlLogo, WpLogo } from '@/components/ConnectorLogo'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +103,14 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     color: '#f59e0b',
     authFlow: 'token',
   },
+  bigcommerce: {
+    type: 'bigcommerce',
+    label: 'BigCommerce',
+    description: 'Connect a BigCommerce store to publish blog content directly.',
+    icon: 'B',
+    color: '#34313F',
+    authFlow: 'credentials',
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,6 +128,7 @@ const CONNECTOR_ADAPTERS: Partial<Record<ConnectorType, ConnectorAdapter>> = {
   ghl:                     ghlConnector,
   wordpress:               wordpressConnector,
   ahrefs:                  ahrefsConnector,
+  bigcommerce:             bigcommerceConnector,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,6 +145,7 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'ghl',
   'wordpress',
   'ahrefs',
+  'bigcommerce',
 ]
 
 /** The four Google connector types that share a single OAuth token. */
@@ -151,6 +162,7 @@ export const UNGROUPED_CONNECTOR_TYPES: ConnectorType[] = [
   'ghl',
   'wordpress',
   'ahrefs',
+  'bigcommerce',
 ]
 
 /** Returns the UI definition for a connector type. */

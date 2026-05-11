@@ -82,8 +82,15 @@ export async function POST(
     ? String(p.slug)
     : `/blog/${slugify(String(p.title ?? p.focus_topic ?? 'post'))}/`
 
+  const { data: csRow } = await db
+    .from('content_settings')
+    .select('publish_time')
+    .eq('client_id', String(p.client_id))
+    .maybeSingle()
+  const publishTime = (csRow as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
+
   const publishedDate = p.target_publish_date
-    ? new Date(String(p.target_publish_date) + 'T08:00:00Z').toISOString()
+    ? new Date(`${String(p.target_publish_date)}T${publishTime}:00`).toISOString()
     : new Date().toISOString()
 
   const payload = {

@@ -27,6 +27,7 @@ export type ConnectorType =
   | 'ghl'
   | 'wordpress'
   | 'ahrefs'
+  | 'bigcommerce'
 
 /** Display metadata for each connector type — used in the UI. */
 export interface ConnectorTypeDef {

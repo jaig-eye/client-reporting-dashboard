@@ -551,7 +551,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
   } catch (err) {
     if (topic_id) {
       await db.from('content_topics')
-        .update({ status: 'scheduled', generation_error: String(err) })
+        .update({ status: 'pending', generation_error: String(err) })
         .eq('id', topic_id)
     }
     return NextResponse.json({ error: String(err) }, { status: 500 })
@@ -569,7 +569,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
         .select('id, connector:connectors!inner(type)')
         .eq('client_id', effectiveClientId)
         .eq('status', 'active')
-        .eq('connector.type', 'wordpress')
+        .in('connector.type', ['wordpress', 'bigcommerce'])
         .limit(1)
         .maybeSingle()
       connectionId = (fallbackConn as { id: string } | null)?.id ?? null
@@ -616,7 +616,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
     if (insertError) {
       if (topic_id) {
         await db.from('content_topics')
-          .update({ status: 'scheduled', generation_error: `DB error: ${insertError.message}` })
+          .update({ status: 'pending', generation_error: `DB error: ${insertError.message}` })
           .eq('id', topic_id)
       }
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })

@@ -17,6 +17,13 @@ const nextConfig = {
   async headers() {
     return [
       {
+        source: '/admin',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self' https://golaunchlocal.com https://*.golaunchlocal.com" },
+        ],
+      },
+      {
         source: '/admin/:path*',
         headers: [
           { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
