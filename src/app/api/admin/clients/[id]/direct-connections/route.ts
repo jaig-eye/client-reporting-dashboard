@@ -104,6 +104,33 @@ export async function POST(
     if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 400 })
     return NextResponse.json({ ok: true })
 
+  } else if (type === 'bigcommerce') {
+    const { storeHash, accessToken } = body as { storeHash: string; accessToken: string }
+    if (!storeHash || !accessToken) return NextResponse.json({ error: 'storeHash and accessToken are required' }, { status: 400 })
+
+    const { data: newConn, error: insertErr } = await db
+      .from('connectors')
+      .insert({
+        type:   'bigcommerce',
+        label:  `BigCommerce — ${storeHash}`,
+        status: 'active',
+        auth:   {},
+        config: { store_hash: storeHash, access_token: accessToken },
+      })
+      .select()
+      .single()
+    if (insertErr || !newConn) return NextResponse.json({ error: insertErr?.message ?? 'Failed to create connector' }, { status: 400 })
+
+    const { error: linkErr } = await db.from('client_connections').insert({
+      client_id:    clientId,
+      connector_id: newConn.id,
+      external_id:  storeHash,
+      external_name: `BigCommerce (${storeHash})`,
+      status:       'active',
+    })
+    if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 400 })
+    return NextResponse.json({ ok: true })
+
   } else {
     return NextResponse.json({ error: `Unsupported type: ${type}` }, { status: 400 })
   }

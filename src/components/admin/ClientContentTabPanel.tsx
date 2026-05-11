@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect }                        from 'react'
-import { useRouter, usePathname, useSearchParams }    from 'next/navigation'
+import { useRouter }                                   from 'next/navigation'
 import ClientContentSettingsForm                      from './ClientContentSettingsForm'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientScheduleTab                              from './ClientScheduleTab'
@@ -62,8 +62,6 @@ export default function ClientContentTabPanel({
   clientId, clientName, isEcom, sites, contentSettings, aiConfigured, overviewStats, gscData, initialSubTab,
 }: Props) {
   const router       = useRouter()
-  const pathname     = usePathname()
-  const searchParams = useSearchParams()
 
   const validSubTab = (s: string | undefined | null): SubTab =>
     SUB_TABS.some(t => t.id === s) ? (s as SubTab) : 'overview'
@@ -74,7 +72,7 @@ export default function ClientContentTabPanel({
     setActiveTab(id)
     const params = new URLSearchParams(window.location.search)
     params.set('subtab', id)
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
   }
 
   const tabStyle = (active: boolean): React.CSSProperties => ({

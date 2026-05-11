@@ -184,7 +184,7 @@ export default async function ConnectionsPage({
           const connector   = byType.get(type)
           const implemented = isConnectorImplemented(type)
           const status      = connector?.status ?? 'disconnected'
-          const isClientLevel = type === 'ghl' || type === 'wordpress'
+          const isClientLevel = type === 'ghl' || type === 'wordpress' || type === 'bigcommerce'
 
           return (
             <div key={type} className="card p-5" style={isClientLevel ? { opacity: 0.6 } : undefined}>

@@ -162,7 +162,6 @@ export default function ContentCalendar({
             { id: 'all',        label: 'All'         },
             { id: 'approved',   label: 'Approved'    },
             { id: 'for_review', label: 'For Review'  },
-            { id: 'generating', label: 'Generating'  },
             { id: 'draft_saved',label: 'On Site'     },
             { id: 'rejected',   label: 'Rejected'    },
           ].map(t => (

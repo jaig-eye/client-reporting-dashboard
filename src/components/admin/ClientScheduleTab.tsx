@@ -76,7 +76,7 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   pending:    { label: 'Pending',    cls: 'badge badge-amber'  },
   approved:   { label: 'Approved',   cls: 'badge badge-green'  },
   generating: { label: 'Generating', cls: 'badge badge-blue'   },
-  generated:  { label: 'Generated',  cls: 'badge badge-blue'   },
+  generated:  { label: 'Generated ✓', cls: 'badge badge-green'  },
   scheduled:  { label: 'Scheduled',  cls: 'badge badge-gray'   },
   rejected:   { label: 'Rejected',   cls: 'badge badge-red'    },
   draft_saved:{ label: 'On Site',     cls: 'badge badge-green'  },
@@ -544,7 +544,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                             const compLevel = compRaw.match(/^(low|medium|high)/i)?.[1]?.toLowerCase() ?? null
                             const hasRationale = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
                             return (
-                              <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: t.status === 'approved' ? 'var(--green-subtle)' : undefined }}>
+                              <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: ['approved', 'generating', 'generated'].includes(t.status) ? 'var(--green-subtle)' : undefined }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <p
                                     className="text-sm font-medium"
@@ -592,7 +592,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   {t.status === 'generating' && (
                                     <span className="text-xs" style={{ color: 'var(--blue)', padding: '0.25rem 0.5rem' }}>⏳</span>
                                   )}
-                                  {!['approved', 'generating'].includes(t.status) && (
+                                  {!['approved', 'generating', 'generated'].includes(t.status) && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
@@ -600,7 +600,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       disabled={topicLoading[t.id]}
                                     >✓</button>
                                   )}
-                                  {t.status !== 'generating' && (
+                                  {!['generating', 'generated'].includes(t.status) && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
@@ -609,7 +609,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       title="Generate a different topic idea for this slot"
                                     >↻</button>
                                   )}
-                                  {t.status !== 'generating' && (
+                                  {!['generating', 'generated'].includes(t.status) && (
                                     <button
                                       className="btn btn-secondary"
                                       style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}

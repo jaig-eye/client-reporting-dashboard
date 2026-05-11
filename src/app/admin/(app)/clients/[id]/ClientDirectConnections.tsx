@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 
-type ConnType = 'ghl' | 'wordpress'
+type ConnType = 'ghl' | 'wordpress' | 'bigcommerce'
 
 interface FormState {
-  ghl: { apiKey: string; locationId: string }
-  wordpress: { siteUrl: string; username: string; appPassword: string }
+  ghl:          { apiKey: string; locationId: string }
+  wordpress:    { siteUrl: string; username: string; appPassword: string }
+  bigcommerce:  { storeHash: string; accessToken: string }
 }
 
 export default function ClientDirectConnections({
@@ -19,8 +20,9 @@ export default function ClientDirectConnections({
   singleType?: ConnType
 }) {
   const [form, setForm] = useState<FormState>({
-    ghl:       { apiKey: '', locationId: '' },
-    wordpress: { siteUrl: '', username: '', appPassword: '' },
+    ghl:         { apiKey: '', locationId: '' },
+    wordpress:   { siteUrl: '', username: '', appPassword: '' },
+    bigcommerce: { storeHash: '', accessToken: '' },
   })
   const [saving,  setSaving]  = useState<Partial<Record<ConnType, boolean>>>({})
   const [saved,   setSaved]   = useState<Partial<Record<ConnType, boolean>>>({})
@@ -32,14 +34,22 @@ export default function ClientDirectConnections({
   function setWp<K extends keyof FormState['wordpress']>(key: K, val: string) {
     setForm(f => ({ ...f, wordpress: { ...f.wordpress, [key]: val } }))
   }
+  function setBc<K extends keyof FormState['bigcommerce']>(key: K, val: string) {
+    setForm(f => ({ ...f, bigcommerce: { ...f.bigcommerce, [key]: val } }))
+  }
 
   async function handleSubmit(type: ConnType) {
     setSaving(s => ({ ...s, [type]: true }))
     setErrors(e => ({ ...e, [type]: '' }))
     try {
-      const body = type === 'ghl'
-        ? { type: 'ghl',       apiKey: form.ghl.apiKey, locationId: form.ghl.locationId }
-        : { type: 'wordpress', siteUrl: form.wordpress.siteUrl, username: form.wordpress.username, appPassword: form.wordpress.appPassword }
+      let body: Record<string, string>
+      if (type === 'ghl') {
+        body = { type: 'ghl', apiKey: form.ghl.apiKey, locationId: form.ghl.locationId }
+      } else if (type === 'wordpress') {
+        body = { type: 'wordpress', siteUrl: form.wordpress.siteUrl, username: form.wordpress.username, appPassword: form.wordpress.appPassword }
+      } else {
+        body = { type: 'bigcommerce', storeHash: form.bigcommerce.storeHash, accessToken: form.bigcommerce.accessToken }
+      }
       const res = await fetch(`/api/admin/clients/${clientId}/direct-connections`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,9 +59,9 @@ export default function ClientDirectConnections({
       if (!res.ok) throw new Error(data.error || 'Failed to connect')
       setSaved(s => ({ ...s, [type]: true }))
       setTimeout(() => setSaved(s => ({ ...s, [type]: false })), 3000)
-      // Clear form
-      if (type === 'ghl') setForm(f => ({ ...f, ghl: { apiKey: '', locationId: '' } }))
-      else setForm(f => ({ ...f, wordpress: { siteUrl: '', username: '', appPassword: '' } }))
+      if (type === 'ghl')         setForm(f => ({ ...f, ghl:         { apiKey: '', locationId: '' } }))
+      else if (type === 'wordpress')   setForm(f => ({ ...f, wordpress:   { siteUrl: '', username: '', appPassword: '' } }))
+      else                             setForm(f => ({ ...f, bigcommerce: { storeHash: '', accessToken: '' } }))
     } catch (err) {
       setErrors(e => ({ ...e, [type]: err instanceof Error ? err.message : 'Something went wrong' }))
     } finally {
@@ -61,36 +71,21 @@ export default function ClientDirectConnections({
 
   const isGhlConnected = existingTypes.includes('ghl')
   const isWpConnected  = existingTypes.includes('wordpress')
+  const isBcConnected  = existingTypes.includes('bigcommerce')
 
-  // ── GHL form (rendered inline or as standalone card) ──────────────────────
+  // ── GHL form ──────────────────────────────────────────────────────────────
   const ghlForm = (
     <div className="space-y-3">
       <div>
         <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>API Key</label>
-        <input
-          className="input"
-          type="password"
-          value={form.ghl.apiKey}
-          onChange={e => setGhl('apiKey', e.target.value)}
-          placeholder="ghl_xxxxxxxxxxxxxxxx"
-        />
+        <input className="input" type="password" value={form.ghl.apiKey} onChange={e => setGhl('apiKey', e.target.value)} placeholder="ghl_xxxxxxxxxxxxxxxx" />
       </div>
       <div>
         <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Location ID</label>
-        <input
-          className="input"
-          value={form.ghl.locationId}
-          onChange={e => setGhl('locationId', e.target.value)}
-          placeholder="Location / Sub-account ID"
-        />
+        <input className="input" value={form.ghl.locationId} onChange={e => setGhl('locationId', e.target.value)} placeholder="Location / Sub-account ID" />
       </div>
       <div className="flex items-center gap-2">
-        <button
-          className="btn btn-primary"
-          style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-          disabled={saving.ghl || !form.ghl.apiKey || !form.ghl.locationId}
-          onClick={() => handleSubmit('ghl')}
-        >
+        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.ghl || !form.ghl.apiKey || !form.ghl.locationId} onClick={() => handleSubmit('ghl')}>
           {saving.ghl ? 'Connecting…' : 'Connect GHL'}
         </button>
         {saved.ghl  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
@@ -104,46 +99,46 @@ export default function ClientDirectConnections({
     <div className="space-y-3">
       <div>
         <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Site URL</label>
-        <input
-          className="input"
-          value={form.wordpress.siteUrl}
-          onChange={e => setWp('siteUrl', e.target.value)}
-          placeholder="https://yourclient.com"
-        />
+        <input className="input" value={form.wordpress.siteUrl} onChange={e => setWp('siteUrl', e.target.value)} placeholder="https://yourclient.com" />
       </div>
       <div>
         <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Username</label>
-        <input
-          className="input"
-          value={form.wordpress.username}
-          onChange={e => setWp('username', e.target.value)}
-          placeholder="WordPress username"
-        />
+        <input className="input" value={form.wordpress.username} onChange={e => setWp('username', e.target.value)} placeholder="WordPress username" />
       </div>
       <div>
         <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Application Password</label>
-        <input
-          className="input"
-          type="password"
-          value={form.wordpress.appPassword}
-          onChange={e => setWp('appPassword', e.target.value)}
-          placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
-        />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-          Generate in WordPress → Users → Your Profile → Application Passwords
-        </p>
+        <input className="input" type="password" value={form.wordpress.appPassword} onChange={e => setWp('appPassword', e.target.value)} placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" />
+        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Generate in WordPress → Users → Your Profile → Application Passwords</p>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          className="btn btn-primary"
-          style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-          disabled={saving.wordpress || !form.wordpress.siteUrl || !form.wordpress.username || !form.wordpress.appPassword}
-          onClick={() => handleSubmit('wordpress')}
-        >
+        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.wordpress || !form.wordpress.siteUrl || !form.wordpress.username || !form.wordpress.appPassword} onClick={() => handleSubmit('wordpress')}>
           {saving.wordpress ? 'Connecting…' : 'Connect WordPress'}
         </button>
         {saved.wordpress  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
         {errors.wordpress && <span className="text-xs" style={{ color: 'var(--red)' }}>{errors.wordpress}</span>}
+      </div>
+    </div>
+  )
+
+  // ── BigCommerce form ───────────────────────────────────────────────────────
+  const bcForm = (
+    <div className="space-y-3">
+      <div>
+        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Store Hash</label>
+        <input className="input" value={form.bigcommerce.storeHash} onChange={e => setBc('storeHash', e.target.value)} placeholder="abc123xyz" />
+        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Found in your BigCommerce store URL: store-<strong>abc123</strong>.mybigcommerce.com</p>
+      </div>
+      <div>
+        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>API Access Token</label>
+        <input className="input" type="password" value={form.bigcommerce.accessToken} onChange={e => setBc('accessToken', e.target.value)} placeholder="Access token from API Accounts" />
+        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Generate in BigCommerce → Settings → API Accounts → Create API Account</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.bigcommerce || !form.bigcommerce.storeHash || !form.bigcommerce.accessToken} onClick={() => handleSubmit('bigcommerce')}>
+          {saving.bigcommerce ? 'Connecting…' : 'Connect BigCommerce'}
+        </button>
+        {saved.bigcommerce  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
+        {errors.bigcommerce && <span className="text-xs" style={{ color: 'var(--red)' }}>{errors.bigcommerce}</span>}
       </div>
     </div>
   )
@@ -159,8 +154,13 @@ export default function ClientDirectConnections({
       ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p>
       : wpForm
   }
+  if (singleType === 'bigcommerce') {
+    return isBcConnected
+      ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p>
+      : bcForm
+  }
 
-  // ── Standalone card mode (legacy — both types side by side) ───────────────
+  // ── Standalone card mode (all types side by side) ─────────────────────────
   return (
     <div className="space-y-4">
       <div className="card p-5">
@@ -169,9 +169,7 @@ export default function ClientDirectConnections({
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>GoHighLevel</h3>
           {isGhlConnected && <span className="badge badge-green">Connected</span>}
         </div>
-        {isGhlConnected
-          ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p>
-          : ghlForm}
+        {isGhlConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p> : ghlForm}
       </div>
       <div className="card p-5">
         <div className="flex items-center gap-2 mb-3">
@@ -179,9 +177,15 @@ export default function ClientDirectConnections({
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>WordPress</h3>
           {isWpConnected && <span className="badge badge-green">Connected</span>}
         </div>
-        {isWpConnected
-          ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p>
-          : wpForm}
+        {isWpConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p> : wpForm}
+      </div>
+      <div className="card p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <div style={{ width: 28, height: 28, borderRadius: 6, background: '#f5f3ff', border: '1px solid #6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: '#4338ca' }}>BC</div>
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>BigCommerce</h3>
+          {isBcConnected && <span className="badge badge-green">Connected</span>}
+        </div>
+        {isBcConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p> : bcForm}
       </div>
     </div>
   )

@@ -57,24 +57,31 @@ export async function PUT(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const { error } = await db
+  // Check whether a global row already exists.
+  // We can't use upsert with onConflict:'client_id' because PostgreSQL treats
+  // NULL != NULL, so the conflict never fires and every save inserts a new row.
+  const { data: existing } = await db
     .from('content_settings')
-    .upsert(
-      {
-        client_id:            null,
-        post_structure:       post_structure       ?? null,
-        auto_generate:        auto_generate        ?? false,
-        posts_per_run:        posts_per_run        ?? 1,
-        schedule_frequency:   schedule_frequency   ?? 'weekly',
-        schedule_day_of_week: schedule_day_of_week ?? 1,
-        topics_per_run:       topics_per_run       ?? 5,
-        weeks_ahead:          weeks_ahead          ?? 4,
-        sitemap_urls:         Array.isArray(sitemap_urls) ? sitemap_urls : [],
-        manual_link_urls:     Array.isArray(manual_link_urls) ? manual_link_urls : [],
-        updated_at:           new Date().toISOString(),
-      },
-      { onConflict: 'client_id', ignoreDuplicates: false }
-    )
+    .select('client_id')
+    .is('client_id', null)
+    .maybeSingle()
+
+  const row = {
+    post_structure:       post_structure       ?? null,
+    auto_generate:        auto_generate        ?? false,
+    posts_per_run:        posts_per_run        ?? 1,
+    schedule_frequency:   schedule_frequency   ?? 'weekly',
+    schedule_day_of_week: schedule_day_of_week ?? 1,
+    topics_per_run:       topics_per_run       ?? 5,
+    weeks_ahead:          weeks_ahead          ?? 4,
+    sitemap_urls:         Array.isArray(sitemap_urls) ? sitemap_urls : [],
+    manual_link_urls:     Array.isArray(manual_link_urls) ? manual_link_urls : [],
+    updated_at:           new Date().toISOString(),
+  }
+
+  const { error } = existing !== null
+    ? await db.from('content_settings').update(row).is('client_id', null)
+    : await db.from('content_settings').insert({ ...row, client_id: null })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

@@ -347,7 +347,7 @@ export default async function ClientDetailPage({
             const connection  = connByType.get(type)
             const connector   = connectors.find(c => c.type === type)
             const implemented = isConnectorImplemented(type)
-            const isDirectType = type === 'ghl' || type === 'wordpress'
+            const isDirectType = type === 'ghl' || type === 'wordpress' || type === 'bigcommerce'
 
             const state =
               !implemented ? 'coming-soon'
@@ -358,8 +358,8 @@ export default async function ClientDetailPage({
                 : 'not-connected'
 
             const existingDirectTypes = connections
-              .filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress')
-              .map(c => c.connector.type as 'ghl' | 'wordpress')
+              .filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress' || c.connector.type === 'bigcommerce')
+              .map(c => c.connector.type as 'ghl' | 'wordpress' | 'bigcommerce')
 
             return (
               <div key={type} className="card p-5">
@@ -418,7 +418,7 @@ export default async function ClientDetailPage({
                 </div>
                 {state === 'direct-connect' && isDirectType && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                    <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress'} />
+                    <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress' | 'bigcommerce'} />
                   </div>
                 )}
               </div>
