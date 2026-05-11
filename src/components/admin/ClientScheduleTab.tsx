@@ -511,7 +511,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   {sortedKeys.map(dateKey => {
                     const group        = groups.get(dateKey)!
-                    const approvedInGroup = group.filter(t => t.status === 'approved').length
+                    const approvedInGroup = group.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
                     const slotPct      = Math.min(100, (approvedInGroup / postsPerRun) * 100)
                     const slotReady    = approvedInGroup >= postsPerRun
                     return (

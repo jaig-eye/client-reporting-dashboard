@@ -473,8 +473,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
     try {
       rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt)
     } catch (err) {
+      console.error('[generate] AI call failed for topic', topicId, err)
       await db.from('content_topics')
-        .update({ status: 'pending', generation_error: String(err) })
+        .update({ status: 'approved', generation_error: String(err) })
         .eq('id', topicId)
       return
     }
@@ -532,8 +533,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
     }).select('id').single()
 
     if (insertError || !savedPost) {
+      console.error('[generate] DB insert failed for topic', topicId, insertError)
       await db.from('content_topics')
-        .update({ status: 'pending', generation_error: `DB error: ${insertError?.message ?? 'Unknown'}` })
+        .update({ status: 'approved', generation_error: `DB error: ${insertError?.message ?? 'Unknown'}` })
         .eq('id', topicId)
       return
     }
@@ -563,10 +565,10 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
     }
 
   } catch (outerErr) {
-    // Last-resort: reset topic so it can be retried
+    console.error('[generate] runTopicGeneration failed for topic', topicId, outerErr)
     try {
       await db.from('content_topics')
-        .update({ status: 'pending', generation_error: String(outerErr) })
+        .update({ status: 'approved', generation_error: String(outerErr) })
         .eq('id', topicId)
     } catch { /* ignore */ }
   }
