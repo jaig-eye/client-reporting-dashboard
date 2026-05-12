@@ -32,7 +32,8 @@ export async function GET(_request: NextRequest) {
 
   const pending: Record<string, number> = {}
   for (const inv of invoices.data) {
-    const pi = inv.payment_intent as Stripe.PaymentIntent | null
+    const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
+    const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
     if (pi?.status !== 'processing') continue
     const customerId = typeof inv.customer === 'string' ? inv.customer : (inv.customer as Stripe.Customer | null)?.id
     if (!customerId) continue
