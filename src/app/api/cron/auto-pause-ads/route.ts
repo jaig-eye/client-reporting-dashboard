@@ -49,23 +49,24 @@ export async function GET(request: NextRequest) {
   for (const r of (gSpendRes.data ?? []) as SumRow[]) gMap[r.client_id] = Number(r.spend ?? 0)
   for (const r of (mSpendRes.data ?? []) as SumRow[]) mMap[r.client_id] = Number(r.spend ?? 0)
 
+  const getEffectiveCutoff = (cd: string, hbd: number): string => {
+    const c = new Date(cd + 'T00:00:00Z')
+    const y = c.getUTCFullYear(), m = c.getUTCMonth(), d = c.getUTCDate()
+    if (d <= hbd) return new Date(Date.UTC(y, m, hbd)).toISOString().slice(0, 10)
+    return new Date(Date.UTC(y, m + 1, hbd)).toISOString().slice(0, 10)
+  }
+  const subtractOneDay = (date: string): string => {
+    const d = new Date(date + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() - 1)
+    return d.toISOString().slice(0, 10)
+  }
+
   // Apply historic_bill_day gap adjustment — same logic as dashboard route
   // Subtracts spend from cutoffDate → (effectiveCutoff - 1) for clients that started mid-cycle
   const historicClients = clients.filter(c => c.historic_bill_day != null)
   const gapAdjustGoogle: Record<string, number> = {}
   const gapAdjustMeta:   Record<string, number> = {}
   if (historicClients.length > 0) {
-    function getEffectiveCutoff(cd: string, hbd: number): string {
-      const c = new Date(cd + 'T00:00:00Z')
-      const y = c.getUTCFullYear(), m = c.getUTCMonth(), d = c.getUTCDate()
-      if (d <= hbd) return new Date(Date.UTC(y, m, hbd)).toISOString().slice(0, 10)
-      return new Date(Date.UTC(y, m + 1, hbd)).toISOString().slice(0, 10)
-    }
-    function subtractOneDay(date: string): string {
-      const d = new Date(date + 'T00:00:00Z')
-      d.setUTCDate(d.getUTCDate() - 1)
-      return d.toISOString().slice(0, 10)
-    }
     const gapGroups: Record<string, string[]> = {}
     for (const c of historicClients) {
       const eff = getEffectiveCutoff(cutoffDate, c.historic_bill_day!)
