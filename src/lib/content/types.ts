@@ -62,6 +62,9 @@ export interface ClientScheduleSettings {
   post_structure:        string
   target_length:         number
   publish_time:          string | null
+  topic_guidelines:      string | null
+  auto_approve_topics:   boolean
+  auto_push_posts:       boolean
 }
 
 export interface ClientBrandDna {

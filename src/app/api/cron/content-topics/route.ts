@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead')
+    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead, auto_approve_topics, auto_push_posts')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -139,8 +139,10 @@ export async function GET(request: NextRequest) {
       client_id,
       schedule_frequency,
       schedule_day_of_week,
-      topics_per_run = 5,
-      weeks_ahead    = 1,
+      topics_per_run      = 5,
+      weeks_ahead         = 1,
+      auto_approve_topics = false,
+      auto_push_posts     = false,
     } = row as {
       client_id:            string
       schedule_frequency:   string | null
@@ -148,6 +150,8 @@ export async function GET(request: NextRequest) {
       topics_per_run:       number
       posts_per_run:        number
       weeks_ahead:          number
+      auto_approve_topics:  boolean
+      auto_push_posts:      boolean
     }
 
     const frequency = (schedule_frequency as string | null) ?? globalFreq
@@ -185,6 +189,25 @@ export async function GET(request: NextRequest) {
         }
       } catch (e) {
         console.error(`[content-topics cron] Topic generation failed for client ${client_id} slot ${slot}:`, e)
+      }
+    }
+
+    // ── Auto-approve: topics still pending past their review deadline ────────
+    if (auto_approve_topics) {
+      // Auto-approve fires when today >= target_publish_date - 9 days
+      // (= 2 days before generate_by_date = target_publish_date - 7 days)
+      const approveThreshold = new Date()
+      approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 9)
+      const { data: autoApproved } = await db
+        .from('content_topics')
+        .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
+        .eq('client_id', client_id)
+        .eq('status', 'pending')
+        .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
+        .not('target_publish_date', 'is', null)
+        .select('id')
+      if (autoApproved?.length) {
+        console.log(`[content-topics cron] auto-approved ${autoApproved.length} topics for ${client_id}`)
       }
     }
 
@@ -253,6 +276,41 @@ export async function GET(request: NextRequest) {
           .eq('id', t.id)
       }
     }))
+
+    // ── Auto-push: generated posts not yet uploaded, publish date approaching ─
+    if (auto_push_posts) {
+      // Auto-push fires when today >= target_publish_date - 2 days
+      const pushThreshold = new Date()
+      pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
+      const { data: duePosts } = await db
+        .from('content_posts')
+        .select('id')
+        .eq('client_id', client_id)
+        .eq('status', 'for_review')
+        .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
+        .not('target_publish_date', 'is', null)
+        .is('wp_post_id', null)
+      for (const post of duePosts ?? []) {
+        try {
+          await fetch(`${appUrl}/api/admin/content/posts/${post.id}/approve`, {
+            method:  'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+            },
+            body: JSON.stringify({ auto: true }),
+          })
+          await db.from('content_posts')
+            .update({ auto_pushed_at: new Date().toISOString() })
+            .eq('id', post.id)
+        } catch (e) {
+          console.error(`[content-topics cron] Auto-push failed for post ${post.id}:`, e)
+        }
+      }
+      if (duePosts?.length) {
+        console.log(`[content-topics cron] auto-pushed ${duePosts.length} posts for ${client_id}`)
+      }
+    }
   }
 
   // ── Batch emails — one per client for topics, one for posts ───────────────

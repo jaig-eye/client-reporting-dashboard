@@ -33,6 +33,7 @@ interface DashRow {
   autoPauseAds:          boolean
   autoResumeAds:         boolean
   campaignsPausedAt:     string | null
+  pendingAch?:           number
 }
 
 interface LedgerEntry {
@@ -103,6 +104,30 @@ const PACE_STYLE: Record<string, { bg: string; color: string }> = {
 
 const ENTRY_TYPES = ['MRR', 'One-Time', 'Catch Up', 'Other']
 
+function sortValue(row: DashRow, key: string): string | number {
+  switch (key) {
+    case 'client':             return row.clientName.toLowerCase()
+    case 'afBalance':          return row.afBalance
+    case 'rawBalance':         return row.rawBalance
+    case 'lifetimeRawBalance': return row.lifetimeRawBalance
+    case 'afPurchased':        return row.afPurchased
+    case 'afSpend':            return row.afSpend
+    case 'rawPurchased':       return row.rawPurchased
+    case 'rawSpend':           return row.rawSpend
+    case 'googleRaw':          return row.googleRaw
+    case 'fbRaw':              return row.facebookRaw
+    case 'billDay':            return row.billDay ?? -1
+    case 'budget':             return row.monthlyBudget ?? -1
+    case 'afSinceBill':        return row.afSinceBill ?? -1
+    case 'avgDaily':           return row.avgDailyAf ?? -1
+    case 'pace': {
+      const o: Record<string, number> = { 'Overspending': 2, 'On Pace': 1, 'Underspending': 0 }
+      return o[row.pace] ?? -1
+    }
+    default: return 0
+  }
+}
+
 function loadCols(): ColConfig[] {
   if (typeof window === 'undefined') return DEFAULT_COLS
   try {
@@ -134,7 +159,19 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'googleAcct':   return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
-    case 'afBalance':         return <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(row.afBalance)}</td>
+    case 'afBalance': {
+      const projectedBalance = row.afBalance + (row.pendingAch ?? 0)
+      return (
+        <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
+          {fmt$(row.afBalance)}
+          {(row.pendingAch ?? 0) > 0 && (
+            <div style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-faint)', marginTop: 1 }}>
+              ({fmt$(projectedBalance)} if ACH clears)
+            </div>
+          )}
+        </td>
+      )
+    }
     case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
     case 'lifetimeRawBalance': return <td key={key} style={{ textAlign: 'right', color: row.lifetimeRawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.lifetimeRawBalance)}</td>
     case 'afPurchased':       return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
@@ -212,12 +249,28 @@ export default function AdFuelPage() {
   const [rows,           setRows]           = useState<DashRow[]>([])
   const [cutoffDate,     setCutoffDate]     = useState('2025-01-01')
   const [loading,        setLoading]        = useState(false)
+  const [pendingAch,     setPendingAch]     = useState<Record<string, number>>({})
+  const [sortCol,        setSortCol]        = useState<string | null>(null)
+  const [sortDir,        setSortDir]        = useState<'asc' | 'desc' | null>(null)
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const datePickerRef = useRef<HTMLDivElement>(null)
 
   // Column config (persisted to localStorage)
   const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
   useEffect(() => { setCols(loadCols()) }, [])
+  useEffect(() => {
+    fetch('/api/admin/ad-fuel/pending-ach')
+      .then(r => r.ok ? r.json() : { pending: {} })
+      .then(({ pending }) => setPendingAch(pending ?? {}))
+      .catch(() => {})
+  }, [])
+
+  function handleSortClick(key: string) {
+    if (sortCol !== key) { setSortCol(key); setSortDir('asc') }
+    else if (sortDir === 'asc') { setSortDir('desc') }
+    else { setSortCol(null); setSortDir(null) }
+  }
+
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
@@ -544,6 +597,19 @@ export default function AdFuelPage() {
 
   const visibleCols = cols.filter(c => c.visible)
 
+  const rowsWithPending = rows.map(r => ({ ...r, pendingAch: pendingAch[r.clientId] ?? 0 }))
+
+  const displayRows = sortCol && sortDir
+    ? [...rowsWithPending].sort((a, b) => {
+        const va = sortValue(a, sortCol)
+        const vb = sortValue(b, sortCol)
+        const cmp = typeof va === 'string'
+          ? va.localeCompare(vb as string)
+          : (va as number) - (vb as number)
+        return sortDir === 'asc' ? cmp : -cmp
+      })
+    : rowsWithPending
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -679,17 +745,31 @@ export default function AdFuelPage() {
                   <thead>
                     <tr>
                       {visibleCols.map(col => (
-                        <th key={col.key} style={{ textAlign: col.key === 'client' ? 'left' : undefined }}>
+                        <th
+                          key={col.key}
+                          onClick={() => handleSortClick(col.key)}
+                          style={{
+                            textAlign: col.key === 'client' ? 'left' : undefined,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           {col.label}
+                          {sortCol === col.key && (
+                            <span style={{ marginLeft: 4, opacity: 0.5, fontSize: '0.65rem' }}>
+                              {sortDir === 'asc' ? '▲' : '▼'}
+                            </span>
+                          )}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.length === 0 && (
+                    {displayRows.length === 0 && (
                       <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
                     )}
-                    {rows.map(row => (
+                    {displayRows.map(row => (
                       <tr
                         key={row.clientId}
                         onClick={() => openClientEdit(row)}

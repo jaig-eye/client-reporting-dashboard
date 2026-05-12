@@ -21,16 +21,18 @@ export const maxDuration = 300
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TopicData = {
-  id:                  string
-  topic:               string
-  rationale:           string | null
-  target_keyword:      string | null
-  page_to_support:     string | null
-  client_id:           string
-  target_publish_date: string | null
-  search_intent:       string | null
-  secondary_keywords:  string | null
-  seo_brief:           SeoBrief | null
+  id:                     string
+  topic:                  string
+  rationale:              string | null
+  target_keyword:         string | null
+  page_to_support:        string | null
+  client_id:              string
+  target_publish_date:    string | null
+  search_intent:          string | null
+  secondary_keywords:     string | null
+  seo_brief:              SeoBrief | null
+  competitors_researched: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
+  edit_notes:             string | null
 }
 
 type AgencySettings = {
@@ -62,6 +64,14 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
   } catch {
     return []
   }
+}
+
+function scoreUrlRelevance(url: string, keywords: string[]): number {
+  const path = url.toLowerCase().replace(/[-_/]/g, ' ')
+  return keywords.reduce((score, kw) => {
+    const words = kw.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+    return score + words.filter(w => path.includes(w)).length
+  }, 0)
 }
 
 // ─── GSC internal link suggestions ───────────────────────────────────────────
@@ -326,7 +336,7 @@ async function runTopicGeneration({
     // ── Load all settings in parallel ────────────────────────────────────────
     const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
       db.from('content_settings')
-        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time')
+        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines')
         .eq('client_id', effectiveClientId)
         .maybeSingle(),
       db.from('content_settings')
@@ -339,7 +349,7 @@ async function runTopicGeneration({
         .order('generated_at', { ascending: false })
         .limit(50),
       db.from('content_sitemap_pages')
-        .select('url, is_priority, is_excluded')
+        .select('url, is_priority, is_excluded, created_at')
         .eq('client_id', effectiveClientId),
     ])
 
@@ -360,7 +370,7 @@ async function runTopicGeneration({
       }
     }
 
-    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[]
+    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
     const priorityUrls = sitemapRows.filter(r => r.is_priority).map(r => r.url)
     const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
     if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
@@ -373,11 +383,30 @@ async function runTopicGeneration({
       return []
     })()
 
-    if (sitemapUrls.length > 0) {
+    const halfMonthAgo1   = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
+    const cacheIsFresh1   = sitemapRows.length > 0 && sitemapRows.some(r => r.created_at >= halfMonthAgo1)
+    const topicKws        = topicData.target_keyword ? [topicData.target_keyword] : []
+
+    if (cacheIsFresh1) {
+      const generalPages = sitemapRows
+        .filter(r => !r.is_priority && !r.is_excluded)
+        .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, topicKws) }))
+        .sort((a, b) => b.score - a.score)
+        .map(r => r.url)
+        .slice(0, 60 - priorityUrls.length)
+      if (generalPages.length > 0)
+        contextLines.push(`\nAvailable site pages for internal linking:\n${generalPages.join('\n')}`)
+    } else if (sitemapUrls.length > 0) {
       const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
       const excluded = new Set(excludedUrls)
-      const unique   = Array.from(new Set(allPages)).filter(u => !excluded.has(u)).slice(0, 60)
-      if (unique.length > 0) contextLines.push(`\nAvailable site pages for internal linking:\n${unique.join('\n')}`)
+      const scored   = Array.from(new Set(allPages))
+        .filter(u => !excluded.has(u))
+        .map(u => ({ url: u, score: scoreUrlRelevance(u, topicKws) }))
+        .sort((a, b) => b.score - a.score)
+        .map(r => r.url)
+        .slice(0, 60)
+      if (scored.length > 0)
+        contextLines.push(`\nAvailable site pages for internal linking:\n${scored.join('\n')}`)
     }
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
@@ -422,7 +451,19 @@ async function runTopicGeneration({
         .replace(/\[[A-Z_]+\]/g, '')
     }
 
+    // ── E-E-A-T + content restrictions (appended to system prompt) ───────────
+    const eeatRaw = clientSettings?.eeat_data
+    const eeatSection = eeatRaw
+      ? `\nE-E-A-T Credibility Signals — weave these specific details naturally into the post (use exact claims, not vague statements):\n${
+          typeof eeatRaw === 'string' ? eeatRaw : JSON.stringify(eeatRaw, null, 2)
+        }`
+      : ''
+    const restrictionSection = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
+      ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
+      : ''
+
     const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)
+      + eeatSection + restrictionSection
 
     // ── Build user prompt ──────────────────────────────────────────────────────
     const targetLength = (clientSettings?.target_length as number | null) ?? 1500
@@ -457,6 +498,36 @@ async function runTopicGeneration({
       if (brief.schema_type)       briefLines.push(`\nContent schema type: ${brief.schema_type}`)
     }
 
+    // ── Competitor gap analysis (from topic research) ─────────────────────────
+    const competitorGapSection = (() => {
+      const cr = topicData.competitors_researched
+      if (!cr || Object.keys(cr.headings).length === 0) return ''
+      const sections = Object.entries(cr.headings)
+        .map(([url, hs]) => `  ${url}:\n    ${(hs as string[]).slice(0, 6).map((h: string) => `• ${h}`).join('\n    ')}`)
+        .join('\n')
+      return `\nCompetitor Analysis for "${cr.keyword}" — these competitors rank #1–5. FILL THE GAPS: go deeper, cover what they missed, add unique angles they skipped:\n${sections}`
+    })()
+
+    // ── Editor direction notes ────────────────────────────────────────────────
+    const editNotesSection = topicData.edit_notes?.trim()
+      ? `\nEditor Direction Notes (follow these closely for this specific post):\n${topicData.edit_notes}`
+      : ''
+
+    // ── Search intent writing instructions ───────────────────────────────────
+    const intentMap: Record<string, string> = {
+      informational:  'Educate thoroughly. Use clear H2/H3 structure, a summary box, FAQ section, and actionable takeaways.',
+      commercial:     'Help readers evaluate and choose. Include comparisons, pros/cons table, and a clear recommendation.',
+      local_service:  'Target local searchers. Include city/region references, local trust signals, and a contact/map CTA.',
+      comparison:     'Structure around head-to-head comparison. Use a comparison table and verdict section.',
+      cost_pricing:   'Address cost directly. Include price ranges, factors affecting cost, and value context.',
+      how_to:         'Step-by-step structure. Use numbered steps, tips per step, tools/materials list, and a summary.',
+      faq:            'Question-answer format. Group related questions, answer concisely, add a summary FAQ schema.',
+      emergency:      'Lead with urgency. Put contact info and steps first. Use direct language, avoid filler.',
+    }
+    const intentSection = topicData.search_intent && intentMap[topicData.search_intent]
+      ? `\nSearch Intent: ${topicData.search_intent} — ${intentMap[topicData.search_intent]}`
+      : ''
+
     const userPrompt = `Write a detailed, SEO-optimized blog post on the following topic:
 
 Title: ${topicData.topic}
@@ -465,6 +536,9 @@ ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
 ${briefLines.length > 0 ? briefLines.join('\n') : ''}
+${competitorGapSection}
+${editNotesSection}
+${intentSection}
 
 Target approximately ${brief?.word_count_target ?? targetLength} words.`
 
@@ -610,7 +684,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes')
       .eq('id', topic_id)
       .single()
     if (topicErr || !topic) {
@@ -649,7 +723,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -666,7 +740,7 @@ export async function POST(request: NextRequest) {
       : Promise.resolve({ data: null }),
     effectiveClientId
       ? db.from('content_sitemap_pages')
-          .select('url, is_priority, is_excluded')
+          .select('url, is_priority, is_excluded, created_at')
           .eq('client_id', effectiveClientId)
       : Promise.resolve({ data: null }),
   ])
@@ -687,7 +761,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[]
+  const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
   const priorityUrls = sitemapRows.filter(r => r.is_priority).map(r => r.url)
   const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
   if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
@@ -700,7 +774,19 @@ export async function POST(request: NextRequest) {
     return []
   })()
 
-  if (sitemapUrls.length > 0) {
+  const halfMonthAgo2 = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
+  const cacheIsFresh2 = sitemapRows.length > 0 && sitemapRows.some(r => r.created_at >= halfMonthAgo2)
+
+  if (cacheIsFresh2) {
+    const generalPages = sitemapRows
+      .filter(r => !r.is_priority && !r.is_excluded)
+      .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, []) }))
+      .sort((a, b) => b.score - a.score)
+      .map(r => r.url)
+      .slice(0, 60 - priorityUrls.length)
+    if (generalPages.length > 0)
+      contextLines.push(`\nAvailable site pages for internal linking:\n${generalPages.join('\n')}`)
+  } else if (sitemapUrls.length > 0) {
     const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
     const excluded = new Set(excludedUrls)
     const unique   = Array.from(new Set(allPages)).filter(u => !excluded.has(u)).slice(0, 60)
@@ -749,7 +835,18 @@ export async function POST(request: NextRequest) {
       .replace(/\[[A-Z_]+\]/g, '')
   }
 
+  const manualEeatRaw = clientSettings?.eeat_data
+  const manualEeatSection = manualEeatRaw
+    ? `\nE-E-A-T Credibility Signals — weave these specific details naturally into the post (use exact claims, not vague statements):\n${
+        typeof manualEeatRaw === 'string' ? manualEeatRaw : JSON.stringify(manualEeatRaw, null, 2)
+      }`
+    : ''
+  const manualRestrictionSection = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
+    ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
+    : ''
+
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)
+    + manualEeatSection + manualRestrictionSection
 
   let rawText: string
   try {

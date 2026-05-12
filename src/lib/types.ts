@@ -250,6 +250,10 @@ export interface AgencySettings {
   ads_sync_frequency?: string
   /** UTC hour (0–23) for the ads sync when ads_sync_frequency is not 'hourly'. */
   ads_sync_hour_utc?: number
+  /** SerpAPI key for competitor research during topic generation. */
+  serp_api_key?: string | null
+  /** Search API provider (currently only 'serpapi'). */
+  serp_api_provider?: string | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

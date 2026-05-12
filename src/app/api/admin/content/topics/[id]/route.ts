@@ -21,9 +21,11 @@ export async function PATCH(
   const body = await request.json() as {
     status?: string
     target_publish_date?: string | null
+    topic?: string
+    edit_notes?: string | null
   }
 
-  const allowed = ['status', 'target_publish_date']
+  const allowed = ['status', 'target_publish_date', 'topic', 'edit_notes']
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
     if (body[key as keyof typeof body] !== undefined) {

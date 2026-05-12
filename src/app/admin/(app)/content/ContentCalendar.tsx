@@ -30,15 +30,15 @@ export type CalendarItem = {
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string }> = {
-  pending:     { label: 'Awaiting Approval', dot: '#f59e0b', color: '#b45309' },
-  scheduled:   { label: 'Scheduled',         dot: '#6366f1', color: '#4338ca' },
-  approved:    { label: 'Approved',           dot: '#f59e0b', color: '#b45309' },
-  generating:  { label: 'Generating',        dot: '#3b82f6', color: '#1d4ed8' },
-  generated:   { label: 'Generated',         dot: '#10b981', color: '#065f46' },
-  for_review:  { label: 'For Review',         dot: '#f97316', color: '#c2410c' },
-  draft_saved: { label: 'On Site',           dot: '#10b981', color: '#065f46' },
-  published:   { label: 'Published',         dot: '#059669', color: '#065f46' },
-  rejected:    { label: 'Rejected',          dot: '#ef4444', color: '#991b1b' },
+  pending:     { label: 'Pending Topics',   dot: '#f59e0b', color: '#b45309' },
+  scheduled:   { label: 'Approved Topics',  dot: '#3b82f6', color: '#1d4ed8' },
+  approved:    { label: 'Approved Topics',  dot: '#3b82f6', color: '#1d4ed8' },
+  generating:  { label: 'Generating Posts', dot: '#f97316', color: '#c2410c' },
+  generated:   { label: 'Generated Posts',  dot: '#10b981', color: '#065f46' },
+  for_review:  { label: 'Generated Posts',  dot: '#10b981', color: '#065f46' },
+  draft_saved: { label: 'Published Posts',  dot: '#059669', color: '#065f46' },
+  published:   { label: 'Published Posts',  dot: '#059669', color: '#065f46' },
+  rejected:    { label: 'Rejected',         dot: '#ef4444', color: '#991b1b' },
 }
 
 function getStatusCfg(status: string) {

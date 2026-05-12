@@ -2,9 +2,11 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
-import { createAdminClient } from '@/lib/supabase/server'
-import { sendEmail }         from '@/lib/email'
-import { buildTopicsEmail }  from '@/lib/content/emailTemplates'
+import { createAdminClient }              from '@/lib/supabase/server'
+import { sendEmail }                      from '@/lib/email'
+import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
+import { researchCompetitors }            from '@/lib/content/competitorResearch'
+import type { CompetitorResearch }        from '@/lib/content/competitorResearch'
 
 interface TopicIdea {
   topic:               string
@@ -16,6 +18,7 @@ interface TopicIdea {
   audience_intent:     string
   why_now:             string
   competition_level:   string
+  cluster_group?:      string
 }
 
 async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
@@ -34,6 +37,14 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
   } catch {
     return []
   }
+}
+
+function scoreUrlRelevance(url: string, keywords: string[]): number {
+  const path = url.toLowerCase().replace(/[-_/]/g, ' ')
+  return keywords.reduce((score, kw) => {
+    const words = kw.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+    return score + words.filter(w => path.includes(w)).length
+  }, 0)
 }
 
 export interface TopicSummary {
@@ -69,11 +80,11 @@ export async function generateTopicsForClient(
     gscRawRes,
   ] = await Promise.all([
     db.from('agency_settings')
-      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready')
+      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key')
       .single(),
     db.from('clients').select('id, name').eq('id', clientId).single(),
     db.from('content_settings')
-      .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data')
+      .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data, topic_guidelines')
       .eq('client_id', clientId)
       .maybeSingle(),
     db.from('content_topics')
@@ -150,6 +161,47 @@ export async function generateTopicsForClient(
     .sort((a, b) => b.totalImpr - a.totalImpr)
     .slice(0, 8)
 
+  // ── Competitor research (optional — requires serp_api_key) ───────────────
+  const competitorMap = new Map<string, CompetitorResearch>()
+  const serpApiKey = (settings as Record<string, unknown>).serp_api_key as string | null
+  if (serpApiKey && growthTargets.length > 0) {
+    const toResearch = growthTargets.slice(0, 3)
+
+    // Same-day keyword cache: reuse SerpAPI results within the same UTC day only
+    const cacheWindowStart = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z'
+    const { data: cachedRows } = await db
+      .from('content_topics')
+      .select('target_keyword, competitors_researched')
+      .eq('client_id', clientId)
+      .not('competitors_researched', 'is', null)
+      .gte('created_at', cacheWindowStart)
+    const serpCache = new Map<string, CompetitorResearch>()
+    for (const row of (cachedRows ?? []) as { target_keyword: string; competitors_researched: unknown }[]) {
+      if (row.competitors_researched && !serpCache.has(row.target_keyword)) {
+        serpCache.set(row.target_keyword, row.competitors_researched as CompetitorResearch)
+      }
+    }
+
+    // Only call SerpAPI for keywords not already in cache
+    const toFetch = toResearch.filter(t => !serpCache.has(t.query))
+    if (toFetch.length > 0) {
+      const results = await Promise.allSettled(
+        toFetch.map(t => researchCompetitors(t.query, serpApiKey))
+      )
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value.urls.length > 0) {
+          serpCache.set(toFetch[i].query, r.value)
+        }
+      })
+    }
+
+    // Merge cache hits + fresh results into competitorMap
+    for (const t of toResearch) {
+      const hit = serpCache.get(t.query)
+      if (hit) competitorMap.set(t.query, hit)
+    }
+  }
+
   // ── Sitemap pages ──────────────────────────────────────────────────────────
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -158,10 +210,33 @@ export async function generateTopicsForClient(
     return []
   })()
 
+  const halfMonthAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
+  const { data: storedPages } = await db
+    .from('content_sitemap_pages')
+    .select('url, is_priority, is_excluded, created_at')
+    .eq('client_id', clientId)
+
+  const cacheIsFresh = storedPages && storedPages.length > 0 &&
+    (storedPages as { created_at: string }[]).some(r => r.created_at >= halfMonthAgo)
+
   let sitemapPages: string[] = []
-  if (sitemapUrls.length > 0) {
-    const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
-    sitemapPages   = Array.from(new Set(allPages)).slice(0, 60)
+  const sitemapKeywords = growthTargets.map(t => t.query)
+
+  if (cacheIsFresh) {
+    const priority   = (storedPages as { url: string; is_priority: boolean; is_excluded: boolean }[]).filter(r => r.is_priority).map(r => r.url)
+    const candidates = (storedPages as { url: string; is_priority: boolean; is_excluded: boolean }[])
+      .filter(r => !r.is_priority && !r.is_excluded)
+      .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, sitemapKeywords) }))
+      .sort((a, b) => b.score - a.score)
+      .map(r => r.url)
+    sitemapPages = [...priority, ...candidates].slice(0, 60)
+  } else if (sitemapUrls.length > 0) {
+    const allPages = Array.from(new Set((await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()))
+    sitemapPages = allPages
+      .map(url => ({ url, score: scoreUrlRelevance(url, sitemapKeywords) }))
+      .sort((a, b) => b.score - a.score)
+      .map(r => r.url)
+      .slice(0, 60)
   }
 
   // ── Avoid list ─────────────────────────────────────────────────────────────
@@ -210,11 +285,31 @@ export async function generateTopicsForClient(
     : ''
 
   const sitemapText = sitemapPages.length > 0
-    ? `\nExisting site pages (for internal link planning):\n${sitemapPages.slice(0, 30).join('\n')}`
+    ? `\nExisting site pages (for internal link planning):\n${sitemapPages.slice(0, 60).join('\n')}`
+    : ''
+
+  const competitorText = competitorMap.size > 0
+    ? `\nCompetitor analysis — write to FILL THE GAPS these competitors missed and improve on their coverage:\n` +
+      Array.from(competitorMap.values()).map(cr => {
+        const lines = Object.entries(cr.headings)
+          .map(([url, hs]) => `  ${url}:\n    ${hs.slice(0, 6).map(h => `• ${h}`).join('\n    ')}`)
+          .join('\n')
+        return `  Keyword: "${cr.keyword}"\n${lines}`
+      }).join('\n\n')
+    : ''
+
+  const guidelinesText = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
+    ? `\nContent Guidelines & Restrictions (strictly follow — never generate topics that violate these):\n${clientSettings!.topic_guidelines}`
     : ''
 
   const systemPrompt = `You are an SEO content strategist for ${settings.agency_name ?? 'a digital agency'}.
 Suggest blog post topic ideas for a client based on their business context and Google Search Console data.
+
+CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
+
+Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
+
+IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.
 
 Return ONLY a JSON array of exactly ${count} objects:
 [
@@ -227,21 +322,22 @@ Return ONLY a JSON array of exactly ${count} objects:
     "ranking_strategy": "How this article will outrank existing results (1–2 sentences)",
     "audience_intent": "What the searcher needs or wants (1 sentence)",
     "why_now": "Seasonal, competitive, or trending timing reason (1 sentence)",
-    "competition_level": "Low/Medium/High — brief 1-line reasoning"
+    "competition_level": "Low/Medium/High — brief 1-line reasoning",
+    "cluster_group": "kebab-case cluster label (e.g. auto-financing, lease-vs-buy)"
   }
 ]
-No text outside the JSON array.
-
-IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.`
+No text outside the JSON array.`
 
   const userPrompt = `Client: ${clientName}
 ${contextLines.join('\n')}${eeatText}
 ${gscGrowthText}
 ${gscQuickWinsText}
 ${gscCtrText}
+${competitorText}
 ${gscTopText}
 ${sitemapText}
 ${avoidText ? `\nAlready covered — DO NOT suggest these again:\n${avoidText}` : ''}
+${guidelinesText}
 
 Suggest ${count} high-impact blog post topics that will improve this client's organic search performance.`
 
@@ -291,19 +387,21 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
 
   // ── Save ───────────────────────────────────────────────────────────────────
   const rows = topics.map(t => ({
-    client_id: clientId,
-    topic:               t.topic,
-    target_keyword:      t.target_keyword,
-    search_intent:       t.search_intent       ?? null,
-    secondary_keywords:  t.secondary_keywords  ?? null,
-    rationale:           [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level].filter(Boolean).join(' | '),
-    keyword_opportunity: t.keyword_opportunity ?? null,
-    ranking_strategy:    t.ranking_strategy    ?? null,
-    audience_intent:     t.audience_intent     ?? null,
-    why_now:             t.why_now             ?? null,
-    competition_level:   t.competition_level   ?? null,
-    status:              'pending',
-    target_publish_date: targetPublishDate ?? null,
+    client_id:            clientId,
+    topic:                t.topic,
+    target_keyword:       t.target_keyword,
+    search_intent:        t.search_intent       ?? null,
+    secondary_keywords:   t.secondary_keywords  ?? null,
+    rationale:            [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level].filter(Boolean).join(' | '),
+    keyword_opportunity:  t.keyword_opportunity ?? null,
+    ranking_strategy:     t.ranking_strategy    ?? null,
+    audience_intent:      t.audience_intent     ?? null,
+    why_now:              t.why_now             ?? null,
+    competition_level:    t.competition_level   ?? null,
+    cluster_group:        t.cluster_group       ?? null,
+    competitors_researched: t.target_keyword ? (competitorMap.get(t.target_keyword) ?? null) : null,
+    status:               'pending',
+    target_publish_date:  targetPublishDate ?? null,
   }))
 
   const { data: saved, error: insertError } = await db

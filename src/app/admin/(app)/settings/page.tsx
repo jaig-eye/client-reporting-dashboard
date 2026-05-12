@@ -61,6 +61,8 @@ interface Settings {
   ads_sync_frequency:             string
   ads_sync_hour_utc:              number
   master_writing_prompt:          string
+  serp_api_key:                   string
+  serp_api_provider:              string
 }
 
 const DEFAULT: Settings = {
@@ -104,6 +106,8 @@ const DEFAULT: Settings = {
   ads_sync_frequency:             'hourly',
   ads_sync_hour_utc:              0,
   master_writing_prompt:          '',
+  serp_api_key:                   '',
+  serp_api_provider:              'serpapi',
 }
 
 const TABS = [
@@ -132,8 +136,10 @@ export default function AgencySettingsPage() {
   const [saved,      setSaved]      = useState(false)
   const [error,      setError]      = useState('')
   const [uploading,  setUploading]  = useState(false)
-  const [testingEmail, setTestingEmail] = useState(false)
-  const [testEmailMsg, setTestEmailMsg] = useState('')
+  const [testingEmail,   setTestingEmail]   = useState(false)
+  const [testEmailMsg,   setTestEmailMsg]   = useState('')
+  const [testingSerp,    setTestingSerp]    = useState(false)
+  const [testSerpMsg,    setTestSerpMsg]    = useState('')
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -205,6 +211,26 @@ export default function AgencySettingsPage() {
       setTestEmailMsg('Failed to send test email')
     } finally {
       setTestingEmail(false)
+    }
+  }
+
+  async function handleTestSerp() {
+    if (!form.serp_api_key) return
+    setTestingSerp(true)
+    setTestSerpMsg('')
+    try {
+      const url = `https://serpapi.com/search.json?q=test&api_key=${encodeURIComponent(form.serp_api_key)}&num=1&engine=google`
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      const data = await res.json() as { error?: string }
+      if (!res.ok || data.error) {
+        setTestSerpMsg(`Error: ${data.error ?? res.statusText}`)
+      } else {
+        setTestSerpMsg('Connected ✓')
+      }
+    } catch {
+      setTestSerpMsg('Failed to reach SerpAPI — check key or network')
+    } finally {
+      setTestingSerp(false)
     }
   }
 
@@ -408,6 +434,7 @@ export default function AgencySettingsPage() {
 
         {/* ─── AI ────────────────────────────────────────────────── */}
         {activeTab === 'ai' && (
+          <>
           <div className="card p-6">
             <h2 className="section-title mb-1">AI Configuration</h2>
             <p className="section-desc mb-4">
@@ -440,6 +467,45 @@ export default function AgencySettingsPage() {
               <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.
             </p>
           </div>
+
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Search API <span className="section-desc" style={{ fontWeight: 400 }}>(competitor research)</span></h2>
+              <p className="section-desc">
+                Used to find top-ranking competitor pages during topic generation. SerpAPI free plan: 250 searches/month.
+                Only the top 3 growth-target keywords per run are researched.
+              </p>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr auto', gap: 8, alignItems: 'end' }}>
+              <FormField label="Provider">
+                <select className="input" value={form.serp_api_provider}
+                  onChange={e => field('serp_api_provider', e.target.value)}>
+                  <option value="serpapi">SerpAPI</option>
+                </select>
+              </FormField>
+              <FormField label="API Key" hint="stored securely, never exposed to clients">
+                <input className="input" type="password"
+                  value={form.serp_api_key}
+                  onChange={e => field('serp_api_key', e.target.value)}
+                  placeholder={form.serp_api_key ? '••••••••••' : 'Enter SerpAPI key…'} />
+              </FormField>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={!form.serp_api_key || testingSerp}
+                onClick={handleTestSerp}
+                style={{ whiteSpace: 'nowrap', marginBottom: 0 }}
+              >
+                {testingSerp ? 'Testing…' : 'Test'}
+              </button>
+            </div>
+            {testSerpMsg && (
+              <p className="text-xs" style={{ color: testSerpMsg.startsWith('Error') || testSerpMsg.startsWith('Failed') ? 'var(--red)' : 'var(--green)' }}>
+                {testSerpMsg}
+              </p>
+            )}
+          </div>
+          </>
         )}
 
         {/* ─── Sync ──────────────────────────────────────────────── */}

@@ -12,22 +12,26 @@ interface Author {
 }
 
 interface Topic {
-  id:                  string
-  topic:               string
-  target_keyword:      string | null
-  status:              string
-  target_publish_date: string | null
-  rationale:           string | null
-  competition_level:   string | null
-  search_intent:       string | null
-  keyword_opportunity: string | null
-  ranking_strategy:    string | null
-  audience_intent:     string | null
-  why_now:             string | null
-  search_volume:       number | null
-  keyword_difficulty:  number | null
-  seo_brief:           Record<string, unknown> | null
+  id:                    string
+  topic:                 string
+  target_keyword:        string | null
+  status:                string
+  target_publish_date:   string | null
+  rationale:             string | null
+  competition_level:     string | null
+  search_intent:         string | null
+  keyword_opportunity:   string | null
+  ranking_strategy:      string | null
+  audience_intent:       string | null
+  why_now:               string | null
+  search_volume:         number | null
+  keyword_difficulty:    number | null
+  seo_brief:             Record<string, unknown> | null
   cannibalization_warning?: string | null
+  page_to_support?:      string | null
+  competitors_researched?: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
+  edit_notes?:           string | null
+  cluster_group?:        string | null
 }
 
 interface Post {
@@ -72,16 +76,30 @@ const FREQ_LABEL: Record<string, string> = {
   monthly: 'Monthly', monthly_first: 'Monthly (1st)', monthly_mid: 'Monthly (15th)', monthly_end: 'Monthly (28th)',
 }
 
-const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  pending:    { label: 'Pending',    cls: 'badge badge-amber'  },
-  approved:   { label: 'Approved',   cls: 'badge badge-green'  },
-  generating: { label: 'Generating', cls: 'badge badge-blue'   },
-  generated:  { label: 'Generated ✓', cls: 'badge badge-green'  },
-  scheduled:  { label: 'Scheduled',  cls: 'badge badge-gray'   },
-  rejected:   { label: 'Rejected',   cls: 'badge badge-red'    },
-  draft_saved:{ label: 'On Site',     cls: 'badge badge-green'  },
-  for_review: { label: 'For Review',  cls: 'badge badge-amber'  },
-  published:  { label: 'Published',  cls: 'badge badge-green'  },
+type DisplayStatus = 'pending' | 'approved' | 'generating' | 'generated' | 'published' | 'rejected'
+
+const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; color: string; dot: string }> = {
+  pending:    { label: 'Pending Topics',   bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
+  approved:   { label: 'Approved Topics',  bg: 'var(--blue-subtle)',   color: 'var(--blue)',    dot: '#2563eb' },
+  generating: { label: 'Generating Posts', bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
+  generated:  { label: 'Generated Posts',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#10b981' },
+  published:  { label: 'Published Posts',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#059669' },
+  rejected:   { label: 'Rejected',         bg: 'var(--red-subtle)',    color: 'var(--red)',     dot: '#ef4444' },
+}
+
+function getTopicDisplayStatus(t: Topic): DisplayStatus {
+  if (t.status === 'rejected')   return 'rejected'
+  if (t.status === 'generating') return 'generating'
+  if (t.status === 'approved')   return 'approved'
+  if (t.status === 'generated')  return 'generated'
+  return 'pending'
+}
+
+function getPostDisplayStatus(p: Post): DisplayStatus {
+  if (p.status === 'rejected')                                        return 'rejected'
+  if (p.status === 'for_review')                                      return 'generated'
+  if (p.status === 'draft_saved' || p.status === 'published')         return 'published'
+  return 'generated'
 }
 
 function today(): string {
@@ -98,6 +116,16 @@ function scoreColor(s: SeoScore | null): string {
   if (s.overall >= 80) return 'var(--green)'
   if (s.overall >= 60) return 'var(--amber)'
   return 'var(--red)'
+}
+
+function truncatePath(url: string, max = 32): string {
+  try {
+    const u    = new URL(url)
+    const path = u.pathname
+    return path.length > max ? path.slice(0, max) + '…' : path
+  } catch {
+    return url.length > max ? url.slice(0, max) + '…' : url
+  }
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
@@ -129,14 +157,29 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   )
 }
 
-function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+function StatusPill({ status, generating }: { status: DisplayStatus; generating?: boolean }) {
+  const cfg = DISPLAY_STATUS_CONFIG[status]
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-      <h4 className="section-title" style={{ margin: 0 }}>{title}</h4>
-      {action}
-    </div>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      fontSize: '0.65rem', fontWeight: 600, padding: '2px 7px',
+      borderRadius: 999, background: cfg.bg, color: cfg.color,
+      whiteSpace: 'nowrap',
+    }}>
+      {generating
+        ? <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg.dot, animation: 'pulse 1.2s ease-in-out infinite' }} />
+        : <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg.dot }} />
+      }
+      {cfg.label}
+    </span>
   )
 }
+
+// ─── Unified table row item (topic or linked post) ────────────────────────────
+
+type RowItem =
+  | { kind: 'topic'; data: Topic }
+  | { kind: 'post';  data: Post; linkedTopic?: Topic }
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
@@ -150,27 +193,31 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [schedSaved,   setSchedSaved]   = useState(false)
   const [schedError,   setSchedError]   = useState('')
   const [schedLoading, setSchedLoading] = useState(true)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
 
   // Pipeline data
-  const [topics,         setTopics]        = useState<Topic[]>([])
-  const [posts,          setPosts]         = useState<Post[]>([])
-  const [dataLoading,    setDataLoading]   = useState(true)
-  const [postTab,        setPostTab]       = useState<'draft_saved' | 'published' | 'rejected'>('draft_saved')
+  const [topics,      setTopics]      = useState<Topic[]>([])
+  const [posts,       setPosts]       = useState<Post[]>([])
+  const [dataLoading, setDataLoading] = useState(true)
+  const [reviewPost,  setReviewPost]  = useState<Post | null>(null)
 
-  // Topic action states
-  const [topicLoading,   setTopicLoading]  = useState<Record<string, boolean>>({})
-  const [rationaleFor,   setRationaleFor]  = useState<Topic | null>(null)
+  // Table state
+  const [expandedId,     setExpandedId]     = useState<string | null>(null)
+  const [editingId,      setEditingId]      = useState<string | null>(null)
+  const [editTitle,      setEditTitle]      = useState('')
+  const [editNotes,      setEditNotes]      = useState('')
+  const [showRejected,   setShowRejected]   = useState(false)
+  const [topicLoading,   setTopicLoading]   = useState<Record<string, boolean>>({})
   const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
-  const [reviewPost,     setReviewPost]    = useState<Post | null>(null)
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   // Calendar modal
   const [calendarModalOpen, setCalendarModalOpen] = useState(false)
-  const [modalStartDate, setModalStartDate] = useState(today())
-  const [modalWeeks,     setModalWeeks]     = useState(6)
-  const [generating,     setGenerating]     = useState(false)
+  const [modalStartDate,    setModalStartDate]    = useState(today())
+  const [modalWeeks,        setModalWeeks]        = useState(6)
+  const [generating,        setGenerating]        = useState(false)
 
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
@@ -178,7 +225,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
       .then(r => r.json())
       .then((d: Record<string, unknown>) => {
-        setSchedule({
+        const loaded: Partial<ClientScheduleSettings> = {
           schedule_frequency:    (d.schedule_frequency    as string  | null) ?? null,
           schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
           monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
@@ -192,7 +239,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           post_structure:        (d.post_structure          as string)         ?? '',
           target_length:         (d.target_length           as number)         ?? 1500,
           publish_time:          (d.publish_time            as string  | null) ?? null,
-        })
+          topic_guidelines:      (d.topic_guidelines        as string  | null) ?? null,
+          auto_approve_topics:   (d.auto_approve_topics      as boolean)        ?? false,
+          auto_push_posts:       (d.auto_push_posts          as boolean)        ?? false,
+        }
+        setSchedule(loaded)
+        // Collapsed by default if already configured
+        setScheduleOpen(!loaded.schedule_frequency || !loaded.schedule_start_date)
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
         setSchedLoading(false)
@@ -200,7 +253,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       .catch(() => setSchedLoading(false))
   }, [clientId])
 
-  // ── Auto-set connection_id from the client's only site ────────────────────
+  // ── Auto-set connection_id ─────────────────────────────────────────────────
   useEffect(() => {
     if (!schedule.connection_id && clientSites[0]?.connectionId) {
       setSched('connection_id', clientSites[0].connectionId)
@@ -208,7 +261,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientSites])
 
-  // ── Load authors from first connected site ─────────────────────────────────
+  // ── Load authors ───────────────────────────────────────────────────────────
   useEffect(() => {
     const connId = clientSites[0]?.connectionId
     if (!connId) { setAuthors([]); return }
@@ -235,13 +288,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   useEffect(() => { loadPipeline() }, [loadPipeline])
 
-  // ── Toast helper ───────────────────────────────────────────────────────────
+  // ── Toast ──────────────────────────────────────────────────────────────────
   function showToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3800)
   }
 
-  // ── Schedule save ──────────────────────────────────────────────────────────
+  // ── Schedule helpers ───────────────────────────────────────────────────────
   function setSched<K extends keyof ClientScheduleSettings>(key: K, val: ClientScheduleSettings[K]) {
     setSchedule(p => ({ ...p, [key]: val }))
   }
@@ -258,7 +311,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     else { const d = await res.json(); setSchedError(d.error || 'Failed to save') }
   }
 
-  // ── Topic regenerate ──────────────────────────────────────────────────────
+  // ── Topic actions ──────────────────────────────────────────────────────────
   async function regenerateTopic(id: string) {
     setTopicLoading(p => ({ ...p, [id]: true }))
     const res = await fetch(`/api/admin/content/topics/${id}/regenerate`, { method: 'POST' })
@@ -268,12 +321,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       setTopics(p => p.map(t => t.id === id ? { ...t, ...updated } : t))
       showToast('New idea generated')
     } else {
-      const d = await res.json()
-      showToast(d.error || 'Regeneration failed', 'error')
+      showToast((await res.json()).error || 'Regeneration failed', 'error')
     }
   }
 
-  // ── Topic approve / reject ─────────────────────────────────────────────────
   async function topicAction(id: string, status: 'approved' | 'rejected') {
     setTopicLoading(p => ({ ...p, [id]: true }))
     const res = await fetch(`/api/admin/content/topics/${id}`, {
@@ -290,7 +341,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }
   }
 
-  // ── Force-generate a post from an approved topic (fire-and-forget) ────────
   function generatePost(topicId: string) {
     setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'generating' } : t))
     showToast('Post generation started — check back shortly', 'info')
@@ -301,7 +351,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }).catch(e => console.error('[generatePost]', e))
   }
 
-  // ── Force-generate all approved topics in a date slot (fire-and-forget) ───
   function generateForSlot(dateKey: string, group: Topic[]) {
     const approved = group.filter(t => t.status === 'approved')
     if (!approved.length) return
@@ -315,6 +364,31 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
       }).catch(e => console.error('[generateForSlot]', e))
     )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
+  }
+
+  async function saveEdit(id: string) {
+    if (!editTitle.trim()) { showToast('Title cannot be empty', 'error'); return }
+    setTopicLoading(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: editTitle.trim(), edit_notes: editNotes.trim() || null }),
+    })
+    setTopicLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      setTopics(p => p.map(t => t.id === id ? { ...t, topic: editTitle.trim(), edit_notes: editNotes.trim() || null } : t))
+      setEditingId(null)
+      showToast('Title updated')
+    } else {
+      showToast('Failed to update', 'error')
+    }
+  }
+
+  function openEdit(t: Topic) {
+    setEditTitle(t.topic)
+    setEditNotes(t.edit_notes ?? '')
+    setEditingId(t.id)
+    setExpandedId(null)
   }
 
   // ── Generate calendar ──────────────────────────────────────────────────────
@@ -342,400 +416,647 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }
   }
 
-  // ── Derived data ───────────────────────────────────────────────────────────
-  const forReviewPosts = posts.filter(p => p.status === 'for_review')
-  const postsForTab    = posts.filter(p => p.status === postTab)
-
-  const postsPerRun    = schedule.posts_per_run  ?? 2
-  const topicsPerRun   = schedule.topics_per_run ?? 5
-
-  const freqSummary    = schedule.schedule_frequency
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const postsPerRun  = schedule.posts_per_run  ?? 2
+  const topicsPerRun = schedule.topics_per_run ?? 5
+  const freqSummary  = schedule.schedule_frequency
     ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · ${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
     : `${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
-
-  const willCreate     = Math.min(modalWeeks * topicsPerRun, 50)
-  const showDayPicker  = schedule.schedule_frequency === 'weekly' || schedule.schedule_frequency === 'biweekly'
+  const willCreate   = Math.min(modalWeeks * topicsPerRun, 50)
+  const showDayPicker = schedule.schedule_frequency === 'weekly' || schedule.schedule_frequency === 'biweekly'
+  const isConfigured  = !!(schedule.schedule_frequency && schedule.schedule_start_date)
 
   if (schedLoading) {
     return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
   }
 
+  // ── Build unified row list ─────────────────────────────────────────────────
+  // Group by publish date for the table. Each topic appears as a row.
+  // Posts that are linked to a topic replace the topic row (they share the date).
+  // Orphan posts (no linked topic) are shown under their publish date.
+
+  // Build map of topic_id → post (via content_topics.post_id lookup)
+  // We'll use the post's focus_topic field or the topic's post_id.
+  // For simplicity: show ALL topics, and for each topic that has status 'generated',
+  // also show its linked post (for_review/draft_saved/published).
+  const topicIdToPost = new Map<string, Post>()
+  // Match posts to topics via target_keyword + date heuristic (no direct FK in API response)
+  // The cleanest way: show topics for active statuses, posts for terminal statuses.
+
+  const allItems: RowItem[] = []
+  const seenPostIds = new Set<string>()
+
+  // Topics (all non-generated statuses + generated topics waiting for review)
+  topics.forEach(t => {
+    // Find matching post by target_keyword + publish_date
+    const linkedPost = posts.find(p =>
+      p.target_keyword === t.target_keyword &&
+      p.target_publish_date === t.target_publish_date &&
+      !seenPostIds.has(p.id)
+    )
+    if (linkedPost) {
+      seenPostIds.add(linkedPost.id)
+      topicIdToPost.set(t.id, linkedPost)
+    }
+    allItems.push({ kind: 'topic', data: t })
+  })
+
+  // Orphan posts (not matched to any topic)
+  posts.forEach(p => {
+    if (!seenPostIds.has(p.id) && (p.status === 'draft_saved' || p.status === 'published' || p.status === 'for_review')) {
+      allItems.push({ kind: 'post', data: p })
+    }
+  })
+
+  // Group by publish date
+  const groups = new Map<string, RowItem[]>()
+  for (const item of allItems) {
+    const date = item.kind === 'topic' ? (item.data.target_publish_date ?? 'unscheduled') : (item.data.target_publish_date ?? 'unscheduled')
+    const arr = groups.get(date) ?? []
+    arr.push(item)
+    groups.set(date, arr)
+  }
+
+  // Published section (terminal posts)
+  const publishedItems = allItems.filter(item =>
+    item.kind === 'topic' ? false : (item.data.status === 'draft_saved' || item.data.status === 'published')
+  )
+
+  // Sort date keys: chronological, unscheduled last
+  const dateKeys = Array.from(groups.keys())
+    .filter(k => k !== 'unscheduled')
+    .sort((a, b) => a.localeCompare(b))
+  if (groups.has('unscheduled')) dateKeys.push('unscheduled')
+
+  // Rejected count
+  const rejectedCount = topics.filter(t => t.status === 'rejected').length
+    + posts.filter(p => p.status === 'rejected').length
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION A — SCHEDULE CONFIGURATION
+          SECTION A — SCHEDULE CONFIGURATION (collapsible)
       ═══════════════════════════════════════════════════════════════════ */}
-      <div className="card p-6">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-          <div>
-            <h3 className="section-title" style={{ marginBottom: 0 }}>Schedule Configuration</h3>
-            <p className="section-desc" style={{ marginTop: '0.125rem' }}>Controls how often content is generated and published for this client.</p>
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-            <Toggle checked={schedule.auto_generate ?? false} onChange={v => setSched('auto_generate', v)} />
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{schedule.auto_generate ? 'Auto-generate On' : 'Auto-generate Off'}</span>
-          </label>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <Label>Start Date</Label>
-            <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />
-          </div>
-          <div>
-            <Label>Frequency</Label>
-            <select className="input" value={schedule.schedule_frequency ?? ''} onChange={e => setSched('schedule_frequency', e.target.value || null)}>
-              <option value="">Use global default</option>
-              {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </div>
-          {showDayPicker && (
-            <div>
-              <Label>Day of Week</Label>
-              <select className="input" value={schedule.schedule_day_of_week ?? 1} onChange={e => setSched('schedule_day_of_week', Number(e.target.value))}>
-                {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
-              </select>
-            </div>
+      <div>
+        {/* Collapsed header — always visible */}
+        <div
+          className="card p-4 cursor-pointer select-none"
+          onClick={() => setScheduleOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <span style={{ fontSize: '0.9rem' }}>⚙</span>
+          <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
+          <span style={{ flex: 1 }} />
+          {schedule.auto_generate && (
+            <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
           )}
-          <div>
-            <Label hint="topic ideas per cycle">Topics per Run</Label>
-            <input className="input" type="number" min={1} max={20} value={schedule.topics_per_run ?? 5} onChange={e => setSched('topics_per_run', Number(e.target.value))} />
-          </div>
-          <div>
-            <Label hint="posts that must be approved per cycle">Posts per Run</Label>
-            <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
-          </div>
-          <div>
-            <Label hint="how far ahead to plan topics">Weeks Ahead</Label>
-            <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
-          </div>
-          <div>
-            <Label>Target Word Count</Label>
-            <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
-          </div>
-          <div>
-            <Label hint="time posts are scheduled in WordPress">Publish Time</Label>
-            <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
-          </div>
-          <div>
-            <Label>Default Author</Label>
-            <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— Default —</option>
-              {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div style={{ marginTop: '1rem' }}>
-          <Label hint="appended to the AI system prompt for this client">Custom Post Structure</Label>
-          <textarea
-            className="input"
-            rows={5}
-            style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
-            value={schedule.post_structure ?? ''}
-            onChange={e => setSched('post_structure', e.target.value)}
-            placeholder={`e.g.\nAlways link to at least 2 priority pages listed in the context.\nNever link to excluded pages.\nInclude E-E-A-T signals: cite the business's years of experience, named staff expertise, or accreditations where natural.\nUse always-included links in the body with descriptive anchor text — never raw URLs.`}
-          />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
-            This text is appended to the master writing prompt on every generation.
-            Priority pages, excluded pages, and always-included links from Brand DNA are already injected as context — use this field to give the AI explicit instructions on how to use them (E-E-A-T signals, linking rules, section boilerplate, CTA style, etc.).
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3" style={{ marginTop: '1rem' }}>
-          <button className="btn btn-primary" onClick={saveSchedule} disabled={schedSaving}>
-            {schedSaving ? 'Saving…' : 'Save Schedule'}
-          </button>
-          {schedSaved  && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
-          {schedError  && <span className="text-xs" style={{ color: 'var(--red)' }}>{schedError}</span>}
-        </div>
-      </div>
-
-      {/* ═══════════════════════════════════════════════════════════════════
-          SECTION B — CONTENT CALENDAR (Generate + Pipeline)
-      ═══════════════════════════════════════════════════════════════════ */}
-      <div className="card p-6">
-        <SectionHeader
-          title="Content Calendar"
-          action={
-            aiConfigured ? (
-              <button
-                className="btn btn-primary"
-                style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
-                onClick={() => setCalendarModalOpen(true)}
-              >
-                Generate Topics →
-              </button>
-            ) : (
-              <span className="text-xs" style={{ color: 'var(--text-faint)' }}>AI not configured</span>
-            )
+          {isConfigured
+            ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
+            : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>
           }
-        />
+          <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
+            {scheduleOpen ? '▲' : '▼'}
+          </span>
+        </div>
 
-        {/* Active Topics — grouped by publish date */}
-        {(() => {
-          const allPending = topics.filter(t => ['pending', 'approved', 'scheduled', 'generating'].includes(t.status))
-          // Group by publish date (undefined → 'unscheduled')
-          const groups = new Map<string, Topic[]>()
-          for (const t of allPending) {
-            const key = t.target_publish_date ?? 'unscheduled'
-            const arr = groups.get(key) ?? []
-            arr.push(t)
-            groups.set(key, arr)
-          }
-          const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
-            if (a === 'unscheduled') return 1
-            if (b === 'unscheduled') return -1
-            return a.localeCompare(b)
-          })
-
-          return (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <span className="text-sm font-medium">
-                  Active Topics{' '}
-                  <span style={{ color: 'var(--text-faint)' }}>({allPending.length})</span>
-                </span>
+        {/* Expanded form */}
+        {scheduleOpen && (
+          <div className="card p-6 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <div>
+                <p className="section-desc" style={{ marginTop: 0 }}>Controls how often content is generated and published for this client.</p>
               </div>
+              <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                <Toggle checked={schedule.auto_generate ?? false} onChange={v => setSched('auto_generate', v)} />
+                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{schedule.auto_generate ? 'Auto-generate On' : 'Auto-generate Off'}</span>
+              </label>
+            </div>
 
-              {dataLoading ? (
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
-              ) : allPending.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-                  {topics.length === 0
-                    ? 'No topics yet — click "Generate Topics" to create your first content calendar.'
-                    : 'No topics pending approval.'}
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {sortedKeys.map(dateKey => {
-                    const group        = groups.get(dateKey)!
-                    const approvedInGroup = group.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
-                    const slotPct      = Math.min(100, (approvedInGroup / postsPerRun) * 100)
-                    const slotReady    = approvedInGroup >= postsPerRun
-                    return (
-                      <div key={dateKey}>
-                        {/* Slot header */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                          <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
-                            {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <span className="text-xs" style={{ color: slotReady ? 'var(--green)' : 'var(--text-muted)' }}>
-                              {approvedInGroup}/{postsPerRun} approved{slotReady ? ' ✓' : ''}
-                            </span>
-                            {slotReady && (
-                              <button
-                                className="btn btn-secondary"
-                                style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', color: 'var(--blue)' }}
-                                onClick={() => generateForSlot(dateKey, group)}
-                                disabled={slotGenerating[dateKey]}
-                                title="Force-generate posts for this slot now"
-                              >
-                                {slotGenerating[dateKey] ? '…' : '▶ Generate'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <div className="quota-bar" style={{ marginBottom: '0.375rem' }}>
-                          <div className="quota-bar__fill" style={{ width: `${slotPct}%`, background: slotReady ? 'var(--green)' : 'var(--blue)' }} />
-                        </div>
-                        {/* Topic rows */}
-                        <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
-                          {group.map((t, i) => {
-                            // Extract just Low/Medium/High from competition_level (which may be a full sentence)
-                            const compRaw   = t.competition_level ?? ''
-                            const compLevel = compRaw.match(/^(low|medium|high)/i)?.[1]?.toLowerCase() ?? null
-                            const hasRationale = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
-                            return (
-                              <div key={t.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', borderBottom: i < group.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: ['approved', 'generating', 'generated'].includes(t.status) ? 'var(--green-subtle)' : undefined }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <p
-                                    className="text-sm font-medium"
-                                    style={{ marginBottom: '0.2rem', lineHeight: 1.35, cursor: hasRationale ? 'pointer' : 'default', color: hasRationale ? 'var(--blue)' : undefined }}
-                                    onClick={() => hasRationale && setRationaleFor(t)}
-                                    title={hasRationale ? 'Click to view SEO analysis' : undefined}
-                                  >
-                                    {t.topic}{hasRationale && <span style={{ fontSize: '0.6875rem', marginLeft: 4, opacity: 0.7 }}>↗</span>}
-                                  </p>
-                                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                                    {t.target_keyword && <span className="badge badge-gray">{t.target_keyword}</span>}
-                                    {compLevel && (
-                                      <span className="badge" style={{
-                                        background: compLevel === 'low' ? 'var(--green-subtle)' : compLevel === 'high' ? 'var(--red-subtle)' : 'var(--amber-subtle)',
-                                        color:      compLevel === 'low' ? 'var(--green)'        : compLevel === 'high' ? 'var(--red)'        : 'var(--amber)',
-                                      }}>
-                                        {compLevel.charAt(0).toUpperCase() + compLevel.slice(1)}
-                                      </span>
-                                    )}
-                                    <span className={STATUS_BADGE[t.status]?.cls ?? 'badge badge-gray'}>{STATUS_BADGE[t.status]?.label ?? t.status}</span>
-                                    {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
-                                      <span className="badge badge-amber">⚠ Overlap</span>
-                                    )}
-                                  </div>
-                                  {/* One-line keyword opportunity preview */}
-                                  {t.keyword_opportunity && (
-                                    <p className="text-xs mt-1" style={{
-                                      color: 'var(--text-muted)',
-                                      display: '-webkit-box',
-                                      WebkitLineClamp: 1,
-                                      WebkitBoxOrient: 'vertical',
-                                      overflow: 'hidden',
-                                    }}>{t.keyword_opportunity}</p>
-                                  )}
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                                  {t.status === 'approved' && (
-                                    <button
-                                      className="btn btn-secondary"
-                                      style={{ fontSize: '0.6875rem', padding: '0.1875rem 0.5rem', color: 'var(--blue)' }}
-                                      onClick={() => generatePost(t.id)}
-                                      title="Force-generate this post now"
-                                    >▶</button>
-                                  )}
-                                  {t.status === 'generating' && (
-                                    <span className="text-xs" style={{ color: 'var(--blue)', padding: '0.25rem 0.5rem' }}>⏳</span>
-                                  )}
-                                  {!['approved', 'generating', 'generated'].includes(t.status) && (
-                                    <button
-                                      className="btn btn-secondary"
-                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--green)' }}
-                                      onClick={() => topicAction(t.id, 'approved')}
-                                      disabled={topicLoading[t.id]}
-                                    >✓</button>
-                                  )}
-                                  {!['generating', 'generated'].includes(t.status) && (
-                                    <button
-                                      className="btn btn-secondary"
-                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}
-                                      onClick={() => regenerateTopic(t.id)}
-                                      disabled={topicLoading[t.id]}
-                                      title="Generate a different topic idea for this slot"
-                                    >↻</button>
-                                  )}
-                                  {!['generating', 'generated'].includes(t.status) && (
-                                    <button
-                                      className="btn btn-secondary"
-                                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', color: 'var(--red)' }}
-                                      onClick={() => topicAction(t.id, 'rejected')}
-                                      disabled={topicLoading[t.id]}
-                                    >✕</button>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Start Date</Label>
+                <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />
+              </div>
+              <div>
+                <Label>Frequency</Label>
+                <select className="input" value={schedule.schedule_frequency ?? ''} onChange={e => setSched('schedule_frequency', e.target.value || null)}>
+                  <option value="">Use global default</option>
+                  {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              {showDayPicker && (
+                <div>
+                  <Label>Day of Week</Label>
+                  <select className="input" value={schedule.schedule_day_of_week ?? 1} onChange={e => setSched('schedule_day_of_week', Number(e.target.value))}>
+                    {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
                 </div>
               )}
+              <div>
+                <Label hint="topic ideas per cycle">Topics per Run</Label>
+                <input className="input" type="number" min={1} max={20} value={schedule.topics_per_run ?? 5} onChange={e => setSched('topics_per_run', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label hint="posts that must be approved per cycle">Posts per Run</Label>
+                <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label hint="how far ahead to plan topics">Weeks Ahead</Label>
+                <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label>Target Word Count</Label>
+                <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
+              </div>
+              <div>
+                <Label hint="time posts are scheduled in WordPress">Publish Time</Label>
+                <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
+              </div>
+              <div>
+                <Label>Default Author</Label>
+                <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">— Default —</option>
+                  {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
             </div>
-          )
-        })()}
 
-        {/* For Review — generated posts awaiting manual approval */}
-        {forReviewPosts.length > 0 && (
-          <div style={{ marginBottom: '1.5rem' }}>
-            <div style={{ marginBottom: '0.5rem' }}>
-              <span className="text-sm font-medium">
-                For Review{' '}
-                <span style={{ color: 'var(--text-faint)' }}>({forReviewPosts.length})</span>
-              </span>
+            <div style={{ marginTop: '1rem' }}>
+              <Label hint="appended to the AI system prompt for this client">Custom Post Structure</Label>
+              <textarea
+                className="input"
+                rows={4}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+                value={schedule.post_structure ?? ''}
+                onChange={e => setSched('post_structure', e.target.value)}
+                placeholder={`e.g.\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite years of experience, named staff expertise.\nNever link to excluded pages.`}
+              />
             </div>
-            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
-              {forReviewPosts.map((p, i) => (
-                <div key={p.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < forReviewPosts.length - 1 ? '1px solid var(--border-subtle)' : 'none', background: 'var(--amber-subtle)' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p className="text-sm font-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.125rem' }}>{p.title ?? '(generating…)'}</p>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      {p.target_keyword && <span className="badge badge-gray">{p.target_keyword}</span>}
-                      {p.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(p.target_publish_date)}</span>}
-                      {p.seo_score && (
-                        <span className="text-xs font-semibold" style={{ color: scoreColor(p.seo_score) }}>
-                          SEO: {p.seo_score.overall}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ fontSize: '0.75rem', padding: '0.3125rem 0.75rem', flexShrink: 0 }}
-                    onClick={() => setReviewPost(p)}
-                  >
-                    Review &amp; Approve
-                  </button>
+
+            <div style={{ marginTop: '1rem' }}>
+              <Label hint="keywords, topics, or angles the AI should never generate">Topic Guidelines & Restrictions</Label>
+              <textarea
+                className="input"
+                rows={3}
+                style={{ width: '100%', resize: 'vertical' }}
+                value={schedule.topic_guidelines ?? ''}
+                onChange={e => setSched('topic_guidelines', e.target.value || null)}
+                placeholder="e.g. Avoid bad credit financing, payday loans, or any topics with negative brand associations. Do not generate topics targeting keywords below $5 CPC."
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                Injected into the topic generation AI prompt. Use this to steer away from brand-sensitive keywords or topics outside the client&apos;s target market.
+              </p>
+            </div>
+
+            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Toggle checked={schedule.auto_approve_topics ?? false} onChange={v => setSched('auto_approve_topics', v)} />
+                <div>
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)', display: 'block', lineHeight: 1.3 }}>Auto-approve topics</span>
+                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Topics still pending 2 days before their review deadline are automatically approved.</span>
                 </div>
-              ))}
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Toggle checked={schedule.auto_push_posts ?? false} onChange={v => setSched('auto_push_posts', v)} />
+                <div>
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)', display: 'block', lineHeight: 1.3 }}>Auto-push posts to site</span>
+                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Generated posts not yet pushed will upload to WordPress 2 days before the publish date.</span>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3" style={{ marginTop: '1rem' }}>
+              <button className="btn btn-primary" onClick={saveSchedule} disabled={schedSaving}>
+                {schedSaving ? 'Saving…' : 'Save Schedule'}
+              </button>
+              {schedSaved  && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+              {schedError  && <span className="text-xs" style={{ color: 'var(--red)' }}>{schedError}</span>}
             </div>
           </div>
         )}
+      </div>
 
-        {/* Posts */}
-        <div>
-          <span className="text-sm font-medium" style={{ display: 'block', marginBottom: '0.5rem' }}>Posts</span>
-          <div className="pipeline-tabs">
-            {(['draft_saved', 'published', 'rejected'] as const).map(tab => (
-              <button
-                key={tab}
-                className={`pipeline-tab${postTab === tab ? ' active' : ''}`}
-                onClick={() => setPostTab(tab)}
-              >
-                {tab === 'draft_saved' ? 'On Site' : tab === 'published' ? 'Published' : 'Rejected'}
-                {' '}
-                <span style={{ color: postTab === tab ? 'var(--blue)' : 'var(--text-faint)' }}>
-                  ({posts.filter(p => p.status === tab).length})
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {dataLoading ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
-          ) : postsForTab.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
-              {postTab === 'draft_saved' ? 'No posts on site yet. Approve a post from the "For Review" section to push it to your connected site.' :
-               postTab === 'published'   ? 'No published posts yet.' :
-               'No rejected posts.'}
-            </p>
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION B — CONTENT CALENDAR (unified table)
+      ═══════════════════════════════════════════════════════════════════ */}
+      <div className="card p-6">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <h4 className="section-title" style={{ margin: 0 }}>Content Calendar</h4>
+          {aiConfigured ? (
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
+              onClick={() => setCalendarModalOpen(true)}
+            >
+              Generate Topics →
+            </button>
           ) : (
-            <div style={{ border: '1px solid var(--border)', borderRadius: '0.5rem', overflow: 'hidden' }}>
-              {postsForTab.map((p, i) => {
-                const siteUrl = p.status === 'published'
-                  ? p.published_url
-                  : p.wp_post_id && p.wp_site_url
-                    ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}`
-                    : p.bc_post_id && p.bc_store_hash
-                      ? `https://store-${p.bc_store_hash}.mybigcommerce.com/manage/site/content`
-                      : null
-                const siteLabel = p.bc_post_id && !p.wp_post_id ? 'Edit ↗' : 'View ↗'
-                return (
-                  <div key={p.id} style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: i < postsForTab.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p className="text-sm font-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.125rem' }}>{p.title ?? '(untitled)'}</p>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        {p.target_keyword && <span className="badge badge-gray">{p.target_keyword}</span>}
-                        {p.target_publish_date && <span className="text-xs" style={{ color: 'var(--text-faint)' }}>→ {fmtDate(p.target_publish_date)}</span>}
-                      </div>
-                    </div>
-                    {p.seo_score && (
-                      <span className="text-xs font-semibold" style={{ color: scoreColor(p.seo_score), flexShrink: 0 }}>
-                        SEO: {p.seo_score.overall}
-                      </span>
-                    )}
-                    {siteUrl && (
-                      <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', flexShrink: 0 }}>
-                        {siteLabel}
-                      </a>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+            <span className="text-xs" style={{ color: 'var(--text-faint)' }}>AI not configured</span>
           )}
         </div>
+
+        {dataLoading ? (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+        ) : allItems.length === 0 ? (
+          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
+            No topics yet — click &quot;Generate Topics&quot; to create your first content calendar.
+          </p>
+        ) : (
+          <div>
+            <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: 130 }} />
+                <col />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 130 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Title</th>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Supporting</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Publish Date</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dateKeys.map(dateKey => {
+                  const group = (groups.get(dateKey) ?? []).filter(item => {
+                    if (!showRejected) {
+                      if (item.kind === 'topic' && item.data.status === 'rejected') return false
+                      if (item.kind === 'post'  && item.data.status === 'rejected')  return false
+                    }
+                    // Hide terminal published/draft_saved posts from date groups (shown in Published section)
+                    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
+                    return true
+                  })
+
+                  if (group.length === 0) return null
+
+                  // Slot approval progress (topics in this date group)
+                  const topicsInGroup = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
+                  const approvedInGroup = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
+                  const slotReady = approvedInGroup >= postsPerRun
+
+                  return [
+                    // Date section header row
+                    <tr key={`hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)' }}>
+                      <td colSpan={5} style={{ padding: '5px 8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
+                            {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
+                          </span>
+                          {/* Approval dots */}
+                          <div style={{ display: 'flex', gap: 3 }}>
+                            {Array.from({ length: postsPerRun }).map((_, i) => (
+                              <span key={i} style={{
+                                display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                                background: i < approvedInGroup ? 'var(--green)' : 'var(--border)',
+                              }} />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
+                            {approvedInGroup}/{postsPerRun}{slotReady ? ' ✓' : ''}
+                          </span>
+                          {slotReady && (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--blue)', marginLeft: 4 }}
+                              onClick={() => generateForSlot(dateKey, topicsInGroup)}
+                              disabled={slotGenerating[dateKey]}
+                            >
+                              {slotGenerating[dateKey] ? '…' : '▶ Generate Slot'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>,
+
+                    // Topic/post rows
+                    ...group.map(item => {
+                      const id = item.data.id
+                      const isExpanded = expandedId === id
+                      const isEditing  = editingId  === id
+
+                      if (item.kind === 'topic') {
+                        const t = item.data
+                        const displayStatus = getTopicDisplayStatus(t)
+                        const linkedPost    = topicIdToPost.get(t.id)
+                        const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
+                        const hasReview     = linkedPost && (linkedPost.status === 'for_review')
+
+                        return [
+                          <tr
+                            key={`topic-${t.id}`}
+                            style={{ cursor: hasDetail ? 'pointer' : 'default', background: isExpanded ? 'var(--bg-subtle)' : undefined }}
+                            onClick={() => { if (hasDetail && !isEditing) setExpandedId(isExpanded ? null : id) }}
+                          >
+                            <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                              <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                            </td>
+                            <td style={{ padding: '8px 8px', verticalAlign: 'middle' }}>
+                              <div style={{ fontWeight: 500, fontSize: '0.8125rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {t.topic}
+                                {hasDetail && <span style={{ fontSize: '0.6rem', marginLeft: 4, opacity: 0.5 }}>↗</span>}
+                              </div>
+                              {t.target_keyword && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                                  {t.target_keyword}
+                                  {t.cluster_group && (
+                                    <span style={{ marginLeft: 5, fontSize: '0.62rem', color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '0 4px', borderRadius: 3 }}>
+                                      {t.cluster_group}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                              {t.page_to_support ? (
+                                <a
+                                  href={t.page_to_support}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ fontSize: '0.7rem', color: 'var(--blue)' }}
+                                  onClick={e => e.stopPropagation()}
+                                  title={t.page_to_support}
+                                >
+                                  {truncatePath(t.page_to_support)}
+                                </a>
+                              ) : <span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span>}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {fmtDate(t.target_publish_date)}
+                            </td>
+                            <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                                {/* Review post */}
+                                {hasReview && (
+                                  <button
+                                    className="btn btn-primary"
+                                    style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                                    onClick={() => setReviewPost(linkedPost!)}
+                                  >→ Review</button>
+                                )}
+                                {/* Generate post */}
+                                {t.status === 'approved' && !hasReview && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.65rem', padding: '2px 7px', color: 'var(--blue)' }}
+                                    onClick={() => generatePost(t.id)}
+                                    title="Generate post now"
+                                  >▶</button>
+                                )}
+                                {/* Approve */}
+                                {!['approved', 'generating', 'generated'].includes(t.status) && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--green)' }}
+                                    onClick={() => topicAction(t.id, 'approved')}
+                                    disabled={topicLoading[t.id]}
+                                    title="Approve topic"
+                                  >✓</button>
+                                )}
+                                {/* Edit title */}
+                                {!['generating', 'rejected'].includes(t.status) && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--text-muted)' }}
+                                    onClick={() => isEditing ? setEditingId(null) : openEdit(t)}
+                                    title="Edit title"
+                                  >✏</button>
+                                )}
+                                {/* Regenerate */}
+                                {!['generating', 'generated'].includes(t.status) && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--text-muted)' }}
+                                    onClick={() => regenerateTopic(t.id)}
+                                    disabled={topicLoading[t.id]}
+                                    title="Generate different topic idea"
+                                  >↻</button>
+                                )}
+                                {/* Reject */}
+                                {!['generating', 'generated'].includes(t.status) && t.status !== 'rejected' && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--red)' }}
+                                    onClick={() => topicAction(t.id, 'rejected')}
+                                    disabled={topicLoading[t.id]}
+                                    title="Reject topic"
+                                  >✕</button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>,
+
+                          // Expanded detail row
+                          isExpanded && (
+                            <tr key={`expand-${t.id}`}>
+                              <td colSpan={5} style={{ padding: '0 0 12px 0', background: 'var(--bg-subtle)' }}>
+                                <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {([
+                                    { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+                                    { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+                                    { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
+                                    { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+                                    { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+                                  ] as const).filter(s => t[s.key]).map(({ key, label, color, bg }) => (
+                                    <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 4px 4px 0', padding: '4px 8px' }}>
+                                      <p style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: 2 }}>{label}</p>
+                                      <p style={{ fontSize: '0.78rem', color: '#374151', lineHeight: 1.4 }}>{t[key]}</p>
+                                    </div>
+                                  ))}
+                                  {t.page_to_support && (
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                      <span style={{ fontWeight: 600 }}>Supporting: </span>
+                                      <a href={t.page_to_support} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>{t.page_to_support}</a>
+                                    </div>
+                                  )}
+                                  {t.competitors_researched && t.competitors_researched.urls.length > 0 && (
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                      <span style={{ fontWeight: 600 }}>Competitors researched: </span>
+                                      {t.competitors_researched.urls.map((u, i) => (
+                                        <span key={i}>
+                                          <a href={u} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
+                                            {new URL(u).hostname.replace('www.', '')}
+                                          </a>
+                                          {i < t.competitors_researched!.urls.length - 1 ? ', ' : ''}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--amber)', background: 'var(--amber-subtle)', padding: '4px 8px', borderRadius: 4 }}>
+                                      ⚠ {t.seo_brief.cannibalization_warning}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ),
+
+                          // Inline edit row
+                          isEditing && (
+                            <tr key={`edit-${t.id}`}>
+                              <td colSpan={5} style={{ padding: '4px 0 12px 0', background: 'var(--bg-subtle)' }}>
+                                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <input
+                                    className="input"
+                                    value={editTitle}
+                                    onChange={e => setEditTitle(e.target.value)}
+                                    placeholder="Topic title"
+                                    style={{ fontSize: '0.875rem' }}
+                                    autoFocus
+                                  />
+                                  <textarea
+                                    className="input"
+                                    rows={2}
+                                    value={editNotes}
+                                    onChange={e => setEditNotes(e.target.value)}
+                                    placeholder="Direction notes (optional) — tell the AI what angle to take if regenerating"
+                                    style={{ fontSize: '0.8125rem', resize: 'vertical' }}
+                                  />
+                                  {t.status === 'generated' && (
+                                    <p style={{ fontSize: '0.72rem', color: 'var(--amber)' }}>
+                                      ⚠ This topic has a generated post — editing the title will not regenerate the post automatically.
+                                    </p>
+                                  )}
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button
+                                      className="btn btn-primary"
+                                      style={{ fontSize: '0.75rem' }}
+                                      onClick={() => saveEdit(t.id)}
+                                      disabled={topicLoading[t.id]}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.75rem' }}
+                                      onClick={() => setEditingId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ),
+                        ].filter(Boolean)
+                      }
+
+                      // Post row (for_review only in date groups)
+                      const p = item.data as Post
+                      const displayStatus = getPostDisplayStatus(p)
+                      const siteUrl = p.status === 'published'
+                        ? p.published_url
+                        : p.wp_post_id && p.wp_site_url
+                          ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}`
+                          : p.bc_post_id && p.bc_store_hash
+                            ? `https://store-${p.bc_store_hash}.mybigcommerce.com/manage/site/content`
+                            : null
+
+                      return (
+                        <tr key={`post-${p.id}`}>
+                          <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                            <StatusPill status={displayStatus} />
+                          </td>
+                          <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                            <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {p.title ?? '(generating…)'}
+                            </div>
+                            {p.target_keyword && (
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                            <span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span>
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {fmtDate(p.target_publish_date)}
+                          </td>
+                          <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                            <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                              {p.seo_score && (
+                                <span style={{ fontSize: '0.65rem', fontWeight: 600, color: scoreColor(p.seo_score), padding: '2px 0' }}>
+                                  SEO:{p.seo_score.overall}
+                                </span>
+                              )}
+                              {p.status === 'for_review' && (
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                                  onClick={() => setReviewPost(p)}
+                                >→ Review</button>
+                              )}
+                              {siteUrl && p.status !== 'for_review' && (
+                                <a href={siteUrl} target="_blank" rel="noreferrer"
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
+                                  ↗ View
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    }).flat(),
+                  ]
+                }).filter(Boolean)}
+
+                {/* Published section */}
+                {publishedItems.length > 0 && [
+                  <tr key="hdr-published" style={{ background: 'var(--bg-subtle)' }}>
+                    <td colSpan={5} style={{ padding: '5px 8px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Published</span>
+                    </td>
+                  </tr>,
+                  ...publishedItems.map(item => {
+                    const p = item.data as Post
+                    const siteUrl = p.published_url
+                      ?? (p.wp_post_id && p.wp_site_url ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}` : null)
+                    return (
+                      <tr key={`pub-${p.id}`}>
+                        <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                          <StatusPill status="published" />
+                        </td>
+                        <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                          <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {p.title ?? '(untitled)'}
+                          </div>
+                          {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
+                        </td>
+                        <td><span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span></td>
+                        <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {fmtDate(p.target_publish_date)}
+                        </td>
+                        <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                          {siteUrl && (
+                            <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
+                              ↗ Live
+                            </a>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  }),
+                ]}
+              </tbody>
+            </table>
+
+            {/* Rejected toggle */}
+            {rejectedCount > 0 && (
+              <button
+                style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                onClick={() => setShowRejected(r => !r)}
+              >
+                {showRejected ? 'Hide' : 'Show'} Rejected ({rejectedCount})
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
@@ -755,7 +1076,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       </details>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          GENERATE MODAL
+          GENERATE CALENDAR MODAL
       ═══════════════════════════════════════════════════════════════════ */}
       {calendarModalOpen && (
         <div
@@ -801,42 +1122,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          RATIONALE POPUP
-      ═══════════════════════════════════════════════════════════════════ */}
-      {rationaleFor && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
-          onClick={() => setRationaleFor(null)}
-        >
-          <div
-            style={{ background: '#fff', borderRadius: '0.75rem', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', padding: '1.25rem', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-              <p style={{ fontWeight: 600, fontSize: '0.9375rem', lineHeight: 1.3, flex: 1, marginRight: '1rem' }}>{rationaleFor.topic}</p>
-              <button onClick={() => setRationaleFor(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-              {rationaleFor.target_keyword && <span className="badge badge-blue">{rationaleFor.target_keyword}</span>}
-              {rationaleFor.search_intent  && <span className="badge badge-gray">{rationaleFor.search_intent}</span>}
-            </div>
-            {([
-              { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-              { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-              { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
-              { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-              { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-            ] as const).filter(s => rationaleFor[s.key]).map(({ key, label, color, bg }) => (
-              <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 0.375rem 0.375rem 0', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
-                <p style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: '0.1875rem' }}>{label}</p>
-                <p style={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.5 }}>{rationaleFor[key]}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════
           TOAST
       ═══════════════════════════════════════════════════════════════════ */}
       {toast && (
@@ -861,9 +1146,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   )
 }
 
-// ─── Manual Post Stub ──────────────────────────────────────────────────────────
-// Lazy-loads the full ContentEditor from the content page to avoid a heavy
-// import at the top of this component.
+// ─── Manual Post Stub ─────────────────────────────────────────────────────────
 
 function ManualPostStub({ clientId, clientName, sites }: { clientId: string; clientName: string; sites: SiteOption[] }) {
   const [show, setShow] = useState(false)
