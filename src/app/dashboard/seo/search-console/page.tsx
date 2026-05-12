@@ -14,6 +14,8 @@ import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import { GscQueriesTable, GscPagesTable } from './GscSortableTable'
+import GscTrendChart from './GscTrendChart'
+import type { GscDailyPoint } from './GscTrendChart'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,8 +113,8 @@ export default async function SearchConsolePage({
   // multiple GSC connections (e.g., after reconnecting — old rows keep the old connection_id).
   const primaryConnectionId = gscConnections[0].id
 
-  type GscRawRow = { clicks: number; impressions: number; ctr: number; position: number; query: string | null; page: string | null }
-  const gscSelect = 'clicks,impressions,ctr,position,query,page'
+  type GscRawRow = { date: string; clicks: number; impressions: number; ctr: number; position: number; query: string | null; page: string | null }
+  const gscSelect = 'date,clicks,impressions,ctr,position,query,page'
 
   const [{ data: currRows }, { data: compRows }] = await Promise.all([
     db.from('gsc_metrics')
@@ -169,6 +171,43 @@ export default async function SearchConsolePage({
 
   const curr = currRows && currRows.length > 0 ? buildSummary(currRows as GscRawRow[]) : null
   const comp = compRows && compRows.length > 0 ? buildSummary(compRows as GscRawRow[]) : null
+
+  // ── Daily trend data (for chart) ──────────────────────────────────────────
+  const dailyData: GscDailyPoint[] = (() => {
+    if (!currRows?.length) return []
+    const dayMap = new Map<string, { clicks: number; impressions: number }>()
+    for (const r of currRows as GscRawRow[]) {
+      const ex = dayMap.get(r.date) ?? { clicks: 0, impressions: 0 }
+      ex.clicks      += r.clicks      ?? 0
+      ex.impressions += r.impressions ?? 0
+      dayMap.set(r.date, ex)
+    }
+    return Array.from(dayMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.clicks / v.impressions : 0 }))
+  })()
+
+  // ── Position distribution (across all unique queries in period) ───────────
+  const dist = (() => {
+    const d = { top3: 0, page1: 0, page2: 0, beyond: 0 }
+    if (!currRows?.length) return d
+    const qMap = new Map<string, { posSum: number; imprSum: number }>()
+    for (const r of currRows as GscRawRow[]) {
+      if (!r.query) continue
+      const impr = r.impressions ?? 0
+      const ex = qMap.get(r.query)
+      if (ex) { ex.posSum += (r.position ?? 0) * impr; ex.imprSum += impr }
+      else qMap.set(r.query, { posSum: (r.position ?? 0) * impr, imprSum: impr })
+    }
+    qMap.forEach(v => {
+      const pos = v.imprSum > 0 ? v.posSum / v.imprSum : 0
+      if      (pos <= 3)  d.top3++
+      else if (pos <= 10) d.page1++
+      else if (pos <= 20) d.page2++
+      else                d.beyond++
+    })
+    return d
+  })()
 
   const hasData = (curr?.totals?.clicks ?? 0) > 0 || (curr?.totals?.impressions ?? 0) > 0
   if (!curr || !hasData) {
@@ -277,6 +316,36 @@ export default async function SearchConsolePage({
             )
           })}
         </div>
+
+        {/* Trend chart */}
+        {dailyData.length > 1 && (
+          <div className="card p-6">
+            <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="section-title">Clicks &amp; Impressions</h2>
+                <p className="section-desc">Daily organic clicks (bars) and impressions (line) over the selected period</p>
+              </div>
+              {(dist.top3 + dist.page1 + dist.page2 + dist.beyond) > 0 && (
+                <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Top 3',       value: dist.top3,   color: '#16a34a', bg: '#dcfce7' },
+                    { label: 'Page 1 (4–10)', value: dist.page1, color: '#d97706', bg: '#fef3c7' },
+                    { label: 'Page 2 (11–20)', value: dist.page2, color: 'var(--text-muted)', bg: 'var(--bg-subtle,#f8f9fa)' },
+                    { label: 'Beyond 20',   value: dist.beyond, color: 'var(--text-faint)', bg: 'var(--bg-muted,#f3f4f6)' },
+                  ].filter(s => s.value > 0).map(s => (
+                    <span key={s.label} style={{
+                      fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                      background: s.bg, color: s.color, whiteSpace: 'nowrap',
+                    }}>
+                      {s.label}: {s.value.toLocaleString()}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <GscTrendChart data={dailyData} />
+          </div>
+        )}
 
         {/* Top Queries */}
         {topQueries.length > 0 && (

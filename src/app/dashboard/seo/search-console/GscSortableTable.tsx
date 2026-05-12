@@ -4,6 +4,15 @@ import { useState } from 'react'
 
 type SortDir = 'asc' | 'desc'
 
+function expectedCtrFloor(pos: number): number {
+  if (pos <= 1)  return 0.20
+  if (pos <= 2)  return 0.10
+  if (pos <= 3)  return 0.07
+  if (pos <= 5)  return 0.04
+  if (pos <= 10) return 0.02
+  return 0
+}
+
 // ─── Queries table ──────────────────────────────────────────────────────────
 
 export interface GscQueryRow {
@@ -76,7 +85,20 @@ export function GscQueriesTable({
             </td>
             <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{q.clicks.toLocaleString()}</td>
             <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{q.impressions.toLocaleString()}</td>
-            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{(q.ctr * 100).toFixed(2)}%</td>
+            <td style={{ textAlign: 'right', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              {(q.ctr * 100).toFixed(2)}%
+              {q.position <= 10 && q.ctr < expectedCtrFloor(q.position) * 0.6 && (
+                <span
+                  title={`Expected ~${(expectedCtrFloor(q.position) * 100).toFixed(0)}%+ for pos ${q.position.toFixed(1)}`}
+                  style={{
+                    marginLeft: 5, fontSize: '0.62rem', fontWeight: 600, padding: '1px 5px',
+                    borderRadius: 999, background: '#fef3c7', color: '#92400e', cursor: 'default',
+                  }}
+                >
+                  Low CTR
+                </span>
+              )}
+            </td>
             <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
               <span style={{
                 color: q.position <= 3 ? 'var(--green)' : q.position <= 10 ? '#d97706' : 'var(--text-muted)',

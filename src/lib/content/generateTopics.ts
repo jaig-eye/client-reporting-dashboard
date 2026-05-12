@@ -134,6 +134,22 @@ export async function generateTopicsForClient(
     .sort((a, b) => b.totalImpr - a.totalImpr)
     .slice(0, 15)
 
+  const quickWins = Array.from(gscMap.entries())
+    .map(([k, v]) => { const [page, query] = k.split('||'); return { page, query, ...v } })
+    .filter(r => r.weightedPos >= 5 && r.weightedPos < 10 && r.totalImpr > 5)
+    .sort((a, b) => b.totalImpr - a.totalImpr)
+    .slice(0, 10)
+
+  const ctrIssues = Array.from(gscMap.entries())
+    .map(([k, v]) => { const [page, query] = k.split('||'); return { page, query, ...v } })
+    .filter(r => {
+      if (r.weightedPos > 5) return false
+      const floor = r.weightedPos <= 1 ? 0.20 : r.weightedPos <= 2 ? 0.10 : r.weightedPos <= 3 ? 0.07 : 0.04
+      return r.weightedCtr < floor * 0.6 && r.totalImpr > 50
+    })
+    .sort((a, b) => b.totalImpr - a.totalImpr)
+    .slice(0, 8)
+
   // ── Sitemap pages ──────────────────────────────────────────────────────────
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -182,7 +198,15 @@ export async function generateTopicsForClient(
     : ''
 
   const gscGrowthText = growthTargets.length > 0
-    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE topics targeting these queries:\n${growthTargets.slice(0, 12).map(p => `  - "${p.query}" → ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article targeting the keyword and internally link it to that page:\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    : ''
+
+  const gscQuickWinsText = quickWins.length > 0
+    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these:\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    : ''
+
+  const gscCtrText = ctrIssues.length > 0
+    ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles to capture more click share:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
     : ''
 
   const sitemapText = sitemapPages.length > 0
@@ -206,11 +230,15 @@ Return ONLY a JSON array of exactly ${count} objects:
     "competition_level": "Low/Medium/High — brief 1-line reasoning"
   }
 ]
-No text outside the JSON array.`
+No text outside the JSON array.
+
+IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.`
 
   const userPrompt = `Client: ${clientName}
 ${contextLines.join('\n')}${eeatText}
 ${gscGrowthText}
+${gscQuickWinsText}
+${gscCtrText}
 ${gscTopText}
 ${sitemapText}
 ${avoidText ? `\nAlready covered — DO NOT suggest these again:\n${avoidText}` : ''}
