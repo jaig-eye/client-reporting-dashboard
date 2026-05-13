@@ -219,9 +219,13 @@ export default function AgencySettingsPage() {
     setTestingSerp(true)
     setTestSerpMsg('')
     try {
-      const url = `https://serpapi.com/search.json?q=test&api_key=${encodeURIComponent(form.serp_api_key)}&num=1&engine=google`
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-      const data = await res.json() as { error?: string }
+      const res = await fetch('/api/admin/settings/test-serp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: form.serp_api_key }),
+        signal: AbortSignal.timeout(10000),
+      })
+      const data = await res.json() as { ok?: boolean; error?: string }
       if (!res.ok || data.error) {
         setTestSerpMsg(`Error: ${data.error ?? res.statusText}`)
       } else {
