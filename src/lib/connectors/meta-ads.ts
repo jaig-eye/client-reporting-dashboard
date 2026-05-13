@@ -728,19 +728,7 @@ export async function resumeMetaCampaigns(
 
     const acctId = externalId.startsWith('act_') ? externalId : `act_${externalId}`
 
-    // Use stored campaign IDs from the pause log if available
-    let targets = campaignIds ?? []
-    if (targets.length === 0) {
-      const url = new URL(`${BASE_URL}/${acctId}/campaigns`)
-      url.searchParams.set('access_token', accessToken)
-      url.searchParams.set('fields', 'id')
-      url.searchParams.set('effective_status', JSON.stringify(['PAUSED']))
-      url.searchParams.set('limit', '500')
-      const res  = await fetch(url.toString())
-      const data = await res.json() as { data: { id: string }[] }
-      targets    = (data.data ?? []).map(c => c.id)
-    }
-
+    const targets = campaignIds ?? []
     if (targets.length === 0) return { resumed: 0 }
 
     for (const id of targets) {

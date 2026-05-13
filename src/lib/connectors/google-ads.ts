@@ -1024,19 +1024,7 @@ export async function resumeGoogleCampaigns(
     const mccId    = (config.mcc_customer_id as string | undefined) || externalId
     const devToken = (auth.developer_token   as string | undefined) || process.env.GOOGLE_DEVELOPER_TOKEN || ''
 
-    // If we have specific resource names from the pause log, use those.
-    // Otherwise fall back to all currently PAUSED campaigns.
-    let targets = resourceNames ?? []
-    if (targets.length === 0) {
-      const results = await runQuery(
-        externalId, mccId, accessToken,
-        `SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'PAUSED'`,
-        devToken
-      )
-      type CampResult = { campaign: { id: string; resourceName: string } }
-      targets = (results as unknown as CampResult[]).map(r => r.campaign.resourceName)
-    }
-
+    const targets = resourceNames ?? []
     if (targets.length === 0) return { resumed: 0 }
 
     await mutateCampaigns(
