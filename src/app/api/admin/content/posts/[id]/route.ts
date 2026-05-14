@@ -1,36 +1,63 @@
 // PATCH /api/admin/content/posts/[id]
-// Body: { status: string }
-// Allows updating the status of a content_post (e.g. pending ↔ rejected).
+// Body: { status?, title?, seoTitle?, content?, metaDescription?, slug?,
+//         targetKeyword?, suggestedTags?, featuredImageUrl?, wpStatus?, authorId? }
+// Status-only updates (reject, restore) and full Save Changes from the review drawer.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 
-const ALLOWED_STATUSES = ['pending', 'approved', 'rejected', 'published', 'draft_saved']
+const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
+
+type PatchBody = {
+  status?:          string
+  title?:           string | null
+  seoTitle?:        string | null
+  content?:         string | null
+  metaDescription?: string | null
+  slug?:            string | null
+  targetKeyword?:   string | null
+  suggestedTags?:   string[]
+  featuredImageUrl?: string | null
+  wpStatus?:        string | null
+  authorId?:        number | null
+}
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
 
   const { id } = await params
-  const body = await request.json() as { status?: string }
+  const body = await request.json() as PatchBody
 
-  if (!body.status || !ALLOWED_STATUSES.includes(body.status)) {
+  if (body.status !== undefined && !ALLOWED_STATUSES.includes(body.status))
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
-  }
+
+  const update: Record<string, unknown> = {}
+
+  if (body.status          !== undefined) update.status           = body.status
+  if (body.title           !== undefined) update.title            = body.title
+  if (body.seoTitle        !== undefined) update.seo_title        = body.seoTitle
+  if (body.content         !== undefined) update.content          = body.content
+  if (body.metaDescription !== undefined) update.meta_description = body.metaDescription
+  if (body.slug            !== undefined) update.slug             = body.slug
+  if (body.targetKeyword   !== undefined) update.target_keyword   = body.targetKeyword
+  if (body.suggestedTags   !== undefined) update.suggested_tags   = body.suggestedTags
+  if (body.featuredImageUrl !== undefined) update.featured_image_url = body.featuredImageUrl
+  if (body.wpStatus        !== undefined) update.wp_status        = body.wpStatus
+  if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
+
+  if (Object.keys(update).length === 0)
+    return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
   const db = createAdminClient()
-  const { error } = await db
-    .from('content_posts')
-    .update({ status: body.status })
-    .eq('id', id)
-
+  const { error } = await db.from('content_posts').update(update).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
   return NextResponse.json({ ok: true })
 }

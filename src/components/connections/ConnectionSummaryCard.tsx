@@ -30,6 +30,9 @@ export default function ConnectionSummaryCard({
       style={{
         borderLeft: `3px solid ${accentColor}`,
         padding: '1.25rem',
+        opacity:    hasData === false ? 0.55 : 1,
+        filter:     hasData === false ? 'grayscale(0.6)' : 'none',
+        transition: 'opacity 0.2s, filter 0.2s',
       }}
     >
       {/* Card header */}

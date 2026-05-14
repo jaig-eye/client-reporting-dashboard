@@ -793,6 +793,44 @@ export const googleAdsConnector: ConnectorAdapter = {
       }
     })
 
+    // Add $0 stub rows for PAUSED campaigns with no activity in the sync window.
+    // The GAQL segments query omits zero-metric rows, so paused campaigns are invisible
+    // without this secondary fetch. Clients can then see their full account setup.
+    try {
+      const insightIds = new Set(rows.map(r => r.campaign_id).filter(Boolean))
+      const pausedRaw = await runQuery(
+        externalId, mccId, token,
+        `SELECT campaign.id, campaign.name, campaign.status,
+                campaign.advertising_channel_type, campaign_budget.amount_micros
+         FROM campaign
+         WHERE campaign.status = 'PAUSED'`,
+        devToken
+      )
+      for (const row of pausedRaw) {
+        const camp   = row.campaign       as Record<string, unknown>
+        const budget = row.campaignBudget as Record<string, unknown> | null | undefined
+        const campId = String(camp?.id || '')
+        if (!campId || insightIds.has(campId)) continue
+        rows.push({
+          campaign_id:              campId,
+          campaign_name:            String(camp?.name   || ''),
+          campaign_status:          String(camp?.status || 'PAUSED'),
+          campaign_type:            String(camp?.advertisingChannelType || ''),
+          date:                     dateTo,
+          cost_micros:              0,
+          daily_budget_micros:      Number(budget?.amountMicros || 0),
+          impressions: 0, clicks: 0, conversions: 0,
+          conversions_value: 0, all_conversions_value: 0,
+          view_through_conversions: 0,
+          search_impression_share: null,
+          search_abs_top_impression_share: null,
+          search_top_impression_share: null,
+        })
+      }
+    } catch {
+      // best-effort — paused campaign stubs are non-critical
+    }
+
     return { rows }
   },
 

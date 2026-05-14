@@ -155,7 +155,15 @@ async function paginateContacts(
     startAfterId = nextStartAfterId
   }
 
-  return all
+  // Deduplicate by contact ID — cursor pagination can return boundary items twice
+  // when contact records are updated between paginated requests.
+  const seen = new Set<string>()
+  return all.filter(c => {
+    const id = String((c as Record<string, unknown>).id || (c as Record<string, unknown>).contactId || '')
+    if (!id || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -492,11 +500,19 @@ async function fetchOpportunities(
     return []
   }
 
-  console.log(`[ghl] opportunities fetched: ${all.length}`)
+  // Deduplicate by opportunity ID before counting
+  const oppSeen = new Set<string>()
+  const uniqueOpps = all.filter(o => {
+    const id = String((o as Record<string, unknown>).id || '')
+    if (!id || oppSeen.has(id)) return false
+    oppSeen.add(id)
+    return true
+  })
+  console.log(`[ghl] opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
 
   const byDate = new Map<string, { newOpps: number; wonOpps: number; lostOpps: number; wonValue: number }>()
 
-  for (const opp of all) {
+  for (const opp of uniqueOpps) {
     const parsed = parseGhlDate(opp.dateAdded ?? opp.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
 

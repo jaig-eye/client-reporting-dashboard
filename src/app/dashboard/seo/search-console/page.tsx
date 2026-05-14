@@ -122,7 +122,8 @@ export default async function SearchConsolePage({
       .eq('client_id', client.id)
       .eq('connection_id', primaryConnectionId)
       .gte('date', fmtDate(fromDate))
-      .lte('date', fmtDate(toDate)),
+      .lte('date', fmtDate(toDate))
+      .range(0, 9999),
     showCompare && compFrom && compTo
       ? db.from('gsc_metrics')
           .select(gscSelect)
@@ -130,6 +131,7 @@ export default async function SearchConsolePage({
           .eq('connection_id', primaryConnectionId)
           .gte('date', fmtDate(compFrom))
           .lte('date', fmtDate(compTo))
+          .range(0, 9999)
       : Promise.resolve({ data: null }),
   ])
 

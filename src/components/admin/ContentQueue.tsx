@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import ContentPostEditor from './ContentPostEditor'
+import RationaleModal    from './RationaleModal'
+import { ArrowClockwise, ArrowCircleRight, X } from '@phosphor-icons/react'
 
 interface QueueItem {
   type:                'post' | 'topic'
@@ -88,151 +90,6 @@ function StatusBadge({ item }: { item: QueueItem }) {
     }}>
       {s.label}
     </span>
-  )
-}
-
-function RationaleModal({ item, onClose }: { item: QueueItem; onClose: () => void }) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const compShort = item.competitionLevel
-    ? item.competitionLevel.split(/[\s/—–\-]/)[0].trim() || null
-    : null
-
-  const seoStats: { label: string; value: string | number | null | undefined }[] = [
-    { label: 'Search Volume',      value: item.searchVolume },
-    { label: 'Keyword Difficulty', value: item.keywordDifficulty },
-    { label: 'Competition',        value: compShort },
-  ]
-
-  const metaChips: { label: string; value: string | null | undefined }[] = [
-    { label: 'Target Keyword',  value: item.targetKeyword },
-    { label: 'Suggested Title', value: item.suggestedTitle },
-  ]
-
-  const ratFields: { label: string; value: string | null | undefined; color: string }[] = [
-    { label: 'Keyword Opportunity', value: item.keywordOpportunity, color: '#2563eb' },
-    { label: 'Ranking Strategy',    value: item.rankingStrategy,    color: '#7c3aed' },
-    { label: 'Audience Intent',     value: item.audienceIntent,     color: '#059669' },
-    { label: 'Why Now',             value: item.whyNow,             color: '#d97706' },
-    { label: 'Competition',         value: (compShort && item.competitionLevel && item.competitionLevel.length > compShort.length + 2) ? item.competitionLevel : null, color: '#ea580c' },
-  ]
-
-  const hasSeoStats  = seoStats.some(s => s.value != null && s.value !== '')
-  const hasMetaChips = metaChips.some(m => m.value != null && m.value !== '')
-  const hasRationale = ratFields.some(f => f.value)
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 1000, padding: '1rem',
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-surface, #fff)',
-          borderRadius: 14,
-          maxWidth: 600,
-          width: '100%',
-          maxHeight: '88vh',
-          overflow: 'auto',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.22)',
-          borderTop: '4px solid var(--blue, #2563eb)',
-        }}
-      >
-        {/* Header */}
-        <div style={{ padding: '1.25rem 1.5rem 1rem', position: 'relative' }}>
-          <button
-            onClick={onClose}
-            style={{
-              position: 'absolute', top: '1rem', right: '1rem',
-              background: 'var(--bg-subtle)', border: 'none', cursor: 'pointer',
-              width: 28, height: 28, borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '1rem', color: 'var(--text-faint)', lineHeight: 1,
-            }}
-          >×</button>
-          <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--blue, #2563eb)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
-            Topic Details
-          </div>
-          <h2 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.35, paddingRight: '2.5rem' }}>
-            {item.topicText ?? item.title}
-          </h2>
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-            {item.clientName && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                <span style={{ color: 'var(--text-faint)' }}>Client </span>{item.clientName}
-              </span>
-            )}
-            {item.targetPublishDate && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                <span style={{ color: 'var(--text-faint)' }}>Publish </span>{fmtDate(item.targetPublishDate)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* SEO stats row */}
-        {hasSeoStats && (
-          <>
-            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
-            <div style={{ padding: '0.875rem 1.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.625rem' }}>
-              {seoStats.filter(s => s.value != null && s.value !== '').map(s => (
-                <div key={s.label} style={{ background: 'var(--bg-subtle)', borderRadius: 8, padding: '0.625rem 0.75rem', textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>{s.label}</div>
-                  <div style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{String(s.value)}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Meta chips */}
-        {hasMetaChips && (
-          <>
-            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
-            <div style={{ padding: '0.875rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {metaChips.filter(m => m.value != null && m.value !== '').map(m => (
-                <div key={m.label} style={{ display: 'flex', gap: '0.625rem', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0, minWidth: 112 }}>{m.label}</span>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontWeight: 500 }}>{m.value}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Rationale sections */}
-        {hasRationale && (
-          <>
-            <div style={{ height: 1, background: 'var(--border)', margin: '0 1.5rem' }} />
-            <div style={{ padding: '1rem 1.5rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {ratFields.filter(f => f.value).map(f => (
-                <div key={f.label} style={{ borderLeft: `3px solid ${f.color}`, paddingLeft: '0.75rem' }}>
-                  <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3125rem' }}>{f.label}</div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.65 }}>{f.value}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Generation error */}
-        {item.generationError && (
-          <div style={{ margin: '0 1.5rem 1.25rem', background: '#fee2e2', borderRadius: 8, padding: '0.625rem 0.875rem' }}>
-            <div style={{ fontSize: '0.625rem', fontWeight: 700, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Generation Error</div>
-            <div style={{ fontSize: '0.8125rem', color: '#7f1d1d', lineHeight: 1.5 }}>{item.generationError}</div>
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
 
@@ -702,18 +559,19 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                   fontSize: '0.7rem', padding: '2px 8px', borderRadius: 5,
                                   background: 'none', border: '1px solid var(--border)',
                                   color: 'var(--text-muted)', cursor: 'pointer',
+                                  display: 'flex', alignItems: 'center', gap: 3,
                                 }}
                                 title="Generate now"
                               >
-                                {isGenLoading ? '⏳' : '▶ Generate'}
+                                {isGenLoading ? '⏳' : <><ArrowClockwise size={12} />Generate</>}
                               </button>
                               <button
                                 type="button"
                                 disabled={isDelLoading || isGenLoading}
                                 onClick={() => deleteSingle(item)}
-                                style={{ fontSize: '0.7rem', padding: '2px 5px', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                style={{ fontSize: '0.7rem', padding: '2px 5px', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                               >
-                                {isDelLoading ? '…' : '✕'}
+                                {isDelLoading ? '…' : <X size={12} />}
                               </button>
                             </div>
                           )}
@@ -866,10 +724,10 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                               type="button"
                               disabled={isLoading || restoring === item.id}
                               onClick={() => deleteSingle(item)}
-                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                               title="Delete permanently"
                             >
-                              {isLoading ? '…' : '✕'}
+                              {isLoading ? '…' : <X size={14} />}
                             </button>
                           </>
                         )}
@@ -886,10 +744,11 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                 background: 'none', border: 'none',
                                 color: isGenerating ? 'var(--blue)' : 'var(--text-muted)',
                                 cursor: isGenerating ? 'default' : 'pointer',
+                                display: 'flex', alignItems: 'center',
                               }}
                               title="Force generate post now"
                             >
-                              {isGenerating ? '⏳' : '▶'}
+                              {isGenerating ? '⏳' : <ArrowClockwise size={14} />}
                             </button>
                             <button
                               type="button"
@@ -898,10 +757,11 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                               style={{
                                 fontSize: '0.7rem', padding: '0.15rem 0.4rem',
                                 background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center',
                               }}
                               title="Delete"
                             >
-                              {isLoading ? '…' : '✕'}
+                              {isLoading ? '…' : <X size={14} />}
                             </button>
                           </>
                         )}
@@ -955,9 +815,9 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                               type="button"
                               onClick={() => setEditingPostId(item.id)}
                               className="btn btn-secondary"
-                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
+                              style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                             >
-                              SEO Report
+                              <ArrowCircleRight size={13} />Review
                             </button>
                             {item.publishedUrl && (
                               <a
@@ -975,10 +835,10 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                 type="button"
                                 disabled={isLoading}
                                 onClick={() => rejectPost(item)}
-                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                                 title="Reject"
                               >
-                                {isLoading ? '…' : '✕'}
+                                {isLoading ? '…' : <X size={14} />}
                               </button>
                             )}
                             {item.wpPostId != null && (
@@ -986,10 +846,10 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                 type="button"
                                 disabled={isLoading}
                                 onClick={() => deleteSingle(item)}
-                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                                 title="Delete"
                               >
-                                {isLoading ? '…' : '✕'}
+                                {isLoading ? '…' : <X size={14} />}
                               </button>
                             )}
                           </>

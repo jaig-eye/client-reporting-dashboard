@@ -134,6 +134,26 @@ async function getGscInternalLinks(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function formatEeat(eeatRaw: unknown): string {
+  if (!eeatRaw) return ''
+  const e = typeof eeatRaw === 'string' ? (() => { try { return JSON.parse(eeatRaw) } catch { return null } })() : eeatRaw
+  if (!e || typeof e !== 'object') return String(eeatRaw)
+  const r = e as Record<string, unknown>
+  const parts: string[] = []
+  if (r.years_in_business)      parts.push(`${r.years_in_business} years in business`)
+  if (r.licenses)               parts.push(`licensed/certified: ${r.licenses}`)
+  if (r.review_count)           parts.push(`${r.review_count} reviews`)
+  if (r.owner_details)          parts.push(`owner: ${r.owner_details}`)
+  if (r.guarantees)             parts.push(`guarantees: ${r.guarantees}`)
+  if (r.emergency_availability) parts.push('24/7 emergency service')
+  if (r.phone_number)           parts.push(`phone: ${r.phone_number}`)
+  if (r.team_experience)        parts.push(String(r.team_experience))
+  if (r.awards)                 parts.push(String(r.awards))
+  const rest = ['brands_used','financing_options','warranties','insurance','case_studies']
+    .filter(k => r[k]).map(k => String(r[k]))
+  return [...parts, ...rest].join('. ')
+}
+
 function mergePostStructures(globalStructure?: string | null, clientStructure?: string | null): string {
   if (!globalStructure && !clientStructure) return ''
   if (!clientStructure) return globalStructure ?? ''
@@ -386,6 +406,9 @@ async function runTopicGeneration({
     const halfMonthAgo1   = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
     const cacheIsFresh1   = sitemapRows.length > 0 && sitemapRows.some(r => r.created_at >= halfMonthAgo1)
     const topicKws        = topicData.target_keyword ? [topicData.target_keyword] : []
+    // Brief's internal_link_targets already identify the best pages — trim sitemap to 30
+    const briefHasLinks   = (topicData.seo_brief?.internal_link_targets?.length ?? 0) > 0
+    const sitemapPageCap  = briefHasLinks ? 30 : 60
 
     if (cacheIsFresh1) {
       const generalPages = sitemapRows
@@ -393,7 +416,7 @@ async function runTopicGeneration({
         .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, topicKws) }))
         .sort((a, b) => b.score - a.score)
         .map(r => r.url)
-        .slice(0, 60 - priorityUrls.length)
+        .slice(0, sitemapPageCap - priorityUrls.length)
       if (generalPages.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${generalPages.join('\n')}`)
     } else if (sitemapUrls.length > 0) {
@@ -404,7 +427,7 @@ async function runTopicGeneration({
         .map(u => ({ url: u, score: scoreUrlRelevance(u, topicKws) }))
         .sort((a, b) => b.score - a.score)
         .map(r => r.url)
-        .slice(0, 60)
+        .slice(0, sitemapPageCap)
       if (scored.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${scored.join('\n')}`)
     }
@@ -452,11 +475,9 @@ async function runTopicGeneration({
     }
 
     // ── E-E-A-T + content restrictions (appended to system prompt) ───────────
-    const eeatRaw = clientSettings?.eeat_data
-    const eeatSection = eeatRaw
-      ? `\nE-E-A-T Credibility Signals — weave these specific details naturally into the post (use exact claims, not vague statements):\n${
-          typeof eeatRaw === 'string' ? eeatRaw : JSON.stringify(eeatRaw, null, 2)
-        }`
+    const eeatFormatted = formatEeat(clientSettings?.eeat_data)
+    const eeatSection   = eeatFormatted
+      ? `\nE-E-A-T Credibility Signals — weave naturally into the post: ${eeatFormatted}`
       : ''
     const restrictionSection = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
       ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
@@ -835,11 +856,9 @@ export async function POST(request: NextRequest) {
       .replace(/\[[A-Z_]+\]/g, '')
   }
 
-  const manualEeatRaw = clientSettings?.eeat_data
-  const manualEeatSection = manualEeatRaw
-    ? `\nE-E-A-T Credibility Signals — weave these specific details naturally into the post (use exact claims, not vague statements):\n${
-        typeof manualEeatRaw === 'string' ? manualEeatRaw : JSON.stringify(manualEeatRaw, null, 2)
-      }`
+  const manualEeatFormatted = formatEeat(clientSettings?.eeat_data)
+  const manualEeatSection   = manualEeatFormatted
+    ? `\nE-E-A-T Credibility Signals — weave naturally into the post: ${manualEeatFormatted}`
     : ''
   const manualRestrictionSection = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
     ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`

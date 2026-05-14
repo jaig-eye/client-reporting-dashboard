@@ -5,6 +5,7 @@ import { useRouter }                                   from 'next/navigation'
 import ClientContentSettingsForm                      from './ClientContentSettingsForm'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientScheduleTab                              from './ClientScheduleTab'
+import ClientContentSetupWizard                       from './ClientContentSetupWizard'
 import type { SiteOption }                            from '@/lib/content/types'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
@@ -66,7 +67,11 @@ export default function ClientContentTabPanel({
   const validSubTab = (s: string | undefined | null): SubTab =>
     SUB_TABS.some(t => t.id === s) ? (s as SubTab) : 'overview'
 
-  const [activeTab, setActiveTab] = useState<SubTab>(validSubTab(initialSubTab))
+  const [activeTab,    setActiveTab]    = useState<SubTab>(validSubTab(initialSubTab))
+  const [showWizard,   setShowWizard]   = useState(() => {
+    const s = contentSettings as Record<string, unknown> | null
+    return !s?.wizard_completed && !s?.business_background
+  })
 
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
@@ -91,6 +96,15 @@ export default function ClientContentTabPanel({
 
   return (
     <div>
+      {/* Setup wizard overlay */}
+      {showWizard && (
+        <ClientContentSetupWizard
+          clientId={clientId}
+          clientName={clientName}
+          onComplete={() => { setShowWizard(false); router.refresh() }}
+        />
+      )}
+
       {/* Sub-tab nav */}
       <div className="no-scrollbar" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>
         {SUB_TABS.map(tab => (
@@ -130,34 +144,12 @@ const FREQ_LABELS: Record<string, string> = {
 }
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
-function OverviewTab({ clientId, settings, stats }: {
+function OverviewTab({ clientId: _clientId, settings, stats }: {
   clientId: string
   settings: ContentSettings
   stats:    Props['overviewStats']
 }) {
-  const [generating, setGenerating] = useState(false)
-  const [genMsg,     setGenMsg]     = useState('')
-
   const s = settings as Record<string, unknown> | null
-
-  async function generateTopics() {
-    setGenerating(true)
-    setGenMsg('')
-    try {
-      const res = await fetch('/api/admin/content/topics/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: clientId, count: s?.topics_per_run ?? 5 }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error((data as { error?: string }).error || 'Failed to generate topics')
-      setGenMsg(`Generated ${(data as { topics?: unknown[] }).topics?.length ?? 0} topics successfully.`)
-    } catch (err) {
-      setGenMsg(err instanceof Error ? err.message : 'Failed')
-    } finally {
-      setGenerating(false)
-    }
-  }
 
   const freq     = s?.schedule_frequency as string | null | undefined
   const dayNum   = s?.schedule_day_of_week as number | null | undefined
@@ -177,7 +169,7 @@ function OverviewTab({ clientId, settings, stats }: {
         />
       </div>
 
-      <div className="card p-5 mb-4">
+      <div className="card p-5">
         <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
           Schedule
         </h3>
@@ -190,22 +182,6 @@ function OverviewTab({ clientId, settings, stats }: {
           <InfoRow label="Weeks Ahead"   value={String(s?.weeks_ahead ?? 1)} />
           <InfoRow label="Auto-generate" value={s?.auto_generate ? 'On' : 'Off'} />
         </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button
-          onClick={generateTopics}
-          disabled={generating}
-          className="btn btn-primary"
-          style={{ fontSize: '0.8125rem' }}
-        >
-          {generating ? 'Generating…' : '✦ Generate Topics Now'}
-        </button>
-        {genMsg && (
-          <span style={{ fontSize: '0.8125rem', color: genMsg.includes('success') ? 'var(--green)' : 'var(--red)' }}>
-            {genMsg}
-          </span>
-        )}
       </div>
     </div>
   )

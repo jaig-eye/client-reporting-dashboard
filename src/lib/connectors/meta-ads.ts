@@ -570,11 +570,13 @@ export const metaAdsConnector: ConnectorAdapter = {
     // (neither field is available in the Insights API)
     const budgetMap = new Map<string, number>() // CBO: campaign-level budget
     const statusMap = new Map<string, string>()
+    const nameMap   = new Map<string, string>()
     const adsetBudgetMap = new Map<string, number>() // ABO: sum of active adset budgets per campaign
+    let allCampaignList: Record<string, unknown>[] = []
     try {
       const [campData, adsetData] = await Promise.all([
         metaGet(`/${externalId}/campaigns`, accessToken, {
-          fields: 'id,daily_budget,effective_status',
+          fields: 'id,name,daily_budget,effective_status,objective',
           limit: '500',
         }),
         metaGet(`/${externalId}/adsets`, accessToken, {
@@ -582,13 +584,16 @@ export const metaAdsConnector: ConnectorAdapter = {
           limit: '500',
         }),
       ])
-      for (const camp of (campData.data || []) as Record<string, unknown>[]) {
+      allCampaignList = (campData.data || []) as Record<string, unknown>[]
+      for (const camp of allCampaignList) {
         const cid    = String(camp.id || '')
         const budget = Number(camp.daily_budget || 0) / 100  // cents → account currency
         const status = String(camp.effective_status || '')
+        const name   = String(camp.name || '')
         if (cid) {
           if (budget > 0) budgetMap.set(cid, budget)
           if (status)     statusMap.set(cid, status)
+          if (name)       nameMap.set(cid, name)
         }
       }
       // For ABO campaigns (no campaign-level budget), sum active adset budgets
@@ -610,6 +615,28 @@ export const metaAdsConnector: ConnectorAdapter = {
       const status = statusMap.get(row.campaign_id)
       if (budget !== undefined) row.daily_budget    = budget
       if (status !== undefined) row.campaign_status = status
+    }
+
+    // Add $0 stub rows for PAUSED/active campaigns with no activity in the sync window.
+    // This allows clients to see their full campaign setup even for campaigns not yet spending.
+    if (allCampaignList.length > 0) {
+      const insightIds = new Set(rows.map(r => r.campaign_id).filter(Boolean))
+      for (const camp of allCampaignList) {
+        const campId = String(camp.id || '')
+        const status = String(camp.effective_status || '')
+        if (!campId || insightIds.has(campId)) continue
+        if (status === 'DELETED' || status === 'ARCHIVED') continue
+        rows.push({
+          campaign_id:     campId,
+          campaign_name:   String(camp.name || ''),
+          campaign_status: status,
+          objective:       String(camp.objective || ''),
+          date:         dateTo,
+          spend:        0, impressions: 0, clicks: 0, reach: 0, frequency: 0,
+          actions: [], action_values: [],
+          daily_budget: budgetMap.get(campId) ?? adsetBudgetMap.get(campId),
+        })
+      }
     }
 
     if (onProgress) onProgress(100, 'Done')

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
+import RationaleModal          from '@/components/admin/RationaleModal'
 
 export type CalendarItem = {
   id:               string
@@ -221,91 +222,7 @@ export default function ContentCalendar({
       )}
 
       {/* ── Rationale modal ───────────────────────────────────────────────────── */}
-      {rationaleFor && (
-        <div
-          onClick={() => setRationaleFor(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000, padding: 20,
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: 'var(--bg-surface)', borderRadius: 12, padding: 24,
-              maxWidth: 520, width: '100%', maxHeight: '80vh', overflowY: 'auto',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-              <div>
-                <p style={{ margin: '0 0 4px', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', fontWeight: 600 }}>
-                  Topic Rationale — {rationaleFor.clientName}
-                </p>
-                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontStyle: 'italic' }}>
-                  {rationaleFor.topicText}
-                </h3>
-              </div>
-              <button
-                onClick={() => setRationaleFor(null)}
-                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text-faint)', lineHeight: 1, marginLeft: 12, flexShrink: 0 }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {(rationaleFor.searchVolume != null || rationaleFor.keywordDifficulty != null || rationaleFor.competitionLevel || rationaleFor.targetKeyword) && (
-              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                {rationaleFor.targetKeyword && (
-                  <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--bg-muted)', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                    {rationaleFor.targetKeyword}
-                  </span>
-                )}
-                {rationaleFor.searchVolume != null && (
-                  <span style={{ padding: '3px 10px', borderRadius: 999, background: '#ede9fe', color: '#5b21b6', fontSize: '0.75rem' }}>
-                    {rationaleFor.searchVolume.toLocaleString()} searches/mo
-                  </span>
-                )}
-                {rationaleFor.keywordDifficulty != null && (
-                  <span style={{ padding: '3px 10px', borderRadius: 999, background: '#fef3c7', color: '#92400e', fontSize: '0.75rem' }}>
-                    KD {rationaleFor.keywordDifficulty}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {[
-              { key: 'keywordOpportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-              { key: 'rankingStrategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-              { key: 'audienceIntent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
-              { key: 'whyNow'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-              { key: 'competitionLevel'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-            ].map(({ key, label, color, bg }) => {
-              const val = rationaleFor[key]
-              if (!val) return null
-              return (
-                <div key={key} style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: bg, borderLeft: `3px solid ${color}` }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    {label}
-                  </p>
-                  <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                    {val}
-                  </p>
-                </div>
-              )
-            })}
-
-            {!rationaleFor.keywordOpportunity && !rationaleFor.rankingStrategy && rationaleFor.rationale && (
-              <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg-muted)' }}>
-                <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                  {rationaleFor.rationale}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <RationaleModal item={rationaleFor} onClose={() => setRationaleFor(null)} />
     </div>
   )
 }

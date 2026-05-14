@@ -24,23 +24,17 @@ import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 const getConnectorDataFlags = unstable_cache(
   async (clientId: string) => {
     const db = createAdminClient()
-    const [ga4Check, gscCheck, ahrefsCheck, gadsCheck, metaCheck, gbpCheck, ghlCheck] = await Promise.all([
-      db.from('ga4_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('gsc_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('ahrefs_metrics').select('id',         { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('google_ads_metrics').select('id',     { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('meta_ads_metrics').select('id',       { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('gbp_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
-      db.from('ghl_metrics').select('id',            { count: 'exact', head: true }).eq('client_id', clientId),
+    const [ahrefsCheck, gadsCheck, metaCheck, gbpCheck] = await Promise.all([
+      db.from('ahrefs_metrics').select('id',     { count: 'exact', head: true }).eq('client_id', clientId),
+      db.from('google_ads_metrics').select('id', { count: 'exact', head: true }).eq('client_id', clientId),
+      db.from('meta_ads_metrics').select('id',   { count: 'exact', head: true }).eq('client_id', clientId),
+      db.from('gbp_metrics').select('id',        { count: 'exact', head: true }).eq('client_id', clientId),
     ])
     return {
-      ga4:    (ga4Check.count    ?? 0) > 0,
-      gsc:    (gscCheck.count    ?? 0) > 0,
       ahrefs: (ahrefsCheck.count ?? 0) > 0,
       gads:   (gadsCheck.count   ?? 0) > 0,
       meta:   (metaCheck.count   ?? 0) > 0,
       gbp:    (gbpCheck.count    ?? 0) > 0,
-      ghl:    (ghlCheck.count    ?? 0) > 0,
     }
   },
   ['dashboard-connector-data-flags'],
@@ -81,21 +75,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
         .filter((v): v is ConnectorType => !!v)
         .filter((v, i, arr) => arr.indexOf(v) === i)
 
-      // Only surface connector types that are both connected AND have synced data.
-      // This prevents stub sidebar items for connections that have never synced.
+      // Gate ad platform tabs on data existence to prevent empty stubs for unsynced accounts.
+      // GA4, GSC, and GHL show as soon as the connection is active — their tab pages handle
+      // the empty-state when no data has synced yet, matching how the dashboard cards work.
       const typesWithData = new Set<string>([
-        ...(dataFlags.ga4    ? ['google_analytics']        : []),
-        ...(dataFlags.gsc    ? ['google_search_console']   : []),
         ...(dataFlags.ahrefs ? ['ahrefs']                  : []),
         ...(dataFlags.gads   ? ['google_ads']              : []),
         ...(dataFlags.meta   ? ['meta_ads']                : []),
         ...(dataFlags.gbp    ? ['google_business_profile'] : []),
-        ...(dataFlags.ghl    ? ['ghl']                     : []),
       ])
 
-      // Keep only connected types that also have data; always pass through types
-      // without a dedicated metrics table (wordpress) so they don't vanish.
-      const metricsGatedTypes = new Set(['google_analytics', 'google_search_console', 'ahrefs', 'google_ads', 'meta_ads', 'google_business_profile', 'ghl'])
+      const metricsGatedTypes = new Set(['ahrefs', 'google_ads', 'meta_ads', 'google_business_profile'])
       activeConnectorTypes = connectedTypes.filter(
         t => !metricsGatedTypes.has(t) || typesWithData.has(t)
       )

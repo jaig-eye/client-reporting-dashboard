@@ -33,7 +33,8 @@ export default async function GSCSummaryCard({ clientId, connectionId, dateFrom,
       .eq('client_id', clientId)
       .eq('connection_id', connectionId)
       .gte('date', dateFrom)
-      .lte('date', dateTo),
+      .lte('date', dateTo)
+      .range(0, 9999),
     showCompare
       ? db.from('gsc_metrics')
           .select('clicks, impressions, ctr, position')
@@ -41,6 +42,7 @@ export default async function GSCSummaryCard({ clientId, connectionId, dateFrom,
           .eq('connection_id', connectionId)
           .gte('date', compareDateFrom!)
           .lte('date', compareDateTo!)
+          .range(0, 9999)
       : Promise.resolve({ data: null }),
   ])
 

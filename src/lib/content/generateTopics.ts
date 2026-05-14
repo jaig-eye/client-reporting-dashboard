@@ -47,6 +47,10 @@ function scoreUrlRelevance(url: string, keywords: string[]): number {
   }, 0)
 }
 
+function stripDomain(url: string): string {
+  try { return new URL(url).pathname } catch { return url }
+}
+
 export interface TopicSummary {
   id:                  string
   topic:               string
@@ -269,33 +273,35 @@ export async function generateTopicsForClient(
   if (clientSettings?.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
 
   const gscTopText = topPages.length > 0
-    ? `\nTop-performing pages:\n${topPages.slice(0, 8).map(p => `  - "${p.query}" → ${p.page} (${p.totalClicks} clicks, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nTop-performing pages:\n${topPages.slice(0, 8).map(p => `  - "${p.query}" → ${stripDomain(p.page)} (${p.totalClicks} clicks, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
   const gscGrowthText = growthTargets.length > 0
-    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article targeting the keyword and internally link it to that page:\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article targeting the keyword and internally link it to that page:\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
   const gscQuickWinsText = quickWins.length > 0
-    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these:\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these:\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
   const gscCtrText = ctrIssues.length > 0
-    ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles to capture more click share:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page to support: ${p.page} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
+    ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
     : ''
 
   const sitemapText = sitemapPages.length > 0
-    ? `\nExisting site pages (for internal link planning):\n${sitemapPages.slice(0, 60).join('\n')}`
+    ? `\nExisting site pages (for internal link planning):\n${sitemapPages.slice(0, 60).map(stripDomain).join('\n')}`
     : ''
 
   const competitorText = competitorMap.size > 0
     ? `\nCompetitor analysis — write to FILL THE GAPS these competitors missed and improve on their coverage:\n` +
       Array.from(competitorMap.values()).map(cr => {
-        const lines = Object.entries(cr.headings)
-          .map(([url, hs]) => `  ${url}:\n    ${hs.slice(0, 6).map(h => `• ${h}`).join('\n    ')}`)
-          .join('\n')
-        return `  Keyword: "${cr.keyword}"\n${lines}`
-      }).join('\n\n')
+        // Deduplicate headings across all competitor URLs for this keyword
+        const seen = new Set<string>()
+        const deduped = Object.entries(cr.headings).flatMap(([, hs]) =>
+          hs.filter(h => { const norm = h.toLowerCase().trim(); if (seen.has(norm)) return false; seen.add(norm); return true })
+        ).slice(0, 8)
+        return `  Keyword: "${cr.keyword}" — competitor headings: ${deduped.map(h => `• ${h}`).join('; ')}`
+      }).join('\n')
     : ''
 
   const guidelinesText = (clientSettings?.topic_guidelines as string | null | undefined)?.trim()
@@ -318,11 +324,11 @@ Return ONLY a JSON array of exactly ${count} objects:
     "target_keyword": "primary keyword phrase",
     "search_intent": "informational | commercial | local_service | comparison | cost_pricing | how_to | faq | emergency",
     "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
-    "keyword_opportunity": "'keyword phrase' — X/mo, pos Y",
-    "ranking_strategy": "How this article will outrank existing results (1–2 sentences)",
-    "audience_intent": "What the searcher needs or wants (1 sentence)",
-    "why_now": "Seasonal, competitive, or trending timing reason (1 sentence)",
-    "competition_level": "Low/Medium/High — brief 1-line reasoning",
+    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. Estimated volume and difficulty context. Any seasonal or trending component to the opportunity.",
+    "ranking_strategy": "3–5 sentences: Which competitor gaps this article fills. What unique angle or depth will outperform existing page-1 results. Specific linking strategy (which existing site page this supports and why). Why this approach wins for this client over generic competitors.",
+    "audience_intent": "2–3 sentences: Who specifically is searching this (describe the person, their situation, and what they are trying to decide or do). What stage of the buyer/research journey they are in. What outcome they need from the content.",
+    "why_now": "2–3 sentences: Specific seasonal or trending timing reason with data context if available. Competitor activity or content gap timing. Why generating this topic now versus later maximises the ranking window.",
+    "competition_level": "Low/Medium/High — 1-sentence reasoning citing what makes it that level",
     "cluster_group": "kebab-case cluster label (e.g. auto-financing, lease-vs-buy)"
   }
 ]
@@ -351,7 +357,7 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 2048, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+        body: JSON.stringify({ model, max_tokens: 3000, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
       })
       if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
       const data = await res.json()
