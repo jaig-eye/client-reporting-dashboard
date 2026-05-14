@@ -217,7 +217,11 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   const loadResearch = useCallback(async () => {
     if (researchDone) return
     try {
-      const res  = await fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
+      // Pass in-memory brand data so the API can use it even if not yet saved to DB
+      const params = new URLSearchParams({ client_id: clientId })
+      if (brand.services)        params.set('services', brand.services)
+      if (brand.geographic_focus) params.set('geo',     brand.geographic_focus)
+      const res  = await fetch(`/api/admin/content/keyword-research?${params.toString()}`)
       const data = await res.json() as ResearchData
       setResearch(data)
     } catch {
@@ -225,7 +229,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     } finally {
       setResearchDone(true)
     }
-  }, [clientId, researchDone])
+  }, [clientId, researchDone, brand.services, brand.geographic_focus])
 
   useEffect(() => {
     if (step === 6) loadResearch()

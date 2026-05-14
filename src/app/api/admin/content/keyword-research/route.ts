@@ -31,16 +31,21 @@ export async function GET(request: NextRequest) {
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const clientId = request.nextUrl.searchParams.get('client_id')
+  const clientId       = request.nextUrl.searchParams.get('client_id')
+  const servicesParam  = request.nextUrl.searchParams.get('services')
+  const geoParam       = request.nextUrl.searchParams.get('geo')
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
   const db = createAdminClient()
 
   const [settingsRes, agencyRes, clientRes] = await Promise.all([
-    db.from('content_settings')
-      .select('services, geographic_focus')
-      .eq('client_id', clientId)
-      .maybeSingle(),
+    // Only fetch DB settings if caller didn't pass them inline (wizard pre-save flow)
+    servicesParam
+      ? Promise.resolve({ data: null })
+      : db.from('content_settings')
+          .select('services, geographic_focus')
+          .eq('client_id', clientId)
+          .maybeSingle(),
     db.from('agency_settings')
       .select('serp_api_key')
       .single(),
@@ -50,8 +55,8 @@ export async function GET(request: NextRequest) {
       .single(),
   ])
 
-  const services = settingsRes.data?.services ?? null
-  const geo      = settingsRes.data?.geographic_focus ?? ''
+  const services = servicesParam ?? settingsRes.data?.services ?? null
+  const geo      = geoParam      ?? settingsRes.data?.geographic_focus ?? ''
   const serpKey  = agencyRes.data?.serp_api_key ?? process.env.SERPAPI_KEY ?? null
 
   const seeds = extractSeedKeywords(services)
