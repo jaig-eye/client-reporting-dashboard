@@ -246,30 +246,35 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
       emergency_availability: brand.emergency_availability,
     }
 
-    await fetch('/api/admin/content/client-settings', {
+    const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_id:          clientId,
-        business_background: brand.business_background,
-        services:            brand.services,
-        target_audience:     brand.target_audience,
-        geographic_focus:    brand.geographic_focus,
-        brand_voice:         brand.brand_voice,
-        phone_number:        brand.phone_number,
-        sitemap_url:         sitemapUrl || undefined,
-        schedule_frequency:  schedule.frequency,
+        client_id:            clientId,
+        business_background:  brand.business_background,
+        services:             brand.services,
+        target_audience:      brand.target_audience,
+        geographic_focus:     brand.geographic_focus,
+        brand_voice:          brand.brand_voice,
+        phone_number:         brand.phone_number,
+        sitemap_url:          sitemapUrl || undefined,
+        schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
-        publish_time:        schedule.publishTime,
-        topics_per_run:      schedule.topicsPerRun,
-        weeks_ahead:         schedule.weeksAhead,
-        auto_generate:       schedule.autoGenerate,
-        auto_approve_topics: schedule.autoApprove,
-        auto_push_posts:     schedule.autoPush,
-        eeat_data:           eeatData,
-        wizard_completed:    wizardCompleted,
+        schedule_start_date:  new Date().toISOString().slice(0, 10),
+        publish_time:         schedule.publishTime,
+        topics_per_run:       schedule.topicsPerRun,
+        weeks_ahead:          schedule.weeksAhead,
+        auto_generate:        schedule.autoGenerate,
+        auto_approve_topics:  schedule.autoApprove,
+        auto_push_posts:      schedule.autoPush,
+        eeat_data:            eeatData,
+        wizard_completed:     wizardCompleted,
       }),
     })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      throw new Error(data.error ?? 'Failed to save settings')
+    }
   }
 
   async function handleSave() {
@@ -290,14 +295,23 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     setSaveMsg('')
     try {
       await saveSettings(true)
-      await fetch('/api/admin/content/topics/generate', {
+      // Use calendar/generate to spread topics across scheduled publish slots with proper dates
+      const res = await fetch('/api/admin/content/calendar/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: clientId, count: schedule.topicsPerRun }),
+        body: JSON.stringify({
+          client_id:   clientId,
+          start_date:  new Date().toISOString().slice(0, 10),
+          weeks_ahead: schedule.weeksAhead,
+        }),
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? 'Generation failed')
+      }
       onComplete()
-    } catch {
-      setSaveMsg('Save failed — please try again.')
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : 'Save failed — please try again.')
     } finally {
       setSaving(false)
     }

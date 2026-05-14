@@ -32,6 +32,7 @@ interface Topic {
   competitors_researched?: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
   edit_notes?:           string | null
   cluster_group?:        string | null
+  post?:                 { id: string; title: string | null; status: string; published_url: string | null } | null
 }
 
 interface Post {
@@ -448,12 +449,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   // Topics (all non-generated statuses + generated topics waiting for review)
   topics.forEach(t => {
-    // Find matching post by target_keyword + publish_date
-    const linkedPost = posts.find(p =>
-      p.target_keyword === t.target_keyword &&
-      p.target_publish_date === t.target_publish_date &&
-      !seenPostIds.has(p.id)
-    )
+    // Prefer matching via the FK join (topic.post.id) set by the generate route.
+    // Fall back to keyword+date heuristic for legacy/orphan posts.
+    const linkedPost = t.post?.id
+      ? posts.find(p => p.id === t.post!.id)
+      : posts.find(p =>
+          p.target_keyword === t.target_keyword &&
+          p.target_publish_date === t.target_publish_date &&
+          !seenPostIds.has(p.id)
+        )
     if (linkedPost) {
       seenPostIds.add(linkedPost.id)
       topicIdToPost.set(t.id, linkedPost)
