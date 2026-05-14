@@ -255,25 +255,26 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       .catch(() => setSchedLoading(false))
   }, [clientId])
 
+  const firstConnectionId = clientSites[0]?.connectionId ?? null
+
   // ── Auto-set connection_id ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!schedule.connection_id && clientSites[0]?.connectionId) {
-      setSched('connection_id', clientSites[0].connectionId)
+    if (!schedule.connection_id && firstConnectionId) {
+      setSched('connection_id', firstConnectionId)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientSites])
+  }, [firstConnectionId])
 
   // ── Load authors ───────────────────────────────────────────────────────────
   useEffect(() => {
-    const connId = clientSites[0]?.connectionId
-    if (!connId) { setAuthors([]); return }
-    fetch(`/api/admin/wordpress/authors?connection_id=${connId}`)
+    if (!firstConnectionId) { setAuthors([]); return }
+    fetch(`/api/admin/wordpress/authors?connection_id=${firstConnectionId}`)
       .then(r => r.json())
       .then((d: { authors?: Author[] } | { error: string }) => {
         if ('authors' in d && Array.isArray(d.authors)) setAuthors(d.authors)
       })
       .catch(() => setAuthors([]))
-  }, [clientSites])
+  }, [firstConnectionId])
 
   // ── Load topics and posts ──────────────────────────────────────────────────
   const loadPipeline = useCallback(() => {
