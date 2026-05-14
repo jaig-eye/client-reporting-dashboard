@@ -80,6 +80,15 @@ async function runReport(
       { name: 'averageSessionDuration' },
       { name: 'engagedSessions' },
     ],
+    // Restrict to web streams only — matches GA4 Traffic Acquisition report default.
+    // Without this filter app streams (iOS/Android) inflate sessions, especially
+    // the Cross-network channel used heavily for app install campaigns.
+    dimensionFilter: {
+      filter: {
+        fieldName: 'platform',
+        stringFilter: { matchType: 'EXACT', value: 'web' },
+      },
+    },
     limit: 100000,
   }
 
@@ -143,6 +152,12 @@ async function runSourceReport(
       { name: 'conversions' },
       { name: 'engagedSessions' },
     ],
+    dimensionFilter: {
+      filter: {
+        fieldName: 'platform',
+        stringFilter: { matchType: 'EXACT', value: 'web' },
+      },
+    },
     limit: 100000,
   }
 

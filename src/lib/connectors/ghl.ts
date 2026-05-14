@@ -37,6 +37,8 @@ export interface GhlRawRow {
   date:               string
   contacts_created:   number
   total_calls:        number
+  incoming_calls:     number
+  outgoing_calls:     number
   missed_calls:       number
   forms_submitted:    number
   reviews_sent:       number
@@ -185,6 +187,7 @@ async function fetchContacts(
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
+    if (c.archived === true || c.deleted === true) continue
     const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0 }
     ex.count++
     const tags = (c.tags as string[]) ?? []
@@ -200,7 +203,7 @@ async function fetchConversations(
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
+): Promise<{ date: string; totalCalls: number; incomingCalls: number; outgoingCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
   const all: Record<string, unknown>[] = []
   let startAfterDate: string | undefined
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
@@ -226,6 +229,8 @@ async function fetchConversations(
           type: sample.type,
           lastMessageDate: sample.lastMessageDate,
           dateAdded: sample.dateAdded,
+          direction: sample.direction,
+          lastMessageType: sample.lastMessageType,
           unreadCount: sample.unreadCount,
         })
       }
@@ -250,7 +255,7 @@ async function fetchConversations(
 
   const typeCounts: Record<string, number> = {}
   const allTypeCounts: Record<string, number> = {}
-  const byDate = new Map<string, { totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
+  const byDate = new Map<string, { totalCalls: number; incomingCalls: number; outgoingCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
 
   // Deduplicate by conversation ID — cursor pagination keyed on lastMessageDate can
   // return the same conversation on two pages when a message arrives mid-pagination.
@@ -273,11 +278,16 @@ async function fetchConversations(
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
 
     typeCounts[typ] = (typeCounts[typ] ?? 0) + 1
-    const ex = byDate.get(parsed.date) ?? { totalCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
+    const ex = byDate.get(parsed.date) ?? { totalCalls: 0, incomingCalls: 0, outgoingCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
 
     if (CALL_TYPES.has(typ)) {
+      const direction = String(conv.direction || '').toLowerCase()
+      const isInbound = direction === 'inbound' || direction === ''
       ex.totalCalls++
-      if (Number(conv.unreadCount ?? 0) > 0) ex.missedCalls++
+      if (isInbound) ex.incomingCalls++
+      else           ex.outgoingCalls++
+      const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
+      if (isInbound && (lastMsgType === 'TYPE_MISSED_CALL' || lastMsgType.includes('MISSED'))) ex.missedCalls++
     } else if (EMAIL_TYPES.has(typ)) {
       ex.emailsSent++
     } else if (SMS_TYPES.has(typ)) {
@@ -466,7 +476,7 @@ async function fetchOpportunities(
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; newOpps: number; wonOpps: number; lostOpps: number; wonValue: number }[]> {
+): Promise<{ date: string; newOpps: number }[]> {
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
   const all: Record<string, unknown>[] = []
@@ -521,23 +531,108 @@ async function fetchOpportunities(
     oppSeen.add(id)
     return true
   })
-  console.log(`[ghl] opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
+  console.log(`[ghl] new opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
 
-  const byDate = new Map<string, { newOpps: number; wonOpps: number; lostOpps: number; wonValue: number }>()
+  const byDate = new Map<string, { newOpps: number }>()
 
   for (const opp of uniqueOpps) {
     const parsed = parseGhlDate(opp.dateAdded ?? opp.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
-
-    const ex     = byDate.get(parsed.date) ?? { newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 }
-    const status = String(opp.status || '').toLowerCase()
-    const value  = Number(opp.monetaryValue ?? opp.value ?? 0)
-
+    const ex = byDate.get(parsed.date) ?? { newOpps: 0 }
     ex.newOpps++
+    byDate.set(parsed.date, ex)
+  }
+
+  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
+}
+
+// Separate pass for won/lost — dated by closedDate, not dateAdded.
+// GHL's own "Won" metric counts by when the opp moved to won status, so pagination
+// must use updatedAt ordering and can't exit early on dateAdded like fetchOpportunities does.
+async function fetchClosedOpportunities(
+  apiKey: string,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<{ date: string; wonOpps: number; lostOpps: number; wonValue: number }[]> {
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+  const all: Record<string, unknown>[] = []
+
+  try {
+    let startAfter:   string | undefined
+    let startAfterId: string | undefined
+
+    for (let page = 0; page < 200; page++) {
+      const p: Record<string, string> = {
+        location_id: locationId,
+        limit:       '100',
+        order:       'updatedAt_desc',
+      }
+      if (startAfter)   p.startAfter   = startAfter
+      if (startAfterId) p.startAfterId = startAfterId
+
+      const data = await ghlGet('/opportunities/search', apiKey, p)
+      const opps = (data.opportunities as Record<string, unknown>[]) ?? []
+      all.push(...opps)
+
+      if (opps.length === 0) break
+
+      // Exit when the oldest opp's close/update date is before our range
+      const oldest       = opps[opps.length - 1] as Record<string, unknown>
+      const closeDate    = oldest.closedDate ?? oldest.lastStatusChangeAt ?? oldest.updatedAt
+      const oldestParsed = parseGhlDate(closeDate)
+      if (oldestParsed && oldestParsed.ts < fromMs) break
+      if (opps.length < 100) break
+
+      const meta = data.meta as Record<string, unknown> | undefined
+      startAfter   = meta?.startAfter   != null ? String(meta.startAfter)   : undefined
+      startAfterId = meta?.startAfterId != null ? String(meta.startAfterId) : undefined
+      if (!startAfter && !startAfterId) break
+    }
+  } catch (e) {
+    console.log(`[ghl] fetchClosedOpportunities failed: ${String(e)}`)
+    return []
+  }
+
+  // Log sample to confirm closedDate field name
+  if (all.length > 0) {
+    const sample = all[0] as Record<string, unknown>
+    console.log('[ghl] sample closed opp fields:', {
+      status: sample.status,
+      closedDate: sample.closedDate,
+      lastStatusChangeAt: sample.lastStatusChangeAt,
+      updatedAt: sample.updatedAt,
+      dateAdded: sample.dateAdded,
+    })
+  }
+
+  const oppSeen = new Set<string>()
+  const uniqueOpps = all.filter(o => {
+    const id = String((o as Record<string, unknown>).id || '')
+    if (!id || oppSeen.has(id)) return false
+    oppSeen.add(id)
+    return true
+  })
+  console.log(`[ghl] closed opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
+
+  const byDate = new Map<string, { wonOpps: number; lostOpps: number; wonValue: number }>()
+
+  for (const opp of uniqueOpps) {
+    const status = String(opp.status || '').toLowerCase()
+    if (status !== 'won' && status !== 'lost') continue
+
+    const closeDate = opp.closedDate ?? opp.lastStatusChangeAt ?? opp.updatedAt
+    const parsed    = parseGhlDate(closeDate)
+    if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
+
+    const ex    = byDate.get(parsed.date) ?? { wonOpps: 0, lostOpps: 0, wonValue: 0 }
+    const value = Number(opp.monetaryValue ?? opp.value ?? 0)
+
     if (status === 'won') {
       ex.wonOpps++
       ex.wonValue += value
-    } else if (status === 'lost') {
+    } else {
       ex.lostOpps++
     }
     byDate.set(parsed.date, ex)
@@ -609,29 +704,34 @@ export const ghlConnector: ConnectorAdapter = {
       const contactData  = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
 
-      const convData     = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
-      const formsResult  = await fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo)
-      const oppData      = await fetchOpportunities(apiKey, locationId, dateFrom, dateTo)
-      const reviewData   = await fetchReviews(apiKey, locationId, dateFrom, dateTo)
+      const convData        = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
+      const formsResult     = await fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo)
+      const oppData         = await fetchOpportunities(apiKey, locationId, dateFrom, dateTo)
+      const closedOppData   = await fetchClosedOpportunities(apiKey, locationId, dateFrom, dateTo)
+      const reviewData      = await fetchReviews(apiKey, locationId, dateFrom, dateTo)
       console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
 
-      const allDates   = dateRange(dateFrom, dateTo)
-      const contactMap = new Map(contactData.map(d  => [d.date, d]))
-      const convMap    = new Map(convData.map(d      => [d.date, d]))
-      const formMap    = new Map(formsResult.rows.map(d => [d.date, d]))
-      const oppMap     = new Map(oppData.map(d       => [d.date, d]))
-      const reviewMap  = new Map(reviewData.map(d    => [d.date, d]))
+      const allDates      = dateRange(dateFrom, dateTo)
+      const contactMap    = new Map(contactData.map(d       => [d.date, d]))
+      const convMap       = new Map(convData.map(d           => [d.date, d]))
+      const formMap       = new Map(formsResult.rows.map(d   => [d.date, d]))
+      const oppMap        = new Map(oppData.map(d            => [d.date, d]))
+      const closedOppMap  = new Map(closedOppData.map(d      => [d.date, d]))
+      const reviewMap     = new Map(reviewData.map(d         => [d.date, d]))
 
       const rows: GhlRawRow[] = allDates.map(date => {
         const c  = contactMap.get(date)
         const v  = convMap.get(date)
         const f  = formMap.get(date)
         const o  = oppMap.get(date)
+        const co = closedOppMap.get(date)
         const rv = reviewMap.get(date)
         return {
           date,
           contacts_created:   c?.count            ?? 0,
           total_calls:        v?.totalCalls        ?? 0,
+          incoming_calls:     v?.incomingCalls     ?? 0,
+          outgoing_calls:     v?.outgoingCalls     ?? 0,
           missed_calls:       v?.missedCalls       ?? 0,
           forms_submitted:    f?.count             ?? 0,
           reviews_sent:       0,
@@ -640,9 +740,9 @@ export const ghlConnector: ConnectorAdapter = {
           emails_sent:        v?.emailsSent        ?? 0,
           sms_sent:           v?.smsSent           ?? 0,
           new_opportunities:  o?.newOpps           ?? 0,
-          won_opportunities:  o?.wonOpps           ?? 0,
-          lost_opportunities: o?.lostOpps          ?? 0,
-          won_value:          o?.wonValue          ?? 0,
+          won_opportunities:  co?.wonOpps          ?? 0,
+          lost_opportunities: co?.lostOpps         ?? 0,
+          won_value:          co?.wonValue         ?? 0,
           raw_data: {
             form_breakdown: f?.breakdown ?? [],
           },

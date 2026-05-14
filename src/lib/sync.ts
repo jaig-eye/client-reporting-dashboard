@@ -22,8 +22,8 @@ import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
-import { fetchDailyTotals } from './connectors/google-search-console'
-import type { GSCDailyTotalRow } from './connectors/google-search-console'
+import { fetchDailyTotals, fetchQueryTotals, fetchPageTotals } from './connectors/google-search-console'
+import type { GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -373,8 +373,8 @@ async function syncGSCInChunks(
         const accessToken = (auth.access_token as string | undefined) ?? ''
         const siteUrl     = connection.external_id
 
-        // Run dimensional fetch (query+page) and daily totals fetch in parallel
-        const [chunkResult, dailyRows] = await Promise.all([
+        // Run dimensional fetch (query+page), daily totals, query totals, and page totals in parallel
+        const [chunkResult, dailyRows, queryRows, pageRows] = await Promise.all([
           adapter.fetchMetrics(connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo),
           accessToken
             ? fetchDailyTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
@@ -382,6 +382,18 @@ async function syncGSCInChunks(
                 return [] as GSCDailyTotalRow[]
               })
             : Promise.resolve([] as GSCDailyTotalRow[]),
+          accessToken
+            ? fetchQueryTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
+                console.error(`[sync] GSC query totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
+                return [] as GSCQueryTotalRow[]
+              })
+            : Promise.resolve([] as GSCQueryTotalRow[]),
+          accessToken
+            ? fetchPageTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
+                console.error(`[sync] GSC page totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
+                return [] as GSCPageTotalRow[]
+              })
+            : Promise.resolve([] as GSCPageTotalRow[]),
         ])
 
         let written = 0
@@ -395,6 +407,14 @@ async function syncGSCInChunks(
         if (dailyRows.length > 0) {
           const dailyWritten = await upsertGSCDailyTotals(db, connection.id, clientId, dailyRows)
           console.log(`[sync] GSC daily totals chunk ${chunkFrom} → ${chunkTo}: ${dailyWritten} rows`)
+        }
+        if (queryRows.length > 0) {
+          const queryWritten = await upsertGSCQueryTotals(db, connection.id, clientId, queryRows)
+          console.log(`[sync] GSC query totals chunk ${chunkFrom} → ${chunkTo}: ${queryWritten} rows`)
+        }
+        if (pageRows.length > 0) {
+          const pageWritten = await upsertGSCPageTotals(db, connection.id, clientId, pageRows)
+          console.log(`[sync] GSC page totals chunk ${chunkFrom} → ${chunkTo}: ${pageWritten} rows`)
         }
         console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
         return written
@@ -871,6 +891,8 @@ export async function upsertGhlMetrics(
     date:             String(r.date).split('T')[0],
     contacts_created: r.contacts_created,
     total_calls:      r.total_calls,
+    incoming_calls:   r.incoming_calls,
+    outgoing_calls:   r.outgoing_calls,
     missed_calls:     r.missed_calls,
     forms_submitted:  r.forms_submitted,
     reviews_sent:     r.reviews_sent,
@@ -974,7 +996,7 @@ export async function upsertGA4Metrics(
     connection_id:        connectionId,
     client_id:            clientId,
     date:                 r.date,
-    channel_group:        r.channel_group || 'Direct',
+    channel_group:        r.channel_group || '',
     sessions:             r.sessions,
     users:                r.users,
     new_users:            r.new_users,
@@ -985,6 +1007,20 @@ export async function upsertGA4Metrics(
     engaged_sessions:     r.engaged_sessions ?? 0,
     synced_at:            new Date().toISOString(),
   }))
+
+  // Delete existing rows for the synced date range before upserting.
+  // Required because the channel_group value for unattributed sessions changed from
+  // 'Direct' (old sync.ts fallback) to '' — the UNIQUE key is (connection_id, date, channel_group)
+  // so old and new rows have different conflict keys and both would accumulate without a delete.
+  const minDate = mapped.reduce((m, r) => r.date < m ? r.date : m, mapped[0].date)
+  const maxDate = mapped.reduce((m, r) => r.date > m ? r.date : m, mapped[0].date)
+  const { error: delErr } = await db
+    .from('ga4_metrics')
+    .delete()
+    .eq('connection_id', connectionId)
+    .gte('date', minDate)
+    .lte('date', maxDate)
+  if (delErr) console.error('[sync] ga4_metrics pre-delete error:', delErr)
 
   for (let i = 0; i < mapped.length; i += 200) {
     const { error } = await db
@@ -1099,6 +1135,72 @@ export async function upsertGSCDailyTotals(
         ignoreDuplicates: false,
       })
     if (error) console.error(`[sync] gsc_daily_totals upsert error (batch ${i}):`, error)
+  }
+  return mapped.length
+}
+
+export async function upsertGSCQueryTotals(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GSCQueryTotalRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.query)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    date:          r.date,
+    query:         r.query,
+    clicks:        r.clicks,
+    impressions:   r.impressions,
+    ctr:           r.ctr,
+    position:      r.position,
+    synced_at:     new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 500) {
+    const { error } = await db
+      .from('gsc_query_totals')
+      .upsert(mapped.slice(i, i + 500), {
+        onConflict: 'connection_id,date,query',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] gsc_query_totals upsert error (batch ${i}):`, error)
+  }
+  return mapped.length
+}
+
+export async function upsertGSCPageTotals(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GSCPageTotalRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.page)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    date:          r.date,
+    page:          r.page,
+    clicks:        r.clicks,
+    impressions:   r.impressions,
+    ctr:           r.ctr,
+    position:      r.position,
+    synced_at:     new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 500) {
+    const { error } = await db
+      .from('gsc_page_totals')
+      .upsert(mapped.slice(i, i + 500), {
+        onConflict: 'connection_id,date,page',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] gsc_page_totals upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }

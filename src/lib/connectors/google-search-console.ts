@@ -220,6 +220,141 @@ export async function fetchDailyTotals(
   }))
 }
 
+export interface GSCQueryTotalRow {
+  date:        string
+  query:       string
+  clicks:      number
+  impressions: number
+  ctr:         number
+  position:    number
+}
+
+export interface GSCPageTotalRow {
+  date:        string
+  page:        string
+  clicks:      number
+  impressions: number
+  ctr:         number
+  position:    number
+}
+
+/**
+ * Fetch accurate per-query metrics using dimensions=['date','query'].
+ * Unlike the (date,query,page) dimensional query, this groups by query only so
+ * impressions are not multiplied across pages — matching GSC's Queries tab.
+ * Uses rowLimit=25000 to capture high-traffic properties.
+ */
+export async function fetchQueryTotals(
+  siteUrl: string,
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<GSCQueryTotalRow[]> {
+  const encodedSite = encodeURIComponent(siteUrl)
+  const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
+
+  const body = {
+    startDate:  dateFrom,
+    endDate:    dateTo,
+    dimensions: ['date', 'query'],
+    rowLimit:   25000,
+    dataState:  'all',
+  }
+
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 60_000)
+  let res: Response
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`GSC query totals API error ${res.status}: ${text}`)
+  }
+
+  const data = await res.json() as {
+    rows?: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }[]
+  }
+
+  return (data.rows ?? []).map(row => ({
+    date:        row.keys[0] ?? '',
+    query:       row.keys[1] ?? '',
+    clicks:      row.clicks,
+    impressions: row.impressions,
+    ctr:         row.ctr,
+    position:    row.position,
+  }))
+}
+
+/**
+ * Fetch accurate per-page metrics using dimensions=['date','page'].
+ * Unlike the (date,query,page) dimensional query, this groups by page only so
+ * impressions are not multiplied across queries — matching GSC's Pages tab.
+ */
+export async function fetchPageTotals(
+  siteUrl: string,
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<GSCPageTotalRow[]> {
+  const encodedSite = encodeURIComponent(siteUrl)
+  const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
+
+  const body = {
+    startDate:  dateFrom,
+    endDate:    dateTo,
+    dimensions: ['date', 'page'],
+    rowLimit:   25000,
+    dataState:  'all',
+  }
+
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 60_000)
+  let res: Response
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`GSC page totals API error ${res.status}: ${text}`)
+  }
+
+  const data = await res.json() as {
+    rows?: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }[]
+  }
+
+  return (data.rows ?? []).map(row => ({
+    date:     row.keys[0] ?? '',
+    page:     row.keys[1] ?? '',
+    clicks:      row.clicks,
+    impressions: row.impressions,
+    ctr:         row.ctr,
+    position:    row.position,
+  }))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────

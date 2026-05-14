@@ -24,6 +24,8 @@ type GhlRow = {
   date:               string
   contacts_created:   number
   total_calls:        number
+  incoming_calls:     number
+  outgoing_calls:     number
   missed_calls:       number
   forms_submitted:    number
   reviews_sent:       number
@@ -77,13 +79,13 @@ export default async function GhlCrmPage({
 
   const [{ data: rows }, { data: priorRows }] = await Promise.all([
     db.from('ghl_metrics')
-      .select('date,contacts_created,total_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
+      .select('date,contacts_created,total_calls,incoming_calls,outgoing_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
       .eq('client_id', client.id)
       .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       .order('date', { ascending: true }),
     showCompare
       ? db.from('ghl_metrics')
-          .select('date,contacts_created,total_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
+          .select('date,contacts_created,total_calls,incoming_calls,outgoing_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
           .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
           .order('date', { ascending: true })
@@ -102,6 +104,8 @@ export default async function GhlCrmPage({
         // spam_leads is still tracked separately for display in the table.
         contacts:  acc.contacts  + Math.max(0, created - spam),
         calls:     acc.calls     + (Number(r.total_calls)         || 0),
+        incoming:  acc.incoming  + (Number(r.incoming_calls)      || 0),
+        outgoing:  acc.outgoing  + (Number(r.outgoing_calls)      || 0),
         missed:    acc.missed    + (Number(r.missed_calls)        || 0),
         forms:     acc.forms     + (Number(r.forms_submitted)     || 0),
         reviews:   acc.reviews   + (Number(r.reviews_received)    || 0),
@@ -113,7 +117,7 @@ export default async function GhlCrmPage({
         lostOpps:  acc.lostOpps  + (Number(r.lost_opportunities)  || 0),
         wonValue:  acc.wonValue  + (Number(r.won_value)           || 0),
       }
-    }, { contacts: 0, calls: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0, newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 })
+    }, { contacts: 0, calls: 0, incoming: 0, outgoing: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0, newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 })
   }
 
   const totals      = sumRows(data)
@@ -208,9 +212,9 @@ export default async function GhlCrmPage({
               <div className="card p-6">
                 <h2 className="section-title mb-4">Call Performance</h2>
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                  <Stat label="Total Calls" value={fmtNum(totals.calls)} />
-                  <Stat label="Answered"    value={fmtNum(totals.calls - totals.missed)} />
-                  <Stat label="Missed"      value={fmtNum(totals.missed)} sub={pct(totals.missed, totals.calls)} />
+                  <Stat label="Incoming Calls" value={fmtNum(totals.incoming)} />
+                  <Stat label="Outgoing Calls" value={fmtNum(totals.outgoing)} />
+                  <Stat label="Incoming Missed" value={fmtNum(totals.missed)} sub={pct(totals.missed, totals.incoming)} />
                 </div>
               </div>
             )}

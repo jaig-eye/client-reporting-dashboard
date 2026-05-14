@@ -105,16 +105,19 @@ export default async function GA4Page({
     .eq('client_id', client.id)
     .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
     .order('date', { ascending: true })
+    .limit(10000)
 
   const priorQ = db.from('ga4_metrics')
     .select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
     .eq('client_id', client.id)
     .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
+    .limit(10000)
 
   const srcQ = db.from('ga4_source_metrics')
     .select('source,medium,campaign,sessions,conversions,engaged_sessions')
     .eq('client_id', client.id)
     .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+    .limit(10000)
 
   const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
     primaryGa4Id ? currQ.eq('connection_id', primaryGa4Id) : currQ,

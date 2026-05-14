@@ -53,6 +53,7 @@ export default async function GA4SummaryCard({
     .eq('client_id', clientId)
     .gte('date', dateFrom)
     .lte('date', dateTo)
+    .limit(10000)
 
   const compQ = showCompare
     ? db.from('ga4_metrics')
@@ -60,6 +61,7 @@ export default async function GA4SummaryCard({
         .eq('client_id', clientId)
         .gte('date', compareDateFrom!)
         .lte('date', compareDateTo!)
+        .limit(10000)
     : null
 
   const srcQ = db.from('ga4_source_metrics')
@@ -67,6 +69,7 @@ export default async function GA4SummaryCard({
     .eq('client_id', clientId)
     .gte('date', dateFrom)
     .lte('date', dateTo)
+    .limit(10000)
 
   const [{ data: rows }, { data: compRows }, { data: sourceRows }] = await Promise.all([
     connectionId ? currQ.eq('connection_id', connectionId) : currQ,
