@@ -70,7 +70,10 @@ export default function ClientContentTabPanel({
   const [activeTab,    setActiveTab]    = useState<SubTab>(validSubTab(initialSubTab))
   const [showWizard,   setShowWizard]   = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
-    return !s?.wizard_completed && !s?.business_background
+    // Skip wizard if already completed, already has brand config, or already has posts/topics
+    const alreadySetUp = s?.wizard_completed || s?.business_background || s?.services
+    const alreadyHasContent = overviewStats.recentPostsCount > 0 || overviewStats.upcomingTopicsCount > 0
+    return !alreadySetUp && !alreadyHasContent
   })
 
   function handleTabChange(id: SubTab) {
