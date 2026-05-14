@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
@@ -202,6 +202,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [posts,       setPosts]       = useState<Post[]>([])
   const [dataLoading, setDataLoading] = useState(true)
   const [reviewPost,  setReviewPost]  = useState<Post | null>(null)
+
+  // Polling ref — cleared on unmount to avoid state updates on dead component
+  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+  const topicsRef  = useRef<Topic[]>([])
+  useEffect(() => { topicsRef.current = topics }, [topics])
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   // Table state
   const [expandedId,     setExpandedId]     = useState<string | null>(null)
@@ -408,8 +414,22 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
-        showToast(`Topics are generating in the background across ${data.slots?.length ?? modalWeeks} publish dates — check back shortly`, 'info')
-        setTimeout(() => loadPipeline(), 5000)
+        showToast(`Topics are generating — they'll appear here automatically`, 'info')
+        // Poll every 15 s for up to 3 minutes. Stop early once new topics appear.
+        const prevCount = topicsRef.current.length
+        let polls = 0
+        if (pollRef.current) clearInterval(pollRef.current)
+        pollRef.current = setInterval(() => {
+          polls++
+          loadPipeline()
+          const done = topicsRef.current.length > prevCount || polls >= 12
+          if (done) {
+            clearInterval(pollRef.current!)
+            pollRef.current = null
+            if (topicsRef.current.length > prevCount)
+              showToast(`${topicsRef.current.length - prevCount} topics generated`, 'success')
+          }
+        }, 15_000)
       } else {
         showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
         loadPipeline()
