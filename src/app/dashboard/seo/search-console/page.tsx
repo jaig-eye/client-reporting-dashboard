@@ -28,12 +28,6 @@ function calcDelta(curr: number, prev: number): number | null {
   return ((curr - prev) / Math.abs(prev)) * 100
 }
 
-type GscSummaryTotals = {
-  clicks:      number | null
-  impressions: number | null
-  ctr:         number | null
-  position:    number | null
-}
 type GscSummaryRow = {
   query?:      string
   page?:       string
@@ -41,11 +35,6 @@ type GscSummaryRow = {
   impressions: number
   ctr:         number
   position:    number
-}
-type GscSummary = {
-  totals:  GscSummaryTotals
-  queries: GscSummaryRow[]
-  pages:   GscSummaryRow[]
 }
 
 export default async function SearchConsolePage({
@@ -108,109 +97,41 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Fetch current and comparison periods via direct DB queries — no Postgres function required.
-  // Aggregation is done in JS (same approach as GSCSummaryCard on the main dashboard).
-  // Filter by the primary connection's ID to avoid double-counting when a client has had
-  // multiple GSC connections (e.g., after reconnecting — old rows keep the old connection_id).
+  // Fetch GSC summary via aggregate RPC — avoids the PostgREST row-limit issue.
+  // Raw gsc_metrics stores one row per (date, query, page) — a busy site produces
+  // 3,000+ rows/day, so PostgREST's row limit would truncate to the oldest ~3 days.
+  // The RPC aggregates everything in Postgres and returns compact summary objects.
   const primaryConnectionId = gscConnections[0].id
 
-  type GscRawRow = { date: string; clicks: number; impressions: number; ctr: number; position: number; query: string | null; page: string | null }
-  const gscSelect = 'date,clicks,impressions,ctr,position,query,page'
+  type GscRpcResult = {
+    totals:       { clicks: number; impressions: number; ctr: number; position: number }
+    queries:      GscSummaryRow[]
+    pages:        GscSummaryRow[]
+    daily:        Array<{ date: string; clicks: number; impressions: number }>
+    distribution: { top3: number; page1: number; page2: number; beyond: number }
+  }
 
-  const [{ data: currRows }, { data: compRows }] = await Promise.all([
-    db.from('gsc_metrics')
-      .select(gscSelect)
-      .eq('client_id', client.id)
-      .eq('connection_id', primaryConnectionId)
-      .gte('date', fmtDate(fromDate))
-      .lte('date', fmtDate(toDate))
-      .range(0, 9999),
+  const rpcBase = { p_client_id: client.id, p_connection_id: primaryConnectionId, p_top_n: 25 }
+  const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
+    db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(fromDate), p_date_to: fmtDate(toDate) }),
     showCompare && compFrom && compTo
-      ? db.from('gsc_metrics')
-          .select(gscSelect)
-          .eq('client_id', client.id)
-          .eq('connection_id', primaryConnectionId)
-          .gte('date', fmtDate(compFrom))
-          .lte('date', fmtDate(compTo))
-          .range(0, 9999)
+      ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(compFrom), p_date_to: fmtDate(compTo) })
       : Promise.resolve({ data: null }),
   ])
 
-  function buildSummary(rows: GscRawRow[]): GscSummary {
-    const totImpr = rows.reduce((s, r) => s + (r.impressions ?? 0), 0)
-    const totals: GscSummaryTotals = {
-      clicks:      rows.reduce((s, r) => s + (r.clicks      ?? 0), 0),
-      impressions: totImpr,
-      ctr:         totImpr > 0 ? rows.reduce((s, r) => s + (r.ctr      ?? 0) * (r.impressions ?? 0), 0) / totImpr : 0,
-      position:    totImpr > 0 ? rows.reduce((s, r) => s + (r.position ?? 0) * (r.impressions ?? 0), 0) / totImpr : 0,
-    }
-    // Aggregate top queries grouped by keyword
-    type Agg = { clicks: number; impressions: number; ctrSum: number; posSum: number }
-    const qMap = new Map<string, Agg>()
-    for (const r of rows) {
-      if (!r.query) continue
-      const impr = r.impressions ?? 0
-      const ex = qMap.get(r.query)
-      if (ex) { ex.clicks += r.clicks ?? 0; ex.impressions += impr; ex.ctrSum += (r.ctr ?? 0) * impr; ex.posSum += (r.position ?? 0) * impr }
-      else qMap.set(r.query, { clicks: r.clicks ?? 0, impressions: impr, ctrSum: (r.ctr ?? 0) * impr, posSum: (r.position ?? 0) * impr })
-    }
-    const queries: GscSummaryRow[] = Array.from(qMap.entries())
-      .sort((a, b) => b[1].clicks - a[1].clicks).slice(0, 25)
-      .map(([query, v]) => ({ query, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.ctrSum / v.impressions : 0, position: v.impressions > 0 ? v.posSum / v.impressions : 0 }))
-    // Aggregate top pages grouped by URL
-    const pMap = new Map<string, Agg>()
-    for (const r of rows) {
-      if (!r.page) continue
-      const impr = r.impressions ?? 0
-      const ex = pMap.get(r.page)
-      if (ex) { ex.clicks += r.clicks ?? 0; ex.impressions += impr; ex.ctrSum += (r.ctr ?? 0) * impr; ex.posSum += (r.position ?? 0) * impr }
-      else pMap.set(r.page, { clicks: r.clicks ?? 0, impressions: impr, ctrSum: (r.ctr ?? 0) * impr, posSum: (r.position ?? 0) * impr })
-    }
-    const pages: GscSummaryRow[] = Array.from(pMap.entries())
-      .sort((a, b) => b[1].clicks - a[1].clicks).slice(0, 25)
-      .map(([page, v]) => ({ page, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.ctrSum / v.impressions : 0, position: v.impressions > 0 ? v.posSum / v.impressions : 0 }))
-    return { totals, queries, pages }
-  }
-
-  const curr = currRows && currRows.length > 0 ? buildSummary(currRows as GscRawRow[]) : null
-  const comp = compRows && compRows.length > 0 ? buildSummary(compRows as GscRawRow[]) : null
+  const curr = currRpc as GscRpcResult | null
+  const comp = compRpc as GscRpcResult | null
 
   // ── Daily trend data (for chart) ──────────────────────────────────────────
-  const dailyData: GscDailyPoint[] = (() => {
-    if (!currRows?.length) return []
-    const dayMap = new Map<string, { clicks: number; impressions: number }>()
-    for (const r of currRows as GscRawRow[]) {
-      const ex = dayMap.get(r.date) ?? { clicks: 0, impressions: 0 }
-      ex.clicks      += r.clicks      ?? 0
-      ex.impressions += r.impressions ?? 0
-      dayMap.set(r.date, ex)
-    }
-    return Array.from(dayMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, v]) => ({ date, clicks: v.clicks, impressions: v.impressions, ctr: v.impressions > 0 ? v.clicks / v.impressions : 0 }))
-  })()
+  const dailyData: GscDailyPoint[] = (curr?.daily ?? []).map(d => ({
+    date:        d.date,
+    clicks:      d.clicks,
+    impressions: d.impressions,
+    ctr:         d.impressions > 0 ? d.clicks / d.impressions : 0,
+  }))
 
-  // ── Position distribution (across all unique queries in period) ───────────
-  const dist = (() => {
-    const d = { top3: 0, page1: 0, page2: 0, beyond: 0 }
-    if (!currRows?.length) return d
-    const qMap = new Map<string, { posSum: number; imprSum: number }>()
-    for (const r of currRows as GscRawRow[]) {
-      if (!r.query) continue
-      const impr = r.impressions ?? 0
-      const ex = qMap.get(r.query)
-      if (ex) { ex.posSum += (r.position ?? 0) * impr; ex.imprSum += impr }
-      else qMap.set(r.query, { posSum: (r.position ?? 0) * impr, imprSum: impr })
-    }
-    qMap.forEach(v => {
-      const pos = v.imprSum > 0 ? v.posSum / v.imprSum : 0
-      if      (pos <= 3)  d.top3++
-      else if (pos <= 10) d.page1++
-      else if (pos <= 20) d.page2++
-      else                d.beyond++
-    })
-    return d
-  })()
+  // ── Position distribution (from RPC — computed in Postgres) ───────────────
+  const dist = curr?.distribution ?? { top3: 0, page1: 0, page2: 0, beyond: 0 }
 
   const hasData = (curr?.totals?.clicks ?? 0) > 0 || (curr?.totals?.impressions ?? 0) > 0
   if (!curr || !hasData) {

@@ -76,7 +76,13 @@ export default async function GA4Page({
     .eq('status', 'active')
 
   const connections = (connData ?? []) as (ClientConnection & { connector: Pick<Connector, 'id' | 'type' | 'label'> })[]
-  const ga4Connections = connections.filter(c => c.connector.type === 'google_analytics')
+  // Pick the most-recently-synced GA4 connection as the primary source.
+  // A client may have multiple GA4 connections (e.g., old + reconnected new) — querying
+  // without connection_id would sum both, inflating sessions vs the real GA4 dashboard.
+  const ga4Connections = connections
+    .filter(c => c.connector.type === 'google_analytics')
+    .sort((a, b) => (b.last_synced_at ?? '').localeCompare(a.last_synced_at ?? ''))
+  const primaryGa4Id = ga4Connections[0]?.id
 
   if (ga4Connections.length === 0) {
     return (
@@ -92,21 +98,30 @@ export default async function GA4Page({
     )
   }
 
-  // Fetch GA4 metrics (current + prior period + UTM sources in parallel)
+  // Fetch GA4 metrics (current + prior period + UTM sources in parallel).
+  // Filter by primaryGa4Id so clients with multiple GA4 connections (old + reconnected)
+  // don't have their sessions double-counted.
+  const currQ = db.from('ga4_metrics').select('*')
+    .eq('client_id', client.id)
+    .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+    .order('date', { ascending: true })
+
+  const priorQ = db.from('ga4_metrics')
+    .select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
+    .eq('client_id', client.id)
+    .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
+
+  const srcQ = db.from('ga4_source_metrics')
+    .select('source,medium,campaign,sessions,conversions,engaged_sessions')
+    .eq('client_id', client.id)
+    .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+
   const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
-    db.from('ga4_metrics').select('*')
-      .eq('client_id', client.id)
-      .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      .order('date', { ascending: true }),
+    primaryGa4Id ? currQ.eq('connection_id', primaryGa4Id) : currQ,
     showCompare
-      ? db.from('ga4_metrics').select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
+      ? (primaryGa4Id ? priorQ.eq('connection_id', primaryGa4Id) : priorQ)
       : Promise.resolve({ data: null }),
-    db.from('ga4_source_metrics')
-      .select('source,medium,campaign,sessions,conversions,engaged_sessions')
-      .eq('client_id', client.id)
-      .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate)),
+    primaryGa4Id ? srcQ.eq('connection_id', primaryGa4Id) : srcQ,
   ])
 
   const ga4Rows = (rows ?? []) as {

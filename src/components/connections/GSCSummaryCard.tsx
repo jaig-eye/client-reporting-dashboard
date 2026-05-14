@@ -27,65 +27,40 @@ export default async function GSCSummaryCard({ clientId, connectionId, dateFrom,
 
   const showCompare = !!(compareDateFrom && compareDateTo)
 
-  const [{ data: rows }, { data: compRows }] = await Promise.all([
-    db.from('gsc_metrics')
-      .select('clicks, impressions, ctr, position, query')
-      .eq('client_id', clientId)
-      .eq('connection_id', connectionId)
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
-      .range(0, 9999),
+  type GscRpc = {
+    totals:  { clicks: number; impressions: number; ctr: number; position: number }
+    queries: Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>
+  }
+
+  const rpcBase = { p_client_id: clientId, p_connection_id: connectionId, p_top_n: 5 }
+  const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
+    db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: dateFrom, p_date_to: dateTo }),
     showCompare
-      ? db.from('gsc_metrics')
-          .select('clicks, impressions, ctr, position')
-          .eq('client_id', clientId)
-          .eq('connection_id', connectionId)
-          .gte('date', compareDateFrom!)
-          .lte('date', compareDateTo!)
-          .range(0, 9999)
+      ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: compareDateFrom!, p_date_to: compareDateTo! })
       : Promise.resolve({ data: null }),
   ])
 
-  const data    = rows ?? []
-  const hasData = data.length > 0
+  const curr     = currRpc as GscRpc | null
+  const comp     = compRpc as GscRpc | null
 
-  const totClicks = data.reduce((s, r) => s + (r.clicks      ?? 0), 0)
-  const totImpr   = data.reduce((s, r) => s + (r.impressions ?? 0), 0)
-  // Impression-weighted averages (matches methodology used on the full GSC page)
-  const avgCtr    = totImpr > 0
-    ? data.reduce((s, r) => s + (r.ctr      ?? 0) * (r.impressions ?? 0), 0) / totImpr
-    : 0
-  const avgPos    = totImpr > 0
-    ? data.reduce((s, r) => s + (r.position ?? 0) * (r.impressions ?? 0), 0) / totImpr
-    : 0
+  const totClicks = curr?.totals?.clicks      ?? 0
+  const totImpr   = curr?.totals?.impressions ?? 0
+  const avgCtr    = curr?.totals?.ctr         ?? 0
+  const avgPos    = curr?.totals?.position    ?? 0
+  const hasData   = totClicks > 0 || totImpr > 0
 
-  // Comparison period aggregates
-  const compData    = compRows ?? []
-  const compClicks  = compData.reduce((s, r) => s + ((r as { clicks?: number }).clicks      ?? 0), 0)
-  const compImpr    = compData.reduce((s, r) => s + ((r as { impressions?: number }).impressions ?? 0), 0)
-  const compAvgCtr  = compImpr > 0
-    ? compData.reduce((s, r) => s + ((r as { ctr?: number }).ctr ?? 0) * ((r as { impressions?: number }).impressions ?? 0), 0) / compImpr
-    : 0
-  const compAvgPos  = compImpr > 0
-    ? compData.reduce((s, r) => s + ((r as { position?: number }).position ?? 0) * ((r as { impressions?: number }).impressions ?? 0), 0) / compImpr
-    : 0
+  const compClicks  = comp?.totals?.clicks      ?? 0
+  const compImpr    = comp?.totals?.impressions ?? 0
+  const compAvgCtr  = comp?.totals?.ctr         ?? 0
+  const compAvgPos  = comp?.totals?.position    ?? 0
 
   const deltaClicks = showCompare ? calcDelta(totClicks, compClicks) : null
   const deltaImpr   = showCompare ? calcDelta(totImpr,   compImpr)   : null
   const deltaCtr    = showCompare ? calcDelta(avgCtr,    compAvgCtr) : null
-  // Position: lower is better, so invert the delta sign for color display
   const deltaPos    = showCompare ? calcDelta(avgPos,    compAvgPos) : null
 
-  // Top 5 queries by clicks
-  const queryMap = new Map<string, number>()
-  for (const r of data) {
-    if (r.query) {
-      queryMap.set(r.query, (queryMap.get(r.query) ?? 0) + (r.clicks ?? 0))
-    }
-  }
-  const topQueries = Array.from(queryMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+  // Top 5 queries already returned by RPC (ordered by clicks)
+  const topQueries = (curr?.queries ?? []).map(q => [q.query, q.clicks] as [string, number])
 
   function DeltaBadge({ delta, invert = false }: { delta: number | null; invert?: boolean }) {
     if (delta === null) return null

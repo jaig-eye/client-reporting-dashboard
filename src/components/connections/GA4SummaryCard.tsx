@@ -40,29 +40,40 @@ function DeltaBadge({ delta, invert = false }: { delta: number | null; invert?: 
 }
 
 export default async function GA4SummaryCard({
-  clientId, dateFrom, dateTo, compareDateFrom, compareDateTo,
+  clientId, connectionId, dateFrom, dateTo, compareDateFrom, compareDateTo,
 }: Props) {
   const db          = createAdminClient()
   const showCompare = !!(compareDateFrom && compareDateTo)
 
+  // Build each query then conditionally add connection_id filter.
+  // Filtering by connection_id is critical when a client has had multiple GA4 connections
+  // (e.g., after reconnecting) — without it both connections' rows are summed, inflating sessions.
+  const currQ = db.from('ga4_metrics')
+    .select('sessions, new_users, bounce_rate, avg_session_duration, conversions')
+    .eq('client_id', clientId)
+    .gte('date', dateFrom)
+    .lte('date', dateTo)
+
+  const compQ = showCompare
+    ? db.from('ga4_metrics')
+        .select('sessions, new_users, bounce_rate, conversions')
+        .eq('client_id', clientId)
+        .gte('date', compareDateFrom!)
+        .lte('date', compareDateTo!)
+    : null
+
+  const srcQ = db.from('ga4_source_metrics')
+    .select('source, medium, sessions')
+    .eq('client_id', clientId)
+    .gte('date', dateFrom)
+    .lte('date', dateTo)
+
   const [{ data: rows }, { data: compRows }, { data: sourceRows }] = await Promise.all([
-    db.from('ga4_metrics')
-      .select('sessions, new_users, bounce_rate, avg_session_duration, conversions')
-      .eq('client_id', clientId)
-      .gte('date', dateFrom)
-      .lte('date', dateTo),
-    showCompare
-      ? db.from('ga4_metrics')
-          .select('sessions, new_users, bounce_rate, conversions')
-          .eq('client_id', clientId)
-          .gte('date', compareDateFrom!)
-          .lte('date', compareDateTo!)
+    connectionId ? currQ.eq('connection_id', connectionId) : currQ,
+    compQ
+      ? (connectionId ? compQ.eq('connection_id', connectionId) : compQ)
       : Promise.resolve({ data: null }),
-    db.from('ga4_source_metrics')
-      .select('source, medium, sessions')
-      .eq('client_id', clientId)
-      .gte('date', dateFrom)
-      .lte('date', dateTo),
+    connectionId ? srcQ.eq('connection_id', connectionId) : srcQ,
   ])
 
   const data    = rows ?? []
