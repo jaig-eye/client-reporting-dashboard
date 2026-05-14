@@ -357,7 +357,7 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 3000, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+        body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
       })
       if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
       const data = await res.json()
@@ -383,11 +383,14 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
     const jsonMatch = stripped.match(/\[[\s\S]*\]/)
     if (jsonMatch) topics = JSON.parse(jsonMatch[0]) as TopicIdea[]
-  } catch {
+    else console.error('[generateTopics] no JSON array found in AI response, rawText length:', rawText.length)
+  } catch (parseErr) {
+    console.error('[generateTopics] JSON parse error:', parseErr, 'rawText snippet:', rawText.slice(0, 200))
     return { topics: [], clientName, count: 0, error: 'Failed to parse AI response' }
   }
 
   if (!topics.length) {
+    console.error('[generateTopics] AI returned empty topics array, rawText length:', rawText.length)
     return { topics: [], clientName, count: 0, error: 'No topics returned from AI' }
   }
 
@@ -416,8 +419,10 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     .select()
 
   if (insertError) {
+    console.error('[generateTopics] insert error:', insertError.message, insertError.details, insertError.hint)
     return { topics: [], clientName, count: 0, error: insertError.message }
   }
+  console.log(`[generateTopics] inserted ${(saved ?? []).length} topics for client ${clientId}`)
 
   const savedTopics = ((saved ?? []) as Array<{ id: string; topic: string; target_keyword: string | null; keyword_opportunity: string | null }>)
     .map(r => ({

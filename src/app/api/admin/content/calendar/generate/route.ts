@@ -49,17 +49,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No publish slots computed for the given parameters' }, { status: 400 })
   }
 
-  // ── Generate topics + assign dates in background ───────────────────────────
+  // ── Generate topics + assign dates in background ─────────────────────────
+  // Batch into groups of 10 — 8192 max_tokens fits ~10 topics with full rationale.
+  // Each successive batch automatically avoids previously inserted topics via the
+  // existing avoidSet logic in generateTopicsForClient.
+  const BATCH_SIZE = 10
   waitUntil(
     (async () => {
-      const result = await generateTopicsForClient(db, client_id, count)
-      if (result.error || !result.topics.length) return
-      const topicIds = result.topics.map(t => t.id)
-      await Promise.all(topicIds.map(async (id, i) => {
-        const slotIndex   = Math.floor(i / topicsPerRun)
-        const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
-        await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', id)
-      }))
+      let inserted = 0
+      const totalBatches = Math.ceil(count / BATCH_SIZE)
+      for (let b = 0; b < totalBatches; b++) {
+        const batchCount = Math.min(BATCH_SIZE, count - inserted)
+        const result = await generateTopicsForClient(db, client_id, batchCount)
+        if (result.error) {
+          console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} error:`, result.error)
+          break
+        }
+        if (!result.topics.length) {
+          console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} returned 0 topics`)
+          break
+        }
+        await Promise.all(result.topics.map(async (t, i) => {
+          const slotIndex   = Math.floor((inserted + i) / topicsPerRun)
+          const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
+          await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
+        }))
+        inserted += result.topics.length
+        console.log(`[calendar/generate] batch ${b + 1}/${totalBatches}: ${result.topics.length} topics (total ${inserted})`)
+      }
     })()
   )
 
