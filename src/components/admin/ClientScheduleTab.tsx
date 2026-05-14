@@ -701,8 +701,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
                   // Slot approval progress (topics in this date group)
                   const topicsInGroup = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
-                  const approvedInGroup = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
-                  const slotReady = approvedInGroup >= postsPerRun
+                  const approvedInGroup    = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
+                  const generatableInGroup = topicsInGroup.filter(t => t.status === 'approved').length
+                  // Slot ready = quota met AND there are approved-but-not-yet-generated topics to trigger
+                  const slotReady = approvedInGroup >= postsPerRun && generatableInGroup > 0
 
                   return [
                     // Date section header row
@@ -749,7 +751,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         const displayStatus = getTopicDisplayStatus(t)
                         const linkedPost    = topicIdToPost.get(t.id)
                         const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
-                        const hasReview     = linkedPost && (linkedPost.status === 'for_review')
+                        const hasReview     = linkedPost && (linkedPost.status === 'for_review' || linkedPost.status === 'generated')
 
                         return [
                           <tr
@@ -822,8 +824,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                     title="Approve topic"
                                   >✓</button>
                                 )}
-                                {/* Edit title */}
-                                {!['generating', 'rejected'].includes(t.status) && (
+                                {/* Edit title — not shown for generated posts (post already written, topic edit won't change it) */}
+                                {!['generating', 'generated', 'rejected'].includes(t.status) && (
                                   <button
                                     className="btn btn-secondary"
                                     style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--text-muted)' }}
