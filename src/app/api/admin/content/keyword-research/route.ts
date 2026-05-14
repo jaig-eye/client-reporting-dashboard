@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       .eq('client_id', clientId)
       .maybeSingle(),
     db.from('agency_settings')
-      .select('serpapi_key')
+      .select('serp_api_key')
       .single(),
     db.from('clients')
       .select('name')
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 
   const services = settingsRes.data?.services ?? null
   const geo      = settingsRes.data?.geographic_focus ?? ''
-  const serpKey  = agencyRes.data?.serpapi_key ?? process.env.SERPAPI_KEY ?? null
+  const serpKey  = agencyRes.data?.serp_api_key ?? process.env.SERPAPI_KEY ?? null
 
   const seeds = extractSeedKeywords(services)
 
