@@ -41,6 +41,7 @@ interface Settings {
   ai_provider:                    string
   ai_model:                       string
   ai_api_key:                     string
+  openai_api_key:                 string
   notification_email:             string
   notify_topics_created:          boolean
   notify_post_generated:          boolean
@@ -86,6 +87,7 @@ const DEFAULT: Settings = {
   ai_provider:                    'anthropic',
   ai_model:                       'claude-sonnet-4-6',
   ai_api_key:                     '',
+  openai_api_key:                 '',
   notification_email:             '',
   notify_topics_created:          true,
   notify_post_generated:          true,
@@ -470,6 +472,22 @@ export default function AgencySettingsPage() {
               The master writing prompt is managed in{' '}
               <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.
             </p>
+          </div>
+
+          <div className="card p-6">
+            <h2 className="section-title mb-1">Image Generation</h2>
+            <p className="section-desc mb-4">
+              OpenAI API key used for DALL-E 3 featured image generation. Required to generate images for posts — separate from the content AI key above.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <FormField label="OpenAI API Key" hint="used for DALL-E 3 image generation only">
+                  <input className="input" type="password" value={form.openai_api_key}
+                    onChange={e => setForm(f => ({ ...f, openai_api_key: e.target.value }))}
+                    placeholder={form.openai_api_key ? '••••••••••' : 'sk-…'} />
+                </FormField>
+              </div>
+            </div>
           </div>
 
           <div className="card p-6 space-y-4">

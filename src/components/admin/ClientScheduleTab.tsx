@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
+import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -731,7 +732,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               onClick={() => generateForSlot(dateKey, topicsInGroup)}
                               disabled={slotGenerating[dateKey]}
                             >
-                              {slotGenerating[dateKey] ? '…' : '▶ Generate Slot'}
+                              {slotGenerating[dateKey]
+                              ? '…'
+                              : <><Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot</>}
                             </button>
                           )}
                         </div>
@@ -785,57 +788,57 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                 {hasReview && (
                                   <button
                                     className="btn btn-primary"
-                                    style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                                    style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                     onClick={() => setReviewPost(linkedPost!)}
-                                  >→ Review</button>
+                                  ><ArrowRight size={11} weight="bold" /> Review</button>
                                 )}
                                 {/* Generate post */}
                                 {t.status === 'approved' && !hasReview && (
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.65rem', padding: '2px 7px', color: 'var(--blue)' }}
+                                    style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }}
                                     onClick={() => generatePost(t.id)}
                                     title="Generate post now"
-                                  >▶</button>
+                                  ><Play size={12} weight="fill" /></button>
                                 )}
                                 {/* Approve */}
                                 {!['approved', 'generating', 'generated'].includes(t.status) && (
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--green)' }}
+                                    style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }}
                                     onClick={() => topicAction(t.id, 'approved')}
                                     disabled={topicLoading[t.id]}
                                     title="Approve topic"
-                                  >✓</button>
+                                  ><Check size={12} weight="bold" /></button>
                                 )}
                                 {/* Edit title — not shown for generated posts (post already written, topic edit won't change it) */}
                                 {!['generating', 'generated', 'rejected'].includes(t.status) && (
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--text-muted)' }}
+                                    style={{ padding: '2px 6px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}
                                     onClick={() => isEditing ? setEditingId(null) : openEdit(t)}
                                     title="Edit title"
-                                  >✏</button>
+                                  ><PencilSimple size={12} /></button>
                                 )}
                                 {/* Regenerate */}
                                 {!['generating', 'generated'].includes(t.status) && (
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--text-muted)' }}
+                                    style={{ padding: '2px 6px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}
                                     onClick={() => regenerateTopic(t.id)}
                                     disabled={topicLoading[t.id]}
                                     title="Generate different topic idea"
-                                  >↻</button>
+                                  ><ArrowClockwise size={12} /></button>
                                 )}
                                 {/* Reject */}
                                 {!['generating', 'generated'].includes(t.status) && t.status !== 'rejected' && (
                                   <button
                                     className="btn btn-secondary"
-                                    style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--red)' }}
+                                    style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
                                     onClick={() => topicAction(t.id, 'rejected')}
                                     disabled={topicLoading[t.id]}
                                     title="Reject topic"
-                                  >✕</button>
+                                  ><X size={12} weight="bold" /></button>
                                 )}
                               </div>
                             </td>
