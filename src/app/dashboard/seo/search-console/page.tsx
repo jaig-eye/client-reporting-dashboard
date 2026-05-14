@@ -64,8 +64,9 @@ export default async function SearchConsolePage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
-  const toDate   = params.to   ? new Date(params.to)   : new Date()
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  // Default end to yesterday (GSC data has a 2-3 day delay; today adds partial noise)
+  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
+  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
 
   // Compute comparison date range
@@ -288,10 +289,27 @@ export default async function SearchConsolePage({
     },
   ]
 
+  // ── Sparse-data coverage notice ────────────────────────────────────────────
+  const requestedDays = Math.ceil((toDate.getTime() - fromDate.getTime()) / 86_400_000)
+  const availableDays = dailyData.length
+  const latestAvailable = dailyData[dailyData.length - 1]?.date ?? null
+  // Show notice when data covers less than 50% of the requested window
+  const showCoverageNotice = availableDays > 0 && availableDays < requestedDays * 0.5
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
+
+        {/* Sparse data notice */}
+        {showCoverageNotice && (
+          <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#fefce8', border: '1px solid #fde047', fontSize: '0.8125rem', color: '#713f12', lineHeight: 1.5 }}>
+            <strong>Limited data coverage:</strong> Only {availableDays} of {requestedDays} days have data
+            {latestAvailable ? ` (through ${latestAvailable})` : ''}.
+            {' '}A full backfill sync is needed to populate the complete history for this date range.
+            Contact your account manager or run a manual backfill from the admin panel.
+          </div>
+        )}
 
         {/* KPI cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

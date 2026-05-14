@@ -51,8 +51,9 @@ export default async function GA4Page({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
-  const toDate   = params.to   ? new Date(params.to)   : new Date()
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  // Default end to yesterday — today is a partial day and inflates totals vs GA4 dashboard
+  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
+  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
 
   const showCompare = compare !== 'none'

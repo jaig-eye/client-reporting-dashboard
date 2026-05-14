@@ -55,8 +55,9 @@ export default async function DashboardPage({
   const client = clientResult.data as Client | null
   if (!client) redirect('/access')
 
-  const toDate   = params.to   ? new Date(params.to)   : new Date()
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  // Default end to yesterday — today is a partial day and inflates totals vs platform dashboards
+  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
+  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
   const compare  = params.compare ?? 'none'
 
   const periodMs = toDate.getTime() - fromDate.getTime()
