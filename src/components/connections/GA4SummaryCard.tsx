@@ -76,8 +76,10 @@ export default async function GA4SummaryCard({
     connectionId ? srcQ.eq('connection_id', connectionId) : srcQ,
   ])
 
-  const data    = rows ?? []
-  const hasData = data.length > 0
+  const allRows = rows ?? []
+  // Exclude rows with empty channel_group (unattributed sessions stored as '' instead of 'Direct')
+  const data    = allRows.filter(r => (r as { channel_group?: string | null }).channel_group !== '')
+  const hasData = allRows.length > 0
 
   // Aggregate current period totals
   const totSessions    = data.reduce((s, r) => s + (r.sessions ?? 0), 0)
@@ -89,8 +91,8 @@ export default async function GA4SummaryCard({
   const avgDur         = totSessions > 0 ? durSum    / totSessions : 0
   const engagementRate = 1 - avgBounce
 
-  // Aggregate comparison period totals
-  const compData         = compRows ?? []
+  // Aggregate comparison period totals (filter empty channel_group)
+  const compData         = (compRows ?? []).filter(r => (r as { channel_group?: string | null }).channel_group !== '')
   const compSessions     = compData.reduce((s, r) => s + ((r as { sessions?: number }).sessions      ?? 0), 0)
   const compNewUsers     = compData.reduce((s, r) => s + ((r as { new_users?: number }).new_users     ?? 0), 0)
   const compConversions  = compData.reduce((s, r) => s + ((r as { conversions?: number }).conversions ?? 0), 0)

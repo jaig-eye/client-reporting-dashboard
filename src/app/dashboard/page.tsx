@@ -224,7 +224,7 @@ export default async function DashboardPage({
       .gte('date', fmtDate(fromDate))
       .lte('date', fmtDate(toDate))
     for (const r of (ghlRows ?? []) as { contacts_created: number; total_calls: number; missed_calls: number; forms_submitted: number; spam_leads: number; emails_sent: number; sms_sent: number; new_opportunities: number; won_opportunities: number; won_value: number }[]) {
-      ghlTotals.contacts    += Number(r.contacts_created)  || 0
+      ghlTotals.contacts    += Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0))
       ghlTotals.calls       += Number(r.total_calls)        || 0
       ghlTotals.missedCalls += Number(r.missed_calls)       || 0
       ghlTotals.forms       += Number(r.forms_submitted)    || 0

@@ -238,7 +238,7 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
 
     const rows: GA4RawRow[] = channelApiRows.map(r => ({
       date:                 String(r.date || ''),
-      channel_group:        String(r.sessionDefaultChannelGroup || 'Direct'),
+      channel_group:        String(r.sessionDefaultChannelGroup || ''),
       sessions:             parseInt(String(r.sessions              || '0'), 10),
       users:                parseInt(String(r.totalUsers            || '0'), 10),
       new_users:            parseInt(String(r.newUsers              || '0'), 10),

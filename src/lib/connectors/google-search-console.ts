@@ -151,6 +151,76 @@ async function fetchSearchAnalytics(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Daily totals — dimensions=['date'] only, no privacy filtering
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GSCDailyTotalRow {
+  date:        string
+  clicks:      number
+  impressions: number
+  ctr:         number
+  position:    number
+}
+
+/**
+ * Fetch true daily totals using dimensions=['date'] only.
+ * Unlike the dimensional query (date+query+page), this endpoint returns
+ * the real total clicks/impressions for each day with no privacy threshold filtering.
+ * Max 1 row per day — no pagination needed for typical date ranges.
+ */
+export async function fetchDailyTotals(
+  siteUrl: string,
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<GSCDailyTotalRow[]> {
+  const encodedSite = encodeURIComponent(siteUrl)
+  const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
+
+  const body = {
+    startDate:  dateFrom,
+    endDate:    dateTo,
+    dimensions: ['date'],
+    rowLimit:   1000,
+    dataState:  'all',
+  }
+
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 60_000)
+  let res: Response
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`GSC daily totals API error ${res.status}: ${text}`)
+  }
+
+  const data = await res.json() as {
+    rows?: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }[]
+  }
+
+  return (data.rows ?? []).map(row => ({
+    date:        row.keys[0] ?? '',
+    clicks:      row.clicks,
+    impressions: row.impressions,
+    ctr:         row.ctr,
+    position:    row.position,
+  }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────
 

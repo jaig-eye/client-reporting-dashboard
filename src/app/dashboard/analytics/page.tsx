@@ -135,8 +135,14 @@ export default async function GA4Page({
   type SourceRow = { source?: string | null; medium?: string | null; campaign?: string | null; sessions?: number; conversions?: number; engaged_sessions?: number }
   const utmRows = (srcRows ?? []) as SourceRow[]
 
+  // Exclude rows with no channel group — GA4 returns empty-string channel_group for
+  // unattributed sessions that don't belong to any named channel group. The GA4 dashboard
+  // shows these as "(not set)" and excludes them from the Traffic Acquisition total.
+  // Previously these were mapped to 'Direct' via || 'Direct', inflating that bucket.
+  const ga4RowsFiltered = ga4Rows.filter(r => r.channel_group && r.channel_group !== '')
+
   // Aggregate totals (all channels combined)
-  const totals = ga4Rows.reduce(
+  const totals = ga4RowsFiltered.reduce(
     (acc, r) => ({
       sessions:             acc.sessions             + (r.sessions             ?? 0),
       users:                acc.users                + (r.users                ?? 0),
@@ -153,9 +159,9 @@ export default async function GA4Page({
   const avgDuration    = totals.sessions > 0 ? totals.duration_sum   / totals.sessions : 0
   const engagementRate = 1 - avgBounceRate
 
-  // Prior period aggregation
+  // Prior period aggregation (also filter empty channel_group)
   type PriorRow = { sessions?: number; users?: number; new_users?: number; page_views?: number; avg_session_duration?: number; conversions?: number; bounce_rate?: number; channel_group?: string | null }
-  const priorData = (priorRows ?? []) as PriorRow[]
+  const priorData = ((priorRows ?? []) as PriorRow[]).filter(r => r.channel_group && r.channel_group !== '')
   const priorTotals = priorData.reduce<{ sessions: number; users: number; new_users: number; page_views: number; conversions: number; bounce_rate_sum: number; duration_sum: number }>(
     (acc, r) => ({
       sessions:        acc.sessions        + (r.sessions             ?? 0),
@@ -188,16 +194,16 @@ export default async function GA4Page({
   const deltaAvgDuration = showCompare ? calcDelta(avgDuration,        priorAvgDuration)        : null
   const deltaConvRate    = showCompare ? calcDelta(convRate,           priorConvRate)           : null
 
-  // Prior channel map for Δ Sessions column
+  // Prior channel map for Δ Sessions column (priorData already filtered above)
   const priorChannelMap = new Map<string, number>()
   for (const r of priorData) {
     const ch = r.channel_group ?? 'Unassigned'
     priorChannelMap.set(ch, (priorChannelMap.get(ch) ?? 0) + (r.sessions ?? 0))
   }
 
-  // Daily trend for chart and sparklines
+  // Daily trend for chart and sparklines (use filtered rows)
   const dailyByDate = new Map<string, { sessions: number; conversions: number; users: number; new_users: number; page_views: number }>()
-  for (const r of ga4Rows) {
+  for (const r of ga4RowsFiltered) {
     const d = r.date.split('T')[0]
     const ex = dailyByDate.get(d)
     if (ex) {
@@ -220,9 +226,9 @@ export default async function GA4Page({
   const pageViewsSpark = sortedDailyEntries.map(([, v]) => ({ v: v.page_views }))
   const convSpark      = sortedDailyEntries.map(([, v]) => ({ v: v.conversions }))
 
-  // Channel breakdown
+  // Channel breakdown (use filtered rows — empty channel_group excluded)
   const channelMap = new Map<string, { sessions: number; users: number; conversions: number; bounce_rate_sum: number }>()
-  for (const r of ga4Rows) {
+  for (const r of ga4RowsFiltered) {
     const ch = r.channel_group ?? 'Unassigned'
     const ex = channelMap.get(ch)
     if (ex) {

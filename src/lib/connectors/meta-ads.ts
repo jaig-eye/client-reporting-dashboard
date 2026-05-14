@@ -264,6 +264,68 @@ export async function fetchMetaAdMetrics(
     })
   }
 
+  // Add $0 stub rows for PAUSED ad sets and ads with no insights activity in the window.
+  // The insights API only returns rows with spend > 0, hiding paused objects entirely.
+  try {
+    const insightAdsetIds = new Set(rows.map(r => r.adset_id).filter(Boolean))
+    const insightAdIds    = new Set(rows.map(r => r.ad_id).filter(Boolean))
+
+    // Fetch all non-deleted ad sets
+    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, {
+      fields: 'id,name,campaign_id,effective_status',
+      limit: '500',
+    })
+    for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+      const adsetId  = String(adset.id || '')
+      const status   = String(adset.effective_status || '')
+      if (!adsetId || status === 'DELETED' || status === 'ARCHIVED') continue
+      if (insightAdsetIds.has(adsetId)) continue
+      insightAdsetIds.add(adsetId)
+      rows.push({
+        campaign_id:       String(adset.campaign_id || ''),
+        campaign_name:     '',
+        adset_id:          adsetId,
+        adset_name:        String(adset.name || ''),
+        ad_id:             adsetId,
+        ad_name:           `[Ad Set] ${String(adset.name || '')}`,
+        thumbnail_url: '', image_url: '', video_id: '', video_thumb_url: '',
+        creative_body: '', creative_title: '', creative_link_url: '',
+        ad_status:     status,
+        date:          dateTo,
+        spend: 0, impressions: 0, clicks: 0, reach: 0,
+        actions: [], action_values: [], conversions: 0, conversion_value: 0,
+      })
+    }
+
+    // Fetch all non-deleted ads
+    const adData = await metaGet(`/${externalId}/ads`, accessToken, {
+      fields: 'id,name,adset_id,campaign_id,effective_status',
+      limit: '500',
+    })
+    for (const ad of (adData.data || []) as Record<string, unknown>[]) {
+      const adId   = String(ad.id || '')
+      const status = String(ad.effective_status || '')
+      if (!adId || status === 'DELETED' || status === 'ARCHIVED') continue
+      if (insightAdIds.has(adId)) continue
+      rows.push({
+        campaign_id:   String(ad.campaign_id || ''),
+        campaign_name: '',
+        adset_id:      String(ad.adset_id    || ''),
+        adset_name:    '',
+        ad_id:         adId,
+        ad_name:       String(ad.name || ''),
+        thumbnail_url: '', image_url: '', video_id: '', video_thumb_url: '',
+        creative_body: '', creative_title: '', creative_link_url: '',
+        ad_status:     status,
+        date:          dateTo,
+        spend: 0, impressions: 0, clicks: 0, reach: 0,
+        actions: [], action_values: [], conversions: 0, conversion_value: 0,
+      })
+    }
+  } catch {
+    // best-effort — paused adset/ad stubs are non-critical
+  }
+
   return rows
 }
 

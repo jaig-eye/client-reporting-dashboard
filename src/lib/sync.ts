@@ -22,6 +22,8 @@ import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
+import { fetchDailyTotals } from './connectors/google-search-console'
+import type { GSCDailyTotalRow } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -368,9 +370,20 @@ async function syncGSCInChunks(
     const batch = chunks.slice(i, i + GSC_CHUNK_CONCURRENCY)
     const settled = await Promise.allSettled(
       batch.map(async ({ from: chunkFrom, to: chunkTo }) => {
-        const chunkResult = await adapter.fetchMetrics(
-          connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo
-        )
+        const accessToken = (auth.access_token as string | undefined) ?? ''
+        const siteUrl     = connection.external_id
+
+        // Run dimensional fetch (query+page) and daily totals fetch in parallel
+        const [chunkResult, dailyRows] = await Promise.all([
+          adapter.fetchMetrics(connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo),
+          accessToken
+            ? fetchDailyTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
+                console.error(`[sync] GSC daily totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
+                return [] as GSCDailyTotalRow[]
+              })
+            : Promise.resolve([] as GSCDailyTotalRow[]),
+        ])
+
         let written = 0
         if (chunkResult.rows.length > 0) {
           written = await upsertGSCMetrics(
@@ -378,6 +391,10 @@ async function syncGSCInChunks(
             chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[],
             ignoreDuplicates
           )
+        }
+        if (dailyRows.length > 0) {
+          const dailyWritten = await upsertGSCDailyTotals(db, connection.id, clientId, dailyRows)
+          console.log(`[sync] GSC daily totals chunk ${chunkFrom} → ${chunkTo}: ${dailyWritten} rows`)
         }
         console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
         return written
@@ -1050,6 +1067,38 @@ export async function upsertGSCMetrics(
         ignoreDuplicates,
       })
     if (error) console.error(`[sync] gsc_metrics upsert error (batch ${i}):`, error)
+  }
+  return mapped.length
+}
+
+export async function upsertGSCDailyTotals(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GSCDailyTotalRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id: connectionId,
+    client_id:     clientId,
+    date:          r.date,
+    clicks:        r.clicks,
+    impressions:   r.impressions,
+    ctr:           r.ctr,
+    position:      r.position,
+    synced_at:     new Date().toISOString(),
+  }))
+
+  for (let i = 0; i < mapped.length; i += 500) {
+    const { error } = await db
+      .from('gsc_daily_totals')
+      .upsert(mapped.slice(i, i + 500), {
+        onConflict: 'connection_id,date',
+        ignoreDuplicates: false,
+      })
+    if (error) console.error(`[sync] gsc_daily_totals upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }

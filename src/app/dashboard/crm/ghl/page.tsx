@@ -94,20 +94,26 @@ export default async function GhlCrmPage({
   const priorData = (priorRows ?? []) as GhlRow[]
 
   function sumRows(arr: GhlRow[]) {
-    return arr.reduce((acc, r) => ({
-      contacts:  acc.contacts  + (Number(r.contacts_created)   || 0),
-      calls:     acc.calls     + (Number(r.total_calls)         || 0),
-      missed:    acc.missed    + (Number(r.missed_calls)        || 0),
-      forms:     acc.forms     + (Number(r.forms_submitted)     || 0),
-      reviews:   acc.reviews   + (Number(r.reviews_received)    || 0),
-      spam:      acc.spam      + (Number(r.spam_leads)          || 0),
-      emails:    acc.emails    + (Number(r.emails_sent)         || 0),
-      sms:       acc.sms       + (Number(r.sms_sent)            || 0),
-      newOpps:   acc.newOpps   + (Number(r.new_opportunities)   || 0),
-      wonOpps:   acc.wonOpps   + (Number(r.won_opportunities)   || 0),
-      lostOpps:  acc.lostOpps  + (Number(r.lost_opportunities)  || 0),
-      wonValue:  acc.wonValue  + (Number(r.won_value)           || 0),
-    }), { contacts: 0, calls: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0, newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 })
+    return arr.reduce((acc, r) => {
+      const created = Number(r.contacts_created) || 0
+      const spam    = Number(r.spam_leads)        || 0
+      return {
+        // Exclude spam leads from "New Contacts" — GHL's native report does the same.
+        // spam_leads is still tracked separately for display in the table.
+        contacts:  acc.contacts  + Math.max(0, created - spam),
+        calls:     acc.calls     + (Number(r.total_calls)         || 0),
+        missed:    acc.missed    + (Number(r.missed_calls)        || 0),
+        forms:     acc.forms     + (Number(r.forms_submitted)     || 0),
+        reviews:   acc.reviews   + (Number(r.reviews_received)    || 0),
+        spam:      acc.spam      + spam,
+        emails:    acc.emails    + (Number(r.emails_sent)         || 0),
+        sms:       acc.sms       + (Number(r.sms_sent)            || 0),
+        newOpps:   acc.newOpps   + (Number(r.new_opportunities)   || 0),
+        wonOpps:   acc.wonOpps   + (Number(r.won_opportunities)   || 0),
+        lostOpps:  acc.lostOpps  + (Number(r.lost_opportunities)  || 0),
+        wonValue:  acc.wonValue  + (Number(r.won_value)           || 0),
+      }
+    }, { contacts: 0, calls: 0, missed: 0, forms: 0, reviews: 0, spam: 0, emails: 0, sms: 0, newOpps: 0, wonOpps: 0, lostOpps: 0, wonValue: 0 })
   }
 
   const totals      = sumRows(data)
@@ -165,7 +171,7 @@ export default async function GhlCrmPage({
               <SparkMetricCard
                 label="New Contacts"
                 value={fmtNum(totals.contacts)}
-                sparkData={data.map(r => ({ v: Number(r.contacts_created) || 0 }))}
+                sparkData={data.map(r => ({ v: Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0)) }))}
                 delta={calcDelta(totals.contacts, priorTotals.contacts)}
                 sparkColor="#10b981"
                 delay={0}
@@ -258,7 +264,7 @@ export default async function GhlCrmPage({
                       {[...data].reverse().map(r => (
                         <tr key={r.date}>
                           <td style={{ color: 'var(--text-secondary)' }}>{r.date}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.contacts_created) || 0)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmtNum(Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0)))}</td>
                           <td style={{ textAlign: 'right' }}>{fmtNum(Number(r.total_calls) || 0)}</td>
                           <td style={{ textAlign: 'right', color: r.missed_calls > 0 ? 'var(--amber, #f59e0b)' : undefined }}>
                             {fmtNum(Number(r.missed_calls) || 0)}

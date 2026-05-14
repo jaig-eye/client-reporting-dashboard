@@ -252,11 +252,24 @@ async function fetchConversations(
   const allTypeCounts: Record<string, number> = {}
   const byDate = new Map<string, { totalCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
 
-  for (const conv of all) {
+  // Deduplicate by conversation ID — cursor pagination keyed on lastMessageDate can
+  // return the same conversation on two pages when a message arrives mid-pagination.
+  const convSeen = new Set<string>()
+  const deduped = all.filter(c => {
+    const id = String((c as Record<string, unknown>).id || '')
+    if (!id || convSeen.has(id)) return false
+    convSeen.add(id)
+    return true
+  })
+
+  for (const conv of deduped) {
     const typ = String(conv.type || '').toUpperCase()
     allTypeCounts[typ] = (allTypeCounts[typ] ?? 0) + 1
 
-    const parsed = parseGhlDate(conv.lastMessageDate ?? conv.dateUpdated ?? conv.dateAdded ?? conv.createdAt)
+    // Use dateAdded (when the conversation/call was created) not lastMessageDate
+    // (when the most recent message was sent). lastMessageDate is updated whenever
+    // anyone replies to an old thread, causing old calls to be counted in the current period.
+    const parsed = parseGhlDate(conv.dateAdded ?? conv.createdAt ?? conv.lastMessageDate)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
 
     typeCounts[typ] = (typeCounts[typ] ?? 0) + 1

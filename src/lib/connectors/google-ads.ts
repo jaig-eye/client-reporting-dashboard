@@ -587,6 +587,83 @@ export async function fetchGoogleAdMetrics(
     // asset_group query may fail for accounts with no pMax campaigns — non-fatal
   }
 
+  // Add $0 stub rows for PAUSED ads and PAUSED ad groups with no activity in the window.
+  // The ad_group_ad query with metrics.impressions > 0 omits zero-activity ads/groups.
+  try {
+    const insightAdIds = new Set(adRows.map(r => r.ad_id).filter(Boolean))
+    const insightGroupIds = new Set(adRows.map(r => r.ad_group_id).filter(Boolean))
+
+    // PAUSED ad groups not yet represented in adRows
+    const pausedGroupRaw = await runQuery(
+      externalId, mccId, token,
+      `SELECT campaign.id, campaign.name, ad_group.id, ad_group.name, ad_group.status
+       FROM ad_group
+       WHERE ad_group.status = 'PAUSED'
+         AND campaign.status != 'REMOVED'`,
+      devToken
+    )
+    for (const row of pausedGroupRaw) {
+      const campaign = row.campaign  as Record<string, unknown>
+      const adGroup  = row.adGroup   as Record<string, unknown>
+      const groupId  = String(adGroup?.id || '')
+      if (!groupId || insightGroupIds.has(groupId)) continue
+      insightGroupIds.add(groupId)
+      adRows.push({
+        campaign_id:   String(campaign?.id   || ''),
+        campaign_name: String(campaign?.name || ''),
+        ad_group_id:   groupId,
+        ad_group_name: String(adGroup?.name  || ''),
+        ad_id:         groupId,
+        ad_name:       `[Ad Group] ${String(adGroup?.name || '')}`,
+        ad_type:       'AD_GROUP_PLACEHOLDER',
+        headlines: [], descriptions: [],
+        final_url: null, image_url: null,
+        ad_strength: null,
+        ad_status:   String(adGroup?.status || 'PAUSED'),
+        date:        dateTo,
+        cost_micros: 0, impressions: 0, clicks: 0,
+        conversions: 0, conversions_value: 0, all_conversions_value: 0,
+      })
+    }
+
+    // PAUSED ads not yet represented in adRows
+    const pausedAdRaw = await runQuery(
+      externalId, mccId, token,
+      `SELECT campaign.id, campaign.name, ad_group.id, ad_group.name,
+              ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status
+       FROM ad_group_ad
+       WHERE ad_group_ad.status = 'PAUSED'
+         AND campaign.status != 'REMOVED'`,
+      devToken
+    )
+    for (const row of pausedAdRaw) {
+      const campaign  = row.campaign  as Record<string, unknown>
+      const adGroup   = row.adGroup   as Record<string, unknown>
+      const adGroupAd = row.adGroupAd as Record<string, unknown>
+      const ad        = adGroupAd?.ad as Record<string, unknown> | undefined
+      const adId      = String(ad?.id || '')
+      if (!adId || insightAdIds.has(adId)) continue
+      adRows.push({
+        campaign_id:   String(campaign?.id   || ''),
+        campaign_name: String(campaign?.name || ''),
+        ad_group_id:   String(adGroup?.id    || ''),
+        ad_group_name: String(adGroup?.name  || ''),
+        ad_id:         adId,
+        ad_name:       String(ad?.name       || ''),
+        ad_type:       String(ad?.type       || ''),
+        headlines: [], descriptions: [],
+        final_url: null, image_url: null,
+        ad_strength: null,
+        ad_status:   String(adGroupAd?.status || 'PAUSED'),
+        date:        dateTo,
+        cost_micros: 0, impressions: 0, clicks: 0,
+        conversions: 0, conversions_value: 0, all_conversions_value: 0,
+      })
+    }
+  } catch {
+    // best-effort — paused ad/adgroup stubs are non-critical
+  }
+
   return [...adRows, ...assetGroupRows]
 }
 
