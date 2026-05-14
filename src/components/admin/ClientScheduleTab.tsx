@@ -673,14 +673,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 <col style={{ width: 130 }} />
                 <col />
                 <col style={{ width: 110 }} />
-                <col style={{ width: 110 }} />
                 <col style={{ width: 130 }} />
               </colgroup>
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
                   <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Title</th>
-                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Supporting</th>
                   <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Publish Date</th>
                   <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
                 </tr>
@@ -709,7 +707,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   return [
                     // Date section header row
                     <tr key={`hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)' }}>
-                      <td colSpan={5} style={{ padding: '5px 8px' }}>
+                      <td colSpan={4} style={{ padding: '5px 8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
                             {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
@@ -777,20 +775,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   )}
                                 </div>
                               )}
-                            </td>
-                            <td style={{ padding: '8px', verticalAlign: 'middle' }}>
-                              {t.page_to_support ? (
-                                <a
-                                  href={t.page_to_support}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ fontSize: '0.7rem', color: 'var(--blue)' }}
-                                  onClick={e => e.stopPropagation()}
-                                  title={t.page_to_support}
-                                >
-                                  {truncatePath(t.page_to_support)}
-                                </a>
-                              ) : <span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span>}
                             </td>
                             <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                               {fmtDate(t.target_publish_date)}
@@ -860,7 +844,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           // Expanded detail row
                           isExpanded && (
                             <tr key={`expand-${t.id}`}>
-                              <td colSpan={5} style={{ padding: '0 0 12px 0', background: 'var(--bg-subtle)' }}>
+                              <td colSpan={4} style={{ padding: '0 0 12px 0', background: 'var(--bg-subtle)' }}>
                                 <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   {([
                                     { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
@@ -906,7 +890,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           // Inline edit row
                           isEditing && (
                             <tr key={`edit-${t.id}`}>
-                              <td colSpan={5} style={{ padding: '4px 0 12px 0', background: 'var(--bg-subtle)' }}>
+                              <td colSpan={4} style={{ padding: '4px 0 12px 0', background: 'var(--bg-subtle)' }}>
                                 <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   <input
                                     className="input"
@@ -977,9 +961,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>
                             )}
                           </td>
-                          <td style={{ padding: '8px', verticalAlign: 'middle' }}>
-                            <span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span>
-                          </td>
                           <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                             {fmtDate(p.target_publish_date)}
                           </td>
@@ -1015,7 +996,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 {/* Published section */}
                 {publishedItems.length > 0 && [
                   <tr key="hdr-published" style={{ background: 'var(--bg-subtle)' }}>
-                    <td colSpan={5} style={{ padding: '5px 8px' }}>
+                    <td colSpan={4} style={{ padding: '5px 8px' }}>
                       <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Published</span>
                     </td>
                   </tr>,
@@ -1034,7 +1015,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           </div>
                           {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
                         </td>
-                        <td><span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>—</span></td>
                         <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                           {fmtDate(p.target_publish_date)}
                         </td>
