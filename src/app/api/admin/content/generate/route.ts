@@ -6,6 +6,7 @@ import { parseBody } from '@/lib/apiError'
 import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
+import { generatePostImage } from '@/lib/content/generatePostImage'
 import type { SeoBrief } from '@/lib/content/types'
 
 export const maxDuration = 300
@@ -41,6 +42,7 @@ type AgencySettings = {
   ai_provider:           string | null
   ai_model:              string | null
   ai_api_key:            string
+  openai_api_key:        string | null
   agency_name:           string | null
   notification_email:    string | null
   notify_post_generated: boolean | null
@@ -678,6 +680,13 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
 
+    // Auto-generate featured image in background if key is configured
+    if (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+      waitUntil(
+        generatePostImage(db, savedPost.id, agencySettings.openai_api_key).catch(() => {})
+      )
+    }
+
     // Email + Discord notification
     if (!suppressEmail) {
       const agencyName = agencySettings.agency_name || 'Agency Dashboard'
@@ -750,7 +759,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, discord_bot_token')
+    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, discord_bot_token')
     .single()
 
   if (!agencySettings?.ai_api_key) {
@@ -984,6 +993,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })
     }
     postId = savedPost?.id ?? null
+
+    // Auto-generate featured image in background
+    if (postId && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
+      waitUntil(
+        generatePostImage(db, postId, agencySettings.openai_api_key).catch(() => {})
+      )
+    }
   }
 
   return NextResponse.json({ ...parsed, post_id: postId })

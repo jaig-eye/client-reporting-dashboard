@@ -1,0 +1,182 @@
+// Shared image generation logic — called by the generate-image API route and
+// by the content generate route (auto-gen after post creation).
+
+import { createAdminClient } from '@/lib/supabase/server'
+
+type PostRow = {
+  id:             string
+  client_id:      string
+  image_concept:  string | null
+  seo_title:      string | null
+  title:          string | null
+  target_keyword: string | null
+}
+
+type ClientSettings = {
+  services:          string | null
+  geographic_focus:  string | null
+}
+
+export function buildImagePrompt(post: PostRow, settings: ClientSettings | null): string {
+  const concept  = post.image_concept?.trim()
+  const keyword  = post.target_keyword?.trim()
+  const service  = settings?.services?.split(',')[0]?.trim() ?? 'local service'
+  const location = settings?.geographic_focus?.trim() ?? ''
+
+  const subject = concept || `${keyword ?? 'professional service'} in ${location || 'a local area'}`
+
+  return [
+    `Professional, clean blog header image for a local ${service} business.`,
+    subject + '.',
+    'Natural lighting, photorealistic, no text overlays, no visible people faces.',
+    'Style: modern, trustworthy, high-quality local business photography.',
+    'Wide landscape format.',
+  ].join(' ')
+}
+
+export type ImageGenResult =
+  | { ok: true;  url: string; prompt: string; provider: string }
+  | { ok: false; error: string }
+
+/**
+ * Generate a featured image for a post and write the result back to the DB.
+ * Pass `openaiKey` from agency_settings.openai_api_key (or env fallback).
+ */
+export async function generatePostImage(
+  db: ReturnType<typeof createAdminClient>,
+  postId: string,
+  openaiKey: string | null | undefined,
+): Promise<ImageGenResult> {
+  const [postRes, settingsRes] = await Promise.all([
+    db.from('content_posts')
+      .select('id, client_id, image_concept, seo_title, title, target_keyword')
+      .eq('id', postId)
+      .single(),
+    db.from('content_posts')
+      .select('client_id')
+      .eq('id', postId)
+      .single(),
+  ])
+
+  if (postRes.error || !postRes.data)
+    return { ok: false, error: 'Post not found' }
+
+  const post = postRes.data as PostRow
+
+  const { data: clientSettings } = await db
+    .from('content_settings')
+    .select('services, geographic_focus')
+    .eq('client_id', post.client_id)
+    .maybeSingle()
+
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null)
+
+  const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
+  let imageUrl: string | null = null
+  let usedProvider = ''
+  let lastError = ''
+
+  // ── DALL-E 3 ────────────────────────────────────────────────────────────────
+  if (effectiveKey) {
+    try {
+      const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${effectiveKey}`,
+        },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt,
+          n: 1,
+          size: '1792x1024',
+          quality: 'standard',
+          style: 'natural',
+        }),
+      })
+      if (dalleRes.ok) {
+        const data = await dalleRes.json() as { data?: { url?: string }[] }
+        imageUrl = data.data?.[0]?.url ?? null
+        if (imageUrl) usedProvider = 'dalle3'
+      } else {
+        const errData = await dalleRes.json().catch(() => ({})) as { error?: { message?: string } }
+        lastError = `DALL-E error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
+      }
+    } catch (e) {
+      lastError = `DALL-E request failed: ${e instanceof Error ? e.message : String(e)}`
+    }
+  } else {
+    lastError = 'No OpenAI API key configured — add it in Agency Settings → AI → Image Generation'
+  }
+
+  // ── Gemini Imagen 3 fallback ────────────────────────────────────────────────
+  if (!imageUrl && process.env.GEMINI_API_KEY) {
+    try {
+      const gemRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instances: [{ prompt }],
+            parameters: { sampleCount: 1, aspectRatio: '16:9' },
+          }),
+        }
+      )
+      if (gemRes.ok) {
+        const gemData = await gemRes.json() as { predictions?: { bytesBase64Encoded?: string }[] }
+        const b64 = gemData.predictions?.[0]?.bytesBase64Encoded
+        if (b64) {
+          const buffer   = Buffer.from(b64, 'base64')
+          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const { error: upErr } = await db.storage
+            .from('uploads')
+            .upload(filename, buffer, { contentType: 'image/png', upsert: true })
+          if (!upErr) {
+            const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
+            imageUrl = publicUrl
+            usedProvider = 'gemini'
+          }
+        }
+      } else {
+        const errData = await gemRes.json().catch(() => ({})) as { error?: { message?: string } }
+        lastError = `Gemini error (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`
+      }
+    } catch (e) {
+      lastError = `Gemini request failed: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+
+  if (!imageUrl)
+    return { ok: false, error: lastError || 'Image generation failed — configure an API key in Agency Settings → AI → Image Generation' }
+
+  // ── Download DALL-E temp URL and re-upload to Supabase ───────────────────────
+  let finalUrl = imageUrl
+  if (usedProvider === 'dalle3') {
+    try {
+      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
+      if (imgRes.ok) {
+        const buffer   = Buffer.from(await imgRes.arrayBuffer())
+        const filename = `content-images/${post.client_id}/${postId}-ai.png`
+        const { error: upErr } = await db.storage
+          .from('uploads')
+          .upload(filename, buffer, { contentType: 'image/png', upsert: true })
+        if (!upErr) {
+          const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
+          finalUrl = publicUrl
+        }
+      }
+    } catch {
+      // keep temp URL — will expire but better than nothing
+    }
+  }
+
+  await db.from('content_posts').update({
+    featured_image_url:     finalUrl,
+    featured_image_prompt:  prompt,
+    featured_image_source:  'ai_generated',
+    image_generation_error: null,
+  }).eq('id', postId)
+
+  return { ok: true, url: finalUrl, prompt, provider: usedProvider }
+}
