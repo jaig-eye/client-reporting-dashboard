@@ -40,6 +40,7 @@ interface LedgerEntry {
   id:              string
   client_id:       string
   date_of_payment: string
+  invoice_date:    string | null
   amount_af:       number
   split_override:  number | null
   invoice_id:      string | null
@@ -160,13 +161,16 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
     case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
     case 'afBalance': {
-      const projectedBalance = row.afBalance + (row.pendingAch ?? 0)
+      const pendingAch       = row.pendingAch ?? 0
+      const projectedBalance = row.afBalance + pendingAch
       return (
         <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
           {fmt$(row.afBalance)}
-          {(row.pendingAch ?? 0) > 0 && (
-            <div style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-faint)', marginTop: 1 }}>
-              ({fmt$(projectedBalance)} if ACH clears)
+          {pendingAch > 0 && (
+            <div style={{ fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>
+              <span style={{ color: '#16a34a' }}>+{fmt$(pendingAch)}</span> ACH pending
+              <br />
+              <span style={{ color: projectedBalance >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 500 }}>{fmt$(projectedBalance)}</span> projected
             </div>
           )}
         </td>
@@ -876,7 +880,8 @@ export default function AdFuelPage() {
                         onChange={toggleSelectAll}
                       />
                     </th>
-                    <th>Date</th>
+                    <th>Payment Date</th>
+                    <th>Invoice Date</th>
                     <th style={{ textAlign: 'left' }}>Client</th>
                     <th>Amount (Ad Fuel)</th>
                     <th>Split Override</th>
@@ -889,7 +894,7 @@ export default function AdFuelPage() {
                 </thead>
                 <tbody>
                   {ledger.length === 0 && (
-                    <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No ledger entries yet.</td></tr>
+                    <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No ledger entries yet.</td></tr>
                   )}
                   {ledger.map(e => {
                     const client  = rows.find(r => r.clientId === e.client_id)
@@ -900,6 +905,9 @@ export default function AdFuelPage() {
                           <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{e.date_of_payment}</td>
+                        <td style={{ whiteSpace: 'nowrap', color: e.invoice_date && e.invoice_date !== e.date_of_payment ? 'var(--text-muted)' : 'var(--text-faint)', fontSize: '0.8rem' }}>
+                          {e.invoice_date ?? '—'}
+                        </td>
                         <td style={{ fontWeight: 600 }}>{client?.clientName ?? e.client_id.slice(0, 8)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600, color: e.amount_af >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(e.amount_af)}</td>
                         <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{e.split_override != null ? fmtPct(e.split_override) : '—'}</td>

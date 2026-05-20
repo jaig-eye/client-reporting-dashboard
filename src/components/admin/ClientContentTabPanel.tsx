@@ -236,7 +236,7 @@ function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
           {(aiProvider || aiModel) && (
             <span>Model: <span style={{ color: 'var(--text-muted)' }}>{[aiProvider, aiModel].filter(Boolean).join(' / ')}</span></span>
           )}
-          {s?.publish_time && (
+          {s?.publish_time != null && (
             <span>Publish time: <span style={{ color: 'var(--text-muted)' }}>{String(s.publish_time)}</span></span>
           )}
           <span>Auto-generate: <span style={{ color: s?.auto_generate ? 'var(--green)' : 'var(--text-muted)' }}>{s?.auto_generate ? 'On' : 'Off'}</span></span>

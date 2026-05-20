@@ -65,11 +65,19 @@ export async function POST(req: NextRequest) {
 
     // Single ad fuel line on invoice → One-Time; bundled with other products → MRR
     const isRecurring = fullInvoice.lines.data.length > 1
-    const dateOfPayment = new Date(fullInvoice.created * 1000).toISOString().split('T')[0]
+
+    // Use the actual payment cleared timestamp (paid_at) as the ledger date so ACH
+    // payments sort by when the bank confirmed the transfer, not when the invoice was created.
+    const paidAt = (fullInvoice as unknown as { status_transitions?: { paid_at?: number | null } }).status_transitions?.paid_at
+    const dateOfPayment = paidAt
+      ? new Date(paidAt * 1000).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0]
+    const invoiceDate = new Date(fullInvoice.created * 1000).toISOString().split('T')[0]
 
     await db.from('ad_fuel_ledger').insert({
       client_id:       client.id,
       date_of_payment: dateOfPayment,
+      invoice_date:    invoiceDate,
       amount_af:       line.amount / 100,
       invoice_id:      fullInvoice.id,
       type:            isRecurring ? 'MRR' : 'One-Time',
