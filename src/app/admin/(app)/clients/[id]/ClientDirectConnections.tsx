@@ -1,192 +1,223 @@
 'use client'
 
 import { useState } from 'react'
+import IntegrationCard from '@/components/admin/IntegrationCard'
+import IntegrationModal from '@/components/admin/IntegrationModal'
 
 type ConnType = 'ghl' | 'wordpress' | 'bigcommerce'
-
-interface FormState {
-  ghl:          { apiKey: string; locationId: string }
-  wordpress:    { siteUrl: string; username: string; appPassword: string }
-  bigcommerce:  { storeHash: string; accessToken: string }
-}
 
 export default function ClientDirectConnections({
   clientId,
   existingTypes,
   singleType,
 }: {
-  clientId: string
+  clientId:      string
   existingTypes: ConnType[]
-  singleType?: ConnType
+  singleType?:   ConnType
 }) {
-  const [form, setForm] = useState<FormState>({
-    ghl:         { apiKey: '', locationId: '' },
-    wordpress:   { siteUrl: '', username: '', appPassword: '' },
-    bigcommerce: { storeHash: '', accessToken: '' },
-  })
-  const [saving,  setSaving]  = useState<Partial<Record<ConnType, boolean>>>({})
-  const [saved,   setSaved]   = useState<Partial<Record<ConnType, boolean>>>({})
-  const [errors,  setErrors]  = useState<Partial<Record<ConnType, string>>>({})
+  // ── GHL ────────────────────────────────────────────────────────────────
+  const [ghlOpen,      setGhlOpen]      = useState(false)
+  const [ghlApiKey,    setGhlApiKey]    = useState('')
+  const [ghlLocId,     setGhlLocId]     = useState('')
+  const [ghlConnected, setGhlConnected] = useState(existingTypes.includes('ghl'))
+  const [ghlJustSaved, setGhlJustSaved] = useState(false)
 
-  function setGhl<K extends keyof FormState['ghl']>(key: K, val: string) {
-    setForm(f => ({ ...f, ghl: { ...f.ghl, [key]: val } }))
-  }
-  function setWp<K extends keyof FormState['wordpress']>(key: K, val: string) {
-    setForm(f => ({ ...f, wordpress: { ...f.wordpress, [key]: val } }))
-  }
-  function setBc<K extends keyof FormState['bigcommerce']>(key: K, val: string) {
-    setForm(f => ({ ...f, bigcommerce: { ...f.bigcommerce, [key]: val } }))
+  // ── WordPress ──────────────────────────────────────────────────────────
+  const [wpOpen,      setWpOpen]      = useState(false)
+  const [wpSiteUrl,   setWpSiteUrl]   = useState('')
+  const [wpUsername,  setWpUsername]  = useState('')
+  const [wpPassword,  setWpPassword]  = useState('')
+  const [wpConnected, setWpConnected] = useState(existingTypes.includes('wordpress'))
+  const [wpJustSaved, setWpJustSaved] = useState(false)
+
+  // ── BigCommerce ────────────────────────────────────────────────────────
+  const [bcOpen,       setBcOpen]       = useState(false)
+  const [bcStoreHash,  setBcStoreHash]  = useState('')
+  const [bcToken,      setBcToken]      = useState('')
+  const [bcConnected,  setBcConnected]  = useState(existingTypes.includes('bigcommerce'))
+  const [bcJustSaved,  setBcJustSaved]  = useState(false)
+
+  async function connect(type: ConnType, body: Record<string, string>) {
+    const res = await fetch(`/api/admin/clients/${clientId}/direct-connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, ...body }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Failed to connect')
   }
 
-  async function handleSubmit(type: ConnType) {
-    setSaving(s => ({ ...s, [type]: true }))
-    setErrors(e => ({ ...e, [type]: '' }))
-    try {
-      let body: Record<string, string>
-      if (type === 'ghl') {
-        body = { type: 'ghl', apiKey: form.ghl.apiKey, locationId: form.ghl.locationId }
-      } else if (type === 'wordpress') {
-        body = { type: 'wordpress', siteUrl: form.wordpress.siteUrl, username: form.wordpress.username, appPassword: form.wordpress.appPassword }
-      } else {
-        body = { type: 'bigcommerce', storeHash: form.bigcommerce.storeHash, accessToken: form.bigcommerce.accessToken }
-      }
-      const res = await fetch(`/api/admin/clients/${clientId}/direct-connections`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to connect')
-      setSaved(s => ({ ...s, [type]: true }))
-      setTimeout(() => setSaved(s => ({ ...s, [type]: false })), 3000)
-      if (type === 'ghl')         setForm(f => ({ ...f, ghl:         { apiKey: '', locationId: '' } }))
-      else if (type === 'wordpress')   setForm(f => ({ ...f, wordpress:   { siteUrl: '', username: '', appPassword: '' } }))
-      else                             setForm(f => ({ ...f, bigcommerce: { storeHash: '', accessToken: '' } }))
-    } catch (err) {
-      setErrors(e => ({ ...e, [type]: err instanceof Error ? err.message : 'Something went wrong' }))
-    } finally {
-      setSaving(s => ({ ...s, [type]: false }))
+  function flashSaved(set: (v: boolean) => void) {
+    set(true); setTimeout(() => set(false), 2000)
+  }
+
+  // ── singleType inline mode (used from parent connector card) ───────────
+  if (singleType) {
+    if (singleType === 'ghl') {
+      if (ghlConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p>
+      return (
+        <>
+          <IntegrationCard icon="📡" name="GoHighLevel" description="Connect CRM, contacts, calls, and pipeline data." isConnected={false} onConfigure={() => setGhlOpen(true)} justConnected={ghlJustSaved} />
+          {ghlOpen && <GhlModal open={ghlOpen} onClose={() => setGhlOpen(false)} apiKey={ghlApiKey} setApiKey={setGhlApiKey} locId={ghlLocId} setLocId={setGhlLocId} onSave={async () => { await connect('ghl', { apiKey: ghlApiKey, locationId: ghlLocId }); setGhlConnected(true) }} onSaved={() => flashSaved(setGhlJustSaved)} />}
+        </>
+      )
+    }
+    if (singleType === 'wordpress') {
+      if (wpConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p>
+      return (
+        <>
+          <IntegrationCard icon="🟦" name="WordPress" description="Post content directly to the client's WordPress site." isConnected={false} onConfigure={() => setWpOpen(true)} justConnected={wpJustSaved} />
+          {wpOpen && <WpModal open={wpOpen} onClose={() => setWpOpen(false)} siteUrl={wpSiteUrl} setSiteUrl={setWpSiteUrl} username={wpUsername} setUsername={setWpUsername} password={wpPassword} setPassword={setWpPassword} onSave={async () => { await connect('wordpress', { siteUrl: wpSiteUrl, username: wpUsername, appPassword: wpPassword }); setWpConnected(true) }} onSaved={() => flashSaved(setWpJustSaved)} />}
+        </>
+      )
+    }
+    if (singleType === 'bigcommerce') {
+      if (bcConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p>
+      return (
+        <>
+          <IntegrationCard icon="🛒" name="BigCommerce" description="Sync store data and publish content to BigCommerce." isConnected={false} onConfigure={() => setBcOpen(true)} justConnected={bcJustSaved} />
+          {bcOpen && <BcModal open={bcOpen} onClose={() => setBcOpen(false)} storeHash={bcStoreHash} setStoreHash={setBcStoreHash} token={bcToken} setToken={setBcToken} onSave={async () => { await connect('bigcommerce', { storeHash: bcStoreHash, accessToken: bcToken }); setBcConnected(true) }} onSaved={() => flashSaved(setBcJustSaved)} />}
+        </>
+      )
     }
   }
 
-  const isGhlConnected = existingTypes.includes('ghl')
-  const isWpConnected  = existingTypes.includes('wordpress')
-  const isBcConnected  = existingTypes.includes('bigcommerce')
-
-  // ── GHL form ──────────────────────────────────────────────────────────────
-  const ghlForm = (
-    <div className="space-y-3">
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>API Key</label>
-        <input className="input" type="password" value={form.ghl.apiKey} onChange={e => setGhl('apiKey', e.target.value)} placeholder="ghl_xxxxxxxxxxxxxxxx" />
-      </div>
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Location ID</label>
-        <input className="input" value={form.ghl.locationId} onChange={e => setGhl('locationId', e.target.value)} placeholder="Location / Sub-account ID" />
-      </div>
-      <div className="flex items-center gap-2">
-        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.ghl || !form.ghl.apiKey || !form.ghl.locationId} onClick={() => handleSubmit('ghl')}>
-          {saving.ghl ? 'Connecting…' : 'Connect GHL'}
-        </button>
-        {saved.ghl  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
-        {errors.ghl && <span className="text-xs" style={{ color: 'var(--red)' }}>{errors.ghl}</span>}
-      </div>
-    </div>
-  )
-
-  // ── WordPress form ─────────────────────────────────────────────────────────
-  const wpForm = (
-    <div className="space-y-3">
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Site URL</label>
-        <input className="input" value={form.wordpress.siteUrl} onChange={e => setWp('siteUrl', e.target.value)} placeholder="https://yourclient.com" />
-      </div>
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Username</label>
-        <input className="input" value={form.wordpress.username} onChange={e => setWp('username', e.target.value)} placeholder="WordPress username" />
-      </div>
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Application Password</label>
-        <input className="input" type="password" value={form.wordpress.appPassword} onChange={e => setWp('appPassword', e.target.value)} placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Generate in WordPress → Users → Your Profile → Application Passwords</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.wordpress || !form.wordpress.siteUrl || !form.wordpress.username || !form.wordpress.appPassword} onClick={() => handleSubmit('wordpress')}>
-          {saving.wordpress ? 'Connecting…' : 'Connect WordPress'}
-        </button>
-        {saved.wordpress  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
-        {errors.wordpress && <span className="text-xs" style={{ color: 'var(--red)' }}>{errors.wordpress}</span>}
-      </div>
-    </div>
-  )
-
-  // ── BigCommerce form ───────────────────────────────────────────────────────
-  const bcForm = (
-    <div className="space-y-3">
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Store Hash</label>
-        <input className="input" value={form.bigcommerce.storeHash} onChange={e => setBc('storeHash', e.target.value)} placeholder="abc123xyz" />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Found in your BigCommerce store URL: store-<strong>abc123</strong>.mybigcommerce.com</p>
-      </div>
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>API Access Token</label>
-        <input className="input" type="password" value={form.bigcommerce.accessToken} onChange={e => setBc('accessToken', e.target.value)} placeholder="Access token from API Accounts" />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Generate in BigCommerce → Settings → API Accounts → Create API Account</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }} disabled={saving.bigcommerce || !form.bigcommerce.storeHash || !form.bigcommerce.accessToken} onClick={() => handleSubmit('bigcommerce')}>
-          {saving.bigcommerce ? 'Connecting…' : 'Connect BigCommerce'}
-        </button>
-        {saved.bigcommerce  && <span className="text-xs" style={{ color: 'var(--green)' }}>Connected ✓</span>}
-        {errors.bigcommerce && <span className="text-xs" style={{ color: 'var(--red)' }}>{errors.bigcommerce}</span>}
-      </div>
-    </div>
-  )
-
-  // ── Inline mode: render just the form for the requested type ──────────────
-  if (singleType === 'ghl') {
-    return isGhlConnected
-      ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p>
-      : ghlForm
-  }
-  if (singleType === 'wordpress') {
-    return isWpConnected
-      ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p>
-      : wpForm
-  }
-  if (singleType === 'bigcommerce') {
-    return isBcConnected
-      ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p>
-      : bcForm
-  }
-
-  // ── Standalone card mode (all types side by side) ─────────────────────────
+  // ── Standalone card mode (all three) ──────────────────────────────────
   return (
-    <div className="space-y-4">
-      <div className="card p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: '#fff0e6', border: '1px solid #f97316', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: '#ea580c' }}>GHL</div>
-          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>GoHighLevel</h3>
-          {isGhlConnected && <span className="badge badge-green">Connected</span>}
-        </div>
-        {isGhlConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p> : ghlForm}
-      </div>
-      <div className="card p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: '#f0f9ff', border: '1px solid #0ea5e9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: '#0369a1' }}>WP</div>
-          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>WordPress</h3>
-          {isWpConnected && <span className="badge badge-green">Connected</span>}
-        </div>
-        {isWpConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p> : wpForm}
-      </div>
-      <div className="card p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: '#f5f3ff', border: '1px solid #6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: '#4338ca' }}>BC</div>
-          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>BigCommerce</h3>
-          {isBcConnected && <span className="badge badge-green">Connected</span>}
-        </div>
-        {isBcConnected ? <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p> : bcForm}
-      </div>
+    <div className="space-y-3">
+      <IntegrationCard
+        icon="📡" name="GoHighLevel (CRM)"
+        description="CRM contacts, calls, forms, and pipeline opportunities."
+        isConnected={ghlConnected}
+        onConfigure={() => setGhlOpen(true)}
+        justConnected={ghlJustSaved}
+      />
+      <GhlModal open={ghlOpen} onClose={() => setGhlOpen(false)} apiKey={ghlApiKey} setApiKey={setGhlApiKey} locId={ghlLocId} setLocId={setGhlLocId} isConnected={ghlConnected}
+        onSave={async () => { await connect('ghl', { apiKey: ghlApiKey, locationId: ghlLocId }); setGhlConnected(true) }} onSaved={() => flashSaved(setGhlJustSaved)} />
+
+      <IntegrationCard
+        icon="🟦" name="WordPress"
+        description="Publish blog posts directly to the client's WordPress site."
+        isConnected={wpConnected}
+        onConfigure={() => setWpOpen(true)}
+        justConnected={wpJustSaved}
+      />
+      <WpModal open={wpOpen} onClose={() => setWpOpen(false)} siteUrl={wpSiteUrl} setSiteUrl={setWpSiteUrl} username={wpUsername} setUsername={setWpUsername} password={wpPassword} setPassword={setWpPassword} isConnected={wpConnected}
+        onSave={async () => { await connect('wordpress', { siteUrl: wpSiteUrl, username: wpUsername, appPassword: wpPassword }); setWpConnected(true) }} onSaved={() => flashSaved(setWpJustSaved)} />
+
+      <IntegrationCard
+        icon="🛒" name="BigCommerce"
+        description="Sync store analytics and publish content to BigCommerce."
+        isConnected={bcConnected}
+        onConfigure={() => setBcOpen(true)}
+        justConnected={bcJustSaved}
+      />
+      <BcModal open={bcOpen} onClose={() => setBcOpen(false)} storeHash={bcStoreHash} setStoreHash={setBcStoreHash} token={bcToken} setToken={setBcToken} isConnected={bcConnected}
+        onSave={async () => { await connect('bigcommerce', { storeHash: bcStoreHash, accessToken: bcToken }); setBcConnected(true) }} onSaved={() => flashSaved(setBcJustSaved)} />
     </div>
+  )
+}
+
+// ── GHL Modal ───────────────────────────────────────────────────────────────
+function GhlModal({ open, onClose, apiKey, setApiKey, locId, setLocId, isConnected, onSave, onSaved }: {
+  open: boolean; onClose: () => void; apiKey: string; setApiKey: (v: string) => void
+  locId: string; setLocId: (v: string) => void; isConnected?: boolean
+  onSave: () => Promise<void>; onSaved?: () => void
+}) {
+  return (
+    <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
+      title="GoHighLevel (CRM)" icon="📡" isConnected={isConnected}
+      saveLabel={isConnected ? 'Reconnect' : 'Connect GHL'}
+      howTo={
+        <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+          <li><strong>Location ID:</strong> In your LaunchLocal / GHL dashboard, the Location ID is in the URL — look for <code>/location/XXXXXXXX</code> and copy that segment.</li>
+          <li><strong>API Key:</strong> Inside the sub-account go to <strong>Settings → Integrations → Private Integrations</strong>, create a new key. Required scopes: <em>Contacts, Conversations, Opportunities, Calendars</em>.</li>
+          <li>Paste both values below and click Connect.</li>
+        </ol>
+      }
+      onSave={onSave}
+    >
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Key</label>
+        <input className="input" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+          placeholder="ghl_xxxxxxxxxxxxxxxx" style={{ width: '100%' }} />
+      </div>
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Location ID</label>
+        <input className="input" value={locId} onChange={e => setLocId(e.target.value)}
+          placeholder="Location / Sub-account ID" style={{ width: '100%' }} />
+      </div>
+    </IntegrationModal>
+  )
+}
+
+// ── WordPress Modal ─────────────────────────────────────────────────────────
+function WpModal({ open, onClose, siteUrl, setSiteUrl, username, setUsername, password, setPassword, isConnected, onSave, onSaved }: {
+  open: boolean; onClose: () => void; siteUrl: string; setSiteUrl: (v: string) => void
+  username: string; setUsername: (v: string) => void; password: string; setPassword: (v: string) => void
+  isConnected?: boolean; onSave: () => Promise<void>; onSaved?: () => void
+}) {
+  return (
+    <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
+      title="WordPress" icon="🟦" isConnected={isConnected}
+      saveLabel={isConnected ? 'Reconnect' : 'Connect WordPress'}
+      howTo={
+        <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+          <li>Log into your WordPress admin panel.</li>
+          <li>Go to <strong>Users → Your Profile</strong> and scroll to the <strong>Application Passwords</strong> section.</li>
+          <li>Enter a name (e.g. "LaunchLocal") and click <strong>Add New Application Password</strong>.</li>
+          <li>Copy the generated password (it appears once) — it looks like <code>xxxx xxxx xxxx xxxx</code>.</li>
+          <li>Paste your site URL, WordPress username, and application password below.</li>
+        </ol>
+      }
+      onSave={onSave}
+    >
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Site URL</label>
+        <input className="input" value={siteUrl} onChange={e => setSiteUrl(e.target.value)}
+          placeholder="https://yourclient.com" style={{ width: '100%' }} />
+      </div>
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Username</label>
+        <input className="input" value={username} onChange={e => setUsername(e.target.value)}
+          placeholder="WordPress username" style={{ width: '100%' }} />
+      </div>
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Application Password</label>
+        <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)}
+          placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" style={{ width: '100%' }} />
+      </div>
+    </IntegrationModal>
+  )
+}
+
+// ── BigCommerce Modal ───────────────────────────────────────────────────────
+function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isConnected, onSave, onSaved }: {
+  open: boolean; onClose: () => void; storeHash: string; setStoreHash: (v: string) => void
+  token: string; setToken: (v: string) => void; isConnected?: boolean
+  onSave: () => Promise<void>; onSaved?: () => void
+}) {
+  return (
+    <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
+      title="BigCommerce" icon="🛒" isConnected={isConnected}
+      saveLabel={isConnected ? 'Reconnect' : 'Connect BigCommerce'}
+      howTo={
+        <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+          <li><strong>Store Hash:</strong> Find it in your BigCommerce store URL — it looks like <code>store-<strong>abc123</strong>.mybigcommerce.com</code>. Copy the bold portion.</li>
+          <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Enable read scopes for Orders, Products, and Customers. Copy the Access Token from the credential sheet (save it — it only shows once).</li>
+        </ol>
+      }
+      onSave={onSave}
+    >
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Store Hash</label>
+        <input className="input" value={storeHash} onChange={e => setStoreHash(e.target.value)}
+          placeholder="abc123xyz" style={{ width: '100%' }} />
+      </div>
+      <div>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Access Token</label>
+        <input className="input" type="password" value={token} onChange={e => setToken(e.target.value)}
+          placeholder="Access token from API Accounts" style={{ width: '100%' }} />
+      </div>
+    </IntegrationModal>
   )
 }

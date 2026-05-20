@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
   type DayRow   = { client_id: string; date: string; spend: number }
   type LedgerRow = { client_id: string; date_of_payment: string; amount_af: number; split_override: number | null }
   type ConnRow  = { client_id: string; connector: { type: string; external_id: string } | null; config: Record<string, unknown> | null }
-  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; historic_bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null; ad_fuel_alert_threshold: number | null; auto_pause_ads: boolean | null; auto_resume_ads: boolean | null; campaigns_paused_at: string | null }
+  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; bill_day: number | null; historic_bill_day: number | null; monthly_budget: number | null; discord_channel_id: string | null; ad_fuel_alert_threshold: number | null; ad_fuel_alert_muted: boolean | null; auto_pause_ads: boolean | null; auto_resume_ads: boolean | null; campaigns_paused_at: string | null }
 
   let gFilterMap: Record<string, number> = {}
   let mFilterMap: Record<string, number> = {}
@@ -288,9 +288,10 @@ export async function GET(request: NextRequest) {
       afSinceBill,
       avgDailyAf,
       pace,
-      autoPauseAds:      client.auto_pause_ads      ?? false,
-      autoResumeAds:     client.auto_resume_ads     ?? false,
-      campaignsPausedAt: client.campaigns_paused_at ?? null,
+      adFuelAlertMuted:  client.ad_fuel_alert_muted  ?? false,
+      autoPauseAds:      client.auto_pause_ads       ?? false,
+      autoResumeAds:     client.auto_resume_ads      ?? false,
+      campaignsPausedAt: client.campaigns_paused_at  ?? null,
     }
   })
 

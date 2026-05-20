@@ -79,7 +79,9 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .not('discovered_actions', 'is', null)
       .limit(200),
-    db.rpc('get_client_data_coverage', { p_client_id: id }).then(r => r.error ? { data: [] } : r),
+    activeTab === 'advanced'
+      ? db.rpc('get_client_data_coverage', { p_client_id: id }).then(r => r.error ? { data: [] } : r)
+      : Promise.resolve({ data: [] }),
     db.from('ad_pause_log').select('*').eq('client_id', id).order('created_at', { ascending: false }).limit(20),
   ])
 

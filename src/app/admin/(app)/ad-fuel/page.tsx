@@ -30,6 +30,7 @@ interface DashRow {
   afSinceBill:           number | null
   avgDailyAf:            number | null
   pace:                  string
+  adFuelAlertMuted:      boolean
   autoPauseAds:          boolean
   autoResumeAds:         boolean
   campaignsPausedAt:     string | null
@@ -48,6 +49,7 @@ interface LedgerEntry {
   note:            string | null
   created_by:      string | null
   created_at:      string
+  ach_status:      string | null
 }
 
 interface ColConfig {
@@ -334,7 +336,7 @@ export default function AdFuelPage() {
 
   // Client edit modal (bill day + budget)
   const [clientEditModal, setClientEditModal] = useState<DashRow | null>(null)
-  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '', autoPauseAds: false, autoResumeAds: false })
+  const [clientEditForm,  setClientEditForm]  = useState({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '', adFuelAlertMuted: false, autoPauseAds: false, autoResumeAds: false })
   const [clientEditSaving, setClientEditSaving] = useState(false)
   const [clientEditError,  setClientEditError]  = useState('')
 
@@ -345,6 +347,7 @@ export default function AdFuelPage() {
       historicBillDay:      String(row.historicBillDay ?? ''),
       monthlyBudget:        String(row.monthlyBudget ?? ''),
       adFuelAlertThreshold: row.adFuelAlertThreshold != null ? String(row.adFuelAlertThreshold) : '',
+      adFuelAlertMuted:     row.adFuelAlertMuted,
       autoPauseAds:         row.autoPauseAds,
       autoResumeAds:        row.autoResumeAds,
     })
@@ -360,6 +363,7 @@ export default function AdFuelPage() {
       historic_bill_day:       clientEditForm.historicBillDay      === '' ? null : parseInt(clientEditForm.historicBillDay),
       monthly_budget:          clientEditForm.monthlyBudget        === '' ? null : parseFloat(clientEditForm.monthlyBudget),
       ad_fuel_alert_threshold: clientEditForm.adFuelAlertThreshold === '' ? null : parseFloat(clientEditForm.adFuelAlertThreshold),
+      ad_fuel_alert_muted:     clientEditForm.adFuelAlertMuted,
       auto_pause_ads:          clientEditForm.autoPauseAds,
       auto_resume_ads:         clientEditForm.autoResumeAds,
     }
@@ -913,6 +917,16 @@ export default function AdFuelPage() {
                         <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{e.split_override != null ? fmtPct(e.split_override) : '—'}</td>
                         <td style={{ color: 'var(--text-muted)' }}>{e.invoice_id ?? '—'}</td>
                         <td>
+                          {e.ach_status === 'pending' && (
+                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fef3c7', color: '#92400e', marginRight: 3 }}>
+                              ACH Pending
+                            </span>
+                          )}
+                          {e.ach_status === 'cleared' && (
+                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#166534', marginRight: 3 }}>
+                              ACH Cleared
+                            </span>
+                          )}
                           {e.type && (
                             <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>
                               {e.type}
@@ -1175,6 +1189,22 @@ export default function AdFuelPage() {
                     className="input" style={{ width: '100%' }}
                   />
                 </div>
+              </div>
+
+              {/* ── Alert Mute ──────────────────────────────────────── */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.875rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={clientEditForm.adFuelAlertMuted}
+                    onChange={e => setClientEditForm(f => ({ ...f, adFuelAlertMuted: e.target.checked }))}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.8125rem' }}>
+                    Mute low-balance Discord alerts
+                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>No alerts will be sent for this client regardless of balance</span>
+                  </span>
+                </label>
               </div>
 
               {/* ── Auto-Pause Settings ─────────────────────────────── */}

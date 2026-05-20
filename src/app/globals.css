@@ -600,4 +600,26 @@
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 1rem;
   }
+
+  /* ── Integration modal / card animations ───────────────────────────────── */
+  @keyframes circle-scale {
+    from { transform: scale(0.5); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
+  }
+  @keyframes checkmark-draw {
+    from { stroke-dashoffset: 36; }
+    to   { stroke-dashoffset: 0;  }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes badge-pop {
+    0%   { transform: scale(1);    }
+    40%  { transform: scale(1.25); }
+    70%  { transform: scale(0.95); }
+    100% { transform: scale(1);    }
+  }
+  .integration-badge-pop {
+    animation: badge-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards;
+  }
 }

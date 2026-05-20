@@ -27,11 +27,11 @@ export async function GET(request: NextRequest) {
 
   type SumRow    = { client_id: string; spend: number }
   type LedgerRow = { client_id: string; amount_af: number; split_override: number | null; date_of_payment: string }
-  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; historic_bill_day: number | null; discord_channel_id: string | null; ad_fuel_alert_threshold: number | null; last_fuel_alert_at: string | null; last_fuel_alert_balance: number | null }
+  type ClientRow = { id: string; name: string; ad_fuel_cut: number | null; historic_bill_day: number | null; discord_channel_id: string | null; ad_fuel_alert_threshold: number | null; ad_fuel_alert_muted: boolean | null; last_fuel_alert_at: string | null; last_fuel_alert_balance: number | null }
 
   // Round 2: remaining queries using correct cutoffDate
   const [clientsRes, ledgerRes, gSpendRes, mSpendRes] = await Promise.all([
-    db.from('clients').select('id, name, ad_fuel_cut, historic_bill_day, discord_channel_id, ad_fuel_alert_threshold, last_fuel_alert_at, last_fuel_alert_balance').not('discord_channel_id', 'is', null),
+    db.from('clients').select('id, name, ad_fuel_cut, historic_bill_day, discord_channel_id, ad_fuel_alert_threshold, ad_fuel_alert_muted, last_fuel_alert_at, last_fuel_alert_balance').not('discord_channel_id', 'is', null),
     db.from('ad_fuel_ledger').select('client_id, amount_af, split_override, date_of_payment'),
     db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }),
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
@@ -91,6 +91,7 @@ export async function GET(request: NextRequest) {
 
   for (const client of clients) {
     if (!client.discord_channel_id) continue
+    if (client.ad_fuel_alert_muted) continue
 
     const cut   = client.ad_fuel_cut ?? agencyCut
     const split = 1 - cut

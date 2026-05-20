@@ -1,4 +1,4 @@
-// GET    /api/admin/ad-fuel/ledger?client_id=...  — list entries
+﻿// GET    /api/admin/ad-fuel/ledger?client_id=...  — list entries
 // POST   /api/admin/ad-fuel/ledger                — add entry
 // DELETE /api/admin/ad-fuel/ledger  body: { ids: string[] } — bulk delete
 // Single-entry delete is handled by [id]/route.ts
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
   let query = db
     .from('ad_fuel_ledger')
-    .select('id, client_id, date_of_payment, invoice_date, amount_af, split_override, invoice_id, type, note, created_by, created_at')
+    .select('id, client_id, date_of_payment, invoice_date, amount_af, split_override, invoice_id, type, note, created_by, created_at, ach_status')
     .order('date_of_payment', { ascending: false })
 
   if (clientId) query = query.eq('client_id', clientId)

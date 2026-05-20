@@ -39,7 +39,7 @@ export async function PUT(request: NextRequest) {
     'cron_enabled',
     'default_lead_action', 'default_lead_action_fallback',
     'default_purchase_action', 'default_purchase_action_fallback',
-    'ai_provider', 'ai_model', 'ai_api_key',
+    'ai_provider', 'ai_model', 'ai_api_key', 'openai_api_key',
     'chart_color_spend', 'chart_color_prior_spend',
     'chart_color_conversions', 'chart_color_prior_conversions',
     'notification_email',

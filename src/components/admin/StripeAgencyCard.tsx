@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { StripeLogo } from '@/components/ConnectorLogo'
+import IntegrationCard from '@/components/admin/IntegrationCard'
+import IntegrationModal from '@/components/admin/IntegrationModal'
 
 interface Props {
   initialApiKey:        string
@@ -9,90 +11,71 @@ interface Props {
 }
 
 export default function StripeAgencyCard({ initialApiKey, initialWebhookSecret }: Props) {
-  const [apiKey,         setApiKey]         = useState(initialApiKey)
-  const [webhookSecret,  setWebhookSecret]  = useState(initialWebhookSecret)
-  const [saving,         setSaving]         = useState(false)
-  const [msg,            setMsg]            = useState('')
+  const [open,          setOpen]          = useState(false)
+  const [apiKey,        setApiKey]        = useState(initialApiKey)
+  const [webhookSecret, setWebhookSecret] = useState(initialWebhookSecret)
+  const [isConnected,   setIsConnected]   = useState(!!(initialApiKey && initialWebhookSecret))
+  const [justSaved,     setJustSaved]     = useState(false)
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    setMsg('')
+  async function handleSave() {
     const res = await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ stripe_api_key: apiKey, stripe_webhook_secret: webhookSecret }),
     })
-    setSaving(false)
-    if (!res.ok) { setMsg('Save failed'); return }
-    setMsg('Saved!')
-    setTimeout(() => setMsg(''), 2000)
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Save failed')
+    }
+    setIsConnected(!!(apiKey && webhookSecret))
   }
 
   return (
-    <div className="card p-5">
-      <div className="flex items-start gap-4 mb-4">
-        <div
-          className="h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{ background: '#635BFF18', border: '1px solid #635BFF30' }}
-        >
-          <StripeLogo size={26} aria-hidden="true" />
-        </div>
+    <>
+      <IntegrationCard
+        icon={<StripeLogo size={22} />}
+        name="Stripe"
+        description="Auto-log ad fuel payments from Stripe invoices. Configure each client's Customer ID in their Integrations tab."
+        isConnected={isConnected}
+        connectedLabel={isConnected ? 'Secret key configured' : undefined}
+        onConfigure={() => setOpen(true)}
+        justConnected={justSaved}
+      />
+      <IntegrationModal
+        open={open}
+        onClose={() => setOpen(false)}
+        onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
+        title="Stripe (Agency)"
+        icon={<StripeLogo size={20} />}
+        isConnected={isConnected}
+        howTo={
+          <div>
+            <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+              <li>In your <strong>Stripe Dashboard</strong>, go to <strong>Developers → API Keys</strong>. Copy your <strong>Secret key</strong> (<code>sk_live_…</code> for production or <code>sk_test_…</code> for testing).</li>
+              <li>To set up the webhook: go to <strong>Developers → Webhooks → Add endpoint</strong>. Enter the endpoint URL below and select the event <code>invoice.payment_succeeded</code>. After saving, copy the <strong>Signing secret</strong> (<code>whsec_…</code>).</li>
+            </ol>
+            <div style={{ marginTop: '0.625rem', padding: '0.5rem 0.625rem', background: 'var(--bg-subtle)', borderRadius: 6, fontSize: '0.75rem' }}>
+              Webhook endpoint: <code style={{ fontFamily: 'monospace' }}>/api/webhooks/stripe</code>
+            </div>
+          </div>
+        }
+        onSave={handleSave}
+      >
         <div>
-          <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Stripe</h2>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            Auto-log ad fuel payments from Stripe invoices. Set each client&apos;s Stripe Customer ID in their Integrations tab.
-          </p>
-        </div>
-      </div>
-
-      <form onSubmit={handleSave} className="space-y-3">
-        <div>
-          <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-            Secret Key <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— starts with sk_live_ or sk_test_</span>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+            Secret Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— sk_live_ or sk_test_</span>
           </label>
-          <input
-            type="password"
-            className="input"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder="sk_live_…"
-            autoComplete="off"
-          />
+          <input type="password" className="input" value={apiKey} onChange={e => setApiKey(e.target.value)}
+            placeholder="sk_live_…" autoComplete="off" style={{ width: '100%' }} />
         </div>
         <div>
-          <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-            Webhook Secret <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— starts with whsec_</span>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+            Webhook Secret <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— whsec_</span>
           </label>
-          <input
-            type="password"
-            className="input"
-            value={webhookSecret}
-            onChange={e => setWebhookSecret(e.target.value)}
-            placeholder="whsec_…"
-            autoComplete="off"
-          />
+          <input type="password" className="input" value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)}
+            placeholder="whsec_…" autoComplete="off" style={{ width: '100%' }} />
         </div>
-        <p className="text-xs rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
-          Webhook endpoint: <code style={{ fontFamily: 'monospace' }}>/api/webhooks/stripe</code> — register in your Stripe dashboard.
-          Event: <code style={{ fontFamily: 'monospace' }}>invoice.payment_succeeded</code>
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={saving}
-            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          {msg && (
-            <span style={{ fontSize: '0.8rem', color: msg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
-              {msg}
-            </span>
-          )}
-        </div>
-      </form>
-    </div>
+      </IntegrationModal>
+    </>
   )
 }

@@ -26,7 +26,7 @@ export async function PATCH(
     'layout_type', 'metric_layout_override',
     'bill_day', 'historic_bill_day', 'monthly_budget', 'discord_channel_id',
     'local_dominator_url', 'stripe_customer_id',
-    'ad_fuel_alert_threshold',
+    'ad_fuel_alert_threshold', 'ad_fuel_alert_muted',
     'auto_pause_ads', 'auto_resume_ads', 'campaigns_paused_at',
   ]
   const patch: Record<string, unknown> = {}

@@ -5,6 +5,8 @@
 
 import { useEffect, useState } from 'react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
+import IntegrationCard from '@/components/admin/IntegrationCard'
+import IntegrationModal from '@/components/admin/IntegrationModal'
 import { useTheme } from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
@@ -136,6 +138,7 @@ const HIDEABLE_CONNECTORS = [
 
 export default function AgencySettingsPage() {
   const [activeTab,  setActiveTab]  = useState('branding')
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['branding']))
   const [form,       setForm]       = useState<Settings>(DEFAULT)
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
@@ -146,6 +149,52 @@ export default function AgencySettingsPage() {
   const [testEmailMsg,   setTestEmailMsg]   = useState('')
   const [testingSerp,    setTestingSerp]    = useState(false)
   const [testSerpMsg,    setTestSerpMsg]    = useState('')
+
+  // ── Integration modals (AI + Discord) ─────────────────────────────────
+  const [aiModalOpen,        setAiModalOpen]        = useState(false)
+  const [aiModalProvider,    setAiModalProvider]    = useState('')
+  const [aiModalModel,       setAiModalModel]       = useState('')
+  const [aiModalKey,         setAiModalKey]         = useState('')
+  const [aiJustSaved,        setAiJustSaved]        = useState(false)
+
+  const [imgModalOpen,       setImgModalOpen]       = useState(false)
+  const [imgModalKey,        setImgModalKey]        = useState('')
+  const [imgJustSaved,       setImgJustSaved]       = useState(false)
+
+  const [discordModalOpen,   setDiscordModalOpen]   = useState(false)
+  const [discordModalToken,  setDiscordModalToken]  = useState('')
+  const [discordJustSaved,   setDiscordJustSaved]   = useState(false)
+
+  function openAiModal()      { setAiModalProvider(form.ai_provider); setAiModalModel(form.ai_model); setAiModalKey(form.ai_api_key);    setAiModalOpen(true) }
+  function openImgModal()     { setImgModalKey(form.openai_api_key);                                                                      setImgModalOpen(true) }
+  function openDiscordModal() { setDiscordModalToken(form.discord_bot_token);                                                             setDiscordModalOpen(true) }
+
+  async function saveAiCredential() {
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ai_provider: aiModalProvider, ai_model: aiModalModel, ai_api_key: aiModalKey }),
+    })
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
+    setForm(f => ({ ...f, ai_provider: aiModalProvider, ai_model: aiModalModel, ai_api_key: aiModalKey }))
+  }
+
+  async function saveImgCredential() {
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openai_api_key: imgModalKey }),
+    })
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
+    setForm(f => ({ ...f, openai_api_key: imgModalKey }))
+  }
+
+  async function saveDiscordCredential() {
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discord_bot_token: discordModalToken }),
+    })
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
+    setForm(f => ({ ...f, discord_bot_token: discordModalToken }))
+  }
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -265,7 +314,7 @@ export default function AgencySettingsPage() {
           <button
             key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { setActiveTab(tab.id); setVisitedTabs(p => new Set(p).add(tab.id)) }}
             style={{
               padding: '0.5rem 1rem', border: 'none', background: 'transparent',
               fontSize: '0.8125rem', fontWeight: activeTab === tab.id ? 600 : 400,
@@ -283,7 +332,7 @@ export default function AgencySettingsPage() {
       <form onSubmit={handleSave} className="space-y-5">
 
         {/* ─── Branding ──────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'branding' ? 'block' : 'none' }}>
+        {visitedTabs.has('branding') && <div style={{ display: activeTab === 'branding' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <h2 className="section-title">Branding</h2>
             <FormField label="Agency Name">
@@ -328,10 +377,10 @@ export default function AgencySettingsPage() {
               />
             </FormField>
           </div>
-        </div>
+        </div>}
 
         {/* ─── Benchmarks ────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'benchmarks' ? 'block' : 'none' }}>
+        {visitedTabs.has('benchmarks') && <div style={{ display: activeTab === 'benchmarks' ? 'block' : 'none' }}>
           <div className="space-y-5">
             <div className="card p-6 space-y-4">
               <div>
@@ -416,10 +465,10 @@ export default function AgencySettingsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* ─── Colors ────────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'colors' ? 'block' : 'none' }}>
+        {visitedTabs.has('colors') && <div style={{ display: activeTab === 'colors' ? 'block' : 'none' }}>
           <div className="space-y-5">
             {/* Agency brand color */}
             <div className="card p-6 space-y-4">
@@ -457,59 +506,90 @@ export default function AgencySettingsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* ─── AI ────────────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'ai' ? 'block' : 'none' }}>
+        {visitedTabs.has('ai') && <div style={{ display: activeTab === 'ai' ? 'block' : 'none' }}>
           <div className="space-y-5">
-          <div className="card p-6">
-            <h2 className="section-title mb-1">AI Configuration</h2>
-            <p className="section-desc mb-4">
-              Configure the AI model used for content generation and topic suggestions.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormField label="Provider">
-                <select className="input" value={form.ai_provider}
-                  onChange={e => setForm(f => ({ ...f, ai_provider: e.target.value }))}>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic (Claude)</option>
-                </select>
-              </FormField>
-              <FormField label="Model">
-                <input className="input" type="text" value={form.ai_model}
-                  onChange={e => setForm(f => ({ ...f, ai_model: e.target.value }))}
-                  placeholder={form.ai_provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'} />
-              </FormField>
-              <div className="sm:col-span-2">
-                <FormField label="API Key" hint="stored securely, never exposed to clients">
-                  <input className="input" type="password" value={form.ai_api_key}
-                    onChange={e => setForm(f => ({ ...f, ai_api_key: e.target.value }))}
-                    placeholder={form.ai_api_key ? '••••••••••' : 'Enter API key…'} />
-                </FormField>
-              </div>
+          <IntegrationCard
+            icon="🤖"
+            name="AI Configuration"
+            description="Provider, model, and API key used for content generation and topic suggestions."
+            isConnected={!!form.ai_api_key}
+            connectedLabel={form.ai_api_key ? `${form.ai_provider} / ${form.ai_model || 'default'}` : undefined}
+            onConfigure={openAiModal}
+            justConnected={aiJustSaved}
+          />
+          <IntegrationModal
+            open={aiModalOpen}
+            onClose={() => setAiModalOpen(false)}
+            onSaved={() => { setAiJustSaved(true); setTimeout(() => setAiJustSaved(false), 2000) }}
+            title="AI Configuration"
+            icon="🤖"
+            isConnected={!!form.ai_api_key}
+            howTo={
+              <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li><strong>OpenAI:</strong> Go to <strong>platform.openai.com → API Keys</strong> and create a new secret key (<code>sk-…</code>). Set model to <code>gpt-4o</code> or <code>gpt-4o-mini</code>.</li>
+                <li><strong>Anthropic:</strong> Go to <strong>console.anthropic.com → API Keys</strong> and create a key. Set model to <code>claude-sonnet-4-6</code>.</li>
+                <li>The master writing prompt is managed in <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.</li>
+              </ol>
+            }
+            onSave={saveAiCredential}
+          >
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Provider</label>
+              <select className="input" value={aiModalProvider} onChange={e => setAiModalProvider(e.target.value)} style={{ width: '100%' }}>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+              </select>
             </div>
-
-            <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
-              The master writing prompt is managed in{' '}
-              <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.
-            </p>
-          </div>
-
-          <div className="card p-6">
-            <h2 className="section-title mb-1">Image Generation</h2>
-            <p className="section-desc mb-4">
-              OpenAI API key used for DALL-E 3 featured image generation. Required to generate images for posts — separate from the content AI key above.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2">
-                <FormField label="OpenAI API Key" hint="used for DALL-E 3 image generation only">
-                  <input className="input" type="password" value={form.openai_api_key}
-                    onChange={e => setForm(f => ({ ...f, openai_api_key: e.target.value }))}
-                    placeholder={form.openai_api_key ? '••••••••••' : 'sk-…'} />
-                </FormField>
-              </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Model</label>
+              <input className="input" type="text" value={aiModalModel} onChange={e => setAiModalModel(e.target.value)}
+                placeholder={aiModalProvider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'} style={{ width: '100%' }} />
             </div>
-          </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— stored securely, never exposed to clients</span>
+              </label>
+              <input className="input" type="password" value={aiModalKey} onChange={e => setAiModalKey(e.target.value)}
+                placeholder="Enter API key…" autoComplete="off" style={{ width: '100%' }} />
+            </div>
+          </IntegrationModal>
+
+          <IntegrationCard
+            icon="🖼️"
+            name="Image Generation"
+            description="OpenAI API key for DALL-E 3 featured image generation — separate from the content AI key above."
+            isConnected={!!form.openai_api_key}
+            connectedLabel={form.openai_api_key ? 'Key configured' : undefined}
+            onConfigure={openImgModal}
+            justConnected={imgJustSaved}
+          />
+          <IntegrationModal
+            open={imgModalOpen}
+            onClose={() => setImgModalOpen(false)}
+            onSaved={() => { setImgJustSaved(true); setTimeout(() => setImgJustSaved(false), 2000) }}
+            title="Image Generation (DALL-E 3)"
+            icon="🖼️"
+            isConnected={!!form.openai_api_key}
+            howTo={
+              <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>Go to <strong>platform.openai.com → API Keys</strong> and create a new secret key (<code>sk-…</code>).</li>
+                <li>Ensure the key has access to the <strong>Images</strong> model family (DALL-E 3).</li>
+                <li>This key is used exclusively for generating featured images — it&apos;s separate from your content AI key.</li>
+              </ol>
+            }
+            onSave={saveImgCredential}
+          >
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                OpenAI API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— used for DALL-E 3 image generation only</span>
+              </label>
+              <input className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
+                placeholder="sk-…" autoComplete="off" style={{ width: '100%' }} />
+            </div>
+          </IntegrationModal>
 
           <div className="card p-6 space-y-4">
             <div>
@@ -549,10 +629,10 @@ export default function AgencySettingsPage() {
             )}
           </div>
           </div>
-        </div>
+        </div>}
 
         {/* ─── Sync ──────────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'sync' ? 'block' : 'none' }}>
+        {visitedTabs.has('sync') && <div style={{ display: activeTab === 'sync' ? 'block' : 'none' }}>
           <div className="space-y-5">
           <div className="card p-6 space-y-5">
             <div>
@@ -649,10 +729,10 @@ export default function AgencySettingsPage() {
             </p>
           </div>
           </div>
-        </div>
+        </div>}
 
         {/* ─── Notifications ─────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
+        {visitedTabs.has('notifications') && <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
           <div className="space-y-5">
           <div className="card p-6 space-y-5">
             <div>
@@ -771,21 +851,45 @@ export default function AgencySettingsPage() {
               <h2 className="section-title">Discord Notifications</h2>
               <p className="section-desc">Bot token used to post Ad Fuel low-balance alerts to per-client Discord channels.</p>
             </div>
-            <FormField label="Discord Bot Token" hint="shared bot for all client channels">
-              <input
-                className="input"
-                type="password"
-                value={form.discord_bot_token}
-                onChange={e => field('discord_bot_token', e.target.value)}
-                placeholder={form.discord_bot_token ? '••••••••••' : 'Bot token from Discord Developer Portal…'}
-              />
-            </FormField>
+            <IntegrationCard
+              icon="🤖"
+              name="Discord Bot"
+              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
+              isConnected={!!form.discord_bot_token}
+              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
+              onConfigure={openDiscordModal}
+              justConnected={discordJustSaved}
+            />
+            <IntegrationModal
+              open={discordModalOpen}
+              onClose={() => setDiscordModalOpen(false)}
+              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
+              title="Discord Bot"
+              icon="🤖"
+              isConnected={!!form.discord_bot_token}
+              howTo={
+                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
+                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
+                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
+                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
+                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
+                </ol>
+              }
+              onSave={saveDiscordCredential}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
+                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
+                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
+              </div>
+            </IntegrationModal>
           </div>
           </div>
-        </div>
+        </div>}
 
         {/* ─── Overview ─────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'overview' ? 'block' : 'none' }}>
+        {visitedTabs.has('overview') && <div style={{ display: activeTab === 'overview' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <div>
               <h2 className="section-title">Client Overview Table Columns</h2>
@@ -800,10 +904,10 @@ export default function AgencySettingsPage() {
               onChange={cols => field('overview_columns', cols)}
             />
           </div>
-        </div>
+        </div>}
 
         {/* ─── Layouts ───────────────────────────────────────────── */}
-        <div style={{ display: activeTab === 'layouts' ? 'block' : 'none' }}>
+        {visitedTabs.has('layouts') && <div style={{ display: activeTab === 'layouts' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <div>
               <h2 className="section-title">Dashboard Layouts</h2>
@@ -817,7 +921,7 @@ export default function AgencySettingsPage() {
               onChange={v => field('metric_layouts', v)}
             />
           </div>
-        </div>
+        </div>}
 
         {/* ─── Sticky save bar ───────────────────────────────────── */}
         <div style={{

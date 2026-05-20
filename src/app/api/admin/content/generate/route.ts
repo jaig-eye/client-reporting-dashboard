@@ -189,6 +189,18 @@ function repairJsonStrings(json: string): string {
   return out
 }
 
+// Replace em dashes (—) and en dashes (–) in text nodes only — not inside HTML tags/attributes.
+// LLMs ignore prompt-level rules for these characters; post-processing is the reliable fix.
+function sanitizeEmDashes(html: string): string {
+  // Split on HTML tags, replace dashes only in text segments
+  return html.replace(/(<[^>]*>)|([^<]+)/g, (_, tag, text) => {
+    if (tag) return tag
+    return text
+      .replace(/—/g, ' - ')  // em dash → space-hyphen-space
+      .replace(/–/g, '-')    // en dash → hyphen
+  })
+}
+
 function parseResponse(rawText: string) {
   const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   const jsonMatch = stripped.match(/\{[\s\S]*\}/)
@@ -199,7 +211,7 @@ function parseResponse(rawText: string) {
         return {
           title:           String(parsed.title           || ''),
           seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
-          content:         String(parsed.content         || rawText),
+          content:         sanitizeEmDashes(String(parsed.content || rawText)),
           metaDescription: String(parsed.metaDescription || ''),
           slug:            String(parsed.slug            || ''),
           focusKeyword:    String(parsed.focusKeyword    || ''),
@@ -217,7 +229,7 @@ function parseResponse(rawText: string) {
   return {
     title,
     seoTitle:        extractStr('seoTitle') || title,
-    content:         content || rawText,
+    content:         sanitizeEmDashes(content || rawText),
     metaDescription: extractStr('metaDescription'),
     slug:            extractStr('slug'),
     focusKeyword:    extractStr('focusKeyword'),
@@ -236,6 +248,14 @@ function computeInternalLinks(html: string): number {
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────
+
+// Pull the NON-NEGOTIABLE RULES section out of the master prompt so we can
+// re-append it at the very end — recency bias means the model is far more
+// likely to honour rules it saw last, not rules buried at the top.
+function extractNonNegotiableRules(masterPrompt: string): string {
+  const m = masterPrompt.match(/##\s*NON-NEGOTIABLE RULES\s*\n([\s\S]*?)(?:\n---|\n##\s)/)
+  return m ? m[1].trim() : ''
+}
 
 function buildSystemPrompt(
   agency: string,
@@ -265,13 +285,17 @@ How to use the client context above — MUST follow every rule:
 - Available site pages: when linking internally for SEO value, prefer URLs from the available site pages list over invented paths.` : ''
 
   if (masterPreamble) {
+    const rules = extractNonNegotiableRules(masterPreamble)
+    const rulesReminder = rules
+      ? `\n\n---\nNON-NEGOTIABLE RULES — THESE APPLY TO EVERY WORD OF YOUR OUTPUT. VIOLATIONS INVALIDATE THE POST:\n${rules}`
+      : ''
     return `${masterPreamble}
 
 ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
+${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}${rulesReminder}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -388,8 +412,9 @@ async function runTopicGeneration({
       if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
       if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
       if (clientSettings.phone_number) {
-        const ph = String(clientSettings.phone_number)
-        contextLines.push(`Business phone: ${ph} (link as <a href="tel:${ph.replace(/\D/g, '')}">)`)
+        const ph     = String(clientSettings.phone_number)
+        const digits = ph.replace(/\D/g, '')
+        contextLines.push(`REQUIRED: Every time the phone number ${ph} appears in the post HTML, it MUST be wrapped as <a href="tel:${digits}">${ph}</a> — never display it as plain unlinked text.`)
       }
     }
 
@@ -552,6 +577,16 @@ async function runTopicGeneration({
       ? `\nSearch Intent: ${topicData.search_intent} — ${intentMap[topicData.search_intent]}`
       : ''
 
+    const writingRulesReminder = masterPreamble
+      ? '\n\nBEFORE WRITING — mandatory checklist (non-negotiable):\n' +
+        '• Zero em dashes (—) or en dashes (–) anywhere in the output\n' +
+        '• Zero banned words: delve, tapestry, navigate, landscape, realm, journey, embark, unleash, unlock, dive into, leverage, robust, seamless, foster, harness, cutting-edge, game-changer, revolutionize, paradigm, ever-evolving, "in today\'s fast-paced world", "it\'s important to note", "when it comes to", "in the world of"\n' +
+        '• No sentence starts with: Moreover, Furthermore, Additionally, In conclusion\n' +
+        '• Every phone number in the post MUST be a tel: hyperlink — no plain text phone numbers\n' +
+        '• Open with a concrete hook (stat, scenario, contrarian claim) — never a generic intro\n' +
+        '• Confirm compliance before finalising output'
+      : ''
+
     const userPrompt = `Write a detailed, SEO-optimized blog post on the following topic:
 
 Title: ${topicData.topic}
@@ -564,7 +599,7 @@ ${competitorGapSection}
 ${editNotesSection}
 ${intentSection}
 
-Target approximately ${brief?.word_count_target ?? targetLength} words.`
+Target approximately ${brief?.word_count_target ?? targetLength} words.${writingRulesReminder}`
 
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
@@ -798,8 +833,9 @@ export async function POST(request: NextRequest) {
     if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
     if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
     if (clientSettings.phone_number) {
-      const ph = String(clientSettings.phone_number)
-      contextLines.push(`Business phone: ${ph} (link as <a href="tel:${ph.replace(/\D/g, '')}">)`)
+      const ph     = String(clientSettings.phone_number)
+      const digits = ph.replace(/\D/g, '')
+      contextLines.push(`REQUIRED: Every time the phone number ${ph} appears in the post HTML, it MUST be wrapped as <a href="tel:${digits}">${ph}</a> — never display it as plain unlinked text.`)
     }
   }
 
