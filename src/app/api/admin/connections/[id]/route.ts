@@ -3,6 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity }     from '@/lib/activity'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -31,6 +33,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'connection', {
+    resourceId: id,
+    meta: { status: (data as { status?: string } | null)?.status ?? '' },
+  })
   return NextResponse.json(data)
 }
 
@@ -41,5 +48,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const db = createAdminClient()
   const { error } = await db.from('client_connections').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'connection', { resourceId: id, meta: {} })
   return NextResponse.json({ deleted: true })
 }

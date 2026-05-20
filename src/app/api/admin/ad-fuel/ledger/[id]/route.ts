@@ -3,7 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function DELETE(
   _request: NextRequest,
@@ -18,5 +19,7 @@ export async function DELETE(
   const db = createAdminClient()
   const { error } = await db.from('ad_fuel_ledger').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'ledger_entry', { resourceId: id, meta: {} })
   return NextResponse.json({ ok: true })
 }

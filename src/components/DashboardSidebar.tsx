@@ -149,22 +149,34 @@ export default function DashboardSidebar({
     }
   }
 
-  function navigate(item: NavItem) {
-    if (item.disabled || !item.href) return
+  function buildUrl(item: NavItem): string | null {
+    if (!item.href) return null
     const url = new URL(item.href, 'http://x')
     if (from) url.searchParams.set('from', from)
     if (to)   url.searchParams.set('to',   to)
     if (compare && compare !== 'none') url.searchParams.set('compare', compare)
     if (basePath) {
       const subPath = url.pathname.replace(/^\/dashboard/, '')
-      router.push(basePath + subPath + (url.search || ''))
-    } else {
-      router.push(url.pathname + (url.search || ''))
+      return basePath + subPath + (url.search || '')
     }
+    return url.pathname + (url.search || '')
+  }
+
+  function navigate(item: NavItem) {
+    if (item.disabled || !item.href) return
+    const dest = buildUrl(item)
+    if (!dest) return
+    router.push(dest)
     // Invalidate router cache so re-visiting the same source URL always
     // fetches fresh server data. Called synchronously here (not in useEffect)
     // to avoid the double-render race that affected the old NavigationRefresher.
     router.refresh()
+  }
+
+  function prefetch(item: NavItem) {
+    if (item.disabled || !item.href) return
+    const dest = buildUrl(item)
+    if (dest) router.prefetch(dest)
   }
 
   function hasConnector(type?: ConnectorType): boolean {
@@ -271,6 +283,7 @@ export default function DashboardSidebar({
                         <button
                           key={child.key}
                           onClick={() => connected && !child.disabled ? navigate(child) : undefined}
+                          onMouseEnter={() => connected && !child.disabled ? prefetch(child) : undefined}
                           disabled={child.disabled}
                           className="focus-ring"
                           style={{
@@ -342,6 +355,7 @@ export default function DashboardSidebar({
             <button
               key={section.key}
               onClick={() => navigate(section)}
+              onMouseEnter={() => prefetch(section)}
               className="focus-ring"
               style={{
                 width: '100%',

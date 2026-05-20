@@ -108,11 +108,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
     adminClients = (data ?? []) as typeof adminClients
   }
 
-  const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? ''
-  const rawMode = isAdmin && cookieStore.get('admin_raw_mode')?.value === '1'
+  const rawMode     = isAdmin && cookieStore.get('admin_raw_mode')?.value === '1'
+  const brandPrimary = (settings as Record<string, unknown> | null)?.brand_primary as string | null ?? '#2563eb'
 
   return (
     <>
+      {/* Inject agency brand color as CSS variable for client dashboard */}
+      <style>{`:root { --accent: ${brandPrimary}; }`}</style>
       <DashboardNavigationRefresher />
 
       {/* Admin overlay bar — only visible to admins */}
@@ -123,7 +125,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
             currentClientName={client.name}
             dashboardToken={(client as unknown as Record<string, string>).dashboard_token ?? token ?? ''}
             clients={adminClients}
-            appUrl={appUrl}
             rawMode={rawMode}
           />
         </Suspense>

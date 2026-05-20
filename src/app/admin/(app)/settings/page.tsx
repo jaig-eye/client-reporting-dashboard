@@ -5,6 +5,8 @@
 
 import { useEffect, useState } from 'react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
+import { useTheme } from '@/components/ThemeProvider'
+import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
 const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status', 'ad_fuel'] as const
@@ -57,6 +59,7 @@ interface Settings {
   hidden_connector_types:         string[]
   discord_bot_token:              string
   crm_name:                       string
+  brand_primary:                  string
   stripe_api_key:                 string
   stripe_webhook_secret:          string
   ads_sync_frequency:             string
@@ -103,6 +106,7 @@ const DEFAULT: Settings = {
   hidden_connector_types:         [],
   discord_bot_token:              '',
   crm_name:                       'CRM',
+  brand_primary:                  '#2563eb',
   stripe_api_key:                 '',
   stripe_webhook_secret:          '',
   ads_sync_frequency:             'hourly',
@@ -279,7 +283,7 @@ export default function AgencySettingsPage() {
       <form onSubmit={handleSave} className="space-y-5">
 
         {/* ─── Branding ──────────────────────────────────────────── */}
-        {activeTab === 'branding' && (
+        <div style={{ display: activeTab === 'branding' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <h2 className="section-title">Branding</h2>
             <FormField label="Agency Name">
@@ -324,11 +328,11 @@ export default function AgencySettingsPage() {
               />
             </FormField>
           </div>
-        )}
+        </div>
 
         {/* ─── Benchmarks ────────────────────────────────────────── */}
-        {activeTab === 'benchmarks' && (
-          <>
+        <div style={{ display: activeTab === 'benchmarks' ? 'block' : 'none' }}>
+          <div className="space-y-5">
             <div className="card p-6 space-y-4">
               <div>
                 <h2 className="section-title">Performance Benchmarks</h2>
@@ -411,36 +415,53 @@ export default function AgencySettingsPage() {
                 ))}
               </div>
             </div>
-          </>
-        )}
+          </div>
+        </div>
 
         {/* ─── Colors ────────────────────────────────────────────── */}
-        {activeTab === 'colors' && (
-          <div className="card p-6 space-y-4">
-            <div>
-              <h2 className="section-title">Chart Colors</h2>
-              <p className="section-desc">Customize colors used in the Daily Performance chart on all client dashboards.</p>
+        <div style={{ display: activeTab === 'colors' ? 'block' : 'none' }}>
+          <div className="space-y-5">
+            {/* Agency brand color */}
+            <div className="card p-6 space-y-4">
+              <div>
+                <h2 className="section-title">Agency Brand Color</h2>
+                <p className="section-desc">Primary color used across the admin interface and client dashboards. Individual users can override with their own accent.</p>
+              </div>
+              <FormField label="Brand Color">
+                <ColorInput value={form.brand_primary} onChange={v => field('brand_primary', v)} />
+              </FormField>
             </div>
-            <div className="grid grid-cols-1 gap-4">
-              <FormField label="Spend (current period)">
-                <ColorInput value={form.chart_color_spend} onChange={v => field('chart_color_spend', v)} />
-              </FormField>
-              <FormField label="Spend (prior period)">
-                <ColorInput value={form.chart_color_prior_spend} onChange={v => field('chart_color_prior_spend', v)} />
-              </FormField>
-              <FormField label="Conversions (current period)">
-                <ColorInput value={form.chart_color_conversions} onChange={v => field('chart_color_conversions', v)} />
-              </FormField>
-              <FormField label="Conversions (prior period)">
-                <ColorInput value={form.chart_color_prior_conversions} onChange={v => field('chart_color_prior_conversions', v)} />
-              </FormField>
+
+            {/* Per-user theme preferences */}
+            <ThemeControls />
+
+            {/* Chart colors */}
+            <div className="card p-6 space-y-4">
+              <div>
+                <h2 className="section-title">Chart Colors</h2>
+                <p className="section-desc">Customize colors used in the Daily Performance chart on all client dashboards.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                <FormField label="Spend (current period)">
+                  <ColorInput value={form.chart_color_spend} onChange={v => field('chart_color_spend', v)} />
+                </FormField>
+                <FormField label="Spend (prior period)">
+                  <ColorInput value={form.chart_color_prior_spend} onChange={v => field('chart_color_prior_spend', v)} />
+                </FormField>
+                <FormField label="Conversions (current period)">
+                  <ColorInput value={form.chart_color_conversions} onChange={v => field('chart_color_conversions', v)} />
+                </FormField>
+                <FormField label="Conversions (prior period)">
+                  <ColorInput value={form.chart_color_prior_conversions} onChange={v => field('chart_color_prior_conversions', v)} />
+                </FormField>
+              </div>
             </div>
           </div>
-        )}
+        </div>
 
         {/* ─── AI ────────────────────────────────────────────────── */}
-        {activeTab === 'ai' && (
-          <>
+        <div style={{ display: activeTab === 'ai' ? 'block' : 'none' }}>
+          <div className="space-y-5">
           <div className="card p-6">
             <h2 className="section-title mb-1">AI Configuration</h2>
             <p className="section-desc mb-4">
@@ -527,11 +548,11 @@ export default function AgencySettingsPage() {
               </p>
             )}
           </div>
-          </>
-        )}
+          </div>
+        </div>
 
         {/* ─── Sync ──────────────────────────────────────────────── */}
-        {activeTab === 'sync' && (
+        <div style={{ display: activeTab === 'sync' ? 'block' : 'none' }}>
           <div className="space-y-5">
           <div className="card p-6 space-y-5">
             <div>
@@ -628,11 +649,11 @@ export default function AgencySettingsPage() {
             </p>
           </div>
           </div>
-        )}
+        </div>
 
         {/* ─── Notifications ─────────────────────────────────────── */}
-        {activeTab === 'notifications' && (
-          <>
+        <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
+          <div className="space-y-5">
           <div className="card p-6 space-y-5">
             <div>
               <h2 className="section-title">Email Notifications</h2>
@@ -760,11 +781,11 @@ export default function AgencySettingsPage() {
               />
             </FormField>
           </div>
-          </>
-        )}
+          </div>
+        </div>
 
         {/* ─── Overview ─────────────────────────────────────────── */}
-        {activeTab === 'overview' && (
+        <div style={{ display: activeTab === 'overview' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <div>
               <h2 className="section-title">Client Overview Table Columns</h2>
@@ -779,10 +800,10 @@ export default function AgencySettingsPage() {
               onChange={cols => field('overview_columns', cols)}
             />
           </div>
-        )}
+        </div>
 
         {/* ─── Layouts ───────────────────────────────────────────── */}
-        {activeTab === 'layouts' && (
+        <div style={{ display: activeTab === 'layouts' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
             <div>
               <h2 className="section-title">Dashboard Layouts</h2>
@@ -796,7 +817,7 @@ export default function AgencySettingsPage() {
               onChange={v => field('metric_layouts', v)}
             />
           </div>
-        )}
+        </div>
 
         {/* ─── Sticky save bar ───────────────────────────────────── */}
         <div style={{
@@ -813,6 +834,106 @@ export default function AgencySettingsPage() {
           {error  && <span className="text-sm" style={{ color: 'var(--red)' }}>{error}</span>}
         </div>
       </form>
+    </div>
+  )
+}
+
+// ─── Per-user theme controls ──────────────────────────────────────────────────
+
+const ACCENT_PRESETS = [
+  { label: 'Blue',    value: '#2563eb' },
+  { label: 'Purple',  value: '#7c3aed' },
+  { label: 'Emerald', value: '#059669' },
+  { label: 'Rose',    value: '#e11d48' },
+  { label: 'Amber',   value: '#d97706' },
+  { label: 'Slate',   value: '#475569' },
+]
+
+function ThemeControls() {
+  const theme = useTheme()
+  if (!theme) return null
+  const { mode, accentColor, setMode, setAccent } = theme
+
+  const modeLabels: { value: ThemeMode; label: string }[] = [
+    { value: 'light', label: 'Light' },
+    { value: 'dark',  label: 'Dark'  },
+    { value: 'auto',  label: 'Auto'  },
+  ]
+
+  return (
+    <div className="card p-6 space-y-5">
+      <div>
+        <h2 className="section-title">Your Theme Preferences</h2>
+        <p className="section-desc">Personal settings — only affect your own view. Each admin can set their own.</p>
+      </div>
+
+      {/* Mode toggle */}
+      <div>
+        <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
+          Color mode
+        </label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {modeLabels.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setMode(value)}
+              style={{
+                padding: '0.375rem 1rem',
+                borderRadius: '0.5rem',
+                fontSize: '0.8125rem',
+                fontWeight: mode === value ? 600 : 400,
+                border: mode === value ? '2px solid var(--accent)' : '1px solid var(--border)',
+                background: mode === value ? 'var(--accent-subtle)' : 'var(--bg-surface)',
+                color: mode === value ? 'var(--accent)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Accent color */}
+      <div>
+        <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
+          Accent color
+        </label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {ACCENT_PRESETS.map(preset => (
+            <button
+              key={preset.value}
+              type="button"
+              title={preset.label}
+              onClick={() => setAccent(preset.value)}
+              style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: preset.value,
+                border: accentColor === preset.value ? '3px solid var(--text-primary)' : '2px solid transparent',
+                boxShadow: accentColor === preset.value ? '0 0 0 2px var(--bg-surface), 0 0 0 4px var(--text-primary)' : '0 1px 3px rgba(0,0,0,0.2)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            />
+          ))}
+          <input
+            type="color"
+            value={accentColor || '#2563eb'}
+            onChange={e => setAccent(e.target.value)}
+            title="Custom color"
+            style={{
+              width: 28, height: 28, borderRadius: '50%',
+              padding: 2, border: '1px solid var(--border)',
+              cursor: 'pointer', background: 'var(--bg-surface)',
+            }}
+          />
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', fontFamily: 'monospace' }}>
+            {accentColor}
+          </span>
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed }     from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity }                   from '@/lib/activity'
 
 /**
  * GET /api/admin/content/global-settings
@@ -85,5 +86,7 @@ export async function PUT(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'content_settings', { meta: { scope: 'global' } })
   return NextResponse.json({ ok: true })
 }

@@ -124,15 +124,24 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+type EditorTab = 'content' | 'seo' | 'settings'
+
+const EDITOR_TABS: { id: EditorTab; label: string }[] = [
+  { id: 'content',  label: 'Content'    },
+  { id: 'seo',      label: 'SEO & Meta' },
+  { id: 'settings', label: 'Settings'   },
+]
+
 export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate }: Props) {
-  const [post,         setPost]         = useState<PostDetail | null>(null)
-  const [loading,      setLoading]      = useState(true)
-  const [saving,       setSaving]       = useState(false)
-  const [savedFlash,   setSavedFlash]   = useState(false)
-  const [regenerating, setRegenerating] = useState(false)
-  const [approving,    setApproving]    = useState(false)
-  const [error,        setError]        = useState('')
-  const [isDirty,      setIsDirty]      = useState(false)
+  const [post,            setPost]            = useState<PostDetail | null>(null)
+  const [loading,         setLoading]         = useState(true)
+  const [saving,          setSaving]          = useState(false)
+  const [savedFlash,      setSavedFlash]      = useState(false)
+  const [regenerating,    setRegenerating]    = useState(false)
+  const [approving,       setApproving]       = useState(false)
+  const [error,           setError]           = useState('')
+  const [isDirty,         setIsDirty]         = useState(false)
+  const [activeEditorTab, setActiveEditorTab] = useState<EditorTab>('content')
 
   // Image generation
   const [generatingImage,   setGeneratingImage]   = useState(false)
@@ -531,6 +540,34 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           </button>
         </div>
 
+        {/* Tab navigation */}
+        {!loading && (
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 1.25rem' }}>
+            {EDITOR_TABS.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveEditorTab(tab.id)}
+                style={{
+                  padding: '0.5rem 0.875rem',
+                  fontSize: '0.75rem',
+                  fontWeight: activeEditorTab === tab.id ? 600 : 400,
+                  color: activeEditorTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: `2px solid ${activeEditorTab === tab.id ? 'var(--accent, #2563eb)' : 'transparent'}`,
+                  cursor: 'pointer',
+                  letterSpacing: '0.02em',
+                  marginBottom: -1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {loading ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
@@ -568,18 +605,43 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               </div>
             )}
 
-            {/* Site connection selector */}
-            <div className="mb-4">
-              <label style={labelStyle}>Site Connection</label>
-              <select value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
-                <option value="">— Select a site —</option>
-                {sites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName} ({s.clientName})</option>)}
-              </select>
+            {/* ── TAB: Content ──────────────────────────────────────────────── */}
+            <div style={{ display: activeEditorTab === 'content' ? 'block' : 'none' }}>
+              {/* H1 Title */}
+              <div className="mb-4">
+                <label style={labelStyle}>H1 Title</label>
+                <input type="text" value={title} onChange={e => { setTitle(e.target.value); markDirty() }} style={inputStyle} placeholder="Post H1 title" />
+              </div>
+
+              {/* Content */}
+              <div className="mb-4">
+                <label style={labelStyle}>Content (HTML)</label>
+                <textarea value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
+              </div>
+
+              {/* Featured image */}
+              <div className="mb-4">
+                <label style={labelStyle}>Featured Image</label>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                  </button>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                    {imageUploadingMsg || 'Upload Image'}
+                  </button>
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
+                </div>
+                <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
+                {featuredImageUrl && (
+                  <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
+                )}
+              </div>
             </div>
 
-            {/* SEO Title + Title */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
-              <div style={{ gridColumn: '1 / -1' }}>
+            {/* ── TAB: SEO & Meta ───────────────────────────────────────────── */}
+            <div style={{ display: activeEditorTab === 'seo' ? 'block' : 'none' }}>
+              {/* SEO Title */}
+              <div className="mb-4">
                 <label style={labelStyle}>
                   SEO Title
                   <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 65 ? 'var(--amber, #f59e0b)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
@@ -588,153 +650,141 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 </label>
                 <input type="text" value={seoTitle} onChange={e => { setSeoTitle(e.target.value); markDirty() }} style={inputStyle} placeholder="SEO title (60 chars, includes focus keyword)" />
               </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={labelStyle}>H1 Title</label>
-                <input type="text" value={title} onChange={e => { setTitle(e.target.value); markDirty() }} style={inputStyle} placeholder="Post H1 title" />
-              </div>
-              <div>
-                <label style={labelStyle}>Focus Keyword</label>
-                <input type="text" value={targetKeyword} onChange={e => { setTargetKeyword(e.target.value); markDirty() }} style={inputStyle} placeholder="Primary keyword" />
-              </div>
-              <div>
-                <label style={labelStyle}>
-                  URL Slug
-                  {slug && <span style={{ fontWeight: 400, marginLeft: 6, color: slug.length > 130 ? 'var(--red)' : 'var(--text-faint)' }}>{slug.length} chars</span>}
-                </label>
-                <input type="text" value={slug} onChange={e => { setSlug(e.target.value); markDirty() }} style={inputStyle} placeholder="url-friendly-slug" />
-              </div>
-            </div>
 
-            {/* Tags */}
-            <div className="mb-4">
-              <label style={labelStyle}>Tags</label>
-              <div style={{
-                display: 'flex', flexWrap: 'wrap', gap: '0.375rem',
-                padding: '0.375rem 0.5rem', border: '1px solid var(--border)', borderRadius: 6,
-                background: 'var(--bg-surface)', minHeight: 38, cursor: 'text',
-              }}
-                onClick={() => (document.getElementById('tag-input') as HTMLInputElement)?.focus()}
-              >
-                {tags.map(tag => (
-                  <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 500, padding: '0.1rem 0.5rem', borderRadius: 4, background: 'var(--bg-muted)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-                    {tag}
-                    <button type="button" onClick={() => removeTag(tag)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.75rem', padding: 0, lineHeight: 1 }}>×</button>
-                  </span>
-                ))}
-                <input id="tag-input" type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={handleTagInputKeyDown} placeholder={tags.length === 0 ? 'Type tag, press Enter…' : ''} style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.8125rem', color: 'var(--text-primary)', minWidth: 120, flex: 1 }} />
-              </div>
-              {wpTags.length > 0 && (
-                <div style={{ marginTop: '0.375rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
-                  {wpTags.filter(t => !tags.includes(t.name)).slice(0, 12).map(t => (
-                    <button key={t.id} type="button" onClick={() => addTag(t.name)} style={{ fontSize: '0.6875rem', padding: '0.1rem 0.4rem', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                      + {t.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: '0.25rem' }}>
-                Add/remove before publishing. Press Enter or comma to add a custom tag.
-              </p>
-            </div>
-
-            {/* Content */}
-            <div className="mb-4">
-              <label style={labelStyle}>Content (HTML)</label>
-              <textarea value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 220, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
-            </div>
-
-            {/* Meta description */}
-            <div className="mb-4">
-              <label style={labelStyle}>
-                Meta Description
-                <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber, #f59e0b)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
-                  {liveMetaLen}/160
-                </span>
-              </label>
-              <textarea value={metaDescription} onChange={e => { setMetaDescription(e.target.value); markDirty() }} rows={2} style={{ ...inputStyle, resize: 'vertical' }} placeholder="SEO meta description (150–160 characters)" />
-            </div>
-
-            {/* Featured image */}
-            <div className="mb-4">
-              <label style={labelStyle}>Featured Image</label>
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  {generatingImage ? 'Generating…' : '✦ Generate with AI'}
-                </button>
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                  {imageUploadingMsg || 'Upload Image'}
-                </button>
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-              </div>
-              <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
-              {featuredImageUrl && (
-                <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
-              )}
-            </div>
-
-            {/* SEO checklist */}
-            <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
-              <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', marginBottom: '0.5rem' }}>SEO Checklist</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
-                <div><Check ok={keywordInTitle} />Keyword in H1</div>
-                <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
-                <div><Check ok={keywordInMeta} />Keyword in meta desc</div>
-                <div><Check ok={!!keywordInFirst} />Keyword in opening</div>
-                <div><Check ok={keywordInSubhd} />Keyword in subheading</div>
-                <div><Check ok={densityOk} warn={densityPct > 0 && !densityOk} />{densityPct.toFixed(1)}% density</div>
-                <div><Check ok={liveWordCount >= 600} />{liveWordCount.toLocaleString()} words</div>
-                <div><Check ok={liveHeadings >= 2} />{liveHeadings} headings</div>
-                <div><Check ok={metaLenOk} warn={liveMetaLen > 0 && !metaLenOk} />Meta {liveMetaLen}/160</div>
-                <div><Check ok={liveIntLinks >= 1} />{liveIntLinks} internal link{liveIntLinks !== 1 ? 's' : ''}</div>
-                <div><Check ok={liveExtLinks >= 1} />{liveExtLinks} external link{liveExtLinks !== 1 ? 's' : ''}</div>
-                <div><Check ok={imgAltKw} />Image alt w/ keyword</div>
-                <div><Check ok={keywordSlug} />Keyword in slug</div>
-                <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
-                <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
-              </div>
-            </div>
-
-            {/* Author + publish status */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
-              <div>
-                <label style={labelStyle}>WP Author</label>
-                <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle} disabled={authorsLoading}>
-                  <option value="">{authorsLoading ? 'Loading…' : '— Default —'}</option>
-                  {authors.map(a => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}{a.id === defaultAuthorId ? ' (Default)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Publish as</label>
-                <select value={wpStatus} onChange={e => { setWpStatus(e.target.value as WpPublishStatus); markDirty() }} style={inputStyle}>
-                  <option value="future">Scheduled Published - Draft</option>
-                  <option value="draft">Draft</option>
-                  <option value="publish">Published</option>
-                </select>
-              </div>
-            </div>
-
-            {/* AI re-edit */}
-            <div className="mb-4">
-              {!showEditNotes ? (
-                <button type="button" onClick={() => setShowEditNotes(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                  Editor Notes for Regeneration…
-                </button>
-              ) : (
+              {/* Focus Keyword + URL Slug */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
                 <div>
-                  <label style={labelStyle}>Editor Notes for Regeneration</label>
-                  <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }} placeholder="e.g. Make the tone more conversational and add a FAQ section at the end" autoFocus />
-                  <div className="flex gap-2">
-                    <button type="button" disabled={regenerating} onClick={handleRegenerate} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-                      {regenerating ? 'Regenerating…' : 'Regenerate with AI'}
-                    </button>
-                    <button type="button" onClick={() => { setShowEditNotes(false); setEditNotes('') }} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Cancel</button>
-                  </div>
+                  <label style={labelStyle}>Focus Keyword</label>
+                  <input type="text" value={targetKeyword} onChange={e => { setTargetKeyword(e.target.value); markDirty() }} style={inputStyle} placeholder="Primary keyword" />
                 </div>
-              )}
+                <div>
+                  <label style={labelStyle}>
+                    URL Slug
+                    {slug && <span style={{ fontWeight: 400, marginLeft: 6, color: slug.length > 130 ? 'var(--red)' : 'var(--text-faint)' }}>{slug.length} chars</span>}
+                  </label>
+                  <input type="text" value={slug} onChange={e => { setSlug(e.target.value); markDirty() }} style={inputStyle} placeholder="url-friendly-slug" />
+                </div>
+              </div>
+
+              {/* Tags */}
+              <div className="mb-4">
+                <label style={labelStyle}>Tags</label>
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: '0.375rem',
+                  padding: '0.375rem 0.5rem', border: '1px solid var(--border)', borderRadius: 6,
+                  background: 'var(--bg-surface)', minHeight: 38, cursor: 'text',
+                }}
+                  onClick={() => (document.getElementById('tag-input') as HTMLInputElement)?.focus()}
+                >
+                  {tags.map(tag => (
+                    <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 500, padding: '0.1rem 0.5rem', borderRadius: 4, background: 'var(--bg-muted)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                      {tag}
+                      <button type="button" onClick={() => removeTag(tag)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.75rem', padding: 0, lineHeight: 1 }}>×</button>
+                    </span>
+                  ))}
+                  <input id="tag-input" type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={handleTagInputKeyDown} placeholder={tags.length === 0 ? 'Type tag, press Enter…' : ''} style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.8125rem', color: 'var(--text-primary)', minWidth: 120, flex: 1 }} />
+                </div>
+                {wpTags.length > 0 && (
+                  <div style={{ marginTop: '0.375rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                    {wpTags.filter(t => !tags.includes(t.name)).slice(0, 12).map(t => (
+                      <button key={t.id} type="button" onClick={() => addTag(t.name)} style={{ fontSize: '0.6875rem', padding: '0.1rem 0.4rem', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                        + {t.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: '0.25rem' }}>
+                  Add/remove before publishing. Press Enter or comma to add a custom tag.
+                </p>
+              </div>
+
+              {/* Meta description */}
+              <div className="mb-4">
+                <label style={labelStyle}>
+                  Meta Description
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber, #f59e0b)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
+                    {liveMetaLen}/160
+                  </span>
+                </label>
+                <textarea value={metaDescription} onChange={e => { setMetaDescription(e.target.value); markDirty() }} rows={2} style={{ ...inputStyle, resize: 'vertical' }} placeholder="SEO meta description (150–160 characters)" />
+              </div>
+
+              {/* SEO checklist */}
+              <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
+                <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', marginBottom: '0.5rem' }}>SEO Checklist</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
+                  <div><Check ok={keywordInTitle} />Keyword in H1</div>
+                  <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
+                  <div><Check ok={keywordInMeta} />Keyword in meta desc</div>
+                  <div><Check ok={!!keywordInFirst} />Keyword in opening</div>
+                  <div><Check ok={keywordInSubhd} />Keyword in subheading</div>
+                  <div><Check ok={densityOk} warn={densityPct > 0 && !densityOk} />{densityPct.toFixed(1)}% density</div>
+                  <div><Check ok={liveWordCount >= 600} />{liveWordCount.toLocaleString()} words</div>
+                  <div><Check ok={liveHeadings >= 2} />{liveHeadings} headings</div>
+                  <div><Check ok={metaLenOk} warn={liveMetaLen > 0 && !metaLenOk} />Meta {liveMetaLen}/160</div>
+                  <div><Check ok={liveIntLinks >= 1} />{liveIntLinks} internal link{liveIntLinks !== 1 ? 's' : ''}</div>
+                  <div><Check ok={liveExtLinks >= 1} />{liveExtLinks} external link{liveExtLinks !== 1 ? 's' : ''}</div>
+                  <div><Check ok={imgAltKw} />Image alt w/ keyword</div>
+                  <div><Check ok={keywordSlug} />Keyword in slug</div>
+                  <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
+                  <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── TAB: Settings ─────────────────────────────────────────────── */}
+            <div style={{ display: activeEditorTab === 'settings' ? 'block' : 'none' }}>
+              {/* Site connection selector */}
+              <div className="mb-4">
+                <label style={labelStyle}>Site Connection</label>
+                <select value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
+                  <option value="">— Select a site —</option>
+                  {sites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName} ({s.clientName})</option>)}
+                </select>
+              </div>
+
+              {/* Author + publish status */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
+                <div>
+                  <label style={labelStyle}>WP Author</label>
+                  <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle} disabled={authorsLoading}>
+                    <option value="">{authorsLoading ? 'Loading…' : '— Default —'}</option>
+                    {authors.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}{a.id === defaultAuthorId ? ' (Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>Publish as</label>
+                  <select value={wpStatus} onChange={e => { setWpStatus(e.target.value as WpPublishStatus); markDirty() }} style={inputStyle}>
+                    <option value="future">Scheduled Published - Draft</option>
+                    <option value="draft">Draft</option>
+                    <option value="publish">Published</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* AI re-edit */}
+              <div className="mb-4">
+                {!showEditNotes ? (
+                  <button type="button" onClick={() => setShowEditNotes(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                    Editor Notes for Regeneration…
+                  </button>
+                ) : (
+                  <div>
+                    <label style={labelStyle}>Editor Notes for Regeneration</label>
+                    <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }} placeholder="e.g. Make the tone more conversational and add a FAQ section at the end" autoFocus />
+                    <div className="flex gap-2">
+                      <button type="button" disabled={regenerating} onClick={handleRegenerate} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
+                        {regenerating ? 'Regenerating…' : 'Regenerate with AI'}
+                      </button>
+                      <button type="button" onClick={() => { setShowEditNotes(false); setEditNotes('') }} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

@@ -9,6 +9,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { publishPost, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
 import { logActivity } from '@/lib/activity'
+import { sendDiscordMessage } from '@/lib/discord'
 
 export async function POST(
   _request: NextRequest,
@@ -123,6 +124,23 @@ export async function POST(
       clientId: String(p.client_id),
       meta: { title: p.title, site: siteUrl, wp_post_id: result.id },
     })
+
+    // Discord notification (fire-and-forget)
+    try {
+      const [{ data: agencySettings }, { data: client }] = await Promise.all([
+        db.from('agency_settings').select('discord_bot_token').single(),
+        db.from('clients').select('name, discord_channel_id').eq('id', String(p.client_id)).single(),
+      ])
+      const botToken   = (agencySettings as { discord_bot_token?: string | null } | null)?.discord_bot_token
+      const channelId  = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
+      const clientName = (client as { name?: string } | null)?.name ?? ''
+      if (botToken && channelId) {
+        void sendDiscordMessage(
+          botToken, channelId,
+          `✅ Post uploaded to WordPress draft: **${String(p.title ?? '(untitled)')}**${clientName ? ` (${clientName})` : ''}`
+        ).catch(() => {})
+      }
+    } catch { /* non-fatal */ }
 
     return NextResponse.json({
       wp_post_id:  result.id,

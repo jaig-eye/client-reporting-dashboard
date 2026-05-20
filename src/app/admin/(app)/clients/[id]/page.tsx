@@ -672,6 +672,14 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
 
   const aiConfigured = !!((agencySettingsData.data as { ai_api_key?: string | null } | null)?.ai_api_key)
 
+  const [{ count: pendingCount }, { count: approvedCount }, { count: forReviewCount }, { count: publishedCount }] =
+    await Promise.all([
+      db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['pending', 'scheduled']),
+      db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'approved'),
+      db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'for_review'),
+      db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['draft_saved', 'published']),
+    ])
+
   type WpConn = { id: string; external_id: string; external_name: string | null; connector: { type: string; config: Record<string, unknown> } }
   const sites = ((wpConnData.data ?? []) as unknown as WpConn[]).map(c => ({
     connectionId:  c.id,
@@ -812,6 +820,10 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
           upcomingTopicsCount: upcomingTopics.filter(t => ['pending','scheduled','approved','generating'].includes(t.status)).length,
           nextPublishDate,
           recentPostsCount,
+          pendingTopicsCount:  pendingCount  ?? 0,
+          approvedTopicsCount: approvedCount ?? 0,
+          forReviewPostsCount: forReviewCount ?? 0,
+          publishedPostsCount: publishedCount ?? 0,
         }}
         gscData={gscData}
         initialSubTab={initialSubTab}

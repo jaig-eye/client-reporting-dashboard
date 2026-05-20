@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect }                        from 'react'
-import { useRouter }                                   from 'next/navigation'
+import { useRouter, usePathname }                      from 'next/navigation'
 import ClientContentSettingsForm                      from './ClientContentSettingsForm'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientScheduleTab                              from './ClientScheduleTab'
@@ -37,9 +37,13 @@ interface Props {
   contentSettings: ContentSettings
   aiConfigured:    boolean
   overviewStats: {
-    upcomingTopicsCount: number
-    nextPublishDate:     string | null
-    recentPostsCount:    number
+    upcomingTopicsCount:  number
+    nextPublishDate:      string | null
+    recentPostsCount:     number
+    pendingTopicsCount:   number
+    approvedTopicsCount:  number
+    forReviewPostsCount:  number
+    publishedPostsCount:  number
   }
   gscData:        GscData
   postsPerRun?:   number
@@ -63,14 +67,18 @@ export default function ClientContentTabPanel({
   clientId, clientName, isEcom, sites, contentSettings, aiConfigured, overviewStats, gscData, initialSubTab,
 }: Props) {
   const router       = useRouter()
+  const pathname     = usePathname()
 
   const validSubTab = (s: string | undefined | null): SubTab =>
     SUB_TABS.some(t => t.id === s) ? (s as SubTab) : 'overview'
 
-  const [activeTab,    setActiveTab]    = useState<SubTab>(validSubTab(initialSubTab))
+  const initial = validSubTab(initialSubTab)
+
+  const [activeTab,    setActiveTab]    = useState<SubTab>(initial)
+  // Track which tabs have ever been visited so we can lazy-mount once and keep alive
+  const [visited,      setVisited]      = useState<Set<SubTab>>(() => new Set([initial]))
   const [showWizard,   setShowWizard]   = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
-    // Skip wizard if already completed, already has brand config, or already has posts/topics
     const alreadySetUp = s?.wizard_completed || s?.business_background || s?.services
     const alreadyHasContent = overviewStats.recentPostsCount > 0 || overviewStats.upcomingTopicsCount > 0
     return !alreadySetUp && !alreadyHasContent
@@ -78,6 +86,11 @@ export default function ClientContentTabPanel({
 
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
+    setVisited(prev => new Set([...Array.from(prev), id]))
+    // Write subtab to URL so refreshes/back-button preserve the active tab
+    const params = new URLSearchParams(window.location.search)
+    params.set('subtab', id)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
@@ -117,18 +130,42 @@ export default function ClientContentTabPanel({
         ))}
       </div>
 
-      {activeTab === 'overview'  && <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} />}
-      {activeTab === 'brand-dna' && <ClientContentSettingsForm clientId={clientId} sites={sites} />}
-      {activeTab === 'sitemap'   && <ClientSitemapTab clientId={clientId} />}
-      {activeTab === 'priority'  && <PriorityTab clientId={clientId} />}
-      {activeTab === 'gsc'       && <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />}
-      {activeTab === 'schedule'  && (
-        <ClientScheduleTab
-          clientId={clientId}
-          clientName={clientName}
-          sites={sites}
-          aiConfigured={aiConfigured}
-        />
+      {/* Overview is lightweight — always conditional (no keep-alive needed) */}
+      {activeTab === 'overview' && <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} onNavigate={handleTabChange} />}
+
+      {/* Heavy tabs: lazy-mount on first visit, then keep alive with CSS to avoid re-fetch on every switch */}
+      {visited.has('brand-dna') && (
+        <div style={{ display: activeTab === 'brand-dna' ? 'block' : 'none' }}>
+          <ClientContentSettingsForm clientId={clientId} sites={sites} />
+        </div>
+      )}
+      {visited.has('sitemap') && (
+        <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }}>
+          <ClientSitemapTab clientId={clientId} />
+        </div>
+      )}
+      {visited.has('priority') && (
+        <div style={{ display: activeTab === 'priority' ? 'block' : 'none' }}>
+          <PriorityTab clientId={clientId} />
+        </div>
+      )}
+      {visited.has('gsc') && (
+        <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }}>
+          <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />
+        </div>
+      )}
+      {/* Schedule: keep-alive + pass isActive so its modals close when hidden
+          (position:fixed modals escape display:none containment — must be explicitly closed) */}
+      {visited.has('schedule') && (
+        <div style={{ display: activeTab === 'schedule' ? 'block' : 'none' }}>
+          <ClientScheduleTab
+            clientId={clientId}
+            clientName={clientName}
+            sites={sites}
+            aiConfigured={aiConfigured}
+            isActive={activeTab === 'schedule'}
+          />
+        </div>
       )}
     </div>
   )
@@ -147,67 +184,91 @@ const FREQ_LABELS: Record<string, string> = {
 }
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
-function OverviewTab({ clientId: _clientId, settings, stats }: {
-  clientId: string
-  settings: ContentSettings
-  stats:    Props['overviewStats']
+function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
+  clientId:   string
+  settings:   ContentSettings
+  stats:      Props['overviewStats']
+  onNavigate: (tab: SubTab) => void
 }) {
   const s = settings as Record<string, unknown> | null
 
-  const freq     = s?.schedule_frequency as string | null | undefined
-  const dayNum   = s?.schedule_day_of_week as number | null | undefined
+  const freq      = s?.schedule_frequency as string | null | undefined
+  const dayNum    = s?.schedule_day_of_week as number | null | undefined
   const freqLabel = freq ? (FREQ_LABELS[freq] ?? freq) : 'Not configured'
   const dayLabel  = dayNum != null ? DAY_NAMES[dayNum] ?? String(dayNum) : null
 
+  const pipeline: { label: string; count: number; color: string; borderColor: string }[] = [
+    { label: 'Pending',     count: stats.pendingTopicsCount,  color: '#f59e0b', borderColor: '#f59e0b' },
+    { label: 'Approved',    count: stats.approvedTopicsCount, color: '#2563eb', borderColor: '#2563eb' },
+    { label: 'For Review',  count: stats.forReviewPostsCount, color: '#10b981', borderColor: '#10b981' },
+    { label: 'Published',   count: stats.publishedPostsCount, color: '#059669', borderColor: '#059669' },
+  ]
+
+  const aiModel    = s?.ai_model    as string | null | undefined
+  const aiProvider = s?.ai_provider as string | null | undefined
+
   return (
-    <div style={{ maxWidth: 640 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
-        <StatCard label="Upcoming Topics" value={String(stats.upcomingTopicsCount)} />
-        <StatCard label="Posts This Month"  value={String(stats.recentPostsCount)} />
-        <StatCard
-          label="Next Publish"
-          value={stats.nextPublishDate
-            ? new Date(stats.nextPublishDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-            : '—'}
-        />
+    <div style={{ maxWidth: 680 }}>
+      {/* Pipeline visualization */}
+      <div className="card" style={{ display: 'flex', alignItems: 'stretch', marginBottom: 16, overflow: 'hidden', padding: 0 }}>
+        {pipeline.flatMap((stage, i) => {
+          const box = (
+            <div
+              key={stage.label}
+              style={{ flex: 1, textAlign: 'center', padding: '16px 8px', borderBottom: `3px solid ${stage.borderColor}`, minWidth: 0 }}
+            >
+              <div style={{ fontSize: '1.75rem', fontWeight: 700, color: stage.color, lineHeight: 1, marginBottom: 4 }}>
+                {stage.count}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>{stage.label}</div>
+            </div>
+          )
+          if (i < pipeline.length - 1) {
+            return [box, <div key={`sep-${i}`} style={{ display: 'flex', alignItems: 'center', padding: '0 4px', color: 'var(--text-faint)', fontSize: '0.875rem', flexShrink: 0 }}>→</div>]
+          }
+          return [box]
+        })}
       </div>
 
-      <div className="card p-5">
-        <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-          Schedule
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 20px' }}>
-          <InfoRow label="Frequency"     value={freqLabel} />
-          {dayLabel && <InfoRow label="Day"        value={dayLabel} />}
-          {!!s?.publish_time   && <InfoRow label="Publish Time" value={String(s.publish_time)} />}
-          <InfoRow label="Posts / Run"   value={String(s?.posts_per_run ?? 1)} />
-          <InfoRow label="Topics / Run"  value={String(s?.topics_per_run ?? 5)} />
-          <InfoRow label="Weeks Ahead"   value={String(s?.weeks_ahead ?? 1)} />
-          <InfoRow label="Auto-generate" value={s?.auto_generate ? 'On' : 'Off'} />
+      {/* AI info row */}
+      {(aiModel || aiProvider || s?.auto_generate != null) && (
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {(aiProvider || aiModel) && (
+            <span>Model: <span style={{ color: 'var(--text-muted)' }}>{[aiProvider, aiModel].filter(Boolean).join(' / ')}</span></span>
+          )}
+          {s?.publish_time && (
+            <span>Publish time: <span style={{ color: 'var(--text-muted)' }}>{String(s.publish_time)}</span></span>
+          )}
+          <span>Auto-generate: <span style={{ color: s?.auto_generate ? 'var(--green)' : 'var(--text-muted)' }}>{s?.auto_generate ? 'On' : 'Off'}</span></span>
         </div>
-      </div>
-    </div>
-  )
-}
+      )}
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="card p-4" style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
-        {value}
+      {/* Next publish + schedule summary */}
+      <div className="card p-4" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            {stats.nextPublishDate
+              ? `Next publish: ${new Date(stats.nextPublishDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+              : 'No upcoming publish date'}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+            {freqLabel}{dayLabel ? ` · ${dayLabel}s` : ''}
+            {s?.posts_per_run != null ? ` · ${s.posts_per_run} post${Number(s.posts_per_run) !== 1 ? 's' : ''}/run` : ''}
+          </div>
+        </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+          onClick={() => onNavigate('schedule')}
+        >
+          Open Schedule →
+        </button>
       </div>
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
-        {label}
-      </div>
-    </div>
-  )
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: '0.8125rem' }}>
-      <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{label}:</span>
-      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{value}</span>
     </div>
   )
 }

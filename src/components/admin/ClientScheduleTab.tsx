@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
+import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ interface Topic {
   competitors_researched?: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
   edit_notes?:           string | null
   cluster_group?:        string | null
+  generation_error?:     string | null
   post?:                 { id: string; title: string | null; status: string; published_url: string | null } | null
 }
 
@@ -58,6 +60,7 @@ interface Props {
   sites:        SiteOption[]
   aiConfigured: boolean
   postsPerRun?: number
+  isActive?:    boolean
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -185,7 +188,7 @@ type RowItem =
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
-export default function ClientScheduleTab({ clientId, clientName, sites, aiConfigured }: Props) {
+export default function ClientScheduleTab({ clientId, clientName, sites, aiConfigured, isActive = true }: Props) {
   const clientSites = sites.filter(s => s.clientId === clientId)
 
   // Schedule form state
@@ -208,6 +211,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const topicsRef  = useRef<Topic[]>([])
   useEffect(() => { topicsRef.current = topics }, [topics])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  // Close position:fixed modals when this tab becomes hidden (keep-alive pattern).
+  // position:fixed children escape display:none containment in CSS, so we must
+  // explicitly close them to prevent invisible overlays from absorbing pointer events.
+  useEffect(() => {
+    if (!isActive) {
+      setCalendarModalOpen(false)
+      setReviewPost(null)
+    }
+  }, [isActive])
 
   // Table state
   const [expandedId,     setExpandedId]     = useState<string | null>(null)
@@ -374,6 +387,20 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       }).catch(e => console.error('[generateForSlot]', e))
     )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
   }
+
+  async function retryGenerate(topicId: string) {
+    setTopicLoading(p => ({ ...p, [topicId]: true }))
+    await fetch(`/api/admin/content/topics/${topicId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'approved' }),
+    })
+    setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'approved', generation_error: null } : t))
+    setTopicLoading(p => ({ ...p, [topicId]: false }))
+    generatePost(topicId)
+  }
+
+  const statusCounts = useMemo(() => computeStatusCounts(topics, posts), [topics, posts])
 
   async function saveEdit(id: string) {
     if (!editTitle.trim()) { showToast('Title cannot be empty', 'error'); return }
@@ -663,24 +690,64 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         )}
       </div>
 
+      {/* ── AI Content Plan card ─────────────────────────────────────────── */}
+      {aiConfigured ? (
+        <div className="card" style={{ borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle, #eff6ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2563eb)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>AI Content Plan</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Generate {schedule.topics_per_run ?? 5} {FREQ_LABEL[schedule.schedule_frequency ?? 'weekly'] ?? 'weekly'} topics for your next {schedule.weeks_ahead ?? 1} publish slot{(schedule.weeks_ahead ?? 1) > 1 ? 's' : ''}
+            </div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={() => setCalendarModalOpen(true)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Generate Plan
+          </button>
+        </div>
+      ) : (
+        <div style={{ padding: '10px 14px', marginBottom: 12, fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
+          AI not configured — add a provider in Settings to generate content plans
+        </div>
+      )}
+
+      {/* ── Publish to sites row ─────────────────────────────────────────── */}
+      {clientSites.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Publish to:</span>
+          {clientSites.map(site => (
+            <span key={site.connectionId} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              border: '1px solid var(--border)', borderRadius: 4,
+              padding: '3px 8px', fontSize: '0.75rem', color: 'var(--text-secondary)',
+            }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
+              {site.siteName}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* ═══════════════════════════════════════════════════════════════════
           SECTION B — CONTENT CALENDAR (unified table)
       ═══════════════════════════════════════════════════════════════════ */}
       <div className="card p-6">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
           <h4 className="section-title" style={{ margin: 0 }}>Content Calendar</h4>
-          {aiConfigured ? (
-            <button
-              className="btn btn-primary"
-              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
-              onClick={() => setCalendarModalOpen(true)}
-            >
-              Generate Topics →
-            </button>
-          ) : (
-            <span className="text-xs" style={{ color: 'var(--text-faint)' }}>AI not configured</span>
-          )}
         </div>
+
+        {/* Status bar */}
+        {!dataLoading && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
+            <ContentStatusBar counts={statusCounts} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0, marginLeft: 12 }}>
+              {topics.length + posts.length} items
+            </span>
+          </div>
+        )}
 
         {dataLoading ? (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
@@ -774,15 +841,25 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         const linkedPost    = topicIdToPost.get(t.id)
                         const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
                         const hasReview     = linkedPost && (linkedPost.status === 'for_review' || linkedPost.status === 'generated')
+                        const hasError      = !!t.generation_error && t.status === 'scheduled'
 
                         return [
                           <tr
                             key={`topic-${t.id}`}
-                            style={{ cursor: hasDetail ? 'pointer' : 'default', background: isExpanded ? 'var(--bg-subtle)' : undefined }}
+                            style={{
+                              cursor: hasDetail ? 'pointer' : 'default',
+                              background: isExpanded ? 'var(--bg-subtle)' : undefined,
+                              borderLeft: hasError ? '2px solid #f59e0b' : undefined,
+                            }}
                             onClick={() => { if (hasDetail && !isEditing) setExpandedId(isExpanded ? null : id) }}
                           >
                             <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
-                              <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                                {hasError && (
+                                  <span title={t.generation_error ?? ''} style={{ fontSize: '0.7rem', color: '#f59e0b', cursor: 'help', lineHeight: 1 }}>⚠</span>
+                                )}
+                              </div>
                             </td>
                             <td style={{ padding: '8px 8px', verticalAlign: 'middle' }}>
                               <div style={{ fontWeight: 500, fontSize: '0.8125rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -812,6 +889,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                     style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                     onClick={() => setReviewPost(linkedPost!)}
                                   ><ArrowRight size={11} weight="bold" /> Review</button>
+                                )}
+                                {/* Retry after generation error */}
+                                {hasError && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                    onClick={() => retryGenerate(t.id)}
+                                    disabled={topicLoading[t.id]}
+                                    title="Retry generation"
+                                  ><ArrowClockwise size={11} weight="bold" /> Retry</button>
                                 )}
                                 {/* Generate post */}
                                 {t.status === 'approved' && !hasReview && (

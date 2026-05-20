@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { parseBody }   from '@/lib/apiError'
 
 export async function PATCH(
   request: NextRequest,
@@ -14,7 +15,8 @@ export async function PATCH(
   }
 
   const { id } = await params
-  const body = await request.json()
+  const body = await parseBody<Record<string, unknown>>(request)
+  if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
 
   const allowed = [
     'name', 'email', 'slug', 'logo_url', 'default_conversion_value', 'ad_fuel_cut',

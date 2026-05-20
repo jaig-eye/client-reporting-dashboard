@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -43,6 +44,8 @@ export async function DELETE(request: NextRequest) {
   const db = createAdminClient()
   const { error } = await db.from('ad_fuel_ledger').delete().in('id', ids)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'ledger_entry', { meta: { count: ids.length } })
   return NextResponse.json({ deleted: ids.length })
 }
 
@@ -84,5 +87,11 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'created', 'ledger_entry', {
+    resourceId: (data as { id?: string } | null)?.id,
+    clientId: body.client_id,
+    meta: { amount_af: body.amount_af, type: body.type ?? null },
+  })
   return NextResponse.json(data)
 }

@@ -6,7 +6,8 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -132,6 +133,13 @@ export async function POST(
       bc_store_hash: storeHash,
       status:        'draft_saved',
     }).eq('id', id)
+
+    const adminSession = await getAdminSession()
+    logActivity(adminSession, 'published', 'post', {
+      resourceId: id,
+      clientId: String(p.client_id),
+      meta: { title: p.title, bc_post_id: Number(bcPost.id) },
+    })
 
     return NextResponse.json({
       bc_post_id:  Number(bcPost.id),

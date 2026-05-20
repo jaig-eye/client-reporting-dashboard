@@ -3,7 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword } from '@/lib/auth'
+import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 function isSuperAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -54,6 +55,11 @@ export async function PATCH(
     }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'user', {
+    resourceId: id,
+    meta: { name: (data as { name?: string } | null)?.name ?? '', email: (data as { email?: string } | null)?.email ?? '' },
+  })
   return NextResponse.json(data)
 }
 
@@ -67,8 +73,14 @@ export async function DELETE(
 
   const { id } = await params
   const db = createAdminClient()
+  const { data: userRow } = await db.from('users').select('name').eq('id', id).single()
   const { error } = await db.from('users').delete().eq('id', id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'user', {
+    resourceId: id,
+    meta: { name: (userRow as { name?: string } | null)?.name ?? '' },
+  })
   return NextResponse.json({ success: true })
 }

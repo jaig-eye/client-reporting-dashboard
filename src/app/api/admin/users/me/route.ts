@@ -18,12 +18,14 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json()
-  const { name, email, avatar_url } = body
+  const { name, email, avatar_url, theme, accent_color } = body
 
   const update: Record<string, unknown> = {}
-  if (name       !== undefined) update.name       = name
-  if (email      !== undefined) update.email      = (email as string).toLowerCase().trim()
-  if (avatar_url !== undefined) update.avatar_url = avatar_url
+  if (name         !== undefined) update.name         = name
+  if (email        !== undefined) update.email        = (email as string).toLowerCase().trim()
+  if (avatar_url   !== undefined) update.avatar_url   = avatar_url
+  if (theme        !== undefined) update.theme        = theme
+  if (accent_color !== undefined) update.accent_color = accent_color ?? null
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
@@ -34,7 +36,7 @@ export async function PATCH(req: NextRequest) {
     .from('users')
     .update(update)
     .eq('id', userId)
-    .select('id, name, email, avatar_url, role')
+    .select('id, name, email, avatar_url, role, theme, accent_color')
     .single()
 
   if (error) {

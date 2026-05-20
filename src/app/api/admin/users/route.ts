@@ -3,7 +3,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword } from '@/lib/auth'
+import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
+import { parseBody }   from '@/lib/apiError'
 
 function isSuperAdmin(req: NextRequest): boolean {
   // Super admin = authenticated but no admin_user_id cookie
@@ -17,7 +19,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Super admin access required' }, { status: 403 })
   }
 
-  const { name, email, password, role, username } = await req.json()
+  const body = await parseBody<{ name?: string; email?: string; password?: string; role?: string; username?: string }>(req)
+  if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  const { name, email, password, role, username } = body
 
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
@@ -50,5 +54,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'created', 'user', {
+    resourceId: data.id,
+    meta: { name: data.name, email: data.email, role: data.role },
+  })
   return NextResponse.json(data, { status: 201 })
 }

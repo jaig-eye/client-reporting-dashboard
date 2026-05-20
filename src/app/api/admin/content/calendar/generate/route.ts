@@ -10,7 +10,8 @@ import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { isAdminAuthed }                  from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 
 export const maxDuration = 300
@@ -80,6 +81,8 @@ export async function POST(request: NextRequest) {
     })()
   )
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: slots.length } })
   return NextResponse.json({ ok: true, queued: true, slots })
 }
 

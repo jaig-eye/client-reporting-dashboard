@@ -54,6 +54,46 @@
     /* Skeleton shimmer */
     --skeleton-base:  #e8ebf0;
     --skeleton-shine: #f1f3f6;
+
+    /* Hover / secondary backgrounds */
+    --bg-hover:      #f1f3f6;
+    --bg-secondary:  #f8f9fb;
+
+    /* Accent — overridden per user or agency via ThemeProvider / server style tag */
+    --accent:        #2563eb;
+    --accent-hover:  #1d4ed8;
+    --accent-subtle: #eff6ff;
+  }
+
+  /* ── Dark theme ──────────────────────────────────────────────────────────── */
+  [data-theme="dark"] {
+    --bg-base:        #0f1117;
+    --bg-surface:     #1a1d27;
+    --bg-subtle:      #232636;
+    --bg-muted:       #2d3148;
+    --bg-elevated:    #1f2235;
+    --bg-hover:       #2d3148;
+    --bg-secondary:   #1a1d27;
+
+    --border:         #2d3148;
+    --border-subtle:  #252839;
+
+    --text-primary:   #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted:     #94a3b8;
+    --text-faint:     #64748b;
+
+    --sidebar-bg:     #141720;
+
+    --skeleton-base:  #2d3148;
+    --skeleton-shine: #343752;
+
+    /* Status subtle backgrounds — lower opacity on dark */
+    --blue-subtle:    rgba(37, 99, 235, 0.15);
+    --blue-border:    rgba(37, 99, 235, 0.35);
+    --green-subtle:   rgba(22, 163, 74, 0.15);
+    --red-subtle:     rgba(220, 38, 38, 0.15);
+    --amber-subtle:   rgba(217, 119, 6, 0.15);
   }
 
   body {
@@ -152,8 +192,8 @@
 
   .input:focus {
     outline: none;
-    border-color: var(--blue);
-    box-shadow: 0 0 0 3px var(--blue-subtle);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-subtle);
   }
 
   .input::placeholder {
@@ -190,15 +230,15 @@
   }
 
   .btn-primary {
-    background: var(--blue);
+    background: var(--accent);
     color: #ffffff;
-    border-color: var(--blue);
+    border-color: var(--accent);
     box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--blue-hover);
-    border-color: var(--blue-hover);
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
   }
 
   .btn-secondary {

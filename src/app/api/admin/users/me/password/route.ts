@@ -3,7 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword } from '@/lib/auth'
+import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function POST(req: NextRequest) {
   const session = req.cookies.get('admin_session')?.value
@@ -43,5 +44,7 @@ export async function POST(req: NextRequest) {
     .eq('id', user.id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'user', { resourceId: userId, meta: { field: 'password' } })
   return NextResponse.json({ success: true })
 }

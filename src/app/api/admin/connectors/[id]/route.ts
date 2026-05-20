@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity }     from '@/lib/activity'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -50,6 +52,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'connector', {
+    resourceId: id,
+    meta: { label: (data as { label?: string } | null)?.label ?? '' },
+  })
+
   // For Ahrefs: re-test connection whenever auth is patched
   if (data?.type === 'ahrefs' && body.auth_patch) {
     try {
@@ -78,7 +86,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params
 
   const db = createAdminClient()
+  const { data: connRow } = await db.from('connectors').select('type').eq('id', id).single()
   const { error } = await db.from('connectors').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'connector', {
+    resourceId: id,
+    meta: { type: (connRow as { type?: string } | null)?.type ?? '' },
+  })
   return NextResponse.json({ deleted: true })
 }

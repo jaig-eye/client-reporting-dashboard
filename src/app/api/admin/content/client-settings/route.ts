@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed }     from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity }                   from '@/lib/activity'
+import { parseBody }                     from '@/lib/apiError'
 
 /**
  * GET /api/admin/content/client-settings?client_id=X
@@ -46,7 +48,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as Record<string, unknown>
+  const body = await parseBody<Record<string, unknown>>(request)
+  if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   const { client_id } = body
 
   if (!client_id) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
@@ -72,5 +75,10 @@ export async function PUT(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'content_settings', {
+    clientId: String(client_id),
+    meta: { fields: Object.keys(body).filter(k => k !== 'client_id') },
+  })
   return NextResponse.json({ ok: true })
 }

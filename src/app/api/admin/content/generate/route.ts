@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { parseBody } from '@/lib/apiError'
 import { sendEmail } from '@/lib/email'
+import { sendDiscordMessage } from '@/lib/discord'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import type { SeoBrief } from '@/lib/content/types'
 
@@ -44,6 +46,7 @@ type AgencySettings = {
   notify_post_generated: boolean | null
   notify_post_uploaded:  boolean | null
   master_writing_prompt: string | null
+  discord_bot_token:     string | null
 }
 
 // ─── Sitemap fetching ─────────────────────────────────────────────────────────
@@ -640,22 +643,39 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.`
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
 
-    // Email notification
-    if (!suppressEmail && agencySettings.notification_email && agencySettings.notify_post_generated) {
-      const agencyName  = agencySettings.agency_name || 'Agency Dashboard'
-      const appUrl      = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-      const dateLabel   = topicData.target_publish_date ? ` — publishes ${topicData.target_publish_date}` : ''
+    // Email + Discord notification
+    if (!suppressEmail) {
+      const agencyName = agencySettings.agency_name || 'Agency Dashboard'
+      const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+      const dateLabel  = topicData.target_publish_date ? ` — publishes ${topicData.target_publish_date}` : ''
+
+      let clientName = ''
+      let discordChannelId: string | null = null
       try {
-        const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
-        const clientName = (cl as { name?: string } | null)?.name ?? ''
-        await sendEmail({
-          to:      agencySettings.notification_email,
-          subject: `[${agencyName}] Post ready for review: ${parsed.title}`,
-          html: `<p>A new post has been generated for <strong>${clientName || 'a client'}</strong> and is ready for review: <strong>${parsed.title}</strong>${dateLabel}.</p>
-                 <p><a href="${appUrl}/admin/clients/${effectiveClientId}?tab=content&amp;subtab=schedule">Review Post →</a></p>`,
-        })
-      } catch (emailErr) {
-        console.error('[generate] email error:', emailErr)
+        const { data: cl } = await db.from('clients').select('name, discord_channel_id').eq('id', effectiveClientId).single()
+        clientName = (cl as { name?: string } | null)?.name ?? ''
+        discordChannelId = (cl as { discord_channel_id?: string | null } | null)?.discord_channel_id ?? null
+      } catch {}
+
+      if (agencySettings.notification_email && agencySettings.notify_post_generated) {
+        try {
+          await sendEmail({
+            to:      agencySettings.notification_email,
+            subject: `[${agencyName}] Post ready for review: ${parsed.title}`,
+            html: `<p>A new post has been generated for <strong>${clientName || 'a client'}</strong> and is ready for review: <strong>${parsed.title}</strong>${dateLabel}.</p>
+                   <p><a href="${appUrl}/admin/clients/${effectiveClientId}?tab=content&amp;subtab=schedule">Review Post →</a></p>`,
+          })
+        } catch (emailErr) {
+          console.error('[generate] email error:', emailErr)
+        }
+      }
+
+      if (agencySettings.discord_bot_token && discordChannelId) {
+        void sendDiscordMessage(
+          agencySettings.discord_bot_token,
+          discordChannelId,
+          `✍️ Post ready for review: **${parsed.title}**${clientName ? ` (${clientName})` : ''}${dateLabel}`
+        ).catch(() => {})
       }
     }
 
@@ -677,13 +697,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json()
-  const { prompt, client_id, topic_id, suppress_email } = body as {
+  const body = await parseBody<{
     prompt?:         string
     client_id?:      string
     topic_id?:       string
     suppress_email?: boolean
-  }
+  }>(request)
+  if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  const { prompt, client_id, topic_id, suppress_email } = body
 
   if (!prompt && !topic_id) {
     return NextResponse.json({ error: 'Missing prompt or topic_id' }, { status: 400 })
@@ -694,7 +715,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt')
+    .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, discord_bot_token')
     .single()
 
   if (!agencySettings?.ai_api_key) {

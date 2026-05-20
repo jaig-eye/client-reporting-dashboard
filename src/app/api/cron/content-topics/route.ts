@@ -18,6 +18,7 @@ import { generateTopicsForClient }   from '@/lib/content/generateTopics'
 import type { TopicSummary }         from '@/lib/content/generateTopics'
 import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
+import { sendDiscordMessage }        from '@/lib/discord'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token')
     .single()
 
   const notifEmail  = (agencySettings?.notification_email as string | null) ?? null
@@ -344,6 +345,40 @@ export async function GET(request: NextRequest) {
         } catch (e) {
           console.error(`[content-topics cron] Posts email failed for client ${clientId}:`, e)
         }
+      }
+    }
+  }
+
+  // ── Discord notifications — one per client for topics, one for posts ─────────
+  const discordBotToken = (agencySettings?.discord_bot_token as string | null) ?? null
+  if (discordBotToken) {
+    const allClientIds = Array.from(new Set([...Array.from(topicAccum.keys()), ...Array.from(postAccum.keys())]))
+    if (allClientIds.length > 0) {
+      const { data: clientRows } = await db
+        .from('clients')
+        .select('id, discord_channel_id')
+        .in('id', allClientIds)
+      const channelMap = new Map<string, string>()
+      for (const cl of (clientRows ?? []) as { id: string; discord_channel_id?: string | null }[]) {
+        if (cl.discord_channel_id) channelMap.set(cl.id, cl.discord_channel_id)
+      }
+
+      for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
+        const channelId = channelMap.get(clientId)
+        if (!channelId) continue
+        void sendDiscordMessage(
+          discordBotToken, channelId,
+          `📋 **${items.length} new topic${items.length === 1 ? '' : 's'}** ready for **${clientName}** — review and approve in the dashboard`
+        ).catch(() => {})
+      }
+
+      for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
+        const channelId = channelMap.get(clientId)
+        if (!channelId) continue
+        void sendDiscordMessage(
+          discordBotToken, channelId,
+          `✍️ **${items.length} post${items.length === 1 ? '' : 's'}** ready for review for **${clientName}**`
+        ).catch(() => {})
       }
     }
   }

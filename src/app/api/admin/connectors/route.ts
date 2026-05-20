@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity }     from '@/lib/activity'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -36,6 +38,12 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'created', 'connector', {
+    resourceId: data.id,
+    meta: { type: data.type, label: data.label },
+  })
 
   // For Ahrefs: auto-test API key and update status immediately
   if (type === 'ahrefs' && data) {

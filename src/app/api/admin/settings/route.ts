@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity }     from '@/lib/activity'
+import { parseBody }       from '@/lib/apiError'
 
 function isAdminAuthed(session: string | undefined) {
   return session && session === process.env.ADMIN_PASSWORD
@@ -25,7 +28,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json()
+  const body = await parseBody<Record<string, unknown>>(request)
+  if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
 
   const allowed = [
     'agency_name', 'agency_logo_url',
@@ -79,5 +83,7 @@ export async function PUT(request: NextRequest) {
   revalidatePath('/admin/settings')
   revalidatePath('/admin')
 
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(patch) } })
   return NextResponse.json(data)
 }

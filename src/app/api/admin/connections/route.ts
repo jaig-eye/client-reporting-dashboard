@@ -3,6 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity }     from '@/lib/activity'
 
 function requireAdmin(req: NextRequest): boolean {
   const session = req.cookies.get('admin_session')?.value
@@ -33,5 +35,11 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'created', 'connection', {
+    resourceId: data.id,
+    clientId: data.client_id,
+    meta: { external_name: data.external_name },
+  })
   return NextResponse.json(data, { status: 201 })
 }

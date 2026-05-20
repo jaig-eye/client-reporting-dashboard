@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import ContentPostEditor from './ContentPostEditor'
 import RationaleModal    from './RationaleModal'
+import ContentStatusBar, { computeStatusCounts } from './ContentStatusBar'
 import { ArrowClockwise, ArrowCircleRight, X } from '@phosphor-icons/react'
 
 interface QueueItem {
@@ -200,6 +201,11 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
   const clientOptions = Array.from(
     new Map(items.map(i => [i.clientId, i.clientName])).entries()
   ).sort((a, b) => a[1].localeCompare(b[1]))
+
+  const statusCounts = useMemo(() => computeStatusCounts(
+    items.filter(i => i.type === 'topic'),
+    items.filter(i => i.type === 'post')
+  ), [items])
 
   const isScheduledTab = (i: QueueItem) =>
     i.type === 'topic' && ['scheduled', 'generating'].includes(i.status)
@@ -465,6 +471,11 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
       </div>
 
       {error && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: '0.5rem' }}>{error}</p>}
+
+      {/* Status bar */}
+      <div className="card p-3" style={{ marginBottom: '0.75rem' }}>
+        <ContentStatusBar counts={statusCounts} />
+      </div>
 
       {filtered.length === 0 ? (
         <div className="card p-6 text-center">

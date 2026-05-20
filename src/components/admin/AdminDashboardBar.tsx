@@ -17,7 +17,6 @@ interface Props {
   currentClientName: string
   dashboardToken: string
   clients: Client[]
-  appUrl: string
   rawMode: boolean
 }
 
@@ -26,7 +25,6 @@ export default function AdminDashboardBar({
   currentClientName,
   dashboardToken,
   clients,
-  appUrl,
   rawMode,
 }: Props) {
   const router       = useRouter()
@@ -63,7 +61,7 @@ export default function AdminDashboardBar({
   }
 
   function handleCopyLink() {
-    const url = `${appUrl}/api/auth/access?token=${dashboardToken}`
+    const url = `${window.location.origin}/api/auth/access?token=${dashboardToken}`
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -77,7 +75,7 @@ export default function AdminDashboardBar({
       left: 0,
       right: 0,
       height: 40,
-      zIndex: 9999,
+      zIndex: 200,
       background: 'var(--accent, #2563eb)',
       display: 'flex',
       alignItems: 'center',
