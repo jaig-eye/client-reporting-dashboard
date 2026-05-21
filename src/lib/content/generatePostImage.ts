@@ -76,7 +76,7 @@ export async function generatePostImage(
   let usedProvider = ''
   let lastError = ''
 
-  // ── DALL-E 3 ────────────────────────────────────────────────────────────────
+  // ── OpenAI Image Generation (gpt-image-1) ───────────────────────────────────
   if (effectiveKey) {
     try {
       const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
@@ -86,17 +86,34 @@ export async function generatePostImage(
           'Authorization': `Bearer ${effectiveKey}`,
         },
         body: JSON.stringify({
-          model: 'dall-e-3',
+          model: 'gpt-image-1',
           prompt,
           n: 1,
-          size: '1792x1024',
-          quality: 'standard',
+          size: '1536x1024',
+          quality: 'medium',
         }),
       })
       if (dalleRes.ok) {
-        const data = await dalleRes.json() as { data?: { url?: string }[] }
-        imageUrl = data.data?.[0]?.url ?? null
-        if (imageUrl) usedProvider = 'dalle3'
+        const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
+        const item = data.data?.[0]
+        if (item?.b64_json) {
+          // gpt-image-1 returns base64 — decode and upload to Supabase directly
+          const buffer   = Buffer.from(item.b64_json, 'base64')
+          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const { error: upErr } = await db.storage
+            .from('uploads')
+            .upload(filename, buffer, { contentType: 'image/png', upsert: true })
+          if (!upErr) {
+            const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
+            imageUrl     = publicUrl
+            usedProvider = 'gpt-image-1'
+          } else {
+            lastError = `Storage upload failed: ${upErr.message}`
+          }
+        } else if (item?.url) {
+          imageUrl     = item.url
+          usedProvider = 'gpt-image-1'
+        }
       } else {
         const errData = await dalleRes.json().catch(() => ({})) as { error?: { message?: string } }
         lastError = `DALL-E error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
@@ -149,9 +166,10 @@ export async function generatePostImage(
   if (!imageUrl)
     return { ok: false, error: lastError || 'Image generation failed — configure an API key in Agency Settings → AI → Image Generation' }
 
-  // ── Download DALL-E temp URL and re-upload to Supabase ───────────────────────
+  // gpt-image-1 responses are already uploaded to Supabase above (b64_json path).
+  // If a temp URL was returned (url path), download and re-upload so it doesn't expire.
   let finalUrl = imageUrl
-  if (usedProvider === 'dalle3') {
+  if (usedProvider === 'gpt-image-1' && imageUrl && !imageUrl.includes('supabase')) {
     try {
       const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
       if (imgRes.ok) {
