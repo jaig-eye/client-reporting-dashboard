@@ -14,17 +14,32 @@ interface MetricAlert {
   direction:  'up' | 'down'
   insight:    string
   createdAt:  string
+  alertType:  string
+  platform:   string | null
+  dateLabel:  string | null
 }
 
 const GOOD_UP   = new Set(['roas', 'conversions'])  // up = good
-const BAD_DOWN  = new Set(['spend'])                 // down = good (lower spend = may be bad)
 
 function alertColor(alert: MetricAlert): { bg: string; border: string; dot: string } {
-  const up      = alert.direction === 'up'
-  const isGood  = GOOD_UP.has(alert.metric) ? up : !up
+  if (alert.alertType === 'daily') {
+    return { bg: 'rgba(239,68,68,0.08)', border: '#ef4444', dot: '#ef4444' }
+  }
+  const up     = alert.direction === 'up'
+  const isGood = GOOD_UP.has(alert.metric) ? up : !up
   return isGood
     ? { bg: 'rgba(16,185,129,0.08)',  border: '#10b981', dot: '#10b981' }
-    : { bg: 'rgba(239,68,68,0.08)',   border: '#ef4444', dot: '#ef4444' }
+    : { bg: 'rgba(245,158,11,0.08)',  border: '#f59e0b', dot: '#f59e0b' }
+}
+
+function timeLabel(alert: MetricAlert): string {
+  if (alert.alertType === 'daily' && alert.dateLabel) {
+    const d   = new Date(alert.dateLabel + 'T00:00:00Z')
+    const db  = new Date(d.getTime() - 86_400_000)
+    const fmt = (dt: Date) => dt.toISOString().slice(5, 10).replace('-', '/')
+    return `${fmt(db)} vs ${fmt(d)}`
+  }
+  return '7d comparison'
 }
 
 function metricLabel(m: string): string {
@@ -58,6 +73,7 @@ export default function MetricAlertBanner() {
       {visible.map(alert => {
         const colors = alertColor(alert)
         const sign   = alert.direction === 'up' ? '+' : '−'
+        const tLabel = timeLabel(alert)
         return (
           <div
             key={alert.id}
@@ -67,23 +83,31 @@ export default function MetricAlertBanner() {
               background: colors.bg, marginBottom: 8,
             }}
           >
-            {/* Dot */}
-            <span style={{
-              width: 8, height: 8, borderRadius: '50%', background: colors.dot,
-              marginTop: 5, flexShrink: 0,
-            }} />
+            {/* Alert type badge */}
+            <span style={{ fontSize: '0.875rem', marginTop: 2, flexShrink: 0 }}>
+              {alert.alertType === 'daily' ? '🔴' : '🟡'}
+            </span>
 
             {/* Content */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                <strong>{alert.clientName}</strong>
-                {' — '}
-                {metricLabel(alert.metric)} {alert.direction === 'up' ? '▲' : '▼'} {sign}{Math.abs(alert.pctChange).toFixed(0)}%
-                {' '}
-                <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                  (14d vs prior 14d)
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                  <strong>{alert.clientName}</strong>
+                  {' — '}
+                  {metricLabel(alert.metric)} {alert.direction === 'up' ? '▲' : '▼'} {sign}{Math.abs(alert.pctChange).toFixed(0)}%
+                  {' '}
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({tLabel})</span>
                 </span>
-              </span>
+                {alert.platform && (
+                  <span style={{
+                    fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 4,
+                    background: alert.platform === 'google' ? 'rgba(59,130,246,0.12)' : 'rgba(139,92,246,0.12)',
+                    color:      alert.platform === 'google' ? '#3b82f6'              : '#8b5cf6',
+                  }}>
+                    {alert.platform === 'google' ? 'Google' : 'Meta'}
+                  </span>
+                )}
+              </div>
               {alert.insight && (
                 <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   {alert.insight}

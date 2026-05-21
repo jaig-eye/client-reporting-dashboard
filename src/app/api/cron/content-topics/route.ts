@@ -196,7 +196,6 @@ export async function GET(request: NextRequest) {
     // ── Auto-approve: topics still pending past their review deadline ────────
     if (auto_approve_topics) {
       // Auto-approve fires when today >= target_publish_date - 9 days
-      // (= 2 days before generate_by_date = target_publish_date - 7 days)
       const approveThreshold = new Date()
       approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 9)
       const { data: autoApproved } = await db
@@ -209,6 +208,20 @@ export async function GET(request: NextRequest) {
         .select('id')
       if (autoApproved?.length) {
         console.log(`[content-topics cron] auto-approved ${autoApproved.length} topics for ${client_id}`)
+      }
+
+      // Also approve dateless topics that have been pending for more than 3 days
+      const staleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
+      const { data: datelessApproved } = await db
+        .from('content_topics')
+        .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
+        .eq('client_id', client_id)
+        .eq('status', 'pending')
+        .is('target_publish_date', null)
+        .lte('created_at', staleCutoff)
+        .select('id')
+      if (datelessApproved?.length) {
+        console.log(`[content-topics cron] auto-approved ${datelessApproved.length} dateless topics for ${client_id}`)
       }
     }
 
@@ -287,13 +300,27 @@ export async function GET(request: NextRequest) {
         .from('content_posts')
         .select('id')
         .eq('client_id', client_id)
-        .eq('status', 'for_review')
+        .in('status', ['for_review', 'pending'])
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
         .is('wp_post_id', null)
-      for (const post of duePosts ?? []) {
+
+      // Also push dateless posts that have been sitting for more than 3 days
+      const staleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
+      const { data: datelessPosts } = await db
+        .from('content_posts')
+        .select('id')
+        .eq('client_id', client_id)
+        .in('status', ['for_review', 'pending'])
+        .is('target_publish_date', null)
+        .is('wp_post_id', null)
+        .lte('created_at', staleCutoff)
+
+      const allDuePosts = [...(duePosts ?? []), ...(datelessPosts ?? [])]
+
+      for (const post of allDuePosts) {
         try {
-          await fetch(`${appUrl}/api/admin/content/posts/${post.id}/approve`, {
+          const approveRes = await fetch(`${appUrl}/api/admin/content/posts/${post.id}/approve`, {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -301,15 +328,26 @@ export async function GET(request: NextRequest) {
             },
             body: JSON.stringify({ auto: true }),
           })
-          await db.from('content_posts')
-            .update({ auto_pushed_at: new Date().toISOString() })
-            .eq('id', post.id)
+          if (approveRes.ok) {
+            await db.from('content_posts')
+              .update({ auto_pushed_at: new Date().toISOString() })
+              .eq('id', post.id)
+          } else {
+            const errText = await approveRes.text().catch(() => '')
+            await db.from('content_posts')
+              .update({
+                auto_pushed_at: new Date().toISOString(),
+                auto_push_error: `${approveRes.status}: ${errText.slice(0, 200)}`,
+              })
+              .eq('id', post.id)
+            console.error(`[content-topics cron] Auto-push approve returned ${approveRes.status} for post ${post.id}:`, errText)
+          }
         } catch (e) {
           console.error(`[content-topics cron] Auto-push failed for post ${post.id}:`, e)
         }
       }
-      if (duePosts?.length) {
-        console.log(`[content-topics cron] auto-pushed ${duePosts.length} posts for ${client_id}`)
+      if (allDuePosts.length) {
+        console.log(`[content-topics cron] auto-pushed ${allDuePosts.length} posts for ${client_id}`)
       }
     }
   }

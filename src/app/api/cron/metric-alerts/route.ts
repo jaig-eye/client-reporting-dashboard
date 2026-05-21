@@ -1,24 +1,44 @@
-// Daily cron — checks all active clients for 14-day metric anomalies vs prior 14 days.
-// Inserts metric_alerts rows for significant changes; optionally sends email summary.
+// Daily cron — two-phase metric alert system.
+// Phase 1 (daily / red alert): yesterday vs day-before, per platform, 50% default threshold.
+// Phase 2 (weekly / notable change): 7d ending yesterday vs prior 7d, per platform, 25% default.
+// Data accuracy: Google uses conversions_value column; Meta uses resolveMetaConversions
+// for the client's configured action type rather than the pre-computed conversions sum.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient }         from '@/lib/supabase/server'
-import { summarizeMetrics }          from '@/lib/metrics'
-import { sendEmail }                 from '@/lib/email'
+import { NextRequest, NextResponse }      from 'next/server'
+import { createAdminClient }              from '@/lib/supabase/server'
+import { summarizeMetrics }               from '@/lib/metrics'
+import { resolveMetaConversions }         from '@/lib/metrics'
+import { sendEmail }                      from '@/lib/email'
+import { sendDiscordMessage }             from '@/lib/discord'
 
 export const maxDuration = 120
 
-const METRICS_TO_CHECK = ['spend', 'cpa', 'roas', 'ctr', 'conversions'] as const
-type MetricKey = typeof METRICS_TO_CHECK[number]
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-function extractMetric(summary: ReturnType<typeof summarizeMetrics>, key: MetricKey): number {
-  switch (key) {
-    case 'spend':       return summary.spend
-    case 'cpa':         return summary.cpl          // cost per lead = CPA
-    case 'roas':        return summary.roas
-    case 'ctr':         return summary.ctr
-    case 'conversions': return summary.conversions
-  }
+type MetaAction = { action_type: string; value: string }
+
+type GoogleRow = {
+  spend:             number
+  impressions:       number
+  clicks:            number
+  conversions:       number
+  conversions_value: number   // note: plural — matches DB column
+}
+
+type MetaRow = {
+  spend:        number
+  impressions:  number
+  clicks:       number
+  actions:      MetaAction[] | null
+  action_values: MetaAction[] | null
+}
+
+type MetricKey = 'spend' | 'cpa' | 'roas' | 'ctr' | 'conversions'
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function offsetDay(base: Date, n: number): string {
+  return new Date(base.getTime() + n * 86_400_000).toISOString().slice(0, 10)
 }
 
 function metricLabel(key: MetricKey): string {
@@ -32,6 +52,47 @@ function formatVal(key: MetricKey, val: number): string {
   return val.toFixed(0)
 }
 
+function extractMetric(summary: ReturnType<typeof summarizeMetrics>, key: MetricKey): number {
+  switch (key) {
+    case 'spend':       return summary.spend
+    case 'cpa':         return summary.cpl
+    case 'roas':        return summary.roas
+    case 'ctr':         return summary.ctr
+    case 'conversions': return summary.conversions
+  }
+}
+
+// Map Google rows: conversions_value → conversion_value for summarizeMetrics
+function normalizeGoogleRows(rows: GoogleRow[]): Parameters<typeof summarizeMetrics>[0] {
+  return rows.map(r => ({
+    spend:            Number(r.spend),
+    impressions:      Number(r.impressions),
+    clicks:           Number(r.clicks),
+    conversions:      Number(r.conversions),
+    conversion_value: Number(r.conversions_value ?? 0),
+  }))
+}
+
+// Map Meta rows: resolve correct conversions via action type, not the pre-computed sum
+function normalizeMetaRows(
+  rows: MetaRow[],
+  primaryAction: string,
+  fallbackAction: string | null,
+): Parameters<typeof summarizeMetrics>[0] {
+  return rows.map(r => {
+    const resolved = resolveMetaConversions(r.actions, r.action_values, primaryAction, fallbackAction)
+    return {
+      spend:            Number(r.spend),
+      impressions:      Number(r.impressions),
+      clicks:           Number(r.clicks),
+      conversions:      resolved.conversions,
+      conversion_value: resolved.conversionValue,
+    }
+  })
+}
+
+// ─── Route ────────────────────────────────────────────────────────────────────
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -40,111 +101,288 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
+  // ── Fetch settings + clients ───────────────────────────────────────────────
   const [agencyRes, clientsRes] = await Promise.all([
     db.from('agency_settings')
-      .select('notify_metric_alerts, metric_alert_threshold, metric_alert_window_days, notification_email, agency_name, ai_provider, ai_model, ai_api_key')
+      .select([
+        'notify_metric_alerts', 'notification_email', 'agency_name',
+        'metric_alert_threshold', 'daily_alert_threshold',
+        'discord_bot_token',
+        'default_lead_action', 'default_lead_action_fallback',
+      ].join(', '))
       .single(),
-    db.from('clients').select('id, name'),
+    db.from('clients')
+      .select('id, name, discord_channel_id, lead_action, lead_action_fallback'),
   ])
 
-  const agency      = agencyRes.data as Record<string, unknown> | null
-  const threshold   = Number(agency?.metric_alert_threshold ?? 0.40)
-  const windowDays  = Math.max(1, Number(agency?.metric_alert_window_days ?? 14))
-  const clients     = (clientsRes.data ?? []) as { id: string; name: string }[]
+  const agency   = agencyRes.data  as Record<string, unknown> | null
+  const clients  = (clientsRes.data ?? []) as {
+    id: string; name: string
+    discord_channel_id: string | null
+    lead_action: string | null
+    lead_action_fallback: string | null
+  }[]
 
-  const now    = new Date()
-  const today  = now.toISOString().slice(0, 10)
-  const d14    = new Date(now.getTime() - windowDays * 86_400_000).toISOString().slice(0, 10)
-  const d28    = new Date(now.getTime() - windowDays * 2 * 86_400_000).toISOString().slice(0, 10)
+  const weeklyThreshold = Number(agency?.metric_alert_threshold ?? 0.25)
+  const dailyThreshold  = Number(agency?.daily_alert_threshold  ?? 0.50)
+  const botToken        = String(agency?.discord_bot_token ?? '')
+  const defaultPrimary  = String(agency?.default_lead_action          ?? 'onsite_conversion.lead_grouped')
+  const defaultFallback = String(agency?.default_lead_action_fallback ?? 'lead')
 
-  const newAlerts: { clientId: string; clientName: string; metric: string; currentVal: number; priorVal: number; pctChange: number; direction: string }[] = []
+  // ── Date anchors (everything relative to yesterday = last complete day) ────
+  const now          = new Date()
+  const yesterday    = offsetDay(now, -1)
+  const dayBefore    = offsetDay(now, -2)
+  const w7start      = offsetDay(now, -7)   // start of current 7-day window (=yesterday-6)
+  const w7priorStart = offsetDay(now, -14)  // start of prior 7-day window
+
+  // ── Auto-dismiss stale daily alerts (>48h, not yet dismissed) ─────────────
+  const staleCutoff = new Date(Date.now() - 48 * 3_600_000).toISOString()
+  await db.from('metric_alerts')
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq('alert_type', 'daily')
+    .is('dismissed_at', null)
+    .lt('created_at', staleCutoff)
+
+  // ── Process each client ───────────────────────────────────────────────────
+  const newAlerts: {
+    clientId: string; clientName: string; metric: string
+    currentVal: number; priorVal: number; pctChange: number
+    direction: string; alertType: string; platform: string
+  }[] = []
+
+  const GOOGLE_SELECT = 'spend,impressions,clicks,conversions,conversions_value'
+  const META_SELECT   = 'spend,impressions,clicks,actions,action_values'
+
+  const DAILY_METRICS:  MetricKey[] = ['spend', 'conversions', 'cpa']
+  const WEEKLY_METRICS: MetricKey[] = ['spend', 'conversions', 'cpa', 'roas', 'ctr']
 
   for (const client of clients) {
-    const [gCurr, mCurr, gPrior, mPrior] = await Promise.all([
-      db.from('google_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d14).lt('date', today),
-      db.from('meta_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d14).lt('date', today),
-      db.from('google_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d28).lt('date', d14),
-      db.from('meta_ads_metrics').select('spend,impressions,clicks,conversions,conversion_value')
-        .eq('client_id', client.id).gte('date', d28).lt('date', d14),
+    const primaryAction  = client.lead_action          ?? defaultPrimary
+    const fallbackAction = client.lead_action_fallback ?? defaultFallback
+
+    // ── Fetch all 8 queries in parallel ────────────────────────────────────
+    const [
+      gYest, gDayBefore,
+      mYest, mDayBefore,
+      gCurr7, gPrior7,
+      mCurr7, mPrior7,
+    ] = await Promise.all([
+      db.from('google_ads_metrics').select(GOOGLE_SELECT).eq('client_id', client.id).eq('date', yesterday),
+      db.from('google_ads_metrics').select(GOOGLE_SELECT).eq('client_id', client.id).eq('date', dayBefore),
+      db.from('meta_ads_metrics').select(META_SELECT).eq('client_id', client.id).eq('date', yesterday),
+      db.from('meta_ads_metrics').select(META_SELECT).eq('client_id', client.id).eq('date', dayBefore),
+      db.from('google_ads_metrics').select(GOOGLE_SELECT).eq('client_id', client.id).gte('date', w7start).lte('date', yesterday),
+      db.from('google_ads_metrics').select(GOOGLE_SELECT).eq('client_id', client.id).gte('date', w7priorStart).lt('date', w7start),
+      db.from('meta_ads_metrics').select(META_SELECT).eq('client_id', client.id).gte('date', w7start).lte('date', yesterday),
+      db.from('meta_ads_metrics').select(META_SELECT).eq('client_id', client.id).gte('date', w7priorStart).lt('date', w7start),
     ])
 
-    const currRows  = [...(gCurr.data ?? []), ...(mCurr.data ?? [])] as Parameters<typeof summarizeMetrics>[0]
-    const priorRows = [...(gPrior.data ?? []), ...(mPrior.data ?? [])] as Parameters<typeof summarizeMetrics>[0]
+    // ── Phase 1: Day-over-day (red alert) ──────────────────────────────────
+    const dailyPlatforms: Array<{ platform: 'google' | 'meta'; currRows: Parameters<typeof summarizeMetrics>[0]; priorRows: Parameters<typeof summarizeMetrics>[0] }> = []
 
-    // Skip if no meaningful data
-    if (currRows.length === 0 && priorRows.length === 0) continue
-
-    const curr  = summarizeMetrics(currRows)
-    const prior = summarizeMetrics(priorRows)
-
-    // Need at least some spend activity to avoid noise
-    if (curr.spend < 10 && prior.spend < 10) continue
-
-    for (const key of METRICS_TO_CHECK) {
-      const cv = extractMetric(curr,  key)
-      const pv = extractMetric(prior, key)
-      if (cv === 0 && pv === 0) continue
-      if (pv === 0) continue   // can't compute % change from zero
-      // Skip CPA/conversions when volume is too low to be meaningful
-      if ((key === 'cpa' || key === 'conversions') && curr.conversions < 10 && prior.conversions < 10) continue
-
-      const pct = (cv - pv) / pv
-      if (Math.abs(pct) < threshold) continue
-
-      // Skip if an undismissed alert already exists for this client+metric.
-      // This prevents compounding: once dismissed, a new alert can fire next run.
-      const { count } = await db
-        .from('metric_alerts')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', client.id)
-        .eq('metric', key)
-        .is('dismissed_at', null)
-
-      if ((count ?? 0) > 0) continue
-
-      const direction = pct > 0 ? 'up' : 'down'
-
-      // Simple insight without calling AI for now (AI call adds latency + cost)
-      const pctLabel = `${Math.abs(pct * 100).toFixed(0)}%`
-      const insight  = `${metricLabel(key)} ${direction === 'up' ? 'increased' : 'decreased'} ${pctLabel} over the last ${windowDays} days vs the prior ${windowDays} days, from ${formatVal(key, pv)} to ${formatVal(key, cv)}.`
-
-      await db.from('metric_alerts').insert({
-        client_id:   client.id,
-        metric:      key,
-        current_val: cv,
-        prior_val:   pv,
-        pct_change:  pct * 100,
-        direction,
-        insight,
+    if ((gYest.data?.length ?? 0) > 0 || (gDayBefore.data?.length ?? 0) > 0) {
+      dailyPlatforms.push({
+        platform:  'google',
+        currRows:  normalizeGoogleRows((gYest.data ?? []) as GoogleRow[]),
+        priorRows: normalizeGoogleRows((gDayBefore.data ?? []) as GoogleRow[]),
       })
+    }
+    if ((mYest.data?.length ?? 0) > 0 || (mDayBefore.data?.length ?? 0) > 0) {
+      dailyPlatforms.push({
+        platform:  'meta',
+        currRows:  normalizeMetaRows((mYest.data ?? []) as MetaRow[], primaryAction, fallbackAction),
+        priorRows: normalizeMetaRows((mDayBefore.data ?? []) as MetaRow[], primaryAction, fallbackAction),
+      })
+    }
 
-      newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction })
+    for (const { platform, currRows, priorRows } of dailyPlatforms) {
+      if (currRows.length === 0) continue  // yesterday not synced yet — skip
+
+      const curr  = summarizeMetrics(currRows)
+      const prior = summarizeMetrics(priorRows)
+
+      if (curr.spend < 5 && prior.spend < 5) continue
+
+      for (const key of DAILY_METRICS) {
+        const cv = extractMetric(curr,  key)
+        const pv = extractMetric(prior, key)
+        if (cv === 0 && pv === 0) continue
+        if (pv === 0) continue
+        if ((key === 'cpa' || key === 'conversions') && curr.conversions < 3 && prior.conversions < 3) continue
+
+        const pct = (cv - pv) / pv
+        if (Math.abs(pct) < dailyThreshold) continue
+
+        // Same-day dedup: skip if undismissed daily alert for same client+metric+platform+date_label
+        const { count } = await db.from('metric_alerts')
+          .select('id', { count: 'exact', head: true })
+          .eq('client_id', client.id).eq('metric', key)
+          .eq('alert_type', 'daily').eq('platform', platform)
+          .eq('date_label', yesterday)
+          .is('dismissed_at', null)
+        if ((count ?? 0) > 0) continue
+
+        const direction = pct > 0 ? 'up' : 'down'
+        const pctLabel  = `${Math.abs(pct * 100).toFixed(0)}%`
+        const platformLabel = platform === 'google' ? 'Google Ads' : 'Meta Ads'
+        const insight = `${platformLabel} ${metricLabel(key)} ${direction === 'up' ? 'increased' : 'decreased'} ${pctLabel} — ${formatVal(key, pv)} → ${formatVal(key, cv)} (${yesterday} vs ${dayBefore}).`
+
+        await db.from('metric_alerts').insert({
+          client_id:   client.id,
+          metric:      key,
+          current_val: cv,
+          prior_val:   pv,
+          pct_change:  pct * 100,
+          direction,
+          insight,
+          alert_type:  'daily',
+          platform,
+          date_label:  yesterday,
+        })
+
+        newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'daily', platform })
+      }
+    }
+
+    // ── Phase 2: 7v7 (notable change) ──────────────────────────────────────
+    const weeklyPlatforms: Array<{ platform: 'google' | 'meta'; currRows: Parameters<typeof summarizeMetrics>[0]; priorRows: Parameters<typeof summarizeMetrics>[0] }> = []
+
+    if ((gCurr7.data?.length ?? 0) > 0 || (gPrior7.data?.length ?? 0) > 0) {
+      weeklyPlatforms.push({
+        platform:  'google',
+        currRows:  normalizeGoogleRows((gCurr7.data ?? []) as GoogleRow[]),
+        priorRows: normalizeGoogleRows((gPrior7.data ?? []) as GoogleRow[]),
+      })
+    }
+    if ((mCurr7.data?.length ?? 0) > 0 || (mPrior7.data?.length ?? 0) > 0) {
+      weeklyPlatforms.push({
+        platform:  'meta',
+        currRows:  normalizeMetaRows((mCurr7.data ?? []) as MetaRow[], primaryAction, fallbackAction),
+        priorRows: normalizeMetaRows((mPrior7.data ?? []) as MetaRow[], primaryAction, fallbackAction),
+      })
+    }
+
+    for (const { platform, currRows, priorRows } of weeklyPlatforms) {
+      const curr  = summarizeMetrics(currRows)
+      const prior = summarizeMetrics(priorRows)
+
+      if (curr.spend < 10 && prior.spend < 10) continue
+
+      for (const key of WEEKLY_METRICS) {
+        const cv = extractMetric(curr,  key)
+        const pv = extractMetric(prior, key)
+        if (cv === 0 && pv === 0) continue
+        if (pv === 0) continue
+        if ((key === 'cpa' || key === 'conversions') && curr.conversions < 5 && prior.conversions < 5) continue
+
+        const pct = (cv - pv) / pv
+        if (Math.abs(pct) < weeklyThreshold) continue
+
+        // Weekly dedup: skip if undismissed weekly alert for same client+metric+platform
+        const { count } = await db.from('metric_alerts')
+          .select('id', { count: 'exact', head: true })
+          .eq('client_id', client.id).eq('metric', key)
+          .eq('alert_type', 'weekly').eq('platform', platform)
+          .is('dismissed_at', null)
+        if ((count ?? 0) > 0) continue
+
+        const direction = pct > 0 ? 'up' : 'down'
+        const pctLabel  = `${Math.abs(pct * 100).toFixed(0)}%`
+        const platformLabel = platform === 'google' ? 'Google Ads' : 'Meta Ads'
+        const insight = `${platformLabel} ${metricLabel(key)} ${direction === 'up' ? 'increased' : 'decreased'} ${pctLabel} over the last 7 days vs the prior 7 days — ${formatVal(key, pv)} → ${formatVal(key, cv)}.`
+
+        await db.from('metric_alerts').insert({
+          client_id:   client.id,
+          metric:      key,
+          current_val: cv,
+          prior_val:   pv,
+          pct_change:  pct * 100,
+          direction,
+          insight,
+          alert_type:  'weekly',
+          platform,
+          date_label:  null,
+        })
+
+        newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'weekly', platform })
+      }
     }
   }
 
-  // Send email summary if any alerts and notifications are on
+  // ── Email digest ──────────────────────────────────────────────────────────
   if (newAlerts.length > 0 && agency?.notify_metric_alerts && agency?.notification_email) {
     const agencyName = String(agency.agency_name || 'Agency Dashboard')
     const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-    const rows = newAlerts.map(a =>
-      `<tr><td>${a.clientName}</td><td>${metricLabel(a.metric as MetricKey)}</td><td>${a.direction === 'up' ? '▲' : '▼'} ${Math.abs(a.pctChange).toFixed(0)}%</td><td>${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)}</td></tr>`
-    ).join('')
+
+    const redAlerts    = newAlerts.filter(a => a.alertType === 'daily')
+    const notableAlerts = newAlerts.filter(a => a.alertType === 'weekly')
+
+    const buildRows = (alerts: typeof newAlerts) => alerts.map(a => {
+      const dir = a.direction === 'up' ? '▲' : '▼'
+      return `<tr>
+        <td>${a.clientName}</td>
+        <td>${a.platform === 'google' ? 'Google' : 'Meta'}</td>
+        <td>${metricLabel(a.metric as MetricKey)}</td>
+        <td>${dir} ${Math.abs(a.pctChange).toFixed(0)}%</td>
+        <td>${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)}</td>
+      </tr>`
+    }).join('')
+
+    const tableStyle = 'border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px"'
+    const tableHead  = '<tr><th>Client</th><th>Platform</th><th>Metric</th><th>Change</th><th>Values</th></tr>'
+
+    let html = `<p>${newAlerts.length} metric alert${newAlerts.length > 1 ? 's' : ''} detected:</p>`
+    if (redAlerts.length > 0) {
+      html += `<p><strong>🔴 Red Alerts — Day-over-day (${yesterday} vs ${dayBefore})</strong></p>
+               <table ${tableStyle}>${tableHead}${buildRows(redAlerts)}</table>`
+    }
+    if (notableAlerts.length > 0) {
+      html += `<p><strong>🟡 Notable Changes — 7-day comparison</strong></p>
+               <table ${tableStyle}>${tableHead}${buildRows(notableAlerts)}</table>`
+    }
+    html += `<p><a href="${appUrl}/admin/clients">View Clients →</a></p>`
+
     try {
       await sendEmail({
         to:      String(agency.notification_email),
-        subject: `[${agencyName}] Metric Anomalies Detected — ${newAlerts.length} alert${newAlerts.length > 1 ? 's' : ''}`,
-        html:    `<p>${newAlerts.length} metric anomal${newAlerts.length > 1 ? 'ies' : 'y'} detected across your clients (${windowDays}-day vs prior ${windowDays} days):</p>
-                  <table border="1" cellpadding="6" style="border-collapse:collapse">
-                    <tr><th>Client</th><th>Metric</th><th>Change</th><th>Values</th></tr>
-                    ${rows}
-                  </table>
-                  <p><a href="${appUrl}/admin/clients">View Clients →</a></p>`,
+        subject: `[${agencyName}] ${redAlerts.length > 0 ? '🔴 ' : ''}Metric Alerts — ${newAlerts.length} alert${newAlerts.length > 1 ? 's' : ''}`,
+        html,
       })
     } catch (e) {
       console.error('[metric-alerts] email error:', e)
+    }
+  }
+
+  // ── Discord — one message per client ──────────────────────────────────────
+  if (botToken && newAlerts.length > 0) {
+    const byClient = new Map<string, typeof newAlerts>()
+    for (const a of newAlerts) {
+      const list = byClient.get(a.clientId) ?? []
+      list.push(a)
+      byClient.set(a.clientId, list)
+    }
+
+    for (const [clientId, alerts] of Array.from(byClient.entries())) {
+      const client = clients.find(c => c.id === clientId)
+      if (!client?.discord_channel_id) continue
+
+      const lines = alerts.map((a: typeof newAlerts[number]) => {
+        const tag = a.alertType === 'daily' ? '🔴' : '🟡'
+        const dir = a.direction === 'up' ? '▲' : '▼'
+        const plat = a.platform === 'google' ? 'Google' : 'Meta'
+        return `${tag} **${plat}** — ${metricLabel(a.metric as MetricKey)} ${dir}${Math.abs(a.pctChange).toFixed(0)}% (${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)})`
+      })
+
+      try {
+        await sendDiscordMessage(
+          botToken,
+          client.discord_channel_id,
+          `📊 **${client.name}** metric alert${alerts.length > 1 ? 's' : ''}:\n${lines.join('\n')}`,
+        )
+      } catch (e) {
+        console.error(`[metric-alerts] Discord error for client ${clientId}:`, e)
+      }
     }
   }
 

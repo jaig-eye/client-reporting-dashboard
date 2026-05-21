@@ -56,6 +56,7 @@ interface Settings {
   notify_metric_alerts:           boolean
   metric_alert_threshold:         number
   metric_alert_window_days:       number
+  daily_alert_threshold:          number
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
@@ -101,8 +102,9 @@ const DEFAULT: Settings = {
   notify_approval_needed:         true,
   notify_schedule_generated:      true,
   notify_metric_alerts:           false,
-  metric_alert_threshold:         40,
+  metric_alert_threshold:         25,
   metric_alert_window_days:       14,
+  daily_alert_threshold:          50,
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
@@ -809,8 +811,25 @@ export default function AgencySettingsPage() {
                 <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                      Alert Threshold (%)
-                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum change to trigger alert</span>
+                      Day-over-day threshold (%)
+                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum % change between yesterday and the day before to trigger a red alert</span>
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="number"
+                        className="input"
+                        style={{ maxWidth: 100 }}
+                        value={form.daily_alert_threshold}
+                        min={5} max={100} step={5}
+                        onChange={e => field('daily_alert_threshold', Number(e.target.value))}
+                      />
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                      7-day comparison threshold (%)
+                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum % change in a 7-day window to generate a notable-change alert</span>
                     </label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
@@ -822,23 +841,6 @@ export default function AgencySettingsPage() {
                         onChange={e => field('metric_alert_threshold', Number(e.target.value))}
                       />
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                      Comparison Window (days)
-                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — compares last N days vs prior N days</span>
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input
-                        type="number"
-                        className="input"
-                        style={{ maxWidth: 100 }}
-                        value={form.metric_alert_window_days}
-                        min={7} max={90} step={7}
-                        onChange={e => field('metric_alert_window_days', Number(e.target.value))}
-                      />
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>days</span>
                     </div>
                   </div>
                 </div>

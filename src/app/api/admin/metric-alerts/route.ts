@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
   let query = db
     .from('metric_alerts')
-    .select('id, client_id, metric, current_val, prior_val, pct_change, direction, insight, created_at, clients(name)')
+    .select('id, client_id, metric, current_val, prior_val, pct_change, direction, insight, created_at, alert_type, platform, date_label, clients(name)')
     .is('dismissed_at', null)
     .order('created_at', { ascending: false })
     .limit(50)
@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     id: string; client_id: string; metric: string
     current_val: number; prior_val: number; pct_change: number
     direction: string; insight: string | null; created_at: string
+    alert_type: string | null; platform: string | null; date_label: string | null
     clients: { name: string } | null
   }
 
@@ -47,6 +48,9 @@ export async function GET(request: NextRequest) {
         direction:   row.direction,
         insight:     row.insight ?? '',
         createdAt:   row.created_at,
+        alertType:   row.alert_type ?? 'weekly',
+        platform:    row.platform ?? null,
+        dateLabel:   row.date_label ?? null,
       }
     }),
   })
