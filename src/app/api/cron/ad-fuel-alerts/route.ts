@@ -113,10 +113,23 @@ export async function GET(request: NextRequest) {
 
     if (!atZero && !belowThreshold) continue
 
-    // Only alert when the balance has actually changed — suppresses daily spam
-    // when balance is stuck at the same negative value.
     const roundedBalance = Math.round(afBalance)
-    if (client.last_fuel_alert_balance != null && client.last_fuel_alert_balance === roundedBalance) continue
+    const lastBalance    = client.last_fuel_alert_balance
+
+    // Suppress unless the balance has moved significantly since the last alert.
+    // Rules:
+    //   - Always fire on first alert (no prior record).
+    //   - Always fire when crossing the $0 boundary (positive→negative or vice versa).
+    //   - Otherwise only fire when |change| / |lastBalance| >= 50%.
+    if (lastBalance != null) {
+      const crossedZero = (lastBalance > 0 && roundedBalance <= 0) || (lastBalance <= 0 && roundedBalance > 0)
+      if (!crossedZero) {
+        const pctChange = lastBalance !== 0
+          ? Math.abs(roundedBalance - lastBalance) / Math.abs(lastBalance)
+          : Math.abs(roundedBalance) >= 5 ? 1 : 0  // if last was $0, require ≥$5 swing
+        if (pctChange < 0.50) continue
+      }
+    }
 
     const balanceStr = `$${afBalance.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
     let message: string
