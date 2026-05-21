@@ -198,31 +198,14 @@ export default function RationaleModal({ item, onClose }: Props) {
             </div>
           )}
 
-          {/* ── Why This Topic ─────────────────────────────────────────────── */}
-          {item.rationale && (
-            <>
-              <Divider />
-              <SectionHeader>Why This Topic</SectionHeader>
-              <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#eff6ff', borderLeft: '3px solid #2563eb', marginBottom: item.whyNow ? '0.75rem' : 0 }}>
-                <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-primary)', lineHeight: 1.65 }}>{item.rationale}</p>
-              </div>
-              {item.whyNow && (
-                <div style={{ padding: '0.625rem 0.75rem', borderRadius: 8, background: '#fffbeb', borderLeft: '3px solid #d97706', marginTop: '0.5rem' }}>
-                  <span style={{ fontSize: '0.625rem', fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Why Now: </span>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>{item.whyNow}</span>
-                </div>
-              )}
-            </>
-          )}
-
           {/* ── Strategy breakdown ─────────────────────────────────────────── */}
-          {ratFields.some(f => f.value && f.label !== 'Why Now') && (
+          {ratFields.some(f => f.value) && (
             <>
               <Divider />
               <SectionHeader>Strategy Breakdown</SectionHeader>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
                 {ratFields
-                  .filter(f => f.value && f.label !== 'Why Now')
+                  .filter(f => f.value)
                   .map(f => (
                     <div key={f.label} style={{ borderLeft: `3px solid ${f.color}`, paddingLeft: '0.75rem' }}>
                       <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: f.color, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{f.label}</div>

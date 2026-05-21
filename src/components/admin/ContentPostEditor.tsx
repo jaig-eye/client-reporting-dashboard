@@ -162,6 +162,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [wpStatus,     setWpStatus]     = useState<WpPublishStatus>('draft')
   const [authorId,     setAuthorId]     = useState<number | null>(null)
   const [connectionId, setConnectionId] = useState<string>(defaultConnectionId ?? '')
+  useEffect(() => {
+    if (!connectionId && sites.length === 1) setConnectionId(sites[0].connectionId)
+  }, [sites])
 
   // Featured image
   const [featuredImageUrl, setFeaturedImageUrl] = useState('')
@@ -630,6 +633,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {imageUploadingMsg || 'Upload Image'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
+                  {featuredImageUrl && (
+                    <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
+                      ✕ Remove
+                    </button>
+                  )}
                 </div>
                 <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
                 {featuredImageUrl && (

@@ -87,7 +87,7 @@ const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; 
   pending:    { label: 'Pending Topics',   bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
   approved:   { label: 'Approved Topics',  bg: 'var(--blue-subtle)',   color: 'var(--blue)',    dot: '#2563eb' },
   generating: { label: 'Generating Posts', bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
-  generated:  { label: 'Generated Posts',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#10b981' },
+  generated:  { label: 'Ready for Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#10b981' },
   published:  { label: 'Published Posts',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#059669' },
   rejected:   { label: 'Rejected',         bg: 'var(--red-subtle)',    color: 'var(--red)',     dot: '#ef4444' },
 }
@@ -1093,7 +1093,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                 <a href={siteUrl} target="_blank" rel="noreferrer"
                                   className="btn btn-secondary"
                                   style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
-                                  ↗ View
+                                  {p.status === 'draft_saved' && p.wp_post_id ? '↗ Edit Draft' : p.bc_post_id ? '↗ BC Admin' : '↗ View'}
                                 </a>
                               )}
                             </div>
