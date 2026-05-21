@@ -26,39 +26,73 @@ export type CalendarItem = {
   suggestedTitle:     string | null
   searchVolume:       number | null
   keywordDifficulty:  number | null
+  clusterGroup:       string | null
 }
 
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_NAMES  = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_ABBREV = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']
+
+const MONTH_PILL_COLORS = [
+  '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#14b8a6', '#f97316', '#ef4444',
+]
+
+const BADGE_PALETTE = [
+  { bg: 'rgba(59,130,246,0.12)',  text: '#3b82f6' },
+  { bg: 'rgba(16,185,129,0.12)', text: '#10b981' },
+  { bg: 'rgba(245,158,11,0.12)', text: '#f59e0b' },
+  { bg: 'rgba(139,92,246,0.12)', text: '#8b5cf6' },
+  { bg: 'rgba(20,184,166,0.12)', text: '#14b8a6' },
+  { bg: 'rgba(249,115,22,0.12)', text: '#f97316' },
+  { bg: 'rgba(239,68,68,0.12)',  text: '#ef4444' },
+]
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string }> = {
-  pending:     { label: 'Pending Topics',   dot: '#f59e0b', color: '#b45309' },
-  scheduled:   { label: 'Approved Topics',  dot: '#3b82f6', color: '#1d4ed8' },
-  approved:    { label: 'Approved Topics',  dot: '#3b82f6', color: '#1d4ed8' },
-  generating:  { label: 'Generating Posts', dot: '#f97316', color: '#c2410c' },
-  generated:   { label: 'Generated Posts',  dot: '#10b981', color: '#065f46' },
-  for_review:  { label: 'Generated Posts',  dot: '#10b981', color: '#065f46' },
-  draft_saved: { label: 'Published Posts',  dot: '#059669', color: '#065f46' },
-  published:   { label: 'Published Posts',  dot: '#059669', color: '#065f46' },
-  rejected:    { label: 'Rejected',         dot: '#ef4444', color: '#991b1b' },
+  pending:     { label: 'Pending',      dot: '#f59e0b', color: '#b45309' },
+  scheduled:   { label: 'Approved',     dot: '#3b82f6', color: '#1d4ed8' },
+  approved:    { label: 'Approved',     dot: '#3b82f6', color: '#1d4ed8' },
+  generating:  { label: 'Generating',   dot: '#f97316', color: '#c2410c' },
+  generated:   { label: 'For Review',   dot: '#10b981', color: '#065f46' },
+  for_review:  { label: 'For Review',   dot: '#10b981', color: '#065f46' },
+  draft_saved: { label: 'Published',    dot: '#059669', color: '#065f46' },
+  published:   { label: 'Published',    dot: '#059669', color: '#065f46' },
+  rejected:    { label: 'Rejected',     dot: '#ef4444', color: '#991b1b' },
 }
 
 function getStatusCfg(status: string) {
   return STATUS_CONFIG[status] ?? { label: status, dot: '#9ca3af', color: '#374151' }
 }
 
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  const today = new Date()
-  const tomorrow = new Date(today)
-  tomorrow.setDate(today.getDate() + 1)
+function clusterColor(label: string) {
+  let h = 0
+  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) & 0xff
+  return BADGE_PALETTE[h % BADGE_PALETTE.length]
+}
 
-  if (d.toDateString() === today.toDateString()) return 'Today'
-  if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow'
-  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined })
+function getBadge(item: CalendarItem): { label: string; bg: string; text: string; dot: string } {
+  if (item.clusterGroup) {
+    const c = clusterColor(item.clusterGroup)
+    return { label: item.clusterGroup, bg: c.bg, text: c.text, dot: c.text }
+  }
+  const cfg = getStatusCfg(item.status)
+  const idx = Object.keys(STATUS_CONFIG).indexOf(item.status)
+  const c   = BADGE_PALETTE[Math.max(0, idx) % BADGE_PALETTE.length]
+  return { label: cfg.label, bg: c.bg, text: cfg.color, dot: cfg.dot }
+}
+
+function shortDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function isPast(dateStr: string): boolean {
   return new Date(dateStr + 'T00:00:00') < new Date(new Date().toDateString())
+}
+
+function previewText(item: CalendarItem): string {
+  const raw = item.type === 'topic'
+    ? (item.rationale ?? item.keywordOpportunity ?? '')
+    : (item.rationale ?? '')
+  return raw.length > 120 ? raw.slice(0, 118) + '…' : raw
 }
 
 export default function ContentCalendar({
@@ -70,8 +104,8 @@ export default function ContentCalendar({
 }) {
   const router   = useRouter()
   const today    = new Date()
-  const [year,         setYear]         = useState(today.getFullYear())
-  const [month,        setMonth]        = useState(today.getMonth())
+
+  const [windowStart,  setWindowStart]  = useState({ year: today.getFullYear(), month: today.getMonth() })
   const [clientFilter, setClientFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [items,        setItems]        = useState(initialItems)
@@ -79,7 +113,6 @@ export default function ContentCalendar({
 
   useEffect(() => { setItems(initialItems) }, [initialItems])
 
-  // Poll for status updates while any topic is generating
   useEffect(() => {
     const hasGenerating = items.some(i => i.type === 'topic' && i.status === 'generating')
     if (!hasGenerating) return
@@ -87,40 +120,77 @@ export default function ContentCalendar({
     return () => clearInterval(interval)
   }, [items, router])
 
-  const prevMonth = () => {
-    if (month === 0) { setMonth(11); setYear(y => y - 1) }
-    else setMonth(m => m - 1)
+  const prevWindow = () => {
+    setWindowStart(w => w.month === 0
+      ? { year: w.year - 1, month: 11 }
+      : { year: w.year, month: w.month - 1 })
   }
-  const nextMonth = () => {
-    if (month === 11) { setMonth(0); setYear(y => y + 1) }
-    else setMonth(m => m + 1)
+  const nextWindow = () => {
+    setWindowStart(w => w.month === 11
+      ? { year: w.year + 1, month: 0 }
+      : { year: w.year, month: w.month + 1 })
   }
+  const resetToday = () => setWindowStart({ year: today.getFullYear(), month: today.getMonth() })
 
+  // Build 4-month window keys
+  const windowMonths: { year: number; month: number; key: string }[] = []
+  for (let i = 0; i < 4; i++) {
+    let m = windowStart.month + i
+    let y = windowStart.year
+    if (m > 11) { m -= 12; y += 1 }
+    windowMonths.push({ year: y, month: m, key: `${y}-${String(m).padStart(2, '0')}` })
+  }
+  const windowKeys = new Set(windowMonths.map(w => w.key))
+
+  // Filter items
   const filtered = items.filter(item => {
     if (!item.targetPublishDate) return false
-    const d = new Date(item.targetPublishDate + 'T00:00:00')
-    if (d.getFullYear() !== year || d.getMonth() !== month) return false
+    const d   = new Date(item.targetPublishDate + 'T00:00:00')
+    const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
+    if (!windowKeys.has(key)) return false
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
-    if (statusFilter === 'generating' && item.status !== 'generating') return false
-    if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
-    if (statusFilter === 'for_review' && item.status !== 'for_review') return false
-    if (statusFilter === 'draft_saved' && item.status !== 'draft_saved') return false
-    if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
-    if (statusFilter === 'all'        && item.status === 'rejected') return false
+    if (statusFilter === 'approved'    && !['approved','generating','generated'].includes(item.status)) return false
+    if (statusFilter === 'for_review'  && item.status !== 'for_review') return false
+    if (statusFilter === 'draft_saved' && !['draft_saved','published'].includes(item.status)) return false
+    if (statusFilter === 'rejected'    && item.status !== 'rejected') return false
+    if (statusFilter === 'all'         && item.status === 'rejected') return false
     return true
   })
 
-  // Group by date string
-  const byDate = new Map<string, CalendarItem[]>()
-  for (const item of filtered) {
-    const date = item.targetPublishDate!
-    const arr = byDate.get(date) ?? []
-    arr.push(item)
-    byDate.set(date, arr)
-  }
-  const sortedDates = Array.from(byDate.keys()).sort()
+  // Unscheduled items (no date)
+  const unscheduled = items.filter(item => {
+    if (item.targetPublishDate) return false
+    if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
+    if (statusFilter === 'all' && item.status === 'rejected') return false
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
+      if (statusFilter === 'for_review' && item.status !== 'for_review') return false
+      if (statusFilter === 'draft_saved'&& !['draft_saved','published'].includes(item.status)) return false
+      if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
+    }
+    return true
+  })
 
-  const tabStyle = (active: boolean): React.CSSProperties => ({
+  // Stats
+  const activeMonths  = new Set(filtered.map(i => {
+    const d = new Date(i.targetPublishDate! + 'T00:00:00')
+    return `${d.getFullYear()}-${d.getMonth()}`
+  })).size
+  const uniqueClients = new Set(filtered.map(i => i.clientId)).size
+  const themeSet      = new Set(filtered.map(i => i.clusterGroup ?? getStatusCfg(i.status).label))
+  const uniqueThemes  = themeSet.size
+
+  // Group by month
+  const byMonth = new Map<string, CalendarItem[]>()
+  for (const item of filtered) {
+    const d   = new Date(item.targetPublishDate! + 'T00:00:00')
+    const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
+    const arr = byMonth.get(key) ?? []
+    arr.push(item)
+    byMonth.set(key, arr)
+  }
+
+  const filterTabStyle = (active: boolean): React.CSSProperties => ({
     fontSize: '0.75rem', fontWeight: active ? 600 : 400, padding: '0.25rem 0.75rem',
     borderRadius: 20, border: 'none', cursor: 'pointer',
     background: active ? 'var(--blue)' : 'transparent',
@@ -130,21 +200,41 @@ export default function ContentCalendar({
 
   return (
     <div>
+      {/* ── Stats bar ──────────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { value: filtered.length + unscheduled.length, label: 'posts / topics' },
+          { value: activeMonths,  label: 'months' },
+          { value: uniqueClients, label: 'clients' },
+          { value: uniqueThemes,  label: 'themes' },
+        ].map(stat => (
+          <div key={stat.label} style={{
+            display: 'flex', alignItems: 'baseline', gap: 6,
+            padding: '8px 16px', borderRadius: 8,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          }}>
+            <span style={{ fontSize: '1.375rem', fontWeight: 700, color: 'var(--blue)', lineHeight: 1 }}>
+              {stat.value}
+            </span>
+            <span style={{ fontSize: '0.6875rem', fontWeight: 500, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {stat.label}
+            </span>
+          </div>
+        ))}
+      </div>
+
       {/* ── Controls ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-        {/* Month nav */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+        {/* Month window nav */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button onClick={prevMonth} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>‹</button>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 600, minWidth: 140, textAlign: 'center', color: 'var(--text-primary)' }}>
-            {MONTH_NAMES[month]} {year}
+          <button onClick={prevWindow} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>‹</button>
+          <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            {MONTH_NAMES[windowStart.month]} {windowStart.year}
+            {' – '}
+            {MONTH_NAMES[windowMonths[3].month]} {windowMonths[3].year}
           </span>
-          <button onClick={nextMonth} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>›</button>
-          <button
-            onClick={() => { setYear(today.getFullYear()); setMonth(today.getMonth()) }}
-            className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '4px 8px', marginLeft: 4 }}
-          >
-            Today
-          </button>
+          <button onClick={nextWindow} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>›</button>
+          <button onClick={resetToday} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '4px 8px', marginLeft: 4 }}>Today</button>
         </div>
 
         {/* Client filter */}
@@ -160,55 +250,62 @@ export default function ContentCalendar({
         {/* Status filter */}
         <div style={{ display: 'flex', gap: 4, background: 'var(--bg-muted)', borderRadius: 24, padding: 3 }}>
           {[
-            { id: 'all',        label: 'All'         },
-            { id: 'approved',   label: 'Approved'    },
-            { id: 'for_review', label: 'For Review'  },
-            { id: 'draft_saved',label: 'On Site'     },
-            { id: 'rejected',   label: 'Rejected'    },
+            { id: 'all',        label: 'All'        },
+            { id: 'approved',   label: 'Approved'   },
+            { id: 'for_review', label: 'For Review' },
+            { id: 'draft_saved',label: 'On Site'    },
+            { id: 'rejected',   label: 'Rejected'   },
           ].map(t => (
-            <button key={t.id} style={tabStyle(statusFilter === t.id)} onClick={() => setStatusFilter(t.id)}>
+            <button key={t.id} style={filterTabStyle(statusFilter === t.id)} onClick={() => setStatusFilter(t.id)}>
               {t.label}
             </button>
           ))}
         </div>
-
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          {filtered.length} item{filtered.length !== 1 ? 's' : ''}
-        </span>
       </div>
 
-      {/* ── Timeline list ────────────────────────────────────────────────────── */}
-      {sortedDates.length === 0 ? (
+      {/* ── Month sections ───────────────────────────────────────────────────── */}
+      {filtered.length === 0 && unscheduled.length === 0 ? (
         <div className="card p-8" style={{ textAlign: 'center' }}>
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-            No items for {MONTH_NAMES[month]} {year}
-            {statusFilter !== 'all' ? ` with filter "${statusFilter}"` : ''}.
+            No items in this window{statusFilter !== 'all' ? ` with filter "${statusFilter}"` : ''}.
           </p>
         </div>
       ) : (
-        <div>
-          {sortedDates.map(dateStr => {
-            const dateItems = byDate.get(dateStr)!
-            const past = isPast(dateStr)
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          {windowMonths.map(({ year, month, key }) => {
+            const monthItems = byMonth.get(key) ?? []
+            if (monthItems.length === 0) return null
+
+            const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
 
             return (
-              <div key={dateStr} style={{ marginBottom: 20 }}>
-                {/* Date header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <div key={key}>
+                {/* Month heading */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                   <span style={{
-                    fontSize: '0.75rem', fontWeight: 700, color: past ? 'var(--text-faint)' : 'var(--text-primary)',
-                    textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap',
+                    fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
+                    background: pillColor + '20', color: pillColor, letterSpacing: '0.08em',
+                    flexShrink: 0,
                   }}>
-                    {formatDate(dateStr)}
+                    {MONTH_ABBREV[month]}
+                  </span>
+                  <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {MONTH_NAMES[month]} {year}
                   </span>
                   <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                    {monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'}
+                  </span>
                 </div>
 
-                {/* Items for this date */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {dateItems.map(item => (
-                    <TimelineRow
+                {/* Card grid */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                  gap: 12,
+                }}>
+                  {monthItems.map(item => (
+                    <ContentCard
                       key={item.id}
                       item={item}
                       onViewRationale={setRationaleFor}
@@ -218,6 +315,37 @@ export default function ContentCalendar({
               </div>
             )
           })}
+
+          {/* Unscheduled section */}
+          {unscheduled.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <span style={{
+                  fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
+                  background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em',
+                  flexShrink: 0,
+                }}>
+                  —
+                </span>
+                <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Unscheduled
+                </span>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                  {unscheduled.length} {unscheduled.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                gap: 12,
+              }}>
+                {unscheduled.map(item => (
+                  <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -227,78 +355,109 @@ export default function ContentCalendar({
   )
 }
 
-function TimelineRow({
+function ContentCard({
   item,
   onViewRationale,
 }: {
   item:            CalendarItem
   onViewRationale: (item: CalendarItem) => void
 }) {
-  const cfg    = getStatusCfg(item.status)
-  const isPost = item.type === 'post'
-  const label  = isPost
+  const badge   = getBadge(item)
+  const past    = item.targetPublishDate ? isPast(item.targetPublishDate) : false
+  const title   = item.type === 'post'
     ? (item.title ?? item.targetKeyword ?? 'Untitled Post')
-    : (item.topicText ?? item.targetKeyword ?? 'Topic')
+    : (item.topicText ?? item.targetKeyword ?? 'Untitled Topic')
+  const preview = previewText(item)
+  const hasRationale = !!(item.rationale || item.keywordOpportunity)
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '10px 14px', borderRadius: 8,
-      background: 'var(--bg-surface)',
-      border: '1px solid var(--border)',
-      boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-    }}>
-      {/* Status dot */}
-      <span style={{
-        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-        background: cfg.dot,
-        animation: item.status === 'generating' ? 'pulse 1.5s ease-in-out infinite' : 'none',
-      }} />
+    <div
+      onClick={() => hasRationale && onViewRationale(item)}
+      style={{
+        borderRadius: 10,
+        border: '1px solid var(--border)',
+        background: 'var(--bg-surface)',
+        padding: '12px 14px',
+        display: 'flex', flexDirection: 'column', gap: 6,
+        cursor: hasRationale ? 'pointer' : 'default',
+        opacity: past ? 0.65 : 1,
+        transition: 'box-shadow 0.15s, opacity 0.15s',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+      }}
+      onMouseEnter={e => { if (hasRationale) (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)' }}
+    >
+      {/* Top row: date + badge + actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {item.targetPublishDate && (
+          <span style={{
+            fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
+            flexShrink: 0,
+          }}>
+            {shortDate(item.targetPublishDate)}
+          </span>
+        )}
 
-      {/* Client name — links to their content schedule */}
+        <span style={{
+          fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
+          background: badge.bg, color: badge.text,
+          display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+        }}>
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%', background: badge.dot, flexShrink: 0,
+            animation: item.status === 'generating' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+          }} />
+          {badge.label}
+        </span>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {hasRationale && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--blue)', lineHeight: 1 }} title="View rationale">→</span>
+          )}
+          {item.type === 'post' && item.wpPostId && item.wpSiteUrl && (
+            <a
+              href={`${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`}
+              target="_blank" rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{ fontSize: '0.75rem', color: 'var(--blue)', textDecoration: 'none', lineHeight: 1 }}
+              title="Edit in WordPress"
+            >
+              ↗
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Client name */}
       <a
         href={`/admin/clients/${item.clientId}?tab=content`}
         onClick={e => e.stopPropagation()}
-        style={{ fontSize: '0.75rem', color: 'var(--blue)', flexShrink: 0, minWidth: 80, textDecoration: 'none', fontWeight: 500 }}
+        style={{ fontSize: '0.72rem', color: 'var(--blue)', textDecoration: 'none', fontWeight: 500, lineHeight: 1 }}
       >
-        {item.clientName} ↗
+        {item.clientName}
       </a>
 
-      <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem', flexShrink: 0 }}>—</span>
-
-      {/* Label — clickable for topics with rationale */}
-      <span
-        onClick={() => !isPost && (item.rationale || item.keywordOpportunity) && onViewRationale(item)}
-        style={{
-          flex: 1, fontSize: '0.875rem',
-          fontStyle: isPost ? 'normal' : 'italic',
-          fontWeight: isPost ? 500 : 400,
-          color: 'var(--text-primary)',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          cursor: (!isPost && (item.rationale || item.keywordOpportunity)) ? 'pointer' : 'default',
-        }}
-        title={(!isPost && (item.rationale || item.keywordOpportunity)) ? 'Click to view rationale' : undefined}
-      >
-        {label}
-      </span>
-
-      {/* Status badge */}
-      <span style={{
-        fontSize: '0.6875rem', fontWeight: 500, color: cfg.color,
-        flexShrink: 0, whiteSpace: 'nowrap',
+      {/* Title */}
+      <p style={{
+        margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)',
+        lineHeight: 1.35,
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
       }}>
-        {cfg.label}
-      </span>
+        {title}
+      </p>
 
-      {/* WP link for posts */}
-      {isPost && item.wpPostId && item.wpSiteUrl && (
-        <a
-          href={`${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`}
-          target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: '0.6875rem', color: 'var(--blue)', textDecoration: 'none', fontWeight: 500, flexShrink: 0 }}
-        >
-          Edit in WP ↗
-        </a>
+      {/* Preview text */}
+      {preview && (
+        <p style={{
+          margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        }}>
+          {preview}
+        </p>
       )}
     </div>
   )

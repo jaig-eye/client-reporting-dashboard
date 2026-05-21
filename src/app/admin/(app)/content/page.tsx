@@ -36,7 +36,7 @@ export default async function ContentPage({
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
     db.from('content_topics')
-      .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id')
+      .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
   ])
@@ -67,6 +67,7 @@ export default async function ContentPage({
     suggestedTitle:     null,
     searchVolume:       null,
     keywordDifficulty:  null,
+    clusterGroup:       null,
   }))
 
   const topicItems = (scheduledTopicsRes.data ?? []).map(t => ({
@@ -91,6 +92,7 @@ export default async function ContentPage({
     suggestedTitle:     (t as Record<string, unknown>).suggested_title    ? String((t as Record<string, unknown>).suggested_title)    : null,
     searchVolume:       (t as Record<string, unknown>).search_volume      != null ? Number((t as Record<string, unknown>).search_volume)      : null,
     keywordDifficulty:  (t as Record<string, unknown>).keyword_difficulty != null ? Number((t as Record<string, unknown>).keyword_difficulty) : null,
+    clusterGroup:       (t as Record<string, unknown>).cluster_group      ? String((t as Record<string, unknown>).cluster_group)      : null,
   }))
 
   // Exclude topic rows that already have a linked post
