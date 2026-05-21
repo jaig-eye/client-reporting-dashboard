@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/ad-fuel-alerts",
-      "schedule": "0 * * * *"
+      "schedule": "10 * * * *"
     },
     {
       "path": "/api/cron/metric-alerts",
@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/auto-pause-ads",
-      "schedule": "0 * * * *"
+      "schedule": "15 * * * *"
     },
     {
       "path": "/api/cron/ad-fuel-ach-clear",
