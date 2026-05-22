@@ -1082,12 +1082,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   SEO:{p.seo_score.overall}
                                 </span>
                               )}
-                              {p.status === 'for_review' && (
+                              {(p.status === 'for_review' || p.status === 'draft_saved') && (
                                 <button
                                   className="btn btn-primary"
                                   style={{ fontSize: '0.65rem', padding: '2px 7px' }}
                                   onClick={() => setReviewPost(p)}
-                                >→ Review</button>
+                                >{p.status === 'draft_saved' ? '→ Edit' : '→ Review'}</button>
                               )}
                               {siteUrl && p.status !== 'for_review' && (
                                 <a href={siteUrl} target="_blank" rel="noreferrer"
@@ -1130,11 +1130,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           {fmtDate(p.target_publish_date)}
                         </td>
                         <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
-                          {siteUrl && (
-                            <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
-                              ↗ Live
-                            </a>
-                          )}
+                          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                            <button
+                              className="btn btn-primary"
+                              style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                              onClick={() => setReviewPost(p)}
+                            >→ Edit</button>
+                            {siteUrl && (
+                              <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
+                                ↗ Live
+                              </a>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
