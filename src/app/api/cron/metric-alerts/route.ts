@@ -109,32 +109,41 @@ export async function GET(request: NextRequest) {
         'metric_alert_threshold', 'daily_alert_threshold',
         'discord_bot_token',
         'default_lead_action', 'default_lead_action_fallback',
+        'default_purchase_action', 'default_purchase_action_fallback',
       ].join(', '))
       .single(),
     db.from('clients')
-      .select('id, name, discord_channel_id, lead_action, lead_action_fallback'),
+      .select('id, name, discord_channel_id, layout_type, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback'),
   ])
 
   const agency   = agencyRes.data  as Record<string, unknown> | null
   const clients  = (clientsRes.data ?? []) as {
     id: string; name: string
     discord_channel_id: string | null
+    layout_type: string | null
     lead_action: string | null
     lead_action_fallback: string | null
+    purchase_action: string | null
+    purchase_action_fallback: string | null
   }[]
 
-  const weeklyThreshold = Number(agency?.metric_alert_threshold ?? 0.25)
-  const dailyThreshold  = Number(agency?.daily_alert_threshold  ?? 0.50)
-  const botToken        = String(agency?.discord_bot_token ?? '')
-  const defaultPrimary  = String(agency?.default_lead_action          ?? 'onsite_conversion.lead_grouped')
-  const defaultFallback = String(agency?.default_lead_action_fallback ?? 'lead')
+  const weeklyThreshold        = Number(agency?.metric_alert_threshold ?? 0.25)
+  const dailyThreshold         = Number(agency?.daily_alert_threshold  ?? 0.50)
+  const botToken               = String(agency?.discord_bot_token ?? '')
+  const defaultPrimary         = String(agency?.default_lead_action              ?? 'onsite_conversion.lead_grouped')
+  const defaultFallback        = String(agency?.default_lead_action_fallback     ?? 'lead')
+  const defaultPurchasePrimary = String(agency?.default_purchase_action          ?? 'purchase')
+  const defaultPurchaseFallback= String(agency?.default_purchase_action_fallback ?? 'omni_purchase')
 
-  // ── Date anchors (everything relative to yesterday = last complete day) ────
+  // ── Date anchors ─────────────────────────────────────────────────────────
+  // Shift back 2 days instead of 1: Google conversion data is not finalized
+  // until ~24h after the day closes, so a 4am cron reading "yesterday" gets
+  // incomplete numbers. Using day-before-yesterday guarantees settled data.
   const now          = new Date()
-  const yesterday    = offsetDay(now, -1)
-  const dayBefore    = offsetDay(now, -2)
-  const w7start      = offsetDay(now, -7)   // start of current 7-day window (=yesterday-6)
-  const w7priorStart = offsetDay(now, -14)  // start of prior 7-day window
+  const yesterday    = offsetDay(now, -2)   // settled "yesterday" (2 days ago)
+  const dayBefore    = offsetDay(now, -3)
+  const w7start      = offsetDay(now, -8)   // 7-day window ending on settled yesterday
+  const w7priorStart = offsetDay(now, -15)  // prior 7-day window
 
   // ── Auto-dismiss stale daily alerts (>48h, not yet dismissed) ─────────────
   const staleCutoff = new Date(Date.now() - 48 * 3_600_000).toISOString()
@@ -158,8 +167,13 @@ export async function GET(request: NextRequest) {
   const WEEKLY_METRICS: MetricKey[] = ['spend', 'conversions', 'cpa', 'roas', 'ctr']
 
   for (const client of clients) {
-    const primaryAction  = client.lead_action          ?? defaultPrimary
-    const fallbackAction = client.lead_action_fallback ?? defaultFallback
+    const isEcom         = client.layout_type === 'ecom'
+    const primaryAction  = isEcom
+      ? (client.purchase_action          ?? defaultPurchasePrimary)
+      : (client.lead_action              ?? defaultPrimary)
+    const fallbackAction = isEcom
+      ? (client.purchase_action_fallback ?? defaultPurchaseFallback)
+      : (client.lead_action_fallback     ?? defaultFallback)
 
     // ── Fetch all 8 queries in parallel ────────────────────────────────────
     const [
@@ -269,7 +283,8 @@ export async function GET(request: NextRequest) {
 
       if (curr.spend < 10 && prior.spend < 10) continue
 
-      for (const key of WEEKLY_METRICS) {
+      const clientWeeklyMetrics = isEcom ? WEEKLY_METRICS : WEEKLY_METRICS.filter(k => k !== 'roas')
+      for (const key of clientWeeklyMetrics) {
         const cv = extractMetric(curr,  key)
         const pv = extractMetric(prior, key)
         if (cv === 0 && pv === 0) continue
@@ -368,10 +383,13 @@ export async function GET(request: NextRequest) {
       if (!client?.discord_channel_id) continue
 
       const lines = alerts.map((a: typeof newAlerts[number]) => {
-        const tag = a.alertType === 'daily' ? '🔴' : '🟡'
-        const dir = a.direction === 'up' ? '▲' : '▼'
+        const upIsGood: MetricKey[] = ['roas', 'conversions', 'ctr']
+        const isGood = upIsGood.includes(a.metric as MetricKey) ? a.direction === 'up' : a.direction === 'down'
+        const tag  = isGood ? '🟢' : '🔴'
+        const periodLabel = a.alertType === 'daily' ? 'daily' : '7d'
+        const dir  = a.direction === 'up' ? '▲' : '▼'
         const plat = a.platform === 'google' ? 'Google' : 'Meta'
-        return `${tag} **${plat}** — ${metricLabel(a.metric as MetricKey)} ${dir}${Math.abs(a.pctChange).toFixed(0)}% (${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)})`
+        return `${tag} **${plat}** — ${metricLabel(a.metric as MetricKey)} ${dir}${Math.abs(a.pctChange).toFixed(0)}% (${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)}) · ${periodLabel}`
       })
 
       try {

@@ -27,7 +27,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -94,7 +94,7 @@ export async function POST(
     ? new Date(`${String(p.target_publish_date)}T${publishTime}:00`).toISOString()
     : new Date().toISOString()
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     title:            String(p.title ?? ''),
     body:             String(p.content ?? ''),
     author:           'Admin',
@@ -105,6 +105,7 @@ export async function POST(
     meta_description: String(p.meta_description ?? ''),
     meta_keywords:    String(p.target_keyword ?? ''),
     tags,
+    ...(p.featured_image_url ? { thumbnail_path: String(p.featured_image_url) } : {}),
   }
 
   try {
@@ -146,6 +147,8 @@ export async function POST(
       bc_edit_url: `https://store-${storeHash}.mybigcommerce.com/manage/site/content`,
     })
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 })
+    console.error('[publish-bigcommerce]', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

@@ -354,7 +354,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         const route = isBigCommerce
           ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
           : `/api/admin/content/posts/${postId}/approve`
-        fetch(route, { method: 'POST' }).catch(e => console.error('[handleApprove]', e))
+        const pushRes = await fetch(route, { method: 'POST' })
+        if (!pushRes.ok) {
+          const body = await pushRes.json().catch(() => ({ error: 'Push failed' }))
+          throw new Error(body.error || `Push failed (${pushRes.status})`)
+        }
       } else {
         fetch(`/api/admin/content/posts/${postId}`, {
           method:  'PATCH',
