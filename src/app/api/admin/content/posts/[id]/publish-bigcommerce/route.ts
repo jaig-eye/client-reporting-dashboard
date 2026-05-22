@@ -103,7 +103,6 @@ export async function POST(
     url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
     is_published:     false,
     published_date:   publishedDate,
-    summary:          String(p.meta_description ?? ''),
     meta_description: String(p.meta_description ?? ''),
     meta_keywords:    String(p.target_keyword ?? ''),
     tags,
