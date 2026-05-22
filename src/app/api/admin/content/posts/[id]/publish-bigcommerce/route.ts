@@ -135,10 +135,13 @@ export async function POST(
 
     const bcPost = (await res.json()) as Record<string, unknown>
 
+    const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/site/content`
+
     await db.from('content_posts').update({
       bc_post_id:    Number(bcPost.id),
       bc_store_hash: storeHash,
       status:        'draft_saved',
+      published_url: bcEditUrl,
     }).eq('id', id)
 
     const adminSession = await getAdminSession()
@@ -149,8 +152,9 @@ export async function POST(
     })
 
     return NextResponse.json({
-      bc_post_id:  Number(bcPost.id),
-      bc_edit_url: `https://store-${storeHash}.mybigcommerce.com/manage/site/content`,
+      bc_post_id:    Number(bcPost.id),
+      bc_edit_url:   bcEditUrl,
+      published_url: bcEditUrl,
     })
   } catch (err) {
     console.error('[publish-bigcommerce]', err)

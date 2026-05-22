@@ -210,12 +210,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         if (!connectionId && defaultConnectionId) setConnectionId(defaultConnectionId)
 
-        // Default publish status: future if there's a future publish date
+        // Default publish status based on target publish date
         if (data.targetPublishDate) {
           const publishDate = new Date(data.targetPublishDate + 'T00:00:00')
-          if (publishDate > new Date()) {
-            setWpStatus('future')
-          }
+          setWpStatus(publishDate > new Date() ? 'future' : 'publish')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load')
@@ -350,6 +348,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         : `No site connected — the post will be marked approved but not pushed anywhere. Continue?`
       if (!window.confirm(confirmMsg)) { setApproving(false); return }
 
+      let pushData: Record<string, unknown> = {}
       if (activeSite) {
         const route = isBigCommerce
           ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
@@ -359,6 +358,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           const body = await pushRes.json().catch(() => ({ error: 'Push failed' }))
           throw new Error(body.error || `Push failed (${pushRes.status})`)
         }
+        pushData = await pushRes.json().catch(() => ({}))
       } else {
         fetch(`/api/admin/content/posts/${postId}`, {
           method:  'PATCH',
@@ -371,7 +371,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         id: postId, status: 'draft_saved',
         title: title || null, targetKeyword: targetKeyword || null,
         wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
-        publishedUrl: post?.publishedUrl ?? null,
+        publishedUrl: (pushData.published_url as string | null) ?? post?.publishedUrl ?? null,
+        wpPostId:  (pushData.wp_post_id  as number | null) ?? null,
+        wpSiteUrl: (pushData.wp_site_url as string | null) ?? null,
       })
       onClose()
     } catch (err) {

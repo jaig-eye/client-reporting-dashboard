@@ -79,6 +79,22 @@ export async function POST(
 
   const auth = { username, app_password: appPassword }
 
+  // Fetch publish time from content settings
+  const { data: csRow } = await db
+    .from('content_settings')
+    .select('publish_time')
+    .eq('client_id', String(p.client_id))
+    .maybeSingle()
+  const publishTime = (csRow as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
+
+  // Determine WP status and scheduled date from target_publish_date
+  let wpPublishStatus: 'draft' | 'future' | 'publish' = 'draft'
+  let wpDate: string | undefined
+  if (p.target_publish_date) {
+    wpDate = `${String(p.target_publish_date)}T${publishTime}:00`
+    wpPublishStatus = new Date(wpDate) > new Date() ? 'future' : 'publish'
+  }
+
   try {
     const tags   = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
     const tagIds = tags.length > 0 ? await ensureTagIds(siteUrl, auth, tags) : []
@@ -100,7 +116,8 @@ export async function POST(
     const result = await publishPost(siteUrl, auth, {
       title:          String(p.title ?? ''),
       content:        String(p.content ?? ''),
-      status:         'draft',
+      status:         wpPublishStatus,
+      date:           wpDate,
       slug:           p.slug ? String(p.slug) : undefined,
       tags:           tagIds.length > 0 ? tagIds : undefined,
       featured_media: featuredMediaId,
@@ -111,11 +128,14 @@ export async function POST(
       },
     })
 
+    const wpEditUrl = `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
+
     await db.from('content_posts').update({
-      wp_post_id:  result.id,
-      wp_site_url: siteUrl,
-      wp_status:   'draft',
-      status:      'draft_saved',
+      wp_post_id:    result.id,
+      wp_site_url:   siteUrl,
+      wp_status:     wpPublishStatus,
+      status:        'draft_saved',
+      published_url: wpEditUrl,
     }).eq('id', id)
 
     const adminSession = await getAdminSession()
@@ -143,8 +163,10 @@ export async function POST(
     } catch { /* non-fatal */ }
 
     return NextResponse.json({
-      wp_post_id:  result.id,
-      wp_edit_url: `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`,
+      wp_post_id:    result.id,
+      wp_site_url:   siteUrl,
+      wp_edit_url:   wpEditUrl,
+      published_url: wpEditUrl,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

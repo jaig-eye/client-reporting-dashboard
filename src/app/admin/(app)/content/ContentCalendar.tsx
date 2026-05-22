@@ -16,6 +16,7 @@ export type CalendarItem = {
   targetKeyword:    string | null
   wpPostId:         number | null
   wpSiteUrl:        string | null
+  publishedUrl:     string | null
   rationale:        string | null
   competitionLevel: string | null
   generationError:  string | null
@@ -418,13 +419,13 @@ function ContentCard({
           {hasRationale && (
             <span style={{ fontSize: '0.75rem', color: 'var(--blue)', lineHeight: 1 }} title="View rationale">→</span>
           )}
-          {item.type === 'post' && item.wpPostId && item.wpSiteUrl && (
+          {item.type === 'post' && item.publishedUrl && (
             <a
-              href={`${item.wpSiteUrl}/wp-admin/post.php?post=${item.wpPostId}&action=edit`}
+              href={item.publishedUrl}
               target="_blank" rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
               style={{ fontSize: '0.75rem', color: 'var(--blue)', textDecoration: 'none', lineHeight: 1 }}
-              title="Edit in WordPress"
+              title="View published post"
             >
               ↗
             </a>
