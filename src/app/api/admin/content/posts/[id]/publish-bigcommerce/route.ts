@@ -74,6 +74,8 @@ export async function POST(
   const storeHash   = String(connector.config.store_hash   || connector.auth.store_hash   || '')
   const accessToken = String(connector.config.access_token || connector.auth.access_token || '')
 
+  console.log('[publish-bigcommerce] connection_id:', connData.id, '| store_hash:', storeHash, '| token prefix:', accessToken.slice(0, 6) + '…')
+
   if (!storeHash || !accessToken) {
     return NextResponse.json({ error: 'BigCommerce credentials incomplete' }, { status: 400 })
   }
@@ -124,6 +126,11 @@ export async function POST(
 
     if (!res.ok) {
       const text = await res.text()
+      if (res.status === 401) {
+        throw new Error(
+          'BigCommerce rejected the access token (401). Reconnect the integration and ensure the API account has "Content: Modify" scope enabled.'
+        )
+      }
       throw new Error(`BigCommerce API error ${res.status}: ${text}`)
     }
 

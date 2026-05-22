@@ -203,7 +203,7 @@ function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isCo
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
           <li><strong>Store Hash:</strong> Find it in your BigCommerce store URL — it looks like <code>store-<strong>abc123</strong>.mybigcommerce.com</code>. Copy the bold portion.</li>
-          <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Enable read scopes for Orders, Products, and Customers. Copy the Access Token from the credential sheet (save it — it only shows once).</li>
+          <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Under <strong>OAuth Scopes</strong>, set <strong>Content → Modify</strong> (required to publish blog posts). Copy the Access Token from the credential sheet — it only shows once.</li>
         </ol>
       }
       onSave={onSave}

@@ -49,8 +49,10 @@ export const bigcommerceConnector: ConnectorAdapter = {
     const accessToken = String(config.access_token || auth.access_token || '')
     if (!storeHash || !accessToken) return false
     try {
+      // Test against /v2/blog/posts specifically — requires Content scope.
+      // /v2/store passes with any scope and would miss missing Content permission.
       const res = await fetch(
-        `https://api.bigcommerce.com/stores/${storeHash}/v2/store`,
+        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts?limit=1`,
         { headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' } }
       )
       return res.ok
