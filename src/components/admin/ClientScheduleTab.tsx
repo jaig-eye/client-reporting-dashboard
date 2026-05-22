@@ -837,10 +837,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
                       if (item.kind === 'topic') {
                         const t = item.data
-                        const displayStatus = getTopicDisplayStatus(t)
                         const linkedPost    = topicIdToPost.get(t.id)
+                        const displayStatus = (linkedPost?.status === 'draft_saved' || linkedPost?.status === 'published')
+                          ? 'published' as const
+                          : getTopicDisplayStatus(t)
                         const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
-                        const hasReview     = linkedPost && (linkedPost.status === 'for_review' || linkedPost.status === 'generated')
+                        const hasReview     = linkedPost && (linkedPost.status === 'for_review' || linkedPost.status === 'generated' || linkedPost.status === 'draft_saved')
                         const hasError      = !!t.generation_error && t.status === 'scheduled'
 
                         return [
@@ -888,7 +890,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                     className="btn btn-primary"
                                     style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                     onClick={() => setReviewPost(linkedPost!)}
-                                  ><ArrowRight size={11} weight="bold" /> Review</button>
+                                  ><ArrowRight size={11} weight="bold" /> {linkedPost?.status === 'draft_saved' ? 'Edit' : 'Review'}</button>
+                                )}
+                                {linkedPost?.status === 'draft_saved' && linkedPost.published_url && (
+                                  <a href={linkedPost.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗</a>
                                 )}
                                 {/* Retry after generation error */}
                                 {hasError && (
