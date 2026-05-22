@@ -93,8 +93,8 @@ export async function POST(
   const publishTime = (csRow as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
 
   const publishedDate = p.target_publish_date
-    ? new Date(`${String(p.target_publish_date)}T${publishTime}:00`).toISOString()
-    : new Date().toISOString()
+    ? new Date(`${String(p.target_publish_date)}T${publishTime}:00`).toUTCString()
+    : new Date().toUTCString()
 
   const payload: Record<string, unknown> = {
     title:            String(p.title ?? ''),
