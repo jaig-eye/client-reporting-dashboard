@@ -205,6 +205,7 @@ export async function syncClient(
           console.error(`[sync] Google Ads negative keywords failed for connection ${connection.id}:`, negResult.reason)
         }
       } else if (connection.connector.type === 'meta_ads') {
+        onProgress(80, 'Saving campaign data…')
         recordCount = await upsertMetaAdsMetrics(
           db,
           connection.id,
@@ -214,6 +215,7 @@ export async function syncClient(
         )
         // Ad-level sync (best-effort) — rows counted separately so the UI shows
         // the true total (campaign rows + ad rows) instead of just campaign rows.
+        onProgress(88, 'Fetching ad-level data…')
         try {
           const adRows = await fetchMetaAdMetrics(
             connection.external_id,
@@ -223,6 +225,7 @@ export async function syncClient(
           )
           console.log(`[sync] Meta ad-level: ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
+            onProgress(96, 'Saving ad-level data…')
             const adCount = await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
             recordCount += adCount
           }
@@ -230,6 +233,7 @@ export async function syncClient(
           adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
         }
+        onProgress(100, 'Done')
       } else if (connection.connector.type === 'ghl') {
         recordCount = await upsertGhlMetrics(
           db,

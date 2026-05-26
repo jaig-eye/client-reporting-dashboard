@@ -705,7 +705,7 @@ export const metaAdsConnector: ConnectorAdapter = {
       }
     }
 
-    if (onProgress) onProgress(100, 'Done')
+    if (onProgress) onProgress(75, 'Campaign insights ready')
 
     const totalSpend = rows.reduce((s, r) => s + (r.spend ?? 0), 0)
     console.log(`[meta] fetchMetrics returning ${rows.length} rows, total spend=$${totalSpend.toFixed(2)}`)
