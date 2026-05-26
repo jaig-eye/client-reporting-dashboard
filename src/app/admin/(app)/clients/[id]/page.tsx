@@ -429,66 +429,58 @@ export default async function ClientDetailPage({
                     <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress' | 'bigcommerce'} />
                   </div>
                 )}
+                {/* BC Analytics sub-section — only inside the bigcommerce card when content is connected */}
+                {type === 'bigcommerce' && state === 'connected' && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                        <div
+                          className="h-7 w-7 rounded flex items-center justify-center flex-shrink-0 text-sm"
+                          style={{ background: '#f59e0b18', border: '1px solid #f59e0b30' }}
+                        >
+                          📦
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Analytics Connection</span>
+                            <SourceBadge state={analyticsBcConn ? 'connected' : 'direct-connect'} compact />
+                          </div>
+                          {analyticsBcConn ? (
+                            <div className="text-xs space-y-0.5" style={{ color: 'var(--text-muted)' }}>
+                              <p>{analyticsBcConn.external_name ?? analyticsBcConn.external_id}</p>
+                              <p>Fetches order data for daily Discord sales reports.</p>
+                              <ClientBcDailyReport
+                                clientId={id}
+                                enabled={!!(client as unknown as { bc_daily_report?: boolean }).bc_daily_report}
+                                hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Add a second connection with Orders scope to enable daily Discord sales reports.</p>
+                          )}
+                        </div>
+                      </div>
+                      {analyticsBcConn && (
+                        <Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-secondary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}>
+                          Settings
+                        </Link>
+                      )}
+                    </div>
+                    {!analyticsBcConn && (
+                      <div style={{ marginTop: 12 }}>
+                        <ClientDirectConnections
+                          clientId={id}
+                          existingTypes={existingDirectTypes}
+                          singleType="bigcommerce_analytics"
+                          bcAnalyticsConnected={false}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
-
-          {/* ── BigCommerce Analytics card (shown once content BC is connected) ── */}
-          {contentBcConn && (
-            <div className="card p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div
-                    className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 text-lg"
-                    style={{ background: '#f59e0b18', border: '1px solid #f59e0b30' }}
-                  >
-                    📦
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>BigCommerce Analytics</h3>
-                      <SourceBadge state={analyticsBcConn ? 'connected' : 'direct-connect'} />
-                    </div>
-                    {analyticsBcConn && (
-                      <div className="text-xs space-y-0.5" style={{ color: 'var(--text-muted)' }}>
-                        <p>{analyticsBcConn.external_name ?? analyticsBcConn.external_id}</p>
-                        {analyticsBcConn.last_synced_at && (
-                          <p>Last synced {new Date(analyticsBcConn.last_synced_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
-                        )}
-                      </div>
-                    )}
-                    <p className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-                      Fetches order data for daily sales reports sent to Discord.
-                    </p>
-                    {analyticsBcConn && (
-                      <ClientBcDailyReport
-                        clientId={id}
-                        enabled={!!(client as unknown as { bc_daily_report?: boolean }).bc_daily_report}
-                        hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
-                      />
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {analyticsBcConn && (
-                    <Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
-                      Settings
-                    </Link>
-                  )}
-                </div>
-              </div>
-              {!analyticsBcConn && (
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                  <ClientDirectConnections
-                    clientId={id}
-                    existingTypes={connections.filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress' || c.connector.type === 'bigcommerce').map(c => c.connector.type as 'ghl' | 'wordpress' | 'bigcommerce')}
-                    singleType="bigcommerce_analytics"
-                    bcAnalyticsConnected={false}
-                  />
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ── Third-party integration cards ─────────────────────── */}
           <div>
