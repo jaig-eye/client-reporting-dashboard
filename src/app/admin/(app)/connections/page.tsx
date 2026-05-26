@@ -77,6 +77,21 @@ export default async function ConnectionsPage({
           Google tokens were received but could not be saved to the database. Check Vercel logs.
         </div>
       )}
+      {sp.connected === 'meta' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle, #f0fdf4)', border: '1px solid var(--green-border, #bbf7d0)', color: 'var(--green)' }}>
+          Meta Ads reconnected successfully — your 60-day token has been refreshed.
+        </div>
+      )}
+      {sp.error === 'meta_auth_failed' && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          Meta sign-in was cancelled or denied. Try reconnecting from the Meta Ads connector settings.
+        </div>
+      )}
+      {(sp.error === 'meta_save_failed' || sp.error === 'meta_failed') && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          Meta connection failed — the token was received but could not be saved. Check Vercel function logs (<code>/api/auth/meta/callback</code>).
+        </div>
+      )}
 
       <div className="space-y-3">
 

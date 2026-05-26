@@ -314,7 +314,7 @@ export async function syncClient(
       await completeSyncJob(db, jobId, 'success', recordCount, adLevelError)
     } catch (err) {
       await completeSyncJob(db, jobId, 'error', 0, String(err))
-      throw err
+      // Don't throw — let remaining connections for this client still run
     }
   }
 

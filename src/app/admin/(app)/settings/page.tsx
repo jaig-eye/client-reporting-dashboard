@@ -54,6 +54,7 @@ interface Settings {
   notify_approval_needed:         boolean
   notify_schedule_generated:      boolean
   notify_metric_alerts:           boolean
+  notify_connector_errors:        boolean
   metric_alert_threshold:         number
   metric_alert_window_days:       number
   daily_alert_threshold:          number
@@ -104,6 +105,7 @@ const DEFAULT: Settings = {
   notify_approval_needed:         true,
   notify_schedule_generated:      true,
   notify_metric_alerts:           false,
+  notify_connector_errors:        false,
   metric_alert_threshold:         25,
   metric_alert_window_days:       14,
   daily_alert_threshold:          50,
@@ -882,6 +884,12 @@ export default function AgencySettingsPage() {
                   </div>
                 </div>
               )}
+              <Toggle
+                label="Connector auth errors (expired tokens, revoked access)"
+                hint="Email when a sync fails because a platform token has expired or been revoked — with a link to reconnect"
+                checked={form.notify_connector_errors}
+                onChange={v => field('notify_connector_errors', v)}
+              />
             </div>
           </div>
 

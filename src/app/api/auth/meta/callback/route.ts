@@ -20,25 +20,33 @@ export async function GET(request: NextRequest) {
     // Preserve existing config (e.g. Business Manager ID) when re-authorizing
     const { data: existing } = await db
       .from('connectors')
-      .select('config')
+      .select('id, config')
       .eq('type', 'meta_ads')
       .maybeSingle()
 
-    // Upsert the agency-level Meta Ads connector
-    const { data: connector, error } = await db
-      .from('connectors')
-      .upsert({
-        type:   'meta_ads',
-        label:  'Meta Ads',
-        auth,
-        config: (existing?.config ?? {}),
-        status: 'active',
-      }, { onConflict: 'type' })
-      .select('id')
-      .single()
+    // Explicit update-or-insert — onConflict: 'type' doesn't work with partial unique indexes
+    let connector: { id: string } | null = null
+    let connError: unknown = null
 
-    if (error || !connector) {
-      console.error('Meta connector upsert failed:', error)
+    if (existing?.id) {
+      const { data, error } = await db
+        .from('connectors')
+        .update({ auth, config: existing.config ?? {}, status: 'active' })
+        .eq('id', existing.id)
+        .select('id')
+        .single()
+      connector = data; connError = error
+    } else {
+      const { data, error } = await db
+        .from('connectors')
+        .insert({ type: 'meta_ads', label: 'Meta Ads', auth, config: {}, status: 'active' })
+        .select('id')
+        .single()
+      connector = data; connError = error
+    }
+
+    if (connError || !connector) {
+      console.error('Meta connector save failed:', connError)
       return NextResponse.redirect(`${appUrl}/admin/connections?error=meta_save_failed`)
     }
 

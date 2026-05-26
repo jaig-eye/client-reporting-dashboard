@@ -308,7 +308,7 @@ export default async function ClientDetailPage({
                         )}
                         {state === 'connector-missing' && (
                           <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                            <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency Google connection first →</Link>
+                            <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency connection first →</Link>
                           </p>
                         )}
                       </div>
@@ -389,16 +389,11 @@ export default async function ClientDetailPage({
                           )}
                         </div>
                       )}
+                      <p className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 2 }}>{def.description}</p>
                       {state === 'connector-missing' && (
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency {def.label} connection first →</Link>
+                        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                          <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency connection first →</Link>
                         </p>
-                      )}
-                      {state === 'not-connected' && (
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Agency connector is ready — assign an account to this client.</p>
-                      )}
-                      {state === 'coming-soon' && (
-                        <p className="text-xs" style={{ color: 'var(--text-faint)' }}>{def.description}</p>
                       )}
                     </div>
                   </div>
@@ -837,8 +832,19 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function SourceBadge({ state, compact = false }: { state: string; compact?: boolean }) {
+  if (state === 'connected') {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        padding: compact ? '1px 5px' : '1px 8px',
+        borderRadius: 999, fontSize: compact ? '0.6rem' : '0.7rem', fontWeight: 600,
+        background: '#dcfce7', color: '#166534',
+      }}>
+        ✓ Connected
+      </span>
+    )
+  }
   const m: Record<string, { label: string; cls: string }> = {
-    connected:           { label: 'Connected',   cls: 'badge-green' },
     'connector-missing': { label: 'Not set up',  cls: 'badge-amber' },
     'not-connected':     { label: 'Available',   cls: 'badge-gray'  },
     'coming-soon':       { label: 'Coming soon', cls: 'badge-gray'  },

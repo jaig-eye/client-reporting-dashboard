@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
+import { sendEmail } from '@/lib/email'
 
 export const maxDuration = 300
 
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   const { data: settings } = await db
     .from('agency_settings')
-    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc')
+    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc, notify_connector_errors, notification_email, agency_name')
     .single()
 
   if (settings?.cron_enabled === false) {
@@ -72,7 +73,24 @@ export async function GET(request: NextRequest) {
       }
       results.push({ client: client.name, status: 'success', records })
     } catch (e) {
-      results.push({ client: client.name, status: 'error', error: String(e) })
+      const errStr = String(e)
+      results.push({ client: client.name, status: 'error', error: errStr })
+
+      const isAuthError = /OAuthException|access.?token|session.?(expired|invalidat)|code[: ]*190/i.test(errStr)
+      if (isAuthError && settings?.notify_connector_errors && settings?.notification_email) {
+        const agencyName = (settings as Record<string, unknown>).agency_name as string | undefined
+        try {
+          await sendEmail({
+            to:      String(settings.notification_email),
+            subject: `[${agencyName ?? 'Agency'}] Connector auth error — ${client.name}`,
+            html:    `<p>A sync for <strong>${client.name}</strong> failed due to an authentication error.</p>
+                      <p style="font-family:monospace;background:#f1f5f9;padding:8px;border-radius:4px;font-size:13px">${errStr.slice(0, 600)}</p>
+                      <p><a href="${process.env.NEXT_PUBLIC_APP_URL}/admin/connections">Reconnect the expired integration →</a></p>`,
+          })
+        } catch (emailErr) {
+          console.warn('[sync cron] Failed to send connector error email:', emailErr)
+        }
+      }
     }
   }
 

@@ -51,6 +51,10 @@ export async function exchangeMetaCode(
   })
   const llRes = await fetch(`${BASE_URL}/oauth/access_token?${longLived}`)
   const llData = (await llRes.json()) as Record<string, unknown>
+  if (!llRes.ok || llData.error) {
+    console.warn('Meta long-lived token exchange failed:', llData.error ?? llRes.status, '— falling back to short-lived token')
+    return { access_token: String(data.access_token) }
+  }
   return { access_token: String(llData.access_token || data.access_token) }
 }
 
