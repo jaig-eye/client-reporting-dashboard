@@ -57,6 +57,8 @@ interface Settings {
   metric_alert_threshold:         number
   metric_alert_window_days:       number
   daily_alert_threshold:          number
+  daily_alert_metrics:            string[]
+  weekly_alert_metrics:           string[]
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
@@ -105,6 +107,8 @@ const DEFAULT: Settings = {
   metric_alert_threshold:         25,
   metric_alert_window_days:       14,
   daily_alert_threshold:          50,
+  daily_alert_metrics:            ['spend', 'conversions', 'cpa'],
+  weekly_alert_metrics:           ['spend', 'conversions', 'cpa', 'roas', 'ctr'],
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
@@ -127,7 +131,6 @@ const TABS = [
   { id: 'ai',            label: 'AI'            },
   { id: 'sync',          label: 'Sync'          },
   { id: 'notifications', label: 'Notifications' },
-  { id: 'overview',      label: 'Overview'      },
   { id: 'layouts',       label: 'Layouts'       },
 ]
 
@@ -808,13 +811,14 @@ export default function AgencySettingsPage() {
                 onChange={v => field('notify_metric_alerts', v)}
               />
               {form.notify_metric_alerts && (
-                <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {/* Day-over-day */}
                   <div>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                       Day-over-day threshold (%)
                       <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum % change between yesterday and the day before to trigger a red alert</span>
                     </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <input
                         type="number"
                         className="input"
@@ -825,13 +829,30 @@ export default function AgencySettingsPage() {
                       />
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
                     </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Track these metrics daily:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {(['spend', 'conversions', 'cpa'] as const).map(m => {
+                        const labels: Record<string, string> = { spend: 'Spend', conversions: 'Conversions', cpa: 'CPA' }
+                        const checked = (form.daily_alert_metrics ?? ['spend', 'conversions', 'cpa']).includes(m)
+                        return (
+                          <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8125rem', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={checked} onChange={e => {
+                              const cur = form.daily_alert_metrics ?? ['spend', 'conversions', 'cpa']
+                              field('daily_alert_metrics', e.target.checked ? [...cur, m] : cur.filter((x: string) => x !== m))
+                            }} />
+                            {labels[m]}
+                          </label>
+                        )
+                      })}
+                    </div>
                   </div>
+                  {/* 7-day */}
                   <div>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                       7-day comparison threshold (%)
-                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum % change in a 7-day window to generate a notable-change alert</span>
+                      <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — minimum % change in a 7-day window to generate a notable-change alert (sent at most once per 7 days)</span>
                     </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <input
                         type="number"
                         className="input"
@@ -841,6 +862,22 @@ export default function AgencySettingsPage() {
                         onChange={e => field('metric_alert_threshold', Number(e.target.value))}
                       />
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>%</span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Track these metrics weekly:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {(['spend', 'conversions', 'cpa', 'roas', 'ctr'] as const).map(m => {
+                        const labels: Record<string, string> = { spend: 'Spend', conversions: 'Conversions', cpa: 'CPA', roas: 'ROAS', ctr: 'CTR' }
+                        const checked = (form.weekly_alert_metrics ?? ['spend', 'conversions', 'cpa', 'roas', 'ctr']).includes(m)
+                        return (
+                          <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8125rem', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={checked} onChange={e => {
+                              const cur = form.weekly_alert_metrics ?? ['spend', 'conversions', 'cpa', 'roas', 'ctr']
+                              field('weekly_alert_metrics', e.target.checked ? [...cur, m] : cur.filter((x: string) => x !== m))
+                            }} />
+                            {labels[m]}
+                          </label>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
@@ -890,24 +927,6 @@ export default function AgencySettingsPage() {
           </div>
         </div>}
 
-        {/* ─── Overview ─────────────────────────────────────────── */}
-        {visitedTabs.has('overview') && <div style={{ display: activeTab === 'overview' ? 'block' : 'none' }}>
-          <div className="card p-6 space-y-4">
-            <div>
-              <h2 className="section-title">Client Overview Table Columns</h2>
-              <p className="section-desc">Choose which metric columns appear in the Clients table on the admin dashboard. Client, Sources, and Actions are always shown. Drag columns into your preferred order.</p>
-            </div>
-            <LayoutSection
-              title="Visible Columns"
-              description="Add, remove, and reorder the metric columns shown in the clients overview table"
-              items={Array.isArray(form.overview_columns) ? form.overview_columns : DEFAULT_OVERVIEW_COLUMNS}
-              allKeys={OVERVIEW_COLUMN_KEYS}
-              labels={OVERVIEW_COLUMN_LABELS}
-              onChange={cols => field('overview_columns', cols)}
-            />
-          </div>
-        </div>}
-
         {/* ─── Layouts ───────────────────────────────────────────── */}
         {visitedTabs.has('layouts') && <div style={{ display: activeTab === 'layouts' ? 'block' : 'none' }}>
           <div className="card p-6 space-y-4">
@@ -921,6 +940,20 @@ export default function AgencySettingsPage() {
             <MetricLayoutEditor
               value={form.metric_layouts}
               onChange={v => field('metric_layouts', v)}
+            />
+          </div>
+          <div className="card p-6 space-y-4" style={{ marginTop: '1rem' }}>
+            <div>
+              <h2 className="section-title">Client Overview Layout</h2>
+              <p className="section-desc">Choose which metric columns appear in the Clients table on the admin dashboard. Client, Sources, and Actions are always shown. Drag columns into your preferred order.</p>
+            </div>
+            <LayoutSection
+              title="Visible Columns"
+              description="Add, remove, and reorder the metric columns shown in the clients overview table"
+              items={Array.isArray(form.overview_columns) ? form.overview_columns : DEFAULT_OVERVIEW_COLUMNS}
+              allKeys={OVERVIEW_COLUMN_KEYS}
+              labels={OVERVIEW_COLUMN_LABELS}
+              onChange={cols => field('overview_columns', cols)}
             />
           </div>
         </div>}

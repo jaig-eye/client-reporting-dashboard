@@ -107,6 +107,7 @@ export async function GET(request: NextRequest) {
       .select([
         'notify_metric_alerts', 'notification_email', 'agency_name',
         'metric_alert_threshold', 'daily_alert_threshold',
+        'daily_alert_metrics', 'weekly_alert_metrics',
         'discord_bot_token',
         'default_lead_action', 'default_lead_action_fallback',
         'default_purchase_action', 'default_purchase_action_fallback',
@@ -163,8 +164,8 @@ export async function GET(request: NextRequest) {
   const GOOGLE_SELECT = 'spend,impressions,clicks,conversions,conversions_value'
   const META_SELECT   = 'spend,impressions,clicks,actions,action_values'
 
-  const DAILY_METRICS:  MetricKey[] = ['spend', 'conversions', 'cpa']
-  const WEEKLY_METRICS: MetricKey[] = ['spend', 'conversions', 'cpa', 'roas', 'ctr']
+  const DAILY_METRICS:  MetricKey[] = ((agency?.daily_alert_metrics  as MetricKey[] | null) ?? ['spend', 'conversions', 'cpa']).filter(m => ['spend','conversions','cpa','roas','ctr'].includes(m))
+  const WEEKLY_METRICS: MetricKey[] = ((agency?.weekly_alert_metrics as MetricKey[] | null) ?? ['spend', 'conversions', 'cpa', 'roas', 'ctr']).filter(m => ['spend','conversions','cpa','roas','ctr'].includes(m))
 
   for (const client of clients) {
     const isEcom         = client.layout_type === 'ecom'
@@ -294,12 +295,13 @@ export async function GET(request: NextRequest) {
         const pct = (cv - pv) / pv
         if (Math.abs(pct) < weeklyThreshold) continue
 
-        // Weekly dedup: skip if undismissed weekly alert for same client+metric+platform
+        // Weekly dedup: skip if already sent in the last 7 days (regardless of dismissed status)
+        const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
         const { count } = await db.from('metric_alerts')
           .select('id', { count: 'exact', head: true })
           .eq('client_id', client.id).eq('metric', key)
           .eq('alert_type', 'weekly').eq('platform', platform)
-          .is('dismissed_at', null)
+          .gte('created_at', sevenDaysAgo)
         if ((count ?? 0) > 0) continue
 
         const direction = pct > 0 ? 'up' : 'down'

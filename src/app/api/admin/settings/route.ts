@@ -47,6 +47,7 @@ export async function PUT(request: NextRequest) {
     'notify_schedule_generated',
     'notify_post_uploaded', 'notify_topic_ready',
     'notify_metric_alerts', 'metric_alert_threshold', 'daily_alert_threshold',
+    'daily_alert_metrics', 'weekly_alert_metrics',
     'overview_columns',
     'sync_frequency', 'sync_hour_utc', 'sync_day_of_week',
     'metric_layouts',
