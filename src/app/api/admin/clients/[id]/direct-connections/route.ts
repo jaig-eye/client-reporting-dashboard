@@ -105,17 +105,20 @@ export async function POST(
     return NextResponse.json({ ok: true })
 
   } else if (type === 'bigcommerce') {
-    const { storeHash, accessToken } = body as { storeHash: string; accessToken: string }
+    const { storeHash, accessToken, role } = body as { storeHash: string; accessToken: string; role?: string }
     if (!storeHash || !accessToken) return NextResponse.json({ error: 'storeHash and accessToken are required' }, { status: 400 })
+
+    const bcRole  = role === 'analytics' ? 'analytics' : 'content'
+    const bcLabel = bcRole === 'analytics' ? `BigCommerce Analytics — ${storeHash}` : `BigCommerce — ${storeHash}`
 
     const { data: newConn, error: insertErr } = await db
       .from('connectors')
       .insert({
         type:   'bigcommerce',
-        label:  `BigCommerce — ${storeHash}`,
+        label:  bcLabel,
         status: 'active',
         auth:   {},
-        config: { store_hash: storeHash, access_token: accessToken },
+        config: { store_hash: storeHash, access_token: accessToken, role: bcRole },
       })
       .select()
       .single()
@@ -124,8 +127,8 @@ export async function POST(
     const { error: linkErr } = await db.from('client_connections').insert({
       client_id:    clientId,
       connector_id: newConn.id,
-      external_id:  storeHash,
-      external_name: `BigCommerce (${storeHash})`,
+      external_id:  `${storeHash}:${bcRole}`,
+      external_name: bcRole === 'analytics' ? `BigCommerce Analytics (${storeHash})` : `BigCommerce (${storeHash})`,
       status:       'active',
     })
     if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 400 })

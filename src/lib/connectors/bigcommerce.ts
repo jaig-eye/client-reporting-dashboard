@@ -1,14 +1,61 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // BigCommerce Connector
 //
-// Write-only connector for publishing blog content to BigCommerce Blog API.
-// No metric sync — used purely for content automation.
+// Content connection: publishes blog posts to BigCommerce Blog API (default).
+// Analytics connection: fetches orders for daily sales reports (role='analytics').
 //
 // Auth/config object shape (stored in connectors.auth or connectors.config):
-//   { store_hash: string, access_token: string }
+//   { store_hash: string, access_token: string, role?: 'content' | 'analytics' }
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
+
+const BC_API = (storeHash: string) => `https://api.bigcommerce.com/stores/${storeHash}`
+
+export interface BCOrderSummary {
+  grossRevenue: number
+  orderCount:   number
+}
+
+// Fetch gross revenue and order count for a given date window.
+// Excludes Incomplete (0), Refunded (4), and Cancelled (5) orders.
+export async function fetchBCOrders(
+  storeHash:   string,
+  accessToken: string,
+  dateFrom:    Date,
+  dateTo:      Date,
+): Promise<BCOrderSummary> {
+  const headers = { 'X-Auth-Token': accessToken, Accept: 'application/json' }
+  const base    = `${BC_API(storeHash)}/v2/orders`
+  const minDate = dateFrom.toISOString()
+  const maxDate = dateTo.toISOString()
+  const EXCLUDED_STATUSES = new Set([0, 4, 5])
+
+  let grossRevenue = 0
+  let orderCount   = 0
+  let page         = 1
+
+  for (;;) {
+    const qs = new URLSearchParams({ min_date_created: minDate, max_date_created: maxDate, limit: '250', page: String(page) })
+    const res = await fetch(`${base}?${qs}`, { headers })
+    if (res.status === 204 || res.status === 404) break
+    if (!res.ok) throw new Error(`BigCommerce Orders API ${res.status}`)
+
+    const orders = (await res.json()) as Array<{ total_inc_tax: string; status_id: number }>
+    if (!Array.isArray(orders) || orders.length === 0) break
+
+    for (const o of orders) {
+      if (EXCLUDED_STATUSES.has(o.status_id)) continue
+      grossRevenue += parseFloat(o.total_inc_tax) || 0
+      orderCount++
+    }
+
+    if (orders.length < 250) break
+    page++
+  }
+
+  return { grossRevenue, orderCount }
+}
 
 export const bigcommerceConnector: ConnectorAdapter = {
   type: 'bigcommerce',
@@ -48,14 +95,15 @@ export const bigcommerceConnector: ConnectorAdapter = {
     const storeHash   = String(config.store_hash   || auth.store_hash   || '')
     const accessToken = String(config.access_token || auth.access_token || '')
     if (!storeHash || !accessToken) return false
+    const isAnalytics = config.role === 'analytics'
     try {
-      // Test against /v2/blog/posts specifically — requires Content scope.
-      // /v2/store passes with any scope and would miss missing Content permission.
-      const res = await fetch(
-        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts?limit=1`,
-        { headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' } }
-      )
-      return res.ok
+      // Analytics: test orders endpoint (requires Orders/Read scope).
+      // Content: test blog/posts endpoint (requires Content scope).
+      const endpoint = isAnalytics
+        ? `${BC_API(storeHash)}/v2/orders?limit=1`
+        : `${BC_API(storeHash)}/v2/blog/posts?limit=1`
+      const res = await fetch(endpoint, { headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' } })
+      return res.ok || res.status === 204
     } catch {
       return false
     }

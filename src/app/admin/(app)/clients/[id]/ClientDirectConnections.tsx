@@ -4,16 +4,18 @@ import { useState } from 'react'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
 
-type ConnType = 'ghl' | 'wordpress' | 'bigcommerce'
+type ConnType = 'ghl' | 'wordpress' | 'bigcommerce' | 'bigcommerce_analytics'
 
 export default function ClientDirectConnections({
   clientId,
   existingTypes,
   singleType,
+  bcAnalyticsConnected: bcAnalyticsConnectedProp = false,
 }: {
-  clientId:      string
-  existingTypes: ConnType[]
-  singleType?:   ConnType
+  clientId:               string
+  existingTypes:          ('ghl' | 'wordpress' | 'bigcommerce')[]
+  singleType?:            ConnType
+  bcAnalyticsConnected?:  boolean
 }) {
   // ── GHL ────────────────────────────────────────────────────────────────
   const [ghlOpen,      setGhlOpen]      = useState(false)
@@ -30,14 +32,21 @@ export default function ClientDirectConnections({
   const [wpConnected, setWpConnected] = useState(existingTypes.includes('wordpress'))
   const [wpJustSaved, setWpJustSaved] = useState(false)
 
-  // ── BigCommerce ────────────────────────────────────────────────────────
+  // ── BigCommerce (content) ──────────────────────────────────────────────
   const [bcOpen,       setBcOpen]       = useState(false)
   const [bcStoreHash,  setBcStoreHash]  = useState('')
   const [bcToken,      setBcToken]      = useState('')
   const [bcConnected,  setBcConnected]  = useState(existingTypes.includes('bigcommerce'))
   const [bcJustSaved,  setBcJustSaved]  = useState(false)
 
-  async function connect(type: ConnType, body: Record<string, string>) {
+  // ── BigCommerce Analytics ──────────────────────────────────────────────
+  const [bcaOpen,      setBcaOpen]      = useState(false)
+  const [bcaStoreHash, setBcaStoreHash] = useState('')
+  const [bcaToken,     setBcaToken]     = useState('')
+  const [bcaConnected, setBcaConnected] = useState(bcAnalyticsConnectedProp)
+  const [bcaJustSaved, setBcaJustSaved] = useState(false)
+
+  async function connect(type: 'ghl' | 'wordpress' | 'bigcommerce', body: Record<string, string>) {
     const res = await fetch(`/api/admin/clients/${clientId}/direct-connections`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, ...body }),
@@ -79,6 +88,14 @@ export default function ClientDirectConnections({
         </>
       )
     }
+    if (singleType === 'bigcommerce_analytics') {
+      return (
+        <>
+          <IntegrationCard icon="📦" name="BigCommerce Analytics" description="Fetches order data for daily sales reports and revenue tracking." isConnected={bcaConnected} onConfigure={() => setBcaOpen(true)} justConnected={bcaJustSaved} />
+          {bcaOpen && <BcModal open={bcaOpen} onClose={() => setBcaOpen(false)} storeHash={bcaStoreHash} setStoreHash={setBcaStoreHash} token={bcaToken} setToken={setBcaToken} isAnalytics onSave={async () => { await connect('bigcommerce', { storeHash: bcaStoreHash, accessToken: bcaToken, role: 'analytics' }); setBcaConnected(true) }} onSaved={() => flashSaved(setBcaJustSaved)} />}
+        </>
+      )
+    }
   }
 
   // ── Standalone card mode (all three) ──────────────────────────────────
@@ -106,13 +123,23 @@ export default function ClientDirectConnections({
 
       <IntegrationCard
         icon="🛒" name="BigCommerce"
-        description="Sync store analytics and publish content to BigCommerce."
+        description="Publish content to the client's BigCommerce blog."
         isConnected={bcConnected}
         onConfigure={() => setBcOpen(true)}
         justConnected={bcJustSaved}
       />
       <BcModal open={bcOpen} onClose={() => setBcOpen(false)} storeHash={bcStoreHash} setStoreHash={setBcStoreHash} token={bcToken} setToken={setBcToken} isConnected={bcConnected}
         onSave={async () => { await connect('bigcommerce', { storeHash: bcStoreHash, accessToken: bcToken }); setBcConnected(true) }} onSaved={() => flashSaved(setBcJustSaved)} />
+
+      <IntegrationCard
+        icon="📦" name="BigCommerce Analytics"
+        description="Fetches order data for daily sales reports and revenue tracking."
+        isConnected={bcaConnected}
+        onConfigure={() => setBcaOpen(true)}
+        justConnected={bcaJustSaved}
+      />
+      <BcModal open={bcaOpen} onClose={() => setBcaOpen(false)} storeHash={bcaStoreHash} setStoreHash={setBcaStoreHash} token={bcaToken} setToken={setBcaToken} isConnected={bcaConnected} isAnalytics
+        onSave={async () => { await connect('bigcommerce', { storeHash: bcaStoreHash, accessToken: bcaToken, role: 'analytics' }); setBcaConnected(true) }} onSaved={() => flashSaved(setBcaJustSaved)} />
     </div>
   )
 }
@@ -191,19 +218,25 @@ function WpModal({ open, onClose, siteUrl, setSiteUrl, username, setUsername, pa
 }
 
 // ── BigCommerce Modal ───────────────────────────────────────────────────────
-function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isConnected, onSave, onSaved }: {
+function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isConnected, isAnalytics, onSave, onSaved }: {
   open: boolean; onClose: () => void; storeHash: string; setStoreHash: (v: string) => void
-  token: string; setToken: (v: string) => void; isConnected?: boolean
+  token: string; setToken: (v: string) => void; isConnected?: boolean; isAnalytics?: boolean
   onSave: () => Promise<void>; onSaved?: () => void
 }) {
+  const title     = isAnalytics ? 'BigCommerce Analytics' : 'BigCommerce'
+  const icon      = isAnalytics ? '📦' : '🛒'
+  const scopeNote = isAnalytics
+    ? <><strong>OAuth Scopes:</strong> set <strong>Orders → Read Only</strong> (required to fetch order data for sales reports).</>
+    : <><strong>OAuth Scopes:</strong> set <strong>Content → Modify</strong> (required to publish blog posts).</>
+
   return (
     <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
-      title="BigCommerce" icon="🛒" isConnected={isConnected}
-      saveLabel={isConnected ? 'Reconnect' : 'Connect BigCommerce'}
+      title={title} icon={icon} isConnected={isConnected}
+      saveLabel={isConnected ? 'Reconnect' : `Connect ${title}`}
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
           <li><strong>Store Hash:</strong> Find it in your BigCommerce store URL — it looks like <code>store-<strong>abc123</strong>.mybigcommerce.com</code>. Copy the bold portion.</li>
-          <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Under <strong>OAuth Scopes</strong>, set <strong>Content → Modify</strong> (required to publish blog posts). Copy the Access Token from the credential sheet — it only shows once.</li>
+          <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Under {scopeNote} Copy the Access Token from the credential sheet — it only shows once.</li>
         </ol>
       }
       onSave={onSave}

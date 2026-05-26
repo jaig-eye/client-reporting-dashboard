@@ -39,6 +39,10 @@
     {
       "path": "/api/cron/refresh-accounts",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/bc-daily-sales",
+      "schedule": "0 9 * * *"
     }
   ]
 }

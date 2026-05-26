@@ -28,6 +28,7 @@ export async function PATCH(
     'local_dominator_url', 'stripe_customer_id',
     'ad_fuel_alert_threshold', 'ad_fuel_alert_muted',
     'auto_pause_ads', 'auto_resume_ads', 'campaigns_paused_at',
+    'bc_daily_report',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
