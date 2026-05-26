@@ -326,7 +326,7 @@ export async function syncClient(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GSC_CHUNK_DAYS        = 30
-const GSC_CHUNK_CONCURRENCY = 2
+const GSC_CHUNK_CONCURRENCY = 5
 
 /**
  * Fetches GSC data in 30-day windows and upserts each chunk immediately.
@@ -365,7 +365,7 @@ async function syncGSCInChunks(
   let total = 0
 
   // Process chunks in parallel batches to avoid sequential API latency.
-  // 4 concurrent chunks keeps a 2-year backfill (24 chunks) down to ~6 rounds.
+  // 5 concurrent chunks keeps a 2-year backfill (24 chunks) down to ~5 rounds.
   for (let i = 0; i < chunks.length; i += GSC_CHUNK_CONCURRENCY) {
     const batch = chunks.slice(i, i + GSC_CHUNK_CONCURRENCY)
     const settled = await Promise.allSettled(
