@@ -351,12 +351,15 @@ async function fetchFormsAndSurveys(
   // byDate: date → { total, perItem: itemId → count }
   const byDate = new Map<string, { total: number; perItem: Map<string, number> }>()
 
-  for (const item of items) {
-    if (!item.id) continue
-    const submissionKey = item.type === 'form' ? 'formId' : 'surveyId'
-    const subPath       = item.type === 'form' ? '/forms/submissions' : '/surveys/submissions'
+  // Fetch all form/survey items in parallel batches of 5.
+  // ghlGet already handles 429s with backoff — no pre-emptive sleep needed.
+  const SUBMISSION_CONCURRENCY = 5
+  for (let i = 0; i < items.length; i += SUBMISSION_CONCURRENCY) {
+    await Promise.allSettled(items.slice(i, i + SUBMISSION_CONCURRENCY).map(async (item) => {
+      if (!item.id) return
+      const submissionKey = item.type === 'form' ? 'formId' : 'surveyId'
+      const subPath       = item.type === 'form' ? '/forms/submissions' : '/surveys/submissions'
 
-    try {
       let pg = 1
       for (;;) {
         const data = await ghlGet(subPath, apiKey, {
@@ -380,10 +383,8 @@ async function fetchFormsAndSurveys(
 
         if (subs.length < 100) break
         pg++
-        await sleep(200)
       }
-    } catch { /* skip this item on error */ }
-    await sleep(200)
+    }))
   }
 
   // ── 3. Bookings (calendar appointments) ─────────────────────────────────────
@@ -397,15 +398,19 @@ async function fetchFormsAndSurveys(
     const calData  = await ghlGet('/calendars/', apiKey, { locationId })
     const calendars = (calData.calendars as Record<string, unknown>[]) ?? []
 
+    // Pre-register all booking keys before parallel fetch so items map is complete
     for (const cal of calendars) {
       const calId   = String(cal.id   || '')
       const calName = String(cal.name || cal.id || '')
-      if (!calId) continue
+      if (calId) items.push({ id: `booking:${calId}`, name: calName, type: 'booking' })
+    }
 
+    // Fetch all calendars in parallel — no pre-emptive sleep, ghlGet handles 429s
+    await Promise.allSettled(calendars.map(async (cal) => {
+      const calId = String(cal.id || '')
+      if (!calId) return
       const bookingKey = `booking:${calId}`
-      items.push({ id: bookingKey, name: calName, type: 'booking' })
 
-      // Fetch appointments for this calendar in the date range
       let skip = 0
       for (;;) {
         const data = await ghlGet('/calendars/events', apiKey, {
@@ -430,10 +435,8 @@ async function fetchFormsAndSurveys(
 
         if (events.length < 100) break
         skip += 100
-        await sleep(200)
       }
-      await sleep(200)
-    }
+    }))
     console.log(`[ghl] bookings: ${calendars.length} calendars queried`)
   } catch (e) {
     if (String(e).includes('401')) {
@@ -671,7 +674,6 @@ async function fetchReviews(
 
       if (reviews.length < 100) break
       page++
-      await sleep(200)
     }
   } catch { /* reviews endpoint may not be available on all plans */ }
 
@@ -700,15 +702,23 @@ export const ghlConnector: ConnectorAdapter = {
     }
 
     try {
-      // Sequential to avoid burst rate limits
-      const contactData  = await fetchContacts(apiKey, locationId, dateFrom, dateTo)
+      // All 6 fetches are independent — run in parallel. ghlGet handles 429s with backoff.
+      const [
+        contactData,
+        convData,
+        formsResult,
+        oppData,
+        closedOppData,
+        reviewData,
+      ] = await Promise.all([
+        fetchContacts(apiKey, locationId, dateFrom, dateTo),
+        fetchConversations(apiKey, locationId, dateFrom, dateTo),
+        fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo),
+        fetchOpportunities(apiKey, locationId, dateFrom, dateTo),
+        fetchClosedOpportunities(apiKey, locationId, dateFrom, dateTo),
+        fetchReviews(apiKey, locationId, dateFrom, dateTo),
+      ])
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
-
-      const convData        = await fetchConversations(apiKey, locationId, dateFrom, dateTo)
-      const formsResult     = await fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo)
-      const oppData         = await fetchOpportunities(apiKey, locationId, dateFrom, dateTo)
-      const closedOppData   = await fetchClosedOpportunities(apiKey, locationId, dateFrom, dateTo)
-      const reviewData      = await fetchReviews(apiKey, locationId, dateFrom, dateTo)
       console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
 
       const allDates      = dateRange(dateFrom, dateTo)
