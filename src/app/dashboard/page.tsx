@@ -806,7 +806,7 @@ export default async function DashboardPage({
             )}
 
             {/* ── Campaign breakdown (filtered mode only) ───────────── */}
-            {isFiltered && !hiddenMetrics.has('campaigns') && (
+            {!hiddenMetrics.has('campaigns') && (
               <div className="card p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>

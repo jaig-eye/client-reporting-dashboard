@@ -715,11 +715,11 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
       .eq('client_id', clientId)
       .gte('generated_at', monthStart)
       .limit(200),
-    db.from('gsc_metrics')
-      .select('page, query, impressions, clicks, ctr, position')
+    db.from('gsc_query_totals')
+      .select('query, impressions, clicks, ctr, position')
       .eq('client_id', clientId)
       .gte('date', windowStart)
-      .neq('page', '').neq('query', '').not('page', 'ilike', '%?%'),
+      .neq('query', ''),
     db.from('content_posts')
       .select('target_keyword')
       .eq('client_id', clientId)
@@ -766,14 +766,13 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   const nextPublishDate   = upcomingTopics.find(t => ['pending','scheduled','approved','generating'].includes(t.status))?.target_publish_date ?? null
   const recentPostsCount  = (recentPostsData.data ?? []).length
 
-  // GSC aggregation
-  type AggRow = { page: string; query: string; impressions: number; clicks: number; weightedPos: number; weightedCtr: number }
+  // GSC aggregation — keyed by query only (gsc_query_totals has no page correlation)
+  type AggRow = { query: string; impressions: number; clicks: number; weightedPos: number; weightedCtr: number }
   const agg = new Map<string, AggRow>()
-  for (const r of (gscRaw.data ?? []) as { page: string; query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
-    if (!r.page || !r.query) continue
-    const key  = `${r.query}||${r.page}`
+  for (const r of (gscRaw.data ?? []) as { query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
+    if (!r.query) continue
     const impr = r.impressions ?? 0
-    const ex   = agg.get(key)
+    const ex   = agg.get(r.query)
     if (ex) {
       const total = ex.impressions + impr
       ex.weightedPos = total > 0 ? (ex.weightedPos * ex.impressions + (r.position ?? 0) * impr) / total : ex.weightedPos
@@ -781,7 +780,7 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
       ex.impressions += impr
       ex.clicks      += r.clicks ?? 0
     } else {
-      agg.set(key, { page: r.page, query: r.query, impressions: impr, clicks: r.clicks ?? 0, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0 })
+      agg.set(r.query, { query: r.query, impressions: impr, clicks: r.clicks ?? 0, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0 })
     }
   }
 
@@ -790,7 +789,7 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   )
 
   const aggRows = Array.from(agg.values()).map(r => ({
-    page: r.page, query: r.query, impressions: r.impressions, clicks: r.clicks,
+    page: null as string | null, query: r.query, impressions: r.impressions, clicks: r.clicks,
     ctr: r.weightedCtr, position: r.weightedPos,
     recentlyTargeted: recentKeywords.has(r.query.toLowerCase().trim()),
   }))

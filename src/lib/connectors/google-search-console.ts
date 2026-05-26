@@ -77,7 +77,8 @@ export async function fetchSearchAnalytics(
   accessToken: string,
   dateFrom: string,
   dateTo: string,
-  dataState: 'all' | 'final' = 'all'
+  dataState: 'all' | 'final' = 'all',
+  dimensions: string[] = ['date', 'query', 'page']
 ): Promise<GSCRawRow[]> {
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
@@ -88,10 +89,10 @@ export async function fetchSearchAnalytics(
 
   while (true) {
     const body = {
-      startDate:    dateFrom,
-      endDate:      dateTo,
-      dimensions:   ['date', 'query', 'page'],
-      rowLimit:     PAGE_SIZE,
+      startDate: dateFrom,
+      endDate:   dateTo,
+      dimensions,
+      rowLimit:  PAGE_SIZE,
       startRow,
       dataState,
     }
@@ -131,22 +132,22 @@ export async function fetchSearchAnalytics(
     if (!data.rows?.length) break
 
     for (const row of data.rows) {
-      rows.push({
-        date:        row.keys[0] ?? '',
-        query:       row.keys[1] ?? null,
-        page:        row.keys[2] ?? null,
-        clicks:      row.clicks,
-        impressions: row.impressions,
-        ctr:         row.ctr,
-        position:    row.position,
-      })
+      const mapped: GSCRawRow = {
+        date: row.keys[0] ?? '', query: null, page: null,
+        clicks: row.clicks, impressions: row.impressions, ctr: row.ctr, position: row.position,
+      }
+      for (let i = 1; i < dimensions.length; i++) {
+        if (dimensions[i] === 'query') mapped.query = row.keys[i] ?? null
+        else if (dimensions[i] === 'page') mapped.page = row.keys[i] ?? null
+      }
+      rows.push(mapped)
     }
 
     if (data.rows.length < PAGE_SIZE) break
     startRow += PAGE_SIZE
 
     if (rows.length >= 50_000) {
-      console.warn(`[gsc] ${siteUrl}: reached 50K row cap for ${dateFrom}→${dateTo}, stopping pagination`)
+      console.warn(`[gsc] ${siteUrl}: reached 50K row cap for ${dateFrom}→${dateTo} dims=${dimensions.join(',')}, stopping pagination`)
       break
     }
   }

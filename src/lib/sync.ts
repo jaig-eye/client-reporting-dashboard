@@ -23,7 +23,7 @@ import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 import { fetchSearchAnalytics } from './connectors/google-search-console'
-import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
+import type { GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -381,62 +381,41 @@ async function syncGSCInChunks(
         // Use 'final' for fully-processed historical data; 'all' only for the last 2 days
         const dataState: 'all' | 'final' = chunkTo >= twoDaysAgo ? 'all' : 'final'
 
-        const rawRows = await fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState)
+        // Two parallel 2D fetches replace the single 3D fetch.
+        // ['date','query'] rows are already date+query aggregates — no reduction needed.
+        // ['date','page'] rows are already date+page aggregates.
+        // Only daily totals need a Map-reduce (sum query rows by date).
+        const [qFetch, pFetch] = await Promise.all([
+          fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'query']),
+          fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'page']),
+        ])
 
-        // Aggregate daily, query, and page totals client-side from the single raw fetch.
-        // This replaces 3 separate API calls per chunk while keeping the same downstream tables.
+        // Daily totals — aggregate query rows by date
         type DailyAcc = { date: string; clicks: number; impressions: number; posSum: number }
-        type QueryAcc = { date: string; query: string; clicks: number; impressions: number; posSum: number }
-        type PageAcc  = { date: string; page:  string; clicks: number; impressions: number; posSum: number }
-
         const dailyMap = new Map<string, DailyAcc>()
-        const queryMap = new Map<string, QueryAcc>()
-        const pageMap  = new Map<string, PageAcc>()
-
-        for (const r of rawRows) {
-          // Daily
-          const dk = r.date
-          const de = dailyMap.get(dk) ?? { date: r.date, clicks: 0, impressions: 0, posSum: 0 }
-          de.clicks += r.clicks; de.impressions += r.impressions; de.posSum += r.position * r.impressions
-          dailyMap.set(dk, de)
-
-          // Query (keyed by date|query)
-          if (r.query) {
-            const qk = `${r.date}|${r.query}`
-            const qe = queryMap.get(qk) ?? { date: r.date, query: r.query, clicks: 0, impressions: 0, posSum: 0 }
-            qe.clicks += r.clicks; qe.impressions += r.impressions; qe.posSum += r.position * r.impressions
-            queryMap.set(qk, qe)
-          }
-
-          // Page (keyed by date|page)
-          if (r.page) {
-            const pk = `${r.date}|${r.page}`
-            const pe = pageMap.get(pk) ?? { date: r.date, page: r.page, clicks: 0, impressions: 0, posSum: 0 }
-            pe.clicks += r.clicks; pe.impressions += r.impressions; pe.posSum += r.position * r.impressions
-            pageMap.set(pk, pe)
-          }
+        for (const r of qFetch) {
+          const d = dailyMap.get(r.date) ?? { date: r.date, clicks: 0, impressions: 0, posSum: 0 }
+          d.clicks += r.clicks; d.impressions += r.impressions; d.posSum += r.position * r.impressions
+          dailyMap.set(r.date, d)
         }
-
         const dailyRows: GSCDailyTotalRow[] = Array.from(dailyMap.values()).map(d => ({
           date: d.date, clicks: d.clicks, impressions: d.impressions,
           ctr:      d.impressions > 0 ? d.clicks / d.impressions : 0,
           position: d.impressions > 0 ? d.posSum / d.impressions : 0,
         }))
-        const queryRows: GSCQueryTotalRow[] = Array.from(queryMap.values()).map(q => ({
-          date: q.date, query: q.query, clicks: q.clicks, impressions: q.impressions,
-          ctr:      q.impressions > 0 ? q.clicks / q.impressions : 0,
-          position: q.impressions > 0 ? q.posSum / q.impressions : 0,
-        }))
-        const pageRows: GSCPageTotalRow[] = Array.from(pageMap.values()).map(p => ({
-          date: p.date, page: p.page, clicks: p.clicks, impressions: p.impressions,
-          ctr:      p.impressions > 0 ? p.clicks / p.impressions : 0,
-          position: p.impressions > 0 ? p.posSum / p.impressions : 0,
+
+        // Query totals — qFetch rows ARE the date+query aggregates
+        const queryRows: GSCQueryTotalRow[] = qFetch.map(r => ({
+          date: r.date, query: r.query ?? '', clicks: r.clicks, impressions: r.impressions,
+          ctr: r.ctr, position: r.position,
         }))
 
-        let written = 0
-        if (rawRows.length > 0) {
-          written = await upsertGSCMetrics(db, connection.id, clientId, rawRows, ignoreDuplicates)
-        }
+        // Page totals — pFetch rows ARE the date+page aggregates
+        const pageRows: GSCPageTotalRow[] = pFetch.map(r => ({
+          date: r.date, page: r.page ?? '', clicks: r.clicks, impressions: r.impressions,
+          ctr: r.ctr, position: r.position,
+        }))
+
         if (dailyRows.length > 0) {
           await upsertGSCDailyTotals(db, connection.id, clientId, dailyRows)
         }
@@ -446,8 +425,8 @@ async function syncGSCInChunks(
         if (pageRows.length > 0) {
           await upsertGSCPageTotals(db, connection.id, clientId, pageRows)
         }
-        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo} (${dataState}): ${rawRows.length} rows`)
-        return written
+        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo} (${dataState}): ${qFetch.length} query rows, ${pFetch.length} page rows`)
+        return qFetch.length + pFetch.length
       })
     )
     for (const r of settled) {
