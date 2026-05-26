@@ -57,6 +57,23 @@ export async function fetchBCOrders(
   return { grossRevenue, orderCount }
 }
 
+export async function fetchBCStoreTimezone(
+  storeHash:   string,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${BC_API(storeHash)}/v2/store`, {
+      headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as Record<string, unknown>
+    const name = (data.timezone as Record<string, unknown> | null)?.name
+    return typeof name === 'string' ? name : null
+  } catch {
+    return null
+  }
+}
+
 export const bigcommerceConnector: ConnectorAdapter = {
   type: 'bigcommerce',
 

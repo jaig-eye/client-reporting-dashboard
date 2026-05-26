@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { fetchBCOrders } from '@/lib/connectors/bigcommerce'
+import { fetchBCOrders, fetchBCStoreTimezone } from '@/lib/connectors/bigcommerce'
 import { sendDiscordMessage } from '@/lib/discord'
 
 export const maxDuration = 60
@@ -9,9 +9,53 @@ function fmt$(amount: number): string {
   return amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-function toUTCDay(d: Date, offsetDays: number): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + offsetDays))
+// ── Timezone helpers (no external library — pure Intl) ─────────────────────
+
+function tzOffsetMs(tzName: string, sampleUtc: Date): number {
+  // Returns (UTC ms) - (local ms); positive for timezones behind UTC (e.g. US)
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzName,
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false,
+  })
+  const p = f.formatToParts(sampleUtc).reduce<Record<string, string>>(
+    (acc, { type, value }) => { acc[type] = value; return acc }, {}
+  )
+  const h = parseInt(p.hour)
+  const localMs = Date.UTC(
+    parseInt(p.year), parseInt(p.month) - 1, parseInt(p.day),
+    h === 24 ? 0 : h, parseInt(p.minute), parseInt(p.second),
+  )
+  return sampleUtc.getTime() - localMs
 }
+
+// Returns the UTC Date that equals midnight of (now + dayOffset days) in tzName.
+// Samples the offset at noon of the target day to avoid DST-transition edge cases.
+function localMidnight(tzName: string, now: Date, dayOffset: number): Date {
+  const shifted = new Date(now.getTime() + dayOffset * 86_400_000)
+  const dp = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(shifted).reduce<Record<string, string>>(
+    (acc, { type, value }) => { acc[type] = value; return acc }, {}
+  )
+  const y = parseInt(dp.year), m = parseInt(dp.month) - 1, d = parseInt(dp.day)
+  const offsetMs = tzOffsetMs(tzName, new Date(Date.UTC(y, m, d, 12)))
+  return new Date(Date.UTC(y, m, d, 0, 0, 0) + offsetMs)
+}
+
+// Returns the UTC Date that equals the first of the current local month at midnight.
+function localMonthStart(tzName: string, now: Date): Date {
+  const dp = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzName, year: 'numeric', month: '2-digit',
+  }).formatToParts(now).reduce<Record<string, string>>(
+    (acc, { type, value }) => { acc[type] = value; return acc }, {}
+  )
+  const y = parseInt(dp.year), m = parseInt(dp.month) - 1
+  const offsetMs = tzOffsetMs(tzName, new Date(Date.UTC(y, m, 1, 12)))
+  return new Date(Date.UTC(y, m, 1, 0, 0, 0) + offsetMs)
+}
+
+// ── Cron handler ───────────────────────────────────────────────────────────
 
 // Called daily at 09:00 UTC by Vercel Cron.
 export async function GET(request: NextRequest) {
@@ -32,7 +76,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ skipped: true, reason: 'No Discord bot token configured' })
   }
 
-  // Fetch clients opted into daily BC report with a Discord channel
   const { data: clients } = await db
     .from('clients')
     .select('id, name, discord_channel_id, bc_daily_report')
@@ -43,20 +86,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ skipped: true, reason: 'No clients with bc_daily_report enabled' })
   }
 
-  // Date anchors (UTC)
-  const now         = new Date()
-  const todayStart  = toUTCDay(now, 0)
-  const yesterdayStart = toUTCDay(now, -1)
-  const yesterdayEnd   = new Date(todayStart.getTime() - 1)          // 23:59:59.999 yesterday
-  const monthStart     = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-  const dateLabel      = yesterdayStart.toISOString().slice(0, 10)   // YYYY-MM-DD
-
+  const now     = new Date()
   const results = []
 
   for (const client of clients) {
     const channelId = client.discord_channel_id as string
 
-    // Fetch all connections for this client, filter to BC in JS
     const { data: connections } = await db
       .from('client_connections')
       .select('id, connector:connectors(id, type, config, status)')
@@ -81,6 +116,7 @@ export async function GET(request: NextRequest) {
 
     let summary: { grossRevenue: number; orderCount: number } | null = null
     let mtd: { grossRevenue: number; orderCount: number } | null = null
+    let dateLabel = now.toISOString().slice(0, 10)
     let lastError: string | null = null
 
     for (const conn of sorted) {
@@ -90,9 +126,19 @@ export async function GET(request: NextRequest) {
       if (!storeHash || !accessToken) continue
 
       try {
+        // Fetch the store's IANA timezone so date boundaries align with local midnight,
+        // not UTC midnight — avoids systematically missing late-evening orders.
+        const storeTz = await fetchBCStoreTimezone(storeHash, accessToken) ?? 'UTC'
+
+        const yesterdayStart = localMidnight(storeTz, now, -1)
+        const yesterdayEnd   = new Date(localMidnight(storeTz, now, 0).getTime() - 1)
+        const mtdStart       = localMonthStart(storeTz, now)
+
+        dateLabel = new Intl.DateTimeFormat('en-CA', { timeZone: storeTz }).format(yesterdayStart)
+
         const [yday, mtdData] = await Promise.all([
           fetchBCOrders(storeHash, accessToken, yesterdayStart, yesterdayEnd),
-          fetchBCOrders(storeHash, accessToken, monthStart, yesterdayEnd),
+          fetchBCOrders(storeHash, accessToken, mtdStart, yesterdayEnd),
         ])
         summary = yday
         mtd     = mtdData
