@@ -67,13 +67,17 @@ export interface GSCRawRow {
  * Fetch Search Analytics data for a site over a date range.
  * GSC limits to 25,000 rows per request; paginates automatically.
  * Pagination stops when GSC returns a partial page (<PAGE_SIZE rows).
- * A 500K safety cap prevents runaway pagination on extremely high-traffic sites.
+ * A 50K safety cap aligns with GSC's documented per-property daily row limit.
+ *
+ * dataState: 'all' includes fresh/unconfirmed data; 'final' is stable (2-day lag).
+ * Use 'final' for historical chunks, 'all' only for the most recent 2 days.
  */
-async function fetchSearchAnalytics(
+export async function fetchSearchAnalytics(
   siteUrl: string,
   accessToken: string,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  dataState: 'all' | 'final' = 'all'
 ): Promise<GSCRawRow[]> {
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
@@ -89,7 +93,7 @@ async function fetchSearchAnalytics(
       dimensions:   ['date', 'query', 'page'],
       rowLimit:     PAGE_SIZE,
       startRow,
-      dataState:    'all', // include fresh (unconfirmed) data
+      dataState,
     }
 
     const controller = new AbortController()
@@ -141,8 +145,8 @@ async function fetchSearchAnalytics(
     if (data.rows.length < PAGE_SIZE) break
     startRow += PAGE_SIZE
 
-    if (rows.length >= 500_000) {
-      console.warn(`[gsc] ${siteUrl}: reached 500K row safety cap for ${dateFrom}→${dateTo}, stopping pagination`)
+    if (rows.length >= 50_000) {
+      console.warn(`[gsc] ${siteUrl}: reached 50K row cap for ${dateFrom}→${dateTo}, stopping pagination`)
       break
     }
   }
@@ -181,8 +185,8 @@ export async function fetchDailyTotals(
     startDate:  dateFrom,
     endDate:    dateTo,
     dimensions: ['date'],
-    rowLimit:   1000,
-    dataState:  'all',
+    rowLimit:   100, // max 31 rows for a 30-day chunk; 100 is a safe upper bound
+    dataState:  'final',
   }
 
   const controller = new AbortController()

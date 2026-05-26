@@ -728,6 +728,7 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
     db.from('content_posts')
       .select('id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, generate_by_date, target_publish_date, wp_post_id, wp_site_url, topic_rationale')
       .eq('client_id', clientId)
+      .not('status', 'in', '("published","draft_saved")')
       .order('generated_at', { ascending: false })
       .limit(200),
     db.from('agency_settings').select('ai_api_key').single(),

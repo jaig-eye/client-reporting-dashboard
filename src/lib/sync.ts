@@ -22,8 +22,8 @@ import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
-import { fetchDailyTotals, fetchQueryTotals, fetchPageTotals } from './connectors/google-search-console'
-import type { GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
+import { fetchSearchAnalytics } from './connectors/google-search-console'
+import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -267,7 +267,7 @@ export async function syncClient(
           gscFrom = d.toISOString().split('T')[0]
         }
         recordCount = await syncGSCInChunks(
-          db, adapter, connection, auth, gscFrom, resolvedTo, clientId, jobType
+          db, connection, auth, gscFrom, resolvedTo, clientId
         )
       } else if (connection.connector.type === 'google_business_profile') {
         recordCount = await upsertGBPMetrics(
@@ -339,14 +339,12 @@ const GSC_CHUNK_CONCURRENCY = 5
  * ignoreDuplicates=false so re-syncs always overwrite with finalized GSC values.
  */
 async function syncGSCInChunks(
-  db:           ReturnType<typeof createAdminClient>,
-  adapter:      import('./connectors/types').ConnectorAdapter,
-  connection:   ClientConnection & { connector: Connector },
-  auth:         Record<string, unknown>,
-  dateFrom:     string,
-  dateTo:       string,
-  clientId:     string,
-  jobType:      SyncJobType = 'manual'
+  db:         ReturnType<typeof createAdminClient>,
+  connection: ClientConnection & { connector: Connector },
+  auth:       Record<string, unknown>,
+  dateFrom:   string,
+  dateTo:     string,
+  clientId:   string,
 ): Promise<number> {
   const ignoreDuplicates = false
 
@@ -372,55 +370,83 @@ async function syncGSCInChunks(
   // 5 concurrent chunks keeps a 2-year backfill (24 chunks) down to ~5 rounds.
   for (let i = 0; i < chunks.length; i += GSC_CHUNK_CONCURRENCY) {
     const batch = chunks.slice(i, i + GSC_CHUNK_CONCURRENCY)
+    const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10)
+
     const settled = await Promise.allSettled(
       batch.map(async ({ from: chunkFrom, to: chunkTo }) => {
         const accessToken = (auth.access_token as string | undefined) ?? ''
-        const siteUrl     = connection.external_id
+        if (!accessToken) return 0
 
-        // Run dimensional fetch (query+page), daily totals, query totals, and page totals in parallel
-        const [chunkResult, dailyRows, queryRows, pageRows] = await Promise.all([
-          adapter.fetchMetrics(connection.external_id, auth, connection.connector.config, chunkFrom, chunkTo),
-          accessToken
-            ? fetchDailyTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
-                console.error(`[sync] GSC daily totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
-                return [] as GSCDailyTotalRow[]
-              })
-            : Promise.resolve([] as GSCDailyTotalRow[]),
-          accessToken
-            ? fetchQueryTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
-                console.error(`[sync] GSC query totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
-                return [] as GSCQueryTotalRow[]
-              })
-            : Promise.resolve([] as GSCQueryTotalRow[]),
-          accessToken
-            ? fetchPageTotals(siteUrl, accessToken, chunkFrom, chunkTo).catch(err => {
-                console.error(`[sync] GSC page totals chunk ${chunkFrom}→${chunkTo} failed:`, err)
-                return [] as GSCPageTotalRow[]
-              })
-            : Promise.resolve([] as GSCPageTotalRow[]),
-        ])
+        const siteUrl  = connection.external_id
+        // Use 'final' for fully-processed historical data; 'all' only for the last 2 days
+        const dataState: 'all' | 'final' = chunkTo >= twoDaysAgo ? 'all' : 'final'
+
+        const rawRows = await fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState)
+
+        // Aggregate daily, query, and page totals client-side from the single raw fetch.
+        // This replaces 3 separate API calls per chunk while keeping the same downstream tables.
+        type DailyAcc = { date: string; clicks: number; impressions: number; posSum: number }
+        type QueryAcc = { date: string; query: string; clicks: number; impressions: number; posSum: number }
+        type PageAcc  = { date: string; page:  string; clicks: number; impressions: number; posSum: number }
+
+        const dailyMap = new Map<string, DailyAcc>()
+        const queryMap = new Map<string, QueryAcc>()
+        const pageMap  = new Map<string, PageAcc>()
+
+        for (const r of rawRows) {
+          // Daily
+          const dk = r.date
+          const de = dailyMap.get(dk) ?? { date: r.date, clicks: 0, impressions: 0, posSum: 0 }
+          de.clicks += r.clicks; de.impressions += r.impressions; de.posSum += r.position * r.impressions
+          dailyMap.set(dk, de)
+
+          // Query (keyed by date|query)
+          if (r.query) {
+            const qk = `${r.date}|${r.query}`
+            const qe = queryMap.get(qk) ?? { date: r.date, query: r.query, clicks: 0, impressions: 0, posSum: 0 }
+            qe.clicks += r.clicks; qe.impressions += r.impressions; qe.posSum += r.position * r.impressions
+            queryMap.set(qk, qe)
+          }
+
+          // Page (keyed by date|page)
+          if (r.page) {
+            const pk = `${r.date}|${r.page}`
+            const pe = pageMap.get(pk) ?? { date: r.date, page: r.page, clicks: 0, impressions: 0, posSum: 0 }
+            pe.clicks += r.clicks; pe.impressions += r.impressions; pe.posSum += r.position * r.impressions
+            pageMap.set(pk, pe)
+          }
+        }
+
+        const dailyRows: GSCDailyTotalRow[] = Array.from(dailyMap.values()).map(d => ({
+          date: d.date, clicks: d.clicks, impressions: d.impressions,
+          ctr:      d.impressions > 0 ? d.clicks / d.impressions : 0,
+          position: d.impressions > 0 ? d.posSum / d.impressions : 0,
+        }))
+        const queryRows: GSCQueryTotalRow[] = Array.from(queryMap.values()).map(q => ({
+          date: q.date, query: q.query, clicks: q.clicks, impressions: q.impressions,
+          ctr:      q.impressions > 0 ? q.clicks / q.impressions : 0,
+          position: q.impressions > 0 ? q.posSum / q.impressions : 0,
+        }))
+        const pageRows: GSCPageTotalRow[] = Array.from(pageMap.values()).map(p => ({
+          date: p.date, page: p.page, clicks: p.clicks, impressions: p.impressions,
+          ctr:      p.impressions > 0 ? p.clicks / p.impressions : 0,
+          position: p.impressions > 0 ? p.posSum / p.impressions : 0,
+        }))
 
         let written = 0
-        if (chunkResult.rows.length > 0) {
-          written = await upsertGSCMetrics(
-            db, connection.id, clientId,
-            chunkResult.rows as unknown as import('./connectors/google-search-console').GSCRawRow[],
-            ignoreDuplicates
-          )
+        if (rawRows.length > 0) {
+          written = await upsertGSCMetrics(db, connection.id, clientId, rawRows, ignoreDuplicates)
         }
         if (dailyRows.length > 0) {
-          const dailyWritten = await upsertGSCDailyTotals(db, connection.id, clientId, dailyRows)
-          console.log(`[sync] GSC daily totals chunk ${chunkFrom} → ${chunkTo}: ${dailyWritten} rows`)
+          await upsertGSCDailyTotals(db, connection.id, clientId, dailyRows)
         }
         if (queryRows.length > 0) {
-          const queryWritten = await upsertGSCQueryTotals(db, connection.id, clientId, queryRows)
-          console.log(`[sync] GSC query totals chunk ${chunkFrom} → ${chunkTo}: ${queryWritten} rows`)
+          await upsertGSCQueryTotals(db, connection.id, clientId, queryRows)
         }
         if (pageRows.length > 0) {
-          const pageWritten = await upsertGSCPageTotals(db, connection.id, clientId, pageRows)
-          console.log(`[sync] GSC page totals chunk ${chunkFrom} → ${chunkTo}: ${pageWritten} rows`)
+          await upsertGSCPageTotals(db, connection.id, clientId, pageRows)
         }
-        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo}: ${chunkResult.rows.length} rows`)
+        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo} (${dataState}): ${rawRows.length} rows`)
         return written
       })
     )

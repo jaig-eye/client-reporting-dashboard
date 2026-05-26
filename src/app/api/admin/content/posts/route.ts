@@ -13,8 +13,9 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url)
-  const clientId = searchParams.get('client_id')
-  const status   = searchParams.get('status')
+  const clientId         = searchParams.get('client_id')
+  const status           = searchParams.get('status')
+  const excludePublished = searchParams.get('exclude_published') === 'true'
 
   if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
 
@@ -27,6 +28,10 @@ export async function GET(request: NextRequest) {
 
   if (status) {
     query = query.eq('status', status) as typeof query
+  }
+
+  if (excludePublished) {
+    query = query.not('status', 'in', '("published","draft_saved")') as typeof query
   }
 
   const { data, error } = await query

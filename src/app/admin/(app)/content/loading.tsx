@@ -1,3 +1,5 @@
+import Bone from '@/components/admin/Bone'
+
 export default function ContentLoading() {
   return (
     <div>
@@ -40,11 +42,3 @@ export default function ContentLoading() {
   )
 }
 
-function Bone({ className, style }: { className: string; style?: React.CSSProperties }) {
-  return (
-    <div
-      className={`animate-pulse ${className}`}
-      style={{ background: 'var(--bg-subtle)', borderRadius: 'inherit', ...style }}
-    />
-  )
-}

@@ -80,6 +80,34 @@ export async function POST(
     return NextResponse.json({ error: 'BigCommerce credentials incomplete' }, { status: 400 })
   }
 
+  // Upload featured image to BC CDN before creating the post.
+  // BC's thumbnail_path expects a path on their CDN — external URLs render as broken images.
+  let thumbnailPath: string | undefined
+  if (p.featured_image_url) {
+    try {
+      const imgRes = await fetch(String(p.featured_image_url))
+      if (imgRes.ok) {
+        const blob = await imgRes.blob()
+        const ext  = (blob.type.split('/')[1] || 'jpg').replace(/\+.*$/, '')
+        const form = new FormData()
+        form.append('image_file', blob, `${slugify(String(p.title ?? 'post'))}.${ext}`)
+        const uploadRes = await fetch(
+          `https://api.bigcommerce.com/stores/${storeHash}/v2/content/images`,
+          { method: 'POST', headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' }, body: form }
+        )
+        if (uploadRes.ok) {
+          const uploadData = (await uploadRes.json()) as Record<string, unknown>
+          const cdnUrl = String(uploadData.url ?? uploadData.cdn_url ?? '')
+          if (cdnUrl) thumbnailPath = cdnUrl
+        } else {
+          console.warn('[publish-bigcommerce] image upload to BC failed:', await uploadRes.text())
+        }
+      }
+    } catch (imgErr) {
+      console.warn('[publish-bigcommerce] image upload skipped:', imgErr)
+    }
+  }
+
   const tags = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
   const postSlug = p.slug
     ? String(p.slug)
@@ -106,7 +134,7 @@ export async function POST(
     meta_description: String(p.meta_description ?? ''),
     meta_keywords:    String(p.target_keyword ?? ''),
     tags,
-    ...(p.featured_image_url ? { thumbnail_path: String(p.featured_image_url) } : {}),
+    ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
   }
 
   try {

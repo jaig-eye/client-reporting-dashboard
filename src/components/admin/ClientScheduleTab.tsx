@@ -300,7 +300,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setDataLoading(true)
     Promise.all([
       fetch(`/api/admin/content/topics?client_id=${clientId}`).then(r => r.json()),
-      fetch(`/api/admin/content/posts?client_id=${clientId}`).then(r => r.json()),
+      fetch(`/api/admin/content/posts?client_id=${clientId}&exclude_published=true`).then(r => r.json()),
     ]).then(([topicsData, postsData]) => {
       setTopics(Array.isArray(topicsData) ? topicsData as Topic[] : [])
       setPosts(Array.isArray(postsData)   ? postsData   as Post[] : [])

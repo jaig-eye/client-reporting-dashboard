@@ -130,6 +130,77 @@ async function ghlGet(
   throw new Error('GHL API: max retries exceeded')
 }
 
+async function ghlPost(
+  path: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  maxRetries = 4,
+  version = '2021-07-28'
+): Promise<Record<string, unknown>> {
+  const url = `${BASE_URL}${path}`
+  let delay = 5_000
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Version:        version,
+      },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) return res.json() as Promise<Record<string, unknown>>
+    const text = await res.text()
+    if (res.status === 429 && attempt < maxRetries) {
+      const retryAfter = res.headers.get('Retry-After')
+      const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : delay
+      await sleep(waitMs)
+      delay = Math.min(delay * 2, 60_000)
+      continue
+    }
+    throw new Error(`GHL API error ${res.status}: ${text}`)
+  }
+  throw new Error('GHL API: max retries exceeded')
+}
+
+// Server-side date-filtered contact search — avoids fetching all contacts and discarding in memory.
+// Falls back to full pagination if the search endpoint returns an unexpected format.
+async function searchContactsByDate(
+  apiKey: string,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  let page = 1
+
+  for (let i = 0; i < 50; i++) {
+    const data = await ghlPost('/contacts/search', apiKey, {
+      locationId,
+      page,
+      pageLimit: 100,
+      filters: [
+        { field: 'dateAdded', operator: '>=', value: new Date(dateFrom + 'T00:00:00Z').toISOString() },
+        { field: 'dateAdded', operator: '<=', value: new Date(dateTo   + 'T23:59:59Z').toISOString() },
+      ],
+      sort: [{ field: 'dateAdded', direction: 'asc' }],
+    })
+
+    const contacts = (data.contacts as Record<string, unknown>[]) ?? []
+    all.push(...contacts)
+    if (contacts.length < 100) break
+    page++
+  }
+
+  const seen = new Set<string>()
+  return all.filter(c => {
+    const id = String(c.id || c.contactId || '')
+    if (!id || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
 async function paginateContacts(
   apiKey: string,
   locationId: string
@@ -157,8 +228,6 @@ async function paginateContacts(
     startAfterId = nextStartAfterId
   }
 
-  // Deduplicate by contact ID — cursor pagination can return boundary items twice
-  // when contact records are updated between paginated requests.
   const seen = new Set<string>()
   return all.filter(c => {
     const id = String((c as Record<string, unknown>).id || (c as Record<string, unknown>).contactId || '')
@@ -178,7 +247,14 @@ async function fetchContacts(
   dateFrom: string,
   dateTo: string
 ): Promise<{ date: string; count: number; spam: number }[]> {
-  const contacts = await paginateContacts(apiKey, locationId)
+  let contacts: Record<string, unknown>[]
+  try {
+    contacts = await searchContactsByDate(apiKey, locationId, dateFrom, dateTo)
+    console.log(`[ghl] contacts (search endpoint): ${contacts.length} in range`)
+  } catch (searchErr) {
+    console.warn(`[ghl] contacts search fallback to pagination: ${String(searchErr)}`)
+    contacts = await paginateContacts(apiKey, locationId)
+  }
 
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
@@ -351,9 +427,9 @@ async function fetchFormsAndSurveys(
   // byDate: date → { total, perItem: itemId → count }
   const byDate = new Map<string, { total: number; perItem: Map<string, number> }>()
 
-  // Fetch all form/survey items in parallel batches of 5.
-  // ghlGet already handles 429s with backoff — no pre-emptive sleep needed.
-  const SUBMISSION_CONCURRENCY = 5
+  // Fetch all form/survey items in parallel batches of 20.
+  // GHL burst limit is 100 req/10s; ghlGet handles 429s with backoff.
+  const SUBMISSION_CONCURRENCY = 20
   for (let i = 0; i < items.length; i += SUBMISSION_CONCURRENCY) {
     await Promise.allSettled(items.slice(i, i + SUBMISSION_CONCURRENCY).map(async (item) => {
       if (!item.id) return
@@ -474,90 +550,18 @@ async function fetchFormsAndSurveys(
   return { rows, totalBreakdown }
 }
 
-async function fetchOpportunities(
+// Single paginated pass for all opportunity types.
+// Sorts by updatedAt_desc so both new opps (dateAdded) and closed opps (closedDate)
+// are reachable. Results are split client-side by status, eliminating the second pass.
+async function fetchAllOpportunities(
   apiKey: string,
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; newOpps: number }[]> {
-  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
-  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
-  const all: Record<string, unknown>[] = []
-
-  try {
-    // No server-side date filter on /opportunities/search — paginate desc and stop
-    // when we pass the start of our range.
-    let startAfter:   string | undefined
-    let startAfterId: string | undefined
-
-    for (let page = 0; page < 200; page++) {
-      const p: Record<string, string> = {
-        location_id: locationId,
-        limit:       '100',
-        order:       'dateAdded_desc',
-      }
-      if (startAfter)   p.startAfter   = startAfter
-      if (startAfterId) p.startAfterId = startAfterId
-
-      const data  = await ghlGet('/opportunities/search', apiKey, p)
-      const opps  = (data.opportunities as Record<string, unknown>[]) ?? []
-      all.push(...opps)
-
-      if (opps.length === 0) break
-
-      // Stop when oldest opp in this page is before our date range
-      const oldest       = opps[opps.length - 1] as Record<string, unknown>
-      const oldestParsed = parseGhlDate(oldest.dateAdded ?? oldest.createdAt)
-      if (oldestParsed && oldestParsed.ts < fromMs) break
-      if (opps.length < 100) break
-
-      const meta = data.meta as Record<string, unknown> | undefined
-      startAfter   = meta?.startAfter   != null ? String(meta.startAfter)   : undefined
-      startAfterId = meta?.startAfterId != null ? String(meta.startAfterId) : undefined
-      if (!startAfter && !startAfterId) break
-    }
-  } catch (e) {
-    const msg = String(e)
-    if (msg.includes('401') || msg.includes('not authorized')) {
-      console.log('[ghl] opportunities/search: missing scope — add "opportunities.readonly" to your private integration')
-    } else {
-      console.log(`[ghl] opportunities/search failed: ${msg}`)
-    }
-    return []
-  }
-
-  // Deduplicate by opportunity ID before counting
-  const oppSeen = new Set<string>()
-  const uniqueOpps = all.filter(o => {
-    const id = String((o as Record<string, unknown>).id || '')
-    if (!id || oppSeen.has(id)) return false
-    oppSeen.add(id)
-    return true
-  })
-  console.log(`[ghl] new opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
-
-  const byDate = new Map<string, { newOpps: number }>()
-
-  for (const opp of uniqueOpps) {
-    const parsed = parseGhlDate(opp.dateAdded ?? opp.createdAt)
-    if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
-    const ex = byDate.get(parsed.date) ?? { newOpps: 0 }
-    ex.newOpps++
-    byDate.set(parsed.date, ex)
-  }
-
-  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
-}
-
-// Separate pass for won/lost — dated by closedDate, not dateAdded.
-// GHL's own "Won" metric counts by when the opp moved to won status, so pagination
-// must use updatedAt ordering and can't exit early on dateAdded like fetchOpportunities does.
-async function fetchClosedOpportunities(
-  apiKey: string,
-  locationId: string,
-  dateFrom: string,
-  dateTo: string
-): Promise<{ date: string; wonOpps: number; lostOpps: number; wonValue: number }[]> {
+): Promise<{
+  oppData:       { date: string; newOpps: number }[]
+  closedOppData: { date: string; wonOpps: number; lostOpps: number; wonValue: number }[]
+}> {
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
   const all: Record<string, unknown>[] = []
@@ -581,11 +585,14 @@ async function fetchClosedOpportunities(
 
       if (opps.length === 0) break
 
-      // Exit when the oldest opp's close/update date is before our range
-      const oldest       = opps[opps.length - 1] as Record<string, unknown>
-      const closeDate    = oldest.closedDate ?? oldest.lastStatusChangeAt ?? oldest.updatedAt
-      const oldestParsed = parseGhlDate(closeDate)
-      if (oldestParsed && oldestParsed.ts < fromMs) break
+      // Stop when both dateAdded and updatedAt of the oldest item are before range
+      const oldest = opps[opps.length - 1] as Record<string, unknown>
+      const oldestUpdated = parseGhlDate(oldest.updatedAt ?? oldest.dateAdded)
+      const oldestCreated = parseGhlDate(oldest.dateAdded ?? oldest.createdAt)
+      if (
+        oldestUpdated && oldestUpdated.ts < fromMs &&
+        oldestCreated && oldestCreated.ts < fromMs
+      ) break
       if (opps.length < 100) break
 
       const meta = data.meta as Record<string, unknown> | undefined
@@ -594,20 +601,13 @@ async function fetchClosedOpportunities(
       if (!startAfter && !startAfterId) break
     }
   } catch (e) {
-    console.log(`[ghl] fetchClosedOpportunities failed: ${String(e)}`)
-    return []
-  }
-
-  // Log sample to confirm closedDate field name
-  if (all.length > 0) {
-    const sample = all[0] as Record<string, unknown>
-    console.log('[ghl] sample closed opp fields:', {
-      status: sample.status,
-      closedDate: sample.closedDate,
-      lastStatusChangeAt: sample.lastStatusChangeAt,
-      updatedAt: sample.updatedAt,
-      dateAdded: sample.dateAdded,
-    })
+    const msg = String(e)
+    if (msg.includes('401') || msg.includes('not authorized')) {
+      console.log('[ghl] opportunities/search: missing scope — add "opportunities.readonly" to your private integration')
+    } else {
+      console.log(`[ghl] opportunities/search failed: ${msg}`)
+    }
+    return { oppData: [], closedOppData: [] }
   }
 
   const oppSeen = new Set<string>()
@@ -617,31 +617,49 @@ async function fetchClosedOpportunities(
     oppSeen.add(id)
     return true
   })
-  console.log(`[ghl] closed opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
+  console.log(`[ghl] opportunities fetched: ${all.length}, unique: ${uniqueOpps.length}`)
 
-  const byDate = new Map<string, { wonOpps: number; lostOpps: number; wonValue: number }>()
+  if (uniqueOpps.length > 0) {
+    const sample = uniqueOpps[0] as Record<string, unknown>
+    console.log('[ghl] sample opp fields:', {
+      status: sample.status, closedDate: sample.closedDate,
+      lastStatusChangeAt: sample.lastStatusChangeAt,
+      updatedAt: sample.updatedAt, dateAdded: sample.dateAdded,
+    })
+  }
+
+  const newByDate    = new Map<string, { newOpps: number }>()
+  const closedByDate = new Map<string, { wonOpps: number; lostOpps: number; wonValue: number }>()
 
   for (const opp of uniqueOpps) {
     const status = String(opp.status || '').toLowerCase()
-    if (status !== 'won' && status !== 'lost') continue
 
-    const closeDate = opp.closedDate ?? opp.lastStatusChangeAt ?? opp.updatedAt
-    const parsed    = parseGhlDate(closeDate)
-    if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
-
-    const ex    = byDate.get(parsed.date) ?? { wonOpps: 0, lostOpps: 0, wonValue: 0 }
-    const value = Number(opp.monetaryValue ?? opp.value ?? 0)
-
-    if (status === 'won') {
-      ex.wonOpps++
-      ex.wonValue += value
-    } else {
-      ex.lostOpps++
+    // New opportunities: count by creation date
+    const createdParsed = parseGhlDate(opp.dateAdded ?? opp.createdAt)
+    if (createdParsed && createdParsed.ts >= fromMs && createdParsed.ts <= toMs) {
+      const ex = newByDate.get(createdParsed.date) ?? { newOpps: 0 }
+      ex.newOpps++
+      newByDate.set(createdParsed.date, ex)
     }
-    byDate.set(parsed.date, ex)
+
+    // Won/Lost: count by close date
+    if (status === 'won' || status === 'lost') {
+      const closeDate   = opp.closedDate ?? opp.lastStatusChangeAt ?? opp.updatedAt
+      const closeParsed = parseGhlDate(closeDate)
+      if (closeParsed && closeParsed.ts >= fromMs && closeParsed.ts <= toMs) {
+        const ex    = closedByDate.get(closeParsed.date) ?? { wonOpps: 0, lostOpps: 0, wonValue: 0 }
+        const value = Number(opp.monetaryValue ?? opp.value ?? 0)
+        if (status === 'won') { ex.wonOpps++; ex.wonValue += value }
+        else                    ex.lostOpps++
+        closedByDate.set(closeParsed.date, ex)
+      }
+    }
   }
 
-  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
+  return {
+    oppData:       Array.from(newByDate.entries()).map(([date, v]) => ({ date, ...v })),
+    closedOppData: Array.from(closedByDate.entries()).map(([date, v]) => ({ date, ...v })),
+  }
 }
 
 async function fetchReviews(
@@ -702,22 +720,21 @@ export const ghlConnector: ConnectorAdapter = {
     }
 
     try {
-      // All 6 fetches are independent — run in parallel. ghlGet handles 429s with backoff.
+      // All fetches are independent — run in parallel. ghlGet handles 429s with backoff.
       const [
         contactData,
         convData,
         formsResult,
-        oppData,
-        closedOppData,
+        allOppResult,
         reviewData,
       ] = await Promise.all([
         fetchContacts(apiKey, locationId, dateFrom, dateTo),
         fetchConversations(apiKey, locationId, dateFrom, dateTo),
         fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo),
-        fetchOpportunities(apiKey, locationId, dateFrom, dateTo),
-        fetchClosedOpportunities(apiKey, locationId, dateFrom, dateTo),
+        fetchAllOpportunities(apiKey, locationId, dateFrom, dateTo),
         fetchReviews(apiKey, locationId, dateFrom, dateTo),
       ])
+      const { oppData, closedOppData } = allOppResult
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
       console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
 
