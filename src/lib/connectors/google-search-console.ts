@@ -63,6 +63,11 @@ export interface GSCRawRow {
   position:    number
 }
 
+export interface GSCPageFilter {
+  regex: string
+  type: 'include' | 'exclude'
+}
+
 /**
  * Fetch Search Analytics data for a site over a date range.
  * GSC limits to 25,000 rows per request; paginates automatically.
@@ -71,6 +76,10 @@ export interface GSCRawRow {
  *
  * dataState: 'all' includes fresh/unconfirmed data; 'final' is stable (2-day lag).
  * Use 'final' for historical chunks, 'all' only for the most recent 2 days.
+ *
+ * pageFilter: optional regex filter on the 'page' dimension. Use 'exclude' to drop
+ * product/category pages (reduces rows dramatically for e-commerce sites) or
+ * 'include' to scope data to a specific section (e.g. /blog/).
  */
 export async function fetchSearchAnalytics(
   siteUrl: string,
@@ -78,7 +87,8 @@ export async function fetchSearchAnalytics(
   dateFrom: string,
   dateTo: string,
   dataState: 'all' | 'final' = 'all',
-  dimensions: string[] = ['date', 'query', 'page']
+  dimensions: string[] = ['date', 'query', 'page'],
+  pageFilter?: GSCPageFilter
 ): Promise<GSCRawRow[]> {
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
@@ -88,7 +98,7 @@ export async function fetchSearchAnalytics(
   let startRow = 0
 
   while (true) {
-    const body = {
+    const body: Record<string, unknown> = {
       startDate: dateFrom,
       endDate:   dateTo,
       dimensions,
@@ -96,19 +106,25 @@ export async function fetchSearchAnalytics(
       startRow,
       dataState,
     }
+    if (pageFilter?.regex) {
+      body.dimensionFilterGroups = [{
+        filters: [{
+          dimension:  'page',
+          operator:   pageFilter.type === 'include' ? 'includingRegex' : 'excludingRegex',
+          expression: pageFilter.regex,
+        }],
+      }]
+    }
 
     const controller = new AbortController()
     const timeoutId  = setTimeout(() => controller.abort(), 60_000)
     let res: Response
     try {
       res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization:  `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+        method:  'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+        signal:  controller.signal,
       })
     } finally {
       clearTimeout(timeoutId)
@@ -306,22 +322,35 @@ export async function fetchQueryTotals(
  * Fetch accurate per-page metrics using dimensions=['date','page'].
  * Unlike the (date,query,page) dimensional query, this groups by page only so
  * impressions are not multiplied across queries — matching GSC's Pages tab.
+ *
+ * pageFilter: optional regex filter — pass from the connection's config to exclude
+ * product/category pages and reduce row count on large e-commerce sites.
  */
 export async function fetchPageTotals(
   siteUrl: string,
   accessToken: string,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  pageFilter?: GSCPageFilter
 ): Promise<GSCPageTotalRow[]> {
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
 
-  const body = {
+  const body: Record<string, unknown> = {
     startDate:  dateFrom,
     endDate:    dateTo,
     dimensions: ['date', 'page'],
     rowLimit:   25000,
     dataState:  'all',
+  }
+  if (pageFilter?.regex) {
+    body.dimensionFilterGroups = [{
+      filters: [{
+        dimension:  'page',
+        operator:   pageFilter.type === 'include' ? 'includingRegex' : 'excludingRegex',
+        expression: pageFilter.regex,
+      }],
+    }]
   }
 
   const controller = new AbortController()
@@ -329,13 +358,10 @@ export async function fetchPageTotals(
   let res: Response
   try {
     res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization:  `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      method:  'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  controller.signal,
     })
   } finally {
     clearTimeout(timeoutId)

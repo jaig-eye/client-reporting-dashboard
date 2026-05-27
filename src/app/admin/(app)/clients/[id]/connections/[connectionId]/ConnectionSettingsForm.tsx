@@ -12,7 +12,13 @@ export default function ConnectionSettingsForm({
   connection: ClientConnection
 }) {
   const router = useRouter()
-  const [externalName, setExternalName] = useState(connection.external_name ?? '')
+  const isGSC = connection.connector?.type === 'google_search_console'
+
+  const [externalName,     setExternalName]     = useState(connection.external_name ?? '')
+  const [pageFilterRegex,  setPageFilterRegex]  = useState(String(connection.config?.page_filter_regex ?? ''))
+  const [pageFilterType,   setPageFilterType]   = useState<'include' | 'exclude'>(
+    (connection.config?.page_filter_type as 'include' | 'exclude') ?? 'exclude'
+  )
   const [status,       setStatus]       = useState<'idle' | 'saving' | 'deleting' | 'success' | 'error'>('idle')
   const [errorMsg,     setErrorMsg]     = useState('')
   const [showDelete,   setShowDelete]   = useState(false)
@@ -22,10 +28,18 @@ export default function ConnectionSettingsForm({
     setStatus('saving')
     setErrorMsg('')
     try {
+      const payload: Record<string, unknown> = { external_name: externalName || null }
+      if (isGSC) {
+        const trimmed = pageFilterRegex.trim()
+        payload.config = {
+          page_filter_regex: trimmed || null,
+          page_filter_type:  trimmed ? pageFilterType : null,
+        }
+      }
       const res = await fetch(`/api/admin/connections/${connection.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ external_name: externalName || null }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) {
         const d = await res.json()
@@ -110,6 +124,36 @@ export default function ConnectionSettingsForm({
             onChange={e => setExternalName(e.target.value)}
           />
         </div>
+
+        {isGSC && (
+          <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
+            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+              Page Filter <span style={{ color: 'var(--text-faint)' }}>(optional — applied during GSC sync)</span>
+            </label>
+            <div className="flex gap-2 mb-2">
+              <select
+                className="input"
+                style={{ width: 'auto', flexShrink: 0 }}
+                value={pageFilterType}
+                onChange={e => setPageFilterType(e.target.value as 'include' | 'exclude')}
+              >
+                <option value="exclude">Exclude matching pages</option>
+                <option value="include">Include only matching pages</option>
+              </select>
+            </div>
+            <input
+              className="input"
+              placeholder="Regex, e.g. /products/|/category/"
+              value={pageFilterRegex}
+              onChange={e => setPageFilterRegex(e.target.value)}
+            />
+            <p className="text-xs mt-1.5" style={{ color: 'var(--text-faint)' }}>
+              Filters the <em>page</em> dimension when syncing page metrics and 3D data. Leave blank to sync all pages.
+              Example: exclude e-commerce pages with <code>/products/|/category/|/cart</code>
+            </p>
+          </div>
+        )}
+
         <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
           {status === 'saving' ? 'Saving…' : 'Save'}
         </button>

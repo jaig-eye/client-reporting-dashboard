@@ -1,5 +1,5 @@
 // /api/admin/connections/[id]
-// PATCH: update connection display name or status. DELETE: disconnect.
+// PATCH: update connection display name, status, or config fields. DELETE: disconnect.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -20,11 +20,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.external_name !== undefined) update.external_name = body.external_name
   if (body.status        !== undefined) update.status        = body.status
 
+  const db = createAdminClient()
+
+  // Merge config fields (e.g. page_filter_regex) into existing JSONB config
+  if (body.config !== undefined && body.config !== null && typeof body.config === 'object') {
+    const { data: existing } = await db
+      .from('client_connections')
+      .select('config')
+      .eq('id', id)
+      .single()
+    const existingConfig = (existing as { config?: Record<string, unknown> } | null)?.config ?? {}
+    update.config = { ...existingConfig, ...(body.config as Record<string, unknown>) }
+  }
+
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
-
-  const db = createAdminClient()
   const { data, error } = await db
     .from('client_connections')
     .update(update)

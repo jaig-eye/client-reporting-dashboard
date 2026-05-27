@@ -23,7 +23,7 @@ import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 import { fetchSearchAnalytics } from './connectors/google-search-console'
-import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
+import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow, GSCPageFilter } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -366,6 +366,15 @@ async function syncGSCInChunks(
 
   let total = 0
 
+  // Optional page filter from connection config — stored as page_filter_regex / page_filter_type.
+  // Applied to page-dimension fetches only (pFetch and 3D). Daily totals and query ranks are
+  // intentionally left unfiltered so overall site performance numbers remain accurate.
+  const rawRegex = connection.config?.page_filter_regex
+  const pageFilter: GSCPageFilter | undefined = rawRegex && typeof rawRegex === 'string' ? {
+    regex: rawRegex,
+    type:  ((connection.config?.page_filter_type as string | undefined) ?? 'exclude') as 'include' | 'exclude',
+  } : undefined
+
   // Process chunks in parallel batches to avoid sequential API latency.
   // 5 concurrent chunks keeps a 2-year backfill (24 chunks) down to ~5 rounds.
   for (let i = 0; i < chunks.length; i += GSC_CHUNK_CONCURRENCY) {
@@ -390,9 +399,9 @@ async function syncGSCInChunks(
 
         const [qFetch, pFetch, rawRows] = await Promise.all([
           fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'query']),
-          fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'page']),
+          fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'page'], pageFilter),
           needs3D
-            ? fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState)
+            ? fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, undefined, pageFilter)
             : Promise.resolve([] as GSCRawRow[]),
         ])
 

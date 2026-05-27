@@ -116,9 +116,8 @@ export async function POST(
       ? new Date(`${String(p.target_publish_date)}T${bcPublishTime}:00`).toUTCString()
       : new Date().toUTCString()
 
-    function slugify(text: string) {
-      return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    }
+    const slugify = (text: string) =>
+      text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     const postSlug = p.slug
       ? String(p.slug)
       : `/blog/${slugify(String(p.title ?? ''))}/`
