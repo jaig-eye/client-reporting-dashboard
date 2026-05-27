@@ -13,7 +13,6 @@ import { getAgencySettings, pctOfBenchmark, scoreColor } from '@/lib/agency-sett
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import SpendChart from '@/components/SpendChart'
-import CampaignTable from '@/components/CampaignTable'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
@@ -805,27 +804,7 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* ── Campaign breakdown (filtered mode only) ───────────── */}
-            {!hiddenMetrics.has('campaigns') && (
-              <div className="card p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="section-title">Campaigns</h2>
-                    <p className="section-desc">{campaigns.length} campaigns</p>
-                  </div>
-                </div>
-                <CampaignTable
-                  campaigns={campaigns}
-                  connectionsBySource={connectionsBySource}
-                  dateFrom={fmtDate(fromDate)}
-                  dateTo={fmtDate(toDate)}
-                  compare={compare !== 'none' ? compare : undefined}
-                  columns={activeLayout.table_columns}
-                />
-              </div>
-            )}
-
-            {/* ── CRM Activity ─────────────────────────────────────── */}
+{/* ── CRM Activity ─────────────────────────────────────── */}
             {!isFiltered && hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
               <div className="card p-6">
                 <div className="mb-4">

@@ -9,6 +9,7 @@ const VALID_SOURCES = [
   'google_analytics_4',
   'google_business',
   'ahrefs',
+  'content',
   'all',
 ] as const
 type Source = typeof VALID_SOURCES[number]
@@ -32,6 +33,9 @@ async function purgeSource(db: ReturnType<typeof createAdminClient>, clientId: s
     await del('meta_ads_metrics')
   } else if (source === 'google_search_console') {
     await del('gsc_metrics')
+    await del('gsc_daily_totals')
+    await del('gsc_query_totals')
+    await del('gsc_page_totals')
   } else if (source === 'google_analytics_4') {
     await del('ga4_metrics')
   } else if (source === 'google_business') {
@@ -40,6 +44,9 @@ async function purgeSource(db: ReturnType<typeof createAdminClient>, clientId: s
     await del('ahrefs_keywords')
     await del('ahrefs_pages')
     await del('ahrefs_metrics')
+  } else if (source === 'content') {
+    await del('content_posts')
+    await del('content_topics')
   }
 
   return results
@@ -50,7 +57,7 @@ async function purgeSource(db: ReturnType<typeof createAdminClient>, clientId: s
  *
  * Purges all metric data for a specific source (or all sources) for this client.
  * Valid sources: google_ads, meta_ads, google_search_console, google_analytics_4,
- *                google_business, ahrefs, all
+ *                google_business, ahrefs, content, all
  */
 export async function DELETE(
   request: NextRequest,

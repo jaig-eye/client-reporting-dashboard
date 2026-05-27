@@ -23,7 +23,7 @@ import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 import { fetchSearchAnalytics } from './connectors/google-search-console'
-import type { GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
+import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow } from './connectors/google-search-console'
 
 interface AhrefsRow {
   date:                   string
@@ -381,13 +381,19 @@ async function syncGSCInChunks(
         // Use 'final' for fully-processed historical data; 'all' only for the last 2 days
         const dataState: 'all' | 'final' = chunkTo >= twoDaysAgo ? 'all' : 'final'
 
-        // Two parallel 2D fetches replace the single 3D fetch.
-        // ['date','query'] rows are already date+query aggregates — no reduction needed.
-        // ['date','page'] rows are already date+page aggregates.
-        // Only daily totals need a Map-reduce (sum query rows by date).
-        const [qFetch, pFetch] = await Promise.all([
+        // Two parallel 2D fetches feed the aggregate tables (accurate impressions, no cross-product).
+        // A 3D fetch is also run for chunks within the last 30 days so gsc_metrics stays current
+        // for content tools (topic generation, internal links) that need the page-query relationship.
+        // Backfill chunks older than 30 days skip the 3D call — content tools don't need that history.
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)
+        const needs3D = chunkTo >= thirtyDaysAgo
+
+        const [qFetch, pFetch, rawRows] = await Promise.all([
           fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'query']),
           fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'page']),
+          needs3D
+            ? fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState)
+            : Promise.resolve([] as GSCRawRow[]),
         ])
 
         // Daily totals — aggregate query rows by date
@@ -425,7 +431,10 @@ async function syncGSCInChunks(
         if (pageRows.length > 0) {
           await upsertGSCPageTotals(db, connection.id, clientId, pageRows)
         }
-        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo} (${dataState}): ${qFetch.length} query rows, ${pFetch.length} page rows`)
+        if (rawRows.length > 0) {
+          await upsertGSCMetrics(db, connection.id, clientId, rawRows, ignoreDuplicates)
+        }
+        console.log(`[sync] GSC chunk ${chunkFrom} → ${chunkTo} (${dataState}): ${qFetch.length} query rows, ${pFetch.length} page rows${needs3D ? `, ${rawRows.length} raw rows` : ''}`)
         return qFetch.length + pFetch.length
       })
     )
