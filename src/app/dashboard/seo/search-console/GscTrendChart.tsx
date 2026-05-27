@@ -29,7 +29,15 @@ function fmtNum(n: number): string {
   return n.toLocaleString()
 }
 
-export default function GscTrendChart({ data }: { data: GscDailyPoint[] }) {
+export default function GscTrendChart({
+  data,
+  colorClicks      = '#93c5fd',
+  colorImpressions = '#94a3b8',
+}: {
+  data:              GscDailyPoint[]
+  colorClicks?:      string
+  colorImpressions?: string
+}) {
   if (!data.length) return null
 
   const interval = Math.max(1, Math.ceil(data.length / 12)) - 1
@@ -101,7 +109,7 @@ export default function GscTrendChart({ data }: { data: GscDailyPoint[] }) {
             yAxisId="l"
             dataKey="clicks"
             name="Clicks"
-            fill="var(--blue,#2563eb)"
+            fill={colorClicks}
             radius={[3, 3, 0, 0]}
             maxBarSize={24}
           />
@@ -110,7 +118,7 @@ export default function GscTrendChart({ data }: { data: GscDailyPoint[] }) {
             type="monotone"
             dataKey="impressions"
             name="Impressions"
-            stroke="#94a3b8"
+            stroke={colorImpressions}
             strokeWidth={2}
             strokeDasharray="4 2"
             dot={false}

@@ -13,6 +13,7 @@ import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
+import { getAgencySettings } from '@/lib/agency-settings'
 import { GscQueriesTable, GscPagesTable } from './GscSortableTable'
 import GscTrendChart from './GscTrendChart'
 import type { GscDailyPoint } from './GscTrendChart'
@@ -112,11 +113,12 @@ export default async function SearchConsolePage({
   }
 
   const rpcBase = { p_client_id: client.id, p_connection_id: primaryConnectionId, p_top_n: 25 }
-  const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
+  const [{ data: currRpc }, { data: compRpc }, settings] = await Promise.all([
     db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(fromDate), p_date_to: fmtDate(toDate) }),
     showCompare && compFrom && compTo
       ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(compFrom), p_date_to: fmtDate(compTo) })
       : Promise.resolve({ data: null }),
+    getAgencySettings(),
   ])
 
   const curr = currRpc as GscRpcResult | null
@@ -284,7 +286,11 @@ export default async function SearchConsolePage({
                 </div>
               )}
             </div>
-            <GscTrendChart data={dailyData} />
+            <GscTrendChart
+              data={dailyData}
+              colorClicks={settings.chart_color_spend}
+              colorImpressions={settings.chart_color_prior_spend}
+            />
           </div>
         )}
 

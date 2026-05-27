@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { CalendarBlank, CaretDown } from '@phosphor-icons/react'
 
 function fmtD(d: Date) { return d.toISOString().split('T')[0] }
@@ -107,6 +107,13 @@ export default function DateRangePicker({
   const [localTo,   setLocalTo]   = useState(to)
   const [cmp,       setCmp]       = useState(compare)
   const activePreset = detectPreset(from, to)
+
+  // Keep custom inputs in sync when server re-renders with new dates (preset selection,
+  // back/forward navigation, or external link). Without this useState holds the initial
+  // value and the "Apply" button would navigate to stale dates.
+  useEffect(() => { setLocalFrom(from) }, [from])
+  useEffect(() => { setLocalTo(to) },     [to])
+  useEffect(() => { setCmp(compare) },    [compare])
 
   function buildUrl(f: string, t: string, c = cmp) {
     const p = new URLSearchParams(searchParams.toString())

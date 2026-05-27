@@ -1,5 +1,5 @@
 // POST /api/admin/content/posts/[id]/approve
-// Uploads an already-generated pending post to WordPress as a draft.
+// Uploads an already-generated pending post to WordPress or BigCommerce as a draft.
 
 export const maxDuration = 60
 
@@ -25,7 +25,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, wp_post_id, featured_image_url')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -37,6 +37,9 @@ export async function POST(
 
   if (p.wp_post_id) {
     return NextResponse.json({ error: 'Post is already uploaded to WordPress' }, { status: 400 })
+  }
+  if (p.bc_post_id) {
+    return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
   }
 
   // Resolve WP connection: prefer stored connection_id, fall back to any active WP connection
@@ -65,7 +68,136 @@ export async function POST(
   }
 
   if (!connData) {
-    return NextResponse.json({ error: 'No WordPress connection found for this client' }, { status: 400 })
+    // No WordPress connection — check for BigCommerce
+    type BcConnRow = { id: string; connector: { auth: Record<string, unknown>; config: Record<string, unknown> } }
+    let bcConnData: BcConnRow | null = null
+
+    if (p.connection_id) {
+      const { data } = await db
+        .from('client_connections')
+        .select('id, connector:connectors!inner(auth, config)')
+        .eq('id', String(p.connection_id))
+        .single()
+      bcConnData = data as BcConnRow | null
+    }
+
+    if (!bcConnData) {
+      const { data } = await db
+        .from('client_connections')
+        .select('id, connector:connectors!inner(type, auth, config)')
+        .eq('client_id', String(p.client_id))
+        .eq('status', 'active')
+        .eq('connector.type', 'bigcommerce')
+        .limit(1)
+        .maybeSingle()
+      bcConnData = data as BcConnRow | null
+    }
+
+    if (!bcConnData) {
+      return NextResponse.json({ error: 'No WordPress or BigCommerce connection found for this client' }, { status: 400 })
+    }
+
+    const { connector: bcConnector } = bcConnData
+    const storeHash   = String(bcConnector.config.store_hash   || bcConnector.auth.store_hash   || '')
+    const accessToken = String(bcConnector.config.access_token || bcConnector.auth.access_token || '')
+
+    if (!storeHash || !accessToken) {
+      return NextResponse.json({ error: 'BigCommerce credentials incomplete' }, { status: 400 })
+    }
+
+    const { data: csRowBc } = await db
+      .from('content_settings')
+      .select('publish_time')
+      .eq('client_id', String(p.client_id))
+      .maybeSingle()
+    const bcPublishTime = (csRowBc as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
+
+    const publishedDate = p.target_publish_date
+      ? new Date(`${String(p.target_publish_date)}T${bcPublishTime}:00`).toUTCString()
+      : new Date().toUTCString()
+
+    function slugify(text: string) {
+      return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    }
+    const postSlug = p.slug
+      ? String(p.slug)
+      : `/blog/${slugify(String(p.title ?? ''))}/`
+
+    const tags = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
+
+    // Upload featured image to BC CDN (non-fatal)
+    let thumbnailPath: string | undefined
+    if (p.featured_image_url) {
+      try {
+        const imgRes = await fetch(String(p.featured_image_url))
+        if (imgRes.ok) {
+          const blob = await imgRes.blob()
+          const ext  = (blob.type.split('/')[1] || 'jpg').replace(/\+.*$/, '')
+          const form = new FormData()
+          form.append('image_file', blob, `${slugify(String(p.title ?? 'post'))}.${ext}`)
+          const uploadRes = await fetch(
+            `https://api.bigcommerce.com/stores/${storeHash}/v2/content/images`,
+            { method: 'POST', headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' }, body: form }
+          )
+          if (uploadRes.ok) {
+            const uploadData = (await uploadRes.json()) as Record<string, unknown>
+            const cdnUrl = String(uploadData.url ?? uploadData.cdn_url ?? '')
+            if (cdnUrl) thumbnailPath = cdnUrl
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    try {
+      const bcPayload: Record<string, unknown> = {
+        title:            String(p.title ?? ''),
+        body:             String((p as Record<string, unknown>).content ?? ''),
+        author:           'Admin',
+        url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
+        is_published:     false,
+        published_date:   publishedDate,
+        meta_description: String((p as Record<string, unknown>).meta_description ?? ''),
+        meta_keywords:    String(p.target_keyword ?? ''),
+        tags,
+        ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
+      }
+
+      const bcRes = await fetch(
+        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Auth-Token': accessToken, 'Accept': 'application/json' },
+          body: JSON.stringify(bcPayload),
+        }
+      )
+      if (!bcRes.ok) {
+        const text = await bcRes.text()
+        throw new Error(bcRes.status === 401
+          ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+          : `BigCommerce API error ${bcRes.status}: ${text}`)
+      }
+
+      const bcPost = (await bcRes.json()) as Record<string, unknown>
+      const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/site/content`
+
+      await db.from('content_posts').update({
+        bc_post_id:    Number(bcPost.id),
+        bc_store_hash: storeHash,
+        status:        'draft_saved',
+        published_url: bcEditUrl,
+      }).eq('id', id)
+
+      const adminSession = await getAdminSession()
+      logActivity(adminSession, 'approved', 'post', {
+        resourceId: id,
+        clientId: String(p.client_id),
+        meta: { title: p.title, bc_post_id: Number(bcPost.id) },
+      })
+
+      return NextResponse.json({ bc_post_id: Number(bcPost.id), bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+    } catch (err) {
+      return NextResponse.json({ error: String(err) }, { status: 500 })
+    }
   }
 
   const { connector, external_id } = connData

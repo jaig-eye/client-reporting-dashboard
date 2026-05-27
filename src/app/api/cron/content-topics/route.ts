@@ -304,6 +304,7 @@ export async function GET(request: NextRequest) {
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
         .is('wp_post_id', null)
+        .is('bc_post_id', null)
 
       // Also push dateless posts that have been sitting for more than 3 days
       const staleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
@@ -314,6 +315,7 @@ export async function GET(request: NextRequest) {
         .in('status', ['for_review', 'pending'])
         .is('target_publish_date', null)
         .is('wp_post_id', null)
+        .is('bc_post_id', null)
         .lte('created_at', staleCutoff)
 
       const allDuePosts = [...(duePosts ?? []), ...(datelessPosts ?? [])]
