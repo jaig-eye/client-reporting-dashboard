@@ -418,7 +418,6 @@ export default async function DashboardPage({
         daily_budget:    c.daily_budget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(c.daily_budget, effectiveAdFuelCut) : c.daily_budget) : null,
       }
     })
-    .filter(c => c.spend > 0 || c.impressions > 0 || c.clicks > 0)
     .sort((a, b) => b.spend - a.spend)
 
   const campaigns = activeCampaigns

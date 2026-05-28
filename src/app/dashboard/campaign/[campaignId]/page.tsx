@@ -28,6 +28,11 @@ import {
 
 export const dynamic = 'force-dynamic'
 
+const META_DEFAULT_NAMES = new Set(['ad set', 'ad', 'new ad set', 'new ad', 'untitled ad set', 'untitled ad'])
+function isMetaDefaultName(name: string) {
+  return !name.trim() || META_DEFAULT_NAMES.has(name.trim().toLowerCase())
+}
+
 export default async function CampaignDetailPage({
   params,
   searchParams,
@@ -366,7 +371,7 @@ export default async function CampaignDetailPage({
         href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
       }
     })
-    .filter(g => g.spend > 0 || g.impressions > 0 || g.clicks > 0)
+    .filter(g => !isMetaDefaultName(g.setName))
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the
