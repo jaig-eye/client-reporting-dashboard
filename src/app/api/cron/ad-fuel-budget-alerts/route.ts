@@ -142,13 +142,13 @@ function buildFallbackMessage(clientName: string, d: AlertData): string {
     return `🔴 **Ad Fuel — ${clientName}**: At **${fmt$(avgDailyAf)}/day**, ${monthlyBudget ? 'budget' : 'balance'} runs out in ~**${days} days** — **${early} days before** rebill (${rebillDate}).\nRecommended daily budget: **${fmt$(recommendedDaily)}/day** to make it to rebill.`
   }
   if (triggers.includes('budget-overpace')) {
-    return `⚠️ **Ad Fuel — ${clientName}**: Spending **${fmt$(avgDailyAf)}/day** — **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** budget target. At this pace, budget exhausted **${Math.round(budgetDaysEarly)} days early** (rebill: ${rebillDate}).`
+    return `⚠️ **Ad Fuel — ${clientName}**: Spending **${fmt$(avgDailyAf)}/day** — **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** budget target. At this pace, budget exhausted **${Math.round(budgetDaysEarly)} days early** (rebill: ${rebillDate}).\nRecommended: reduce to **${fmt$(recommendedDaily)}/day** to land on budget.`
   }
   if (triggers.includes('low-fuel-vs-budget')) {
-    return `🔋 **Ad Fuel — ${clientName}**: Balance is **${fmt$(afBalance)}** but **${fmt$(d.budgetRemaining)}** of budget remains. Top up to keep campaigns running through rebill (${rebillDate}).`
+    return `🔋 **Ad Fuel — ${clientName}**: Balance is **${fmt$(afBalance)}** but **${fmt$(d.budgetRemaining)}** of budget remains this cycle. Top up to keep campaigns running — recommended spend is **${fmt$(recommendedDaily)}/day** through rebill (${rebillDate}).`
   }
   if (triggers.includes('one-time-depletion')) {
-    return `⚠️ **Ad Fuel — ${clientName}**: Balance of **${fmt$(afBalance)}** will be depleted in ~**${Math.round(runoutDays)} days** at the current **${fmt$(avgDailyAf)}/day** rate.`
+    return `⚠️ **Ad Fuel — ${clientName}**: Balance of **${fmt$(afBalance)}** will be depleted in ~**${Math.round(runoutDays)} days** at the current **${fmt$(avgDailyAf)}/day** rate. Top up or reduce daily spend to extend runway.`
   }
   // underpace
   return `📉 **Ad Fuel — ${clientName}**: Spending **${fmt$(avgDailyAf)}/day** — only **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** needed to hit the ${fmt$(monthlyBudget!)}/mo budget. Recommended: **${fmt$(recommendedDaily)}/day** for remaining ${Math.round(d.daysToRebill)} days.`
