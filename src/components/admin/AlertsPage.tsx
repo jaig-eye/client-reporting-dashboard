@@ -347,7 +347,7 @@ export default function AlertsPage({ initialAlerts, initialCounts }: AlertsPageP
         }
       `}</style>
 
-      <div style={{ maxWidth: 860, margin: '0 auto' }}>
+      <div>
         {/* Page header */}
         <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
