@@ -366,6 +366,7 @@ export default async function CampaignDetailPage({
         href:            `/dashboard/campaign/${encodeURIComponent(campaignId)}/adset/${encodeURIComponent(setId)}?${adsetQs}`,
       }
     })
+    .filter(g => g.spend > 0)
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the
