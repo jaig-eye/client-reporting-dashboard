@@ -60,25 +60,29 @@ export async function GET(request: NextRequest) {
   }
 
   const { data: clients } = await db.from('clients').select('id, name')
-  const results = []
 
-  for (const client of clients ?? []) {
-    let records = 0
-    try {
+  const agencyName = (settings as Record<string, unknown>).agency_name as string | undefined
+
+  const settled = await Promise.allSettled(
+    (clients ?? []).map(async (client) => {
+      let records = 0
       if (runAds) {
         records += await syncClient(client.id, 'incremental', undefined, undefined, undefined, undefined, 'cron', false, ADS_TYPES)
       }
       if (runOther) {
         records += await syncClient(client.id, 'incremental', undefined, undefined, undefined, undefined, 'cron', false, OTHER_TYPES)
       }
-      results.push({ client: client.name, status: 'success', records })
-    } catch (e) {
-      const errStr = String(e)
-      results.push({ client: client.name, status: 'error', error: errStr })
+      return { client: client.name, status: 'success' as const, records }
+    })
+  )
 
+  const results = await Promise.all(
+    settled.map(async (r, i) => {
+      if (r.status === 'fulfilled') return r.value
+      const client = (clients ?? [])[i]
+      const errStr = String(r.reason)
       const isAuthError = /OAuthException|access.?token|session.?(expired|invalidat)|code[: ]*190/i.test(errStr)
       if (isAuthError && settings?.notify_connector_errors && settings?.notification_email) {
-        const agencyName = (settings as Record<string, unknown>).agency_name as string | undefined
         try {
           await sendEmail({
             to:      String(settings.notification_email),
@@ -91,8 +95,9 @@ export async function GET(request: NextRequest) {
           console.warn('[sync cron] Failed to send connector error email:', emailErr)
         }
       }
-    }
-  }
+      return { client: client.name, status: 'error' as const, error: errStr }
+    })
+  )
 
   return NextResponse.json({ synced: results.length, adsRan: runAds, otherRan: runOther, results })
 }
