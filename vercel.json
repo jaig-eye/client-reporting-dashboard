@@ -43,6 +43,10 @@
     {
       "path": "/api/cron/bc-daily-sales",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/ad-fuel-budget-alerts",
+      "schedule": "0 9 * * *"
     }
   ]
 }
