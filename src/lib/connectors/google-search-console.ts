@@ -405,16 +405,10 @@ export const googleSearchConsoleConnector: ConnectorAdapter = {
     }
   },
 
-  async fetchMetrics(externalId, auth, _config, dateFrom, dateTo): Promise<SyncResult> {
-    const accessToken = resolveToken(auth)
-    if (!accessToken) return { rows: [] }
-
-    const siteUrl = externalId // stored as the verified site URL
-
-    const gscRows = await fetchSearchAnalytics(siteUrl, accessToken, dateFrom, dateTo)
-
-    // Cast via unknown — GSC rows stored in gsc_metrics, not the ad metric tables
-    return { rows: gscRows as unknown as import('./types').RawMetricRow[] }
+  async fetchMetrics(_externalId, _auth, _config, _dateFrom, _dateTo): Promise<SyncResult> {
+    // GSC syncing is handled entirely by syncGSCInChunks in sync.ts (hybrid 2D/3D approach).
+    // This stub prevents a redundant full 3D fetch that would time out on large sites.
+    return { rows: [] }
   },
 
   async discoverAccounts(auth): Promise<DiscoveredAccount[]> {
