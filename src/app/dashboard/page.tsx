@@ -20,6 +20,7 @@ import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
 import AdFuelBadge from '@/components/dashboard/AdFuelBadge'
+import CampaignTable from '@/components/CampaignTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -731,6 +732,23 @@ export default async function DashboardPage({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ── Campaign Breakdown (filtered source view only) ────── */}
+            {isFiltered && !hiddenMetrics.has('campaigns') && (
+              <div className="card p-6">
+                <div className="mb-4">
+                  <h2 className="section-title">Campaign Breakdown</h2>
+                  <p className="section-desc">{fmtDate(fromDate)} – {fmtDate(toDate)}</p>
+                </div>
+                <CampaignTable
+                  campaigns={campaigns}
+                  connectionsBySource={connectionsBySource}
+                  dateFrom={fmtDate(fromDate)}
+                  dateTo={fmtDate(toDate)}
+                  compare={showCompare ? fmtDate(priorFrom) : undefined}
+                />
               </div>
             )}
 
