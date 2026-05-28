@@ -9,7 +9,6 @@ import { createAdminClient }              from '@/lib/supabase/server'
 import { summarizeMetrics }               from '@/lib/metrics'
 import { resolveMetaConversions }         from '@/lib/metrics'
 import { sendEmail }                      from '@/lib/email'
-import { sendDiscordMessage }             from '@/lib/discord'
 
 export const maxDuration = 120
 
@@ -108,7 +107,6 @@ export async function GET(request: NextRequest) {
         'notify_metric_alerts', 'notification_email', 'agency_name',
         'metric_alert_threshold', 'daily_alert_threshold',
         'daily_alert_metrics', 'weekly_alert_metrics',
-        'discord_bot_token',
         'default_lead_action', 'default_lead_action_fallback',
         'default_purchase_action', 'default_purchase_action_fallback',
       ].join(', '))
@@ -130,7 +128,6 @@ export async function GET(request: NextRequest) {
 
   const weeklyThreshold        = Number(agency?.metric_alert_threshold ?? 0.25)
   const dailyThreshold         = Number(agency?.daily_alert_threshold  ?? 0.50)
-  const botToken               = String(agency?.discord_bot_token ?? '')
   const defaultPrimary         = String(agency?.default_lead_action              ?? 'onsite_conversion.lead_grouped')
   const defaultFallback        = String(agency?.default_lead_action_fallback     ?? 'lead')
   const defaultPurchasePrimary = String(agency?.default_purchase_action          ?? 'purchase')
@@ -256,6 +253,17 @@ export async function GET(request: NextRequest) {
           date_label:  yesterday,
         })
 
+        void db.from('admin_alerts').insert({
+          type:        'ad_insights',
+          severity:    'warning',
+          client_id:   client.id,
+          client_name: client.name,
+          title:       `${platformLabel} ${metricLabel(key)} ${direction === 'up' ? '▲' : '▼'} ${Math.abs(pct * 100).toFixed(0)}%`,
+          body:        insight,
+          meta:        { metric: key, current_val: cv, prior_val: pv, pct_change: pct * 100, direction, alert_type: 'daily', platform, date_label: yesterday },
+          link_url:    `/admin/dashboard?highlight=${client.id}`,
+        })
+
         newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'daily', platform })
       }
     }
@@ -322,6 +330,17 @@ export async function GET(request: NextRequest) {
           date_label:  null,
         })
 
+        void db.from('admin_alerts').insert({
+          type:        'ad_insights',
+          severity:    'info',
+          client_id:   client.id,
+          client_name: client.name,
+          title:       `${platformLabel} ${metricLabel(key)} ${direction === 'up' ? '▲' : '▼'} ${Math.abs(pct * 100).toFixed(0)}% (7d)`,
+          body:        insight,
+          meta:        { metric: key, current_val: cv, prior_val: pv, pct_change: pct * 100, direction, alert_type: 'weekly', platform, date_label: null },
+          link_url:    `/admin/dashboard?highlight=${client.id}`,
+        })
+
         newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'weekly', platform })
       }
     }
@@ -368,41 +387,6 @@ export async function GET(request: NextRequest) {
       })
     } catch (e) {
       console.error('[metric-alerts] email error:', e)
-    }
-  }
-
-  // ── Discord — one message per client ──────────────────────────────────────
-  if (botToken && newAlerts.length > 0) {
-    const byClient = new Map<string, typeof newAlerts>()
-    for (const a of newAlerts) {
-      const list = byClient.get(a.clientId) ?? []
-      list.push(a)
-      byClient.set(a.clientId, list)
-    }
-
-    for (const [clientId, alerts] of Array.from(byClient.entries())) {
-      const client = clients.find(c => c.id === clientId)
-      if (!client?.discord_channel_id) continue
-
-      const lines = alerts.map((a: typeof newAlerts[number]) => {
-        const upIsGood: MetricKey[] = ['roas', 'conversions', 'ctr']
-        const isGood = upIsGood.includes(a.metric as MetricKey) ? a.direction === 'up' : a.direction === 'down'
-        const tag  = isGood ? '🟢' : '🔴'
-        const periodLabel = a.alertType === 'daily' ? 'daily' : '7d'
-        const dir  = a.direction === 'up' ? '▲' : '▼'
-        const plat = a.platform === 'google' ? 'Google' : 'Meta'
-        return `${tag} **${plat}** — ${metricLabel(a.metric as MetricKey)} ${dir}${Math.abs(a.pctChange).toFixed(0)}% (${formatVal(a.metric as MetricKey, a.priorVal)} → ${formatVal(a.metric as MetricKey, a.currentVal)}) · ${periodLabel}`
-      })
-
-      try {
-        await sendDiscordMessage(
-          botToken,
-          client.discord_channel_id,
-          `📊 **${client.name}** metric alert${alerts.length > 1 ? 's' : ''}:\n${lines.join('\n')}`,
-        )
-      } catch (e) {
-        console.error(`[metric-alerts] Discord error for client ${clientId}:`, e)
-      }
     }
   }
 

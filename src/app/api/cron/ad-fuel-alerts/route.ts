@@ -142,10 +142,22 @@ export async function GET(request: NextRequest) {
 
     try {
       await sendDiscordMessage(botToken, client.discord_channel_id, message)
-      await db.from('clients').update({
-        last_fuel_alert_at:      now.toISOString(),
-        last_fuel_alert_balance: roundedBalance,
-      }).eq('id', client.id)
+      await Promise.all([
+        db.from('clients').update({
+          last_fuel_alert_at:      now.toISOString(),
+          last_fuel_alert_balance: roundedBalance,
+        }).eq('id', client.id),
+        db.from('admin_alerts').insert({
+          type:        'ad_fuel',
+          severity:    atZero ? 'critical' : 'warning',
+          client_id:   client.id,
+          client_name: client.name,
+          title:       atZero ? `Ad Fuel depleted — ${client.name}` : `Ad Fuel low — ${client.name}`,
+          body:        message,
+          meta:        { afBalance, atZero, threshold: client.ad_fuel_alert_threshold },
+          link_url:    '/admin/ad-fuel',
+        }),
+      ])
       alerts.push(client.name)
     } catch (err) {
       console.error(`[ad-fuel-alerts] Discord send failed for ${client.name}:`, err)

@@ -14,16 +14,21 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const cookieStore = await cookies()
   const userId = cookieStore.get('admin_user_id')?.value
 
-  // Resolve current user and agency settings concurrently
-  const [settingsResult, sessionUserResult] = await Promise.all([
+  // Resolve current user, agency settings, and unread alert count concurrently
+  const [settingsResult, sessionUserResult, alertCountResult] = await Promise.all([
     db.from('agency_settings').select('agency_name, agency_logo_url, app_version, brand_primary').single(),
     userId
       ? db.from('users').select('name, email, avatar_url, theme, accent_color').eq('id', userId).single()
       : Promise.resolve({ data: null }),
+    db.from('admin_alerts')
+      .select('id', { count: 'exact', head: true })
+      .is('read_at', null)
+      .is('dismissed_at', null),
   ])
 
-  const settings    = settingsResult.data    ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0', brand_primary: null }
-  const sessionUser = sessionUserResult.data
+  const settings         = settingsResult.data    ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0', brand_primary: null }
+  const sessionUser      = sessionUserResult.data
+  const unreadAlertCount = alertCountResult.count ?? 0
 
   const userName   = sessionUser?.name   ?? 'Super Admin'
   const userEmail  = sessionUser?.email  ?? 'Master account'
@@ -44,6 +49,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           userEmail={userEmail}
           userAvatarUrl={avatarUrl}
           isSuperAdmin={!userId}
+          unreadAlertCount={unreadAlertCount}
         />
         <NavigationRefresher />
         <div className="flex-1 min-w-0">

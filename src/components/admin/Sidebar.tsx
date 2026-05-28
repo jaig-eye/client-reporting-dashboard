@@ -13,6 +13,7 @@ import {
   SignOut,
   CaretRight,
   RocketLaunch,
+  Bell,
 } from '@phosphor-icons/react'
 
 interface NavItem {
@@ -20,6 +21,7 @@ interface NavItem {
   label: string
   icon: React.ReactNode
   matchPrefix?: boolean
+  alertsKey?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -27,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/admin/connections', label: 'Integrations',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
   { href: '/admin/content',     label: 'Content',          icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true  },
   { href: '/admin/ad-fuel',     label: 'Ad Fuel',          icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true  },
+  { href: '/admin/alerts',      label: 'Alerts',           icon: <Bell size={16} aria-hidden />,          matchPrefix: true, alertsKey: true },
   { href: '/admin/users',       label: 'Users',            icon: <UsersThree size={16} aria-hidden />,    matchPrefix: true  },
   { href: '/admin/settings',    label: 'Agency Settings',  icon: <GearSix size={16} aria-hidden />,       matchPrefix: true  },
   { href: '/admin/system',      label: 'System',           icon: <HardDrives size={16} aria-hidden />,    matchPrefix: true  },
@@ -40,6 +43,7 @@ interface SidebarProps {
   userEmail: string
   userAvatarUrl?: string
   isSuperAdmin?: boolean
+  unreadAlertCount?: number
 }
 
 export default function Sidebar({
@@ -50,6 +54,7 @@ export default function Sidebar({
   userEmail,
   userAvatarUrl,
   isSuperAdmin = false,
+  unreadAlertCount = 0,
 }: SidebarProps) {
   const pathname    = usePathname()
   const router      = useRouter()
@@ -113,11 +118,33 @@ export default function Sidebar({
               key={item.href}
               href={item.href}
               className={`nav-item focus-ring ${isActive(item) ? 'active' : ''}`}
+              style={{ display: 'flex', alignItems: 'center' }}
             >
               <span className="flex items-center flex-shrink-0" style={{ width: '1rem', justifyContent: 'center' }}>
                 {item.icon}
               </span>
               {item.label}
+              {item.alertsKey && unreadAlertCount > 0 && (
+                <span
+                  style={{
+                    marginLeft:     'auto',
+                    minWidth:       18,
+                    height:         18,
+                    background:     'var(--red)',
+                    color:          '#fff',
+                    borderRadius:   9,
+                    fontSize:       '0.625rem',
+                    fontWeight:     700,
+                    display:        'flex',
+                    alignItems:     'center',
+                    justifyContent: 'center',
+                    padding:        '0 5px',
+                    animation:      'badge-pop 0.2s ease',
+                  }}
+                >
+                  {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+                </span>
+              )}
             </Link>
           ))}
         </div>

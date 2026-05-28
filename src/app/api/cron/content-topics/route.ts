@@ -403,22 +403,46 @@ export async function GET(request: NextRequest) {
         if (cl.discord_channel_id) channelMap.set(cl.id, cl.discord_channel_id)
       }
 
+      const contentUrl = `${appUrl}/admin/content`
+
       for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
         const channelId = channelMap.get(clientId)
-        if (!channelId) continue
-        void sendDiscordMessage(
-          discordBotToken, channelId,
-          `📋 **${items.length} new topic${items.length === 1 ? '' : 's'}** ready for **${clientName}** — review and approve in the dashboard`
-        ).catch(() => {})
+        if (channelId) {
+          void sendDiscordMessage(
+            discordBotToken, channelId,
+            `📋 **${items.length} new topic${items.length === 1 ? '' : 's'}** ready for **${clientName}** — review and approve: ${contentUrl}`
+          ).catch(() => {})
+        }
+        db.from('admin_alerts').insert({
+          type:        'content',
+          severity:    'info',
+          client_id:   clientId,
+          client_name: clientName,
+          title:       `${items.length} topic${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
+          body:        items.map((t: TopicSummary) => `• ${t.target_keyword ?? t.topic}${t.target_publish_date ? ` (${t.target_publish_date})` : ''}`).join('\n'),
+          meta:        { content_type: 'topics', count: items.length, items: items.map((t: TopicSummary) => ({ keyword: t.target_keyword ?? t.topic, publish_date: t.target_publish_date })) },
+          link_url:    contentUrl,
+        }).then(null, () => {})
       }
 
       for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
         const channelId = channelMap.get(clientId)
-        if (!channelId) continue
-        void sendDiscordMessage(
-          discordBotToken, channelId,
-          `✍️ **${items.length} post${items.length === 1 ? '' : 's'}** ready for review for **${clientName}**`
-        ).catch(() => {})
+        if (channelId) {
+          void sendDiscordMessage(
+            discordBotToken, channelId,
+            `✍️ **${items.length} post${items.length === 1 ? '' : 's'}** ready for review for **${clientName}** → ${contentUrl}`
+          ).catch(() => {})
+        }
+        db.from('admin_alerts').insert({
+          type:        'content',
+          severity:    'info',
+          client_id:   clientId,
+          client_name: clientName,
+          title:       `${items.length} post${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
+          body:        items.map((p: PostSummary) => `• ${p.title ?? '(untitled)'}${p.targetPublishDate ? ` (${p.targetPublishDate})` : ''}`).join('\n'),
+          meta:        { content_type: 'posts', count: items.length, items: items.map((p: PostSummary) => ({ title: p.title, keyword: p.targetKeyword, publish_date: p.targetPublishDate })) },
+          link_url:    contentUrl,
+        }).then(null, () => {})
       }
     }
   }

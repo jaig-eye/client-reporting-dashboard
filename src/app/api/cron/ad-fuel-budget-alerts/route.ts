@@ -19,7 +19,6 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { sendDiscordMessage } from '@/lib/discord'
 
 export const maxDuration = 120
 
@@ -63,21 +62,23 @@ function fmt$(n: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AlertData {
-  afBalance:         number
-  avgDailyAf:        number
-  daysToRebill:      number
-  rebillDate:        string
-  monthlyBudget:     number | null
-  afSinceBill:       number
+  afBalance:          number
+  avgDailyAf:         number
+  projectedDailyAf:   number
+  setDailyAf:         number
+  daysToRebill:       number
+  rebillDate:         string
+  monthlyBudget:      number | null
+  afSinceBill:        number
   budgetImpliedDaily: number
-  budgetRemaining:   number
-  recommendedDaily:  number
-  paceRatio:         number
-  budgetRunoutDays:  number
-  budgetDaysEarly:   number
-  runoutDays:        number
-  daysEarly:         number
-  triggers:          string[]
+  budgetRemaining:    number
+  recommendedDaily:   number
+  paceRatio:          number
+  budgetRunoutDays:   number
+  budgetDaysEarly:    number
+  runoutDays:         number
+  daysEarly:          number
+  triggers:           string[]
 }
 
 async function generateAlertMessage(
@@ -89,7 +90,7 @@ async function generateAlertMessage(
   const sys = `You are an ad operations assistant for a marketing agency. Write a concise Discord alert (3–5 lines, plain text, **bold** for key numbers only). Lead with the most urgent issue. Be specific and always end with one actionable recommendation. No greetings, no sign-off.`
 
   let usr = `Client: ${client}
-Ad Fuel balance: ${fmt$(d.afBalance)} | Avg daily spend: ${fmt$(d.avgDailyAf)}/day | Rebill: ${d.rebillDate} (${d.daysToRebill} days away)`
+Ad Fuel balance: ${fmt$(d.afBalance)} | Trailing avg: ${fmt$(d.avgDailyAf)}/day | Campaign budgets imply: ${fmt$(d.setDailyAf)}/day | Using for projection: ${fmt$(d.projectedDailyAf)}/day | Rebill: ${d.rebillDate} (${d.daysToRebill} days away)`
 
   if (d.monthlyBudget) {
     usr += `
@@ -132,26 +133,34 @@ Recommended daily rate to last until rebill: ${fmt$(d.recommendedDaily)}/day`
   }
 }
 
+function buildFallbackTitle(clientName: string, triggers: string[]): string {
+  if (triggers.includes('budget-runway') || triggers.includes('balance-runway')) return `Budget runway alert — ${clientName}`
+  if (triggers.includes('budget-overpace')) return `Overpacing budget — ${clientName}`
+  if (triggers.includes('low-fuel-vs-budget'))  return `Low Ad Fuel vs budget — ${clientName}`
+  if (triggers.includes('one-time-depletion'))  return `Balance depleting soon — ${clientName}`
+  return `Budget underpace — ${clientName}`
+}
+
 function buildFallbackMessage(clientName: string, d: AlertData): string {
-  const { triggers, monthlyBudget, afBalance, avgDailyAf, budgetRunoutDays, budgetDaysEarly,
+  const { triggers, monthlyBudget, afBalance, projectedDailyAf, budgetRunoutDays, budgetDaysEarly,
           paceRatio, budgetImpliedDaily, recommendedDaily, runoutDays, daysEarly, rebillDate } = d
 
   if (triggers.includes('budget-runway') || triggers.includes('balance-runway')) {
-    const days = monthlyBudget ? Math.round(budgetRunoutDays) : Math.round(runoutDays)
-    const early = monthlyBudget ? Math.round(budgetDaysEarly) : Math.round(daysEarly)
-    return `🔴 **Ad Fuel — ${clientName}**: At **${fmt$(avgDailyAf)}/day**, ${monthlyBudget ? 'budget' : 'balance'} runs out in ~**${days} days** — **${early} days before** rebill (${rebillDate}).\nRecommended daily budget: **${fmt$(recommendedDaily)}/day** to make it to rebill.`
+    const days  = monthlyBudget ? Math.round(budgetRunoutDays) : Math.round(runoutDays)
+    const early = monthlyBudget ? Math.round(budgetDaysEarly)  : Math.round(daysEarly)
+    return `🔴 **Ad Fuel — ${clientName}**: At **${fmt$(projectedDailyAf)}/day**, ${monthlyBudget ? 'budget' : 'balance'} runs out in ~**${days} days** — **${early} days before** rebill (${rebillDate}).\nRecommended daily budget: **${fmt$(recommendedDaily)}/day** to make it to rebill.`
   }
   if (triggers.includes('budget-overpace')) {
-    return `⚠️ **Ad Fuel — ${clientName}**: Spending **${fmt$(avgDailyAf)}/day** — **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** budget target. At this pace, budget exhausted **${Math.round(budgetDaysEarly)} days early** (rebill: ${rebillDate}).\nRecommended: reduce to **${fmt$(recommendedDaily)}/day** to land on budget.`
+    return `⚠️ **Ad Fuel — ${clientName}**: Spending **${fmt$(projectedDailyAf)}/day** — **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** budget target. At this pace, budget exhausted **${Math.round(budgetDaysEarly)} days early** (rebill: ${rebillDate}).\nRecommended: reduce to **${fmt$(recommendedDaily)}/day** to land on budget.`
   }
   if (triggers.includes('low-fuel-vs-budget')) {
     return `🔋 **Ad Fuel — ${clientName}**: Balance is **${fmt$(afBalance)}** but **${fmt$(d.budgetRemaining)}** of budget remains this cycle. Top up to keep campaigns running — recommended spend is **${fmt$(recommendedDaily)}/day** through rebill (${rebillDate}).`
   }
   if (triggers.includes('one-time-depletion')) {
-    return `⚠️ **Ad Fuel — ${clientName}**: Balance of **${fmt$(afBalance)}** will be depleted in ~**${Math.round(runoutDays)} days** at the current **${fmt$(avgDailyAf)}/day** rate. Top up or reduce daily spend to extend runway.`
+    return `⚠️ **Ad Fuel — ${clientName}**: Balance of **${fmt$(afBalance)}** will be depleted in ~**${Math.round(runoutDays)} days** at the current **${fmt$(projectedDailyAf)}/day** rate. Top up or reduce daily spend to extend runway.`
   }
   // underpace
-  return `📉 **Ad Fuel — ${clientName}**: Spending **${fmt$(avgDailyAf)}/day** — only **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** needed to hit the ${fmt$(monthlyBudget!)}/mo budget. Recommended: **${fmt$(recommendedDaily)}/day** for remaining ${Math.round(d.daysToRebill)} days.`
+  return `📉 **Ad Fuel — ${clientName}**: Spending **${fmt$(projectedDailyAf)}/day** — only **${Math.round(paceRatio * 100)}%** of the **${fmt$(budgetImpliedDaily)}/day** needed to hit the ${fmt$(monthlyBudget!)}/mo budget. Recommended: **${fmt$(recommendedDaily)}/day** for remaining ${Math.round(d.daysToRebill)} days.`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,18 +177,14 @@ export async function GET(request: NextRequest) {
 
   const agencyRes = await db
     .from('agency_settings')
-    .select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, ai_provider, ai_model, ai_api_key')
+    .select('ad_fuel_cut, ad_fuel_cutoff_date, ai_provider, ai_model, ai_api_key')
     .single()
 
   type AgencyRow = {
     ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null
-    discord_bot_token: string | null; ai_provider: string | null
-    ai_model: string | null; ai_api_key: string | null
+    ai_provider: string | null; ai_model: string | null; ai_api_key: string | null
   }
   const agency = agencyRes.data as AgencyRow | null
-
-  const botToken = agency?.discord_bot_token
-  if (!botToken) return NextResponse.json({ skipped: true, reason: 'No discord_bot_token configured' })
 
   const agencyCut  = agency?.ad_fuel_cut          ?? 0.20
   const cutoffDate = agency?.ad_fuel_cutoff_date   ?? '2025-01-01'
@@ -194,6 +199,7 @@ export async function GET(request: NextRequest) {
   type SumRow    = { client_id: string; spend: number }
   type DayRow    = { client_id: string; date: string; spend: number }
   type LedgerRow = { client_id: string; amount_af: number; split_override: number | null; date_of_payment: string }
+  type BudgetRow = { client_id: string; campaign_id: string; daily_budget: number; date: string; spend: number }
   type ClientRow = {
     id: string; name: string; bill_day: number | null; historic_bill_day: number | null
     monthly_budget: number | null; ad_fuel_cut: number | null
@@ -218,6 +224,33 @@ export async function GET(request: NextRequest) {
   for (const r of (mSumRes.data ?? []) as SumRow[]) mSumMap[r.client_id] = Number(r.spend ?? 0)
 
   const clients = (clientsRes.data ?? []) as ClientRow[]
+
+  // ── Hybrid burn rate: fetch most-recent daily_budget per active campaign ──
+  const threeDaysAgo = new Date(today.getTime() - 3 * 86_400_000).toISOString().slice(0, 10)
+  const [gBudgetRes, mBudgetRes] = await Promise.all([
+    db.from('google_ads_metrics')
+      .select('client_id, campaign_id, daily_budget, date, spend')
+      .gte('date', threeDaysAgo)
+      .gt('spend', 0)
+      .gt('daily_budget', 0)
+      .order('date', { ascending: false }),
+    db.from('meta_ads_metrics')
+      .select('client_id, campaign_id, daily_budget, date, spend')
+      .gte('date', threeDaysAgo)
+      .gt('spend', 0)
+      .gt('daily_budget', 0)
+      .order('date', { ascending: false }),
+  ])
+
+  // Aggregate: latest row per (client_id, campaign_id) → sum raw daily_budget per client
+  const setDailyRawByClient: Record<string, number> = {}
+  const seenCampaigns = new Set<string>()
+  for (const r of [...((gBudgetRes.data ?? []) as BudgetRow[]), ...((mBudgetRes.data ?? []) as BudgetRow[])]) {
+    const key = `${r.client_id}:${r.campaign_id}`
+    if (seenCampaigns.has(key)) continue   // already have a newer row (sorted DESC)
+    seenCampaigns.add(key)
+    setDailyRawByClient[r.client_id] = (setDailyRawByClient[r.client_id] ?? 0) + Number(r.daily_budget)
+  }
 
   // Historic bill_day gap adjustments (same pattern as ad-fuel-alerts cron)
   const historicClients = clients.filter(c => c.historic_bill_day != null)
@@ -333,6 +366,11 @@ export async function GET(request: NextRequest) {
 
     if (avgDailyAf <= 0) continue
 
+    // ── Hybrid burn rate — max(trailing avg, set campaign budgets) ───────────
+    const setDailyRaw      = setDailyRawByClient[client.id] ?? 0
+    const setDailyAf       = split > 0 ? setDailyRaw / split : 0
+    const projectedDailyAf = Math.max(avgDailyAf, setDailyAf)
+
     // ── Alert logic ──────────────────────────────────────────────────────────
     const triggers: string[] = []
     const monthlyBudget = client.monthly_budget
@@ -351,8 +389,8 @@ export async function GET(request: NextRequest) {
       budgetImpliedDaily = monthlyBudget / daysInCycle
       budgetRemaining    = Math.max(0, monthlyBudget - afSinceBill)
       recommendedDaily   = budgetRemaining / daysToRebill
-      paceRatio          = budgetImpliedDaily > 0 ? avgDailyAf / budgetImpliedDaily : 0
-      budgetRunoutDays   = avgDailyAf > 0 ? budgetRemaining / avgDailyAf : Infinity
+      paceRatio          = budgetImpliedDaily > 0 ? projectedDailyAf / budgetImpliedDaily : 0
+      budgetRunoutDays   = projectedDailyAf > 0 ? budgetRemaining / projectedDailyAf : Infinity
       budgetDaysEarly    = daysToRebill - budgetRunoutDays
 
       if (paceRatio > 1.20)                     triggers.push('budget-overpace')
@@ -364,7 +402,7 @@ export async function GET(request: NextRequest) {
 
     } else if (billDay && daysToRebill > 0) {
       // Path B: no budget — balance runway vs rebill
-      runoutDays       = afBalance / avgDailyAf
+      runoutDays       = afBalance / projectedDailyAf
       daysEarly        = daysToRebill - runoutDays
       recommendedDaily = afBalance / daysToRebill
 
@@ -372,8 +410,8 @@ export async function GET(request: NextRequest) {
 
     } else {
       // Path C: one-time / open-ended
-      runoutDays       = afBalance / avgDailyAf
-      recommendedDaily = avgDailyAf
+      runoutDays       = afBalance / projectedDailyAf
+      recommendedDaily = projectedDailyAf
 
       if (runoutDays < 14) triggers.push('one-time-depletion')
     }
@@ -398,7 +436,7 @@ export async function GET(request: NextRequest) {
       : 'N/A'
 
     const alertData: AlertData = {
-      afBalance, avgDailyAf, daysToRebill, rebillDate,
+      afBalance, avgDailyAf, projectedDailyAf, setDailyAf, daysToRebill, rebillDate,
       monthlyBudget, afSinceBill,
       budgetImpliedDaily, budgetRemaining, recommendedDaily,
       paceRatio, budgetRunoutDays, budgetDaysEarly,
@@ -414,7 +452,16 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      await db.from('admin_alerts').insert({
+        type:        'ad_fuel',
+        severity:    triggers.some(t => t.includes('runway')) ? 'critical' : 'warning',
+        client_id:   client.id,
+        client_name: client.name,
+        title:       buildFallbackTitle(client.name, triggers),
+        body:        message,
+        meta:        { triggers, avgDailyAf, projectedDailyAf, setDailyAf, afBalance, daysToRebill, recommendedDaily, paceRatio, monthlyBudget },
+        link_url:    '/admin/ad-fuel',
+      })
       await db.from('clients').update({
         last_runway_alert_at:   now.toISOString(),
         last_runway_alert_days: currentDaysEarly,
@@ -422,7 +469,7 @@ export async function GET(request: NextRequest) {
       alerted.push({ name: client.name, triggers })
       console.log(`[ad-fuel-budget-alerts] ${client.name}: ${triggers.join(', ')}`)
     } catch (err) {
-      console.error(`[ad-fuel-budget-alerts] Discord send failed for ${client.name}:`, err)
+      console.error(`[ad-fuel-budget-alerts] admin_alerts insert failed for ${client.name}:`, err)
     }
   }
 
