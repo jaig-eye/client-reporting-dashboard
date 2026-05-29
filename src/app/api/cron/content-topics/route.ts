@@ -218,12 +218,12 @@ export async function GET(request: NextRequest) {
         grouped.set(key, [...(grouped.get(key) ?? []), t])
       }
       const toApprove: string[] = []
-      for (const [, group] of grouped) {
-        const picked = group
-          .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
+      for (const [, group] of Array.from(grouped)) {
+        const picked = (group as PendingTopic[])
+          .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
             || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
           .slice(0, posts_per_run)
-        toApprove.push(...picked.map(t => t.id))
+        toApprove.push(...picked.map((t: PendingTopic) => t.id))
       }
 
       if (toApprove.length) {
