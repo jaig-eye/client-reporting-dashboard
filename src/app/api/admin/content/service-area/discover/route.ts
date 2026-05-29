@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:fl|tx|ca|ny|ga|nc|va|oh|pa|az|co|wa|or|mn|wi|mo|tn|sc|al|la|ky|ok|ar|ms|ia|ks|ut|nv|nm|ne|id|nh|me|ri|ct|de|vt|mt|wy|sd|nd|ak|hi|wv|in|mi|il|md|nj|ma)\b/i,
   ]
 
-  for (const [query, stats] of queryMap) {
+  for (const [query, stats] of Array.from(queryMap)) {
     for (const pattern of geoPatterns) {
       const m = query.match(pattern)
       if (m) {
