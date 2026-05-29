@@ -7,9 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
-import { logActivity } from '@/lib/activity'
-import { sendDiscordMessage } from '@/lib/discord'
+import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
+import { publishBCPage } from '@/lib/connectors/bigcommerce'
+import { logActivity }        from '@/lib/activity'
+import { sendDiscordMessage }  from '@/lib/discord'
+import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 
 export async function POST(
   _request: NextRequest,
@@ -25,7 +27,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url')
     .eq('id', id)
     .single()
 
@@ -148,6 +150,38 @@ export async function POST(
     }
 
     try {
+      const isSaPage = p.content_type === 'service_area'
+
+      if (isSaPage) {
+        // Use BC pages API for service area pages
+        const bcPage = await publishBCPage(storeHash, accessToken, {
+          name:       String(p.title ?? ''),
+          body:       String((p as Record<string, unknown>).content ?? ''),
+          url:        postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
+          is_visible: false,
+        })
+        const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
+
+        await db.from('content_posts').update({
+          bc_post_id:    bcPage.id,
+          bc_store_hash: storeHash,
+          status:        'draft_saved',
+          published_url: bcEditUrl,
+        }).eq('id', id)
+
+        const adminSession = await getAdminSession()
+        logActivity(adminSession, 'approved', 'post', {
+          resourceId: id, clientId: String(p.client_id),
+          meta: { title: p.title, bc_page_id: bcPage.id },
+        })
+
+        // Inject nearby-city links (fire-and-forget)
+        injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
+          .catch(() => {})
+
+        return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+      }
+
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
         body:             String((p as Record<string, unknown>).content ?? ''),
@@ -177,7 +211,7 @@ export async function POST(
       }
 
       const bcPost = (await bcRes.json()) as Record<string, unknown>
-      const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/site/content`
+      const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
 
       await db.from('content_posts').update({
         bc_post_id:    Number(bcPost.id),
@@ -210,18 +244,23 @@ export async function POST(
 
   const auth = { username, app_password: appPassword }
 
-  // Fetch publish time from content settings
+  // Fetch publish time and wp_publish_mode from content settings
   const { data: csRow } = await db
     .from('content_settings')
-    .select('publish_time')
+    .select('publish_time, wp_publish_mode')
     .eq('client_id', String(p.client_id))
     .maybeSingle()
-  const publishTime = (csRow as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
+  const publishTime    = (csRow as { publish_time?: string | null; wp_publish_mode?: string | null } | null)?.publish_time ?? '09:00'
+  const wpPublishMode  = (csRow as { publish_time?: string | null; wp_publish_mode?: string | null } | null)?.wp_publish_mode ?? 'scheduled_draft'
 
   // Determine WP status and scheduled date from target_publish_date
   let wpPublishStatus: 'draft' | 'future' | 'publish' = 'draft'
   let wpDate: string | undefined
-  if (p.target_publish_date) {
+  if (wpPublishMode === 'draft_only') {
+    // Always save as plain draft regardless of publish date
+    wpPublishStatus = 'draft'
+    wpDate = undefined
+  } else if (p.target_publish_date) {
     wpDate = `${String(p.target_publish_date)}T${publishTime}:00`
     wpPublishStatus = new Date(wpDate) > new Date() ? 'future' : 'publish'
   }
@@ -244,30 +283,65 @@ export async function POST(
       }
     }
 
-    const result = await publishPost(siteUrl, auth, {
-      title:          String(p.title ?? ''),
-      content:        String(p.content ?? ''),
-      status:         wpPublishStatus,
-      date:           wpDate,
-      slug:           p.slug ? String(p.slug) : undefined,
-      tags:           tagIds.length > 0 ? tagIds : undefined,
-      featured_media: featuredMediaId,
-      meta: {
-        rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-        rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-        rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-      },
-    })
+    const isServiceArea = p.content_type === 'service_area'
 
-    const wpEditUrl = `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
+    let result: { id: number; link: string; title: string; status: string; date: string }
+
+    if (isServiceArea) {
+      // Service area pages go to WP Pages, not Posts
+      const saSettingsRes = await db.from('service_area_settings').select('wp_publish_mode, publish_time').eq('client_id', String(p.client_id)).maybeSingle()
+      const saSettings    = (saSettingsRes.data ?? {}) as Record<string, unknown>
+      const saPublishMode = (saSettings.wp_publish_mode as string | null) ?? 'draft_only'
+      const saPublishTime = (saSettings.publish_time    as string | null) ?? '09:00'
+
+      let saStatus: 'draft' | 'future' | 'publish' = 'draft'
+      let saDate: string | undefined
+      if (saPublishMode !== 'draft_only' && p.target_publish_date) {
+        saDate   = `${String(p.target_publish_date)}T${saPublishTime}:00`
+        saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
+      }
+
+      result = await publishPage(siteUrl, auth, {
+        title:   String(p.title ?? ''),
+        content: String(p.content ?? ''),
+        status:  saStatus,
+        date:    saDate,
+        slug:    p.slug ? String(p.slug) : undefined,
+      })
+    } else {
+      result = await publishPost(siteUrl, auth, {
+        title:          String(p.title ?? ''),
+        content:        String(p.content ?? ''),
+        status:         wpPublishStatus,
+        date:           wpDate,
+        slug:           p.slug ? String(p.slug) : undefined,
+        tags:           tagIds.length > 0 ? tagIds : undefined,
+        featured_media: featuredMediaId,
+        meta: {
+          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+        },
+      })
+    }
+
+    const wpEditUrl = isServiceArea
+      ? `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
+      : `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
 
     await db.from('content_posts').update({
       wp_post_id:    result.id,
       wp_site_url:   siteUrl,
-      wp_status:     wpPublishStatus,
+      wp_status:     isServiceArea ? result.status : wpPublishStatus,
       status:        'draft_saved',
-      published_url: wpEditUrl,
+      published_url: result.link || wpEditUrl,
     }).eq('id', id)
+
+    // Inject nearby-city links into sibling SA pages (fire-and-forget)
+    if (isServiceArea) {
+      injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
+        .catch(() => {})
+    }
 
     const adminSession = await getAdminSession()
     logActivity(adminSession, 'approved', 'post', {

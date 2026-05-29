@@ -74,6 +74,67 @@ export async function fetchBCStoreTimezone(
   }
 }
 
+export interface BCPagePayload {
+  name:       string
+  body:       string
+  url?:       string
+  is_visible?: boolean
+  parent_id?:  number
+}
+
+export interface BCPublishedPage {
+  id:  number
+  url: string
+}
+
+/**
+ * Publish a static page to BigCommerce via v2/pages API.
+ */
+export async function publishBCPage(
+  storeHash:   string,
+  accessToken: string,
+  page:        BCPagePayload
+): Promise<BCPublishedPage> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/pages`, {
+    method:  'POST',
+    headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      type:       'raw',
+      name:       page.name,
+      body:       page.body,
+      url:        page.url ?? '',
+      is_visible: page.is_visible ?? false,
+      ...(page.parent_id ? { parent_id: page.parent_id } : {}),
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Record<string, unknown>
+  return { id: Number(data.id), url: String(data.url || '') }
+}
+
+/**
+ * Update an existing BC page body (for nearby-link injection).
+ */
+export async function updateBCPage(
+  storeHash:   string,
+  accessToken: string,
+  pageId:      number,
+  patch:       { body?: string }
+): Promise<void> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
+    method:  'PUT',
+    headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
+}
+
 export const bigcommerceConnector: ConnectorAdapter = {
   type: 'bigcommerce',
 

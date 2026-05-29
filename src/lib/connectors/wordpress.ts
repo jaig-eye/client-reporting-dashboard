@@ -133,6 +133,67 @@ export async function publishPost(
   }
 }
 
+export interface WpPagePayload {
+  title:    string
+  content:  string
+  status?:  'publish' | 'draft' | 'pending' | 'future'
+  date?:    string
+  slug?:    string
+  parent?:  number
+  excerpt?: string
+}
+
+/**
+ * Publish a page (not a post) to a WordPress site.
+ * Returns the created/updated page.
+ */
+export async function publishPage(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  page: WpPagePayload
+): Promise<WpPublishedPost> {
+  const result = (await wpPost(siteUrl, '/pages', auth, {
+    title:   page.title,
+    content: page.content,
+    status:  page.status ?? 'draft',
+    ...(page.date    ? { date:    page.date    } : {}),
+    ...(page.slug    ? { slug:    page.slug    } : {}),
+    ...(page.parent  ? { parent:  page.parent  } : {}),
+    ...(page.excerpt ? { excerpt: page.excerpt } : {}),
+  })) as Record<string, unknown>
+
+  return {
+    id:     Number(result.id),
+    link:   String(result.link   || ''),
+    title:  String((result.title as Record<string, unknown>)?.rendered || page.title),
+    status: String(result.status || ''),
+    date:   String(result.date   || ''),
+  }
+}
+
+/**
+ * Update an existing WP page by ID (for nearby-link injection).
+ */
+export async function updatePage(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  pageId: number,
+  patch: { content?: string }
+): Promise<void> {
+  const res = await fetch(wpApiUrl(siteUrl, `/pages/${pageId}`), {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader(auth.username, auth.app_password),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  }
+}
+
 /**
  * Get existing categories from the WordPress site.
  */

@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Star, MinusCircle } from '@phosphor-icons/react'
+import { Star, MinusCircle, MapPin } from '@phosphor-icons/react'
 
 type SitemapPage = {
-  url:        string
-  title:      string | null
-  isPriority: boolean
-  isExcluded: boolean
+  url:           string
+  title:         string | null
+  isPriority:    boolean
+  isExcluded:    boolean
+  isServicePage: boolean
 }
 
 export default function ClientSitemapTab({ clientId }: { clientId: string }) {
@@ -53,13 +54,14 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
     }
   }
 
-  async function toggleFlag(url: string, field: 'is_priority' | 'is_excluded', currentVal: boolean) {
+  async function toggleFlag(url: string, field: 'is_priority' | 'is_excluded' | 'is_service_page', currentVal: boolean) {
     setSaving(prev => new Set(prev).add(url))
 
-    // Optimistic update — priority and excluded are mutually exclusive
+    // Optimistic update
     setPages(prev => prev.map(p => {
       if (p.url !== url) return p
       if (field === 'is_priority') return { ...p, isPriority: !currentVal, isExcluded: !currentVal ? false : p.isExcluded }
+      if (field === 'is_service_page') return { ...p, isServicePage: !currentVal }
       return { ...p, isExcluded: !currentVal, isPriority: !currentVal ? false : p.isPriority }
     }))
 
@@ -68,6 +70,8 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       if (field === 'is_priority') {
         body.is_priority = !currentVal
         if (!currentVal) body.is_excluded = false
+      } else if (field === 'is_service_page') {
+        body.is_service_page = !currentVal
       } else {
         body.is_excluded = !currentVal
         if (!currentVal) body.is_priority = false
@@ -101,8 +105,9 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
     return a.url.localeCompare(b.url)
   })
 
-  const priorityCount = pages.filter(p => p.isPriority).length
-  const excludedCount = pages.filter(p => p.isExcluded).length
+  const priorityCount    = pages.filter(p => p.isPriority).length
+  const excludedCount    = pages.filter(p => p.isExcluded).length
+  const servicePageCount = pages.filter(p => p.isServicePage).length
 
   return (
     <div>
@@ -115,7 +120,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
           <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
             Star pages to prioritize for internal linking. Minus-circle to exclude from AI context entirely.
             {pages.length > 0 && (
-              <span> — {pages.length} pages · {priorityCount} starred · {excludedCount} excluded</span>
+              <span> — {pages.length} pages · {priorityCount} starred · {excludedCount} excluded · {servicePageCount} service pages</span>
             )}
           </p>
         </div>
@@ -129,14 +134,18 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       )}
 
       {/* Legend */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           <Star size={13} weight="fill" color="#6366f1" />
-          Priority — preferred for internal links (not always included)
+          Priority — preferred for internal links
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           <MinusCircle size={13} weight="fill" color="#9ca3af" />
-          Excluded — AI will not link to or reference these pages
+          Excluded — AI will not link to these
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          <MapPin size={13} weight="fill" color="#059669" />
+          Service Page — used as parent for service area sub-pages
         </div>
       </div>
 
@@ -171,6 +180,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
                 <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 200 }}>Title</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 60 }}>Priority</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 60 }}>Exclude</th>
+                <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 70 }}>Svc Page</th>
               </tr>
             </thead>
             <tbody>
@@ -214,6 +224,20 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
                         size={16}
                         weight={page.isExcluded ? 'fill' : 'regular'}
                         color={page.isExcluded ? '#9ca3af' : '#d1d5db'}
+                      />
+                    </button>
+                  </td>
+                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>
+                    <button
+                      onClick={() => toggleFlag(page.url, 'is_service_page', page.isServicePage)}
+                      disabled={saving.has(page.url)}
+                      title={page.isServicePage ? 'Remove service page flag' : 'Mark as service category page'}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 3, lineHeight: 1 }}
+                    >
+                      <MapPin
+                        size={16}
+                        weight={page.isServicePage ? 'fill' : 'regular'}
+                        color={page.isServicePage ? '#059669' : '#d1d5db'}
                       />
                     </button>
                   </td>

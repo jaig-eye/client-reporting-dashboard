@@ -8,6 +8,40 @@ import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosp
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface SaSettings {
+  connection_id?:      string | null
+  slug_structure?:     string
+  wp_publish_mode?:    string
+  target_length?:      number
+  location_notes?:     string
+  pages_per_run?:      number
+  schedule_frequency?: string | null
+  schedule_day_of_week?: number | null
+  auto_approve_pages?: boolean
+  auto_push_pages?:    boolean
+  service_pages?:      { url: string; name: string; wp_page_id?: number }[]
+  service_areas?:      { city: string; state: string; priority?: string; skip?: boolean }[]
+  primary_service?:    string
+}
+
+interface SaTopic {
+  id:            string
+  city:          string | null
+  state_abbr:    string | null
+  service_name:  string | null
+  status:        string
+  created_at:    string
+  post?:         { id: string; status: string; published_url: string | null } | null
+}
+
+interface SaDiscoverySuggestion {
+  city:                  string
+  state:                 string
+  service_name:          string
+  rationale:             string
+  estimated_opportunity: 'high' | 'medium' | 'low'
+}
+
 interface Author {
   id:   number
   name: string
@@ -206,6 +240,23 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [dataLoading, setDataLoading] = useState(true)
   const [reviewPost,  setReviewPost]  = useState<Post | null>(null)
 
+  // ── Service Area state ─────────────────────────────────────────────────────
+  const [saSettings,     setSaSettings]     = useState<SaSettings>({})
+  const [saSettingsOpen, setSaSettingsOpen] = useState(false)
+  const [saLoading,      setSaLoading]      = useState(true)
+  const [saSaving,       setSaSaving]       = useState(false)
+  const [saSaved,        setSaSaved]        = useState(false)
+  const [saError,        setSaError]        = useState('')
+  const [saTopics,       setSaTopics]       = useState<SaTopic[]>([])
+  const [saTopicsLoading, setSaTopicsLoading] = useState(false)
+  const [saTopicAction,  setSaTopicAction]  = useState<Record<string, boolean>>({})
+  const [saDiscovering,  setSaDiscovering]  = useState(false)
+  const [saSuggestions,  setSaSuggestions]  = useState<SaDiscoverySuggestion[]>([])
+  const [saAddCity,      setSaAddCity]      = useState('')
+  const [saAddState,     setSaAddState]     = useState('')
+  const [saAddService,   setSaAddService]   = useState('')
+  const [saAddOpen,      setSaAddOpen]      = useState(false)
+
   // Polling ref — cleared on unmount to avoid state updates on dead component
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const topicsRef  = useRef<Topic[]>([])
@@ -260,6 +311,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           post_structure:        (d.post_structure          as string)         ?? '',
           target_length:         (d.target_length           as number)         ?? 1500,
           publish_time:          (d.publish_time            as string  | null) ?? null,
+          wp_publish_mode:       ((d.wp_publish_mode as string | null) === 'draft_only' ? 'draft_only' : 'scheduled_draft') as 'scheduled_draft' | 'draft_only',
           topic_guidelines:      (d.topic_guidelines        as string  | null) ?? null,
           auto_approve_topics:   (d.auto_approve_topics      as boolean)        ?? false,
           auto_push_posts:       (d.auto_push_posts          as boolean)        ?? false,
@@ -273,6 +325,25 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       })
       .catch(() => setSchedLoading(false))
   }, [clientId])
+
+  // ── Load SA settings + topics ──────────────────────────────────────────────
+  useEffect(() => {
+    setSaLoading(true)
+    fetch(`/api/admin/content/service-area-settings?client_id=${clientId}`)
+      .then(r => r.json())
+      .then((d: SaSettings) => { setSaSettings(d); setSaLoading(false) })
+      .catch(() => setSaLoading(false))
+  }, [clientId])
+
+  const loadSaTopics = useCallback(() => {
+    setSaTopicsLoading(true)
+    fetch(`/api/admin/content/topics?client_id=${clientId}&content_type=service_area`)
+      .then(r => r.json())
+      .then((d: SaTopic[]) => { setSaTopics(Array.isArray(d) ? d : []); setSaTopicsLoading(false) })
+      .catch(() => setSaTopicsLoading(false))
+  }, [clientId])
+
+  useEffect(() => { loadSaTopics() }, [loadSaTopics])
 
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -425,6 +496,91 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setEditNotes(t.edit_notes ?? '')
     setEditingId(t.id)
     setExpandedId(null)
+  }
+
+  // ── Service Area helpers ───────────────────────────────────────────────────
+  function setSa<K extends keyof SaSettings>(key: K, val: SaSettings[K]) {
+    setSaSettings(p => ({ ...p, [key]: val }))
+  }
+
+  async function saveSaSettings() {
+    setSaSaving(true); setSaError(''); setSaSaved(false)
+    const res = await fetch(`/api/admin/content/service-area-settings?client_id=${clientId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(saSettings),
+    })
+    setSaSaving(false)
+    if (res.ok) { setSaSaved(true); setTimeout(() => setSaSaved(false), 2500) }
+    else { const d = await res.json(); setSaError(d.error || 'Failed to save') }
+  }
+
+  async function saTopicAction_fn(id: string, status: 'approved' | 'rejected') {
+    setSaTopicAction(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+    setSaTopicAction(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      setSaTopics(p => p.map(t => t.id === id ? { ...t, status } : t))
+    } else {
+      showToast('Action failed', 'error')
+    }
+  }
+
+  async function generateSaPost(topicId: string) {
+    setSaTopics(p => p.map(t => t.id === topicId ? { ...t, status: 'generating' } : t))
+    showToast('Service area page generation started…', 'info')
+    fetch('/api/admin/content/service-area/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic_id: topicId }),
+    }).catch(e => console.error('[generateSaPost]', e))
+  }
+
+  async function discoverSaAreas() {
+    setSaDiscovering(true); setSaSuggestions([])
+    const res = await fetch('/api/admin/content/service-area/discover', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId }),
+    })
+    const d = await res.json() as { suggestions?: SaDiscoverySuggestion[] }
+    setSaDiscovering(false)
+    if (res.ok) {
+      setSaSuggestions(d.suggestions ?? [])
+      if (!d.suggestions?.length) showToast('No new service areas found', 'info')
+    } else {
+      showToast('Discovery failed', 'error')
+    }
+  }
+
+  async function addSaTopic() {
+    if (!saAddCity.trim() || !saAddState.trim()) return
+    const sn = saAddService.trim() || saSettings.primary_service || 'Service'
+    const res = await fetch('/api/admin/content/topics', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, content_type: 'service_area', city: saAddCity.trim(), state_abbr: saAddState.trim().toUpperCase().slice(0, 2), service_name: sn }),
+    })
+    if (res.ok) {
+      setSaAddCity(''); setSaAddState(''); setSaAddService(''); setSaAddOpen(false)
+      loadSaTopics()
+      showToast('Service area added to queue')
+    } else {
+      showToast('Failed to add', 'error')
+    }
+  }
+
+  async function addSuggestionToQueue(s: SaDiscoverySuggestion) {
+    const res = await fetch('/api/admin/content/topics', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, content_type: 'service_area', city: s.city, state_abbr: s.state, service_name: s.service_name }),
+    })
+    if (res.ok) {
+      setSaSuggestions(p => p.filter(x => !(x.city === s.city && x.state === s.state)))
+      loadSaTopics()
+      showToast(`${s.city}, ${s.state} added to queue`)
+    } else {
+      showToast('Failed to add', 'error')
+    }
   }
 
   // ── Generate calendar ──────────────────────────────────────────────────────
@@ -625,6 +781,33 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <div>
                 <Label hint="time posts are scheduled in WordPress">Publish Time</Label>
                 <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <Label hint="controls WP status when posts are approved or auto-pushed">WordPress Publish Mode</Label>
+                <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.375rem' }}>
+                  {(['scheduled_draft', 'draft_only'] as const).map(mode => (
+                    <label key={mode} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="wp_publish_mode"
+                        value={mode}
+                        checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode}
+                        onChange={() => setSched('wp_publish_mode', mode)}
+                        style={{ marginTop: '0.2rem', flexShrink: 0 }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
+                          {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
+                        </span>
+                        <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {mode === 'scheduled_draft'
+                            ? 'Saved with scheduled publish date (status: future) — WordPress publishes automatically'
+                            : 'Always saved as plain draft — use when you need to add images or edits before publishing'}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div>
                 <Label>Default Author</Label>
@@ -1061,7 +1244,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         : p.wp_post_id && p.wp_site_url
                           ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}`
                           : p.bc_post_id && p.bc_store_hash
-                            ? `https://store-${p.bc_store_hash}.mybigcommerce.com/manage/site/content`
+                            ? `https://store-${p.bc_store_hash}.mybigcommerce.com/manage/content/blog`
                             : null
 
                       return (
@@ -1183,6 +1366,282 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           )}
         </div>
       </details>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION D — SERVICE AREA PAGES (collapsible)
+      ═══════════════════════════════════════════════════════════════════ */}
+      {!saLoading && (
+        <div>
+          <div
+            className="card p-4 cursor-pointer select-none"
+            onClick={() => setSaSettingsOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ fontSize: '0.9rem' }}>📍</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Area Pages</span>
+            <span style={{ flex: 1 }} />
+            {saSettings.auto_approve_pages && (
+              <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto-approve</span>
+            )}
+            {saSettings.auto_push_pages && (
+              <span className="badge badge-blue" style={{ fontSize: '0.62rem' }}>Auto-push</span>
+            )}
+            <span className="badge badge-gray" style={{ fontSize: '0.62rem' }}>{saTopics.filter(t => t.status !== 'rejected').length} queued</span>
+            <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
+              {saSettingsOpen ? '▲' : '▼'}
+            </span>
+          </div>
+
+          {saSettingsOpen && (
+            <div className="card p-6 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+
+              {/* ── Config ── */}
+              <div className="grid grid-cols-3 gap-4" style={{ marginBottom: '1rem' }}>
+                <div>
+                  <Label>Connection</Label>
+                  <select className="input" value={saSettings.connection_id ?? ''} onChange={e => setSa('connection_id', e.target.value || null)}>
+                    <option value="">None</option>
+                    {clientSites.map(s => (
+                      <option key={s.connectionId} value={s.connectionId}>{s.siteName || s.siteUrl}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label>Slug Structure</Label>
+                  <select className="input" value={saSettings.slug_structure ?? 'service_slash_city_state'} onChange={e => setSa('slug_structure', e.target.value)}>
+                    <option value="service_slash_city_state">/tree-service/palm-bay-fl/</option>
+                    <option value="service_dash_city_state">/tree-service-palm-bay-fl/</option>
+                    <option value="service_slash_city">/tree-service/palm-bay/</option>
+                  </select>
+                </div>
+                <div>
+                  <Label>WP Publish Mode</Label>
+                  <select className="input" value={saSettings.wp_publish_mode ?? 'draft_only'} onChange={e => setSa('wp_publish_mode', e.target.value)}>
+                    <option value="draft_only">Draft Only</option>
+                    <option value="scheduled_draft">Scheduled Draft</option>
+                  </select>
+                </div>
+                <div>
+                  <Label hint="target word count for generated pages">Target Length</Label>
+                  <input className="input" type="number" min={600} max={3000} step={100} value={saSettings.target_length ?? 1200} onChange={e => setSa('target_length', Number(e.target.value))} />
+                </div>
+                <div>
+                  <Label hint="pages to generate per cron run">Pages per Run</Label>
+                  <input className="input" type="number" min={1} max={10} value={saSettings.pages_per_run ?? 1} onChange={e => setSa('pages_per_run', Number(e.target.value))} />
+                </div>
+                <div>
+                  <Label>Frequency</Label>
+                  <select className="input" value={saSettings.schedule_frequency ?? 'monthly'} onChange={e => setSa('schedule_frequency', e.target.value || null)}>
+                    {FREQ_OPTS.slice(0, 4).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                {(saSettings.schedule_frequency === 'weekly' || saSettings.schedule_frequency === 'biweekly') && (
+                  <div>
+                    <Label>Day of Week</Label>
+                    <select className="input" value={saSettings.schedule_day_of_week ?? 1} onChange={e => setSa('schedule_day_of_week', Number(e.target.value))}>
+                      {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Label hint="extra guidance for the AI (climate, regional details, tone)">Location Notes</Label>
+                  <textarea
+                    className="input"
+                    rows={2}
+                    style={{ resize: 'vertical', width: '100%', fontSize: '0.8125rem' }}
+                    value={saSettings.location_notes ?? ''}
+                    onChange={e => setSa('location_notes', e.target.value || undefined)}
+                    placeholder="e.g. Mention hurricane season for Florida clients. Use 'yard' not 'garden'."
+                  />
+                </div>
+              </div>
+
+              {/* Toggles */}
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8125rem' }}>
+                  <Toggle checked={saSettings.auto_approve_pages ?? false} onChange={v => setSa('auto_approve_pages', v)} />
+                  <span style={{ color: 'var(--text-muted)' }}>Auto-approve</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8125rem' }}>
+                  <Toggle checked={saSettings.auto_push_pages ?? false} onChange={v => setSa('auto_push_pages', v)} />
+                  <span style={{ color: 'var(--text-muted)' }}>Auto-push to site</span>
+                </label>
+              </div>
+
+              {/* Save config */}
+              <div className="flex items-center gap-3" style={{ marginBottom: '1.5rem' }}>
+                <button className="btn btn-primary" onClick={saveSaSettings} disabled={saSaving} style={{ fontSize: '0.8125rem' }}>
+                  {saSaving ? 'Saving…' : 'Save Configuration'}
+                </button>
+                {saSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+                {saError && <span className="text-xs" style={{ color: 'var(--red)' }}>{saError}</span>}
+              </div>
+
+              {/* ── Service Area Queue ── */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.8125rem' }}>Service Area Queue</span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
+                    onClick={discoverSaAreas}
+                    disabled={saDiscovering}
+                  >
+                    {saDiscovering ? 'Discovering…' : '🔍 Generate Service Area Plan'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
+                    onClick={() => setSaAddOpen(o => !o)}
+                  >
+                    + Add Manually
+                  </button>
+                </div>
+
+                {/* Add manually form */}
+                {saAddOpen && (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <div>
+                      <Label>City</Label>
+                      <input className="input" style={{ width: 140 }} value={saAddCity} onChange={e => setSaAddCity(e.target.value)} placeholder="Palm Bay" />
+                    </div>
+                    <div>
+                      <Label>State</Label>
+                      <input className="input" style={{ width: 60 }} value={saAddState} onChange={e => setSaAddState(e.target.value.toUpperCase().slice(0, 2))} placeholder="FL" maxLength={2} />
+                    </div>
+                    <div>
+                      <Label>Service</Label>
+                      <input className="input" style={{ width: 160 }} value={saAddService} onChange={e => setSaAddService(e.target.value)} placeholder={saSettings.primary_service ?? 'Tree Service'} />
+                    </div>
+                    <button className="btn btn-primary" style={{ fontSize: '0.8125rem' }} onClick={addSaTopic} disabled={!saAddCity.trim() || !saAddState.trim()}>
+                      Add
+                    </button>
+                    <button className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={() => setSaAddOpen(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* AI Suggestions */}
+                {saSuggestions.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem', padding: '0.75rem', borderRadius: 8, background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+                    <p className="text-xs font-semibold" style={{ color: 'var(--blue)', marginBottom: '0.5rem' }}>
+                      AI Suggestions — click to add to queue
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {saSuggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                          title={s.rationale}
+                          onClick={() => addSuggestionToQueue(s)}
+                        >
+                          {s.city}, {s.state}
+                          {s.estimated_opportunity === 'high' && ' ⭐'}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setSaSuggestions([])}
+                      style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* Queue table */}
+                {saTopicsLoading ? (
+                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+                ) : saTopics.length === 0 ? (
+                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>No service area topics queued yet. Use &ldquo;Generate Service Area Plan&rdquo; or add cities manually.</p>
+                ) : (
+                  <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--text-faint)', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                        <th style={{ padding: '4px 8px' }}>Service</th>
+                        <th style={{ padding: '4px 8px' }}>City</th>
+                        <th style={{ padding: '4px 8px' }}>State</th>
+                        <th style={{ padding: '4px 8px' }}>Status</th>
+                        <th style={{ padding: '4px 8px' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saTopics.filter(t => t.status !== 'rejected').map(t => (
+                        <tr key={t.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                          <td style={{ padding: '5px 8px' }}>{t.service_name ?? saSettings.primary_service ?? '—'}</td>
+                          <td style={{ padding: '5px 8px' }}>{t.city ?? '—'}</td>
+                          <td style={{ padding: '5px 8px' }}>{t.state_abbr ?? '—'}</td>
+                          <td style={{ padding: '5px 8px' }}>
+                            <span className={`badge ${
+                              t.status === 'pending'    ? 'badge-gray'  :
+                              t.status === 'approved'   ? 'badge-blue'  :
+                              t.status === 'generating' ? 'badge-amber' :
+                              t.status === 'generated'  ? 'badge-green' :
+                              'badge-gray'
+                            }`} style={{ fontSize: '0.65rem' }}>
+                              {t.status === 'pending' ? 'Pending' :
+                               t.status === 'approved' ? 'Approved' :
+                               t.status === 'generating' ? 'Generating…' :
+                               t.status === 'generated' ? 'Ready' : t.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '5px 8px' }}>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              {t.status === 'pending' && (
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                  disabled={saTopicAction[t.id]}
+                                  onClick={() => saTopicAction_fn(t.id, 'approved')}
+                                >
+                                  Approve
+                                </button>
+                              )}
+                              {t.status === 'approved' && (
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                  onClick={() => generateSaPost(t.id)}
+                                >
+                                  Generate
+                                </button>
+                              )}
+                              {t.status === 'generated' && t.post?.published_url && (
+                                <a
+                                  href={t.post.published_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                >
+                                  ↗ View
+                                </a>
+                              )}
+                              {t.status !== 'generating' && (
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 6px', color: 'var(--red)' }}
+                                  disabled={saTopicAction[t.id]}
+                                  onClick={() => saTopicAction_fn(t.id, 'rejected')}
+                                >
+                                  Reject
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
           GENERATE CALENDAR MODAL

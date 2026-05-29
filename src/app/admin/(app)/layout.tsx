@@ -2,12 +2,28 @@
 
 export const dynamic = 'force-dynamic'
 
+import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
 import ThemeProvider from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
+
+export async function generateMetadata(): Promise<Metadata> {
+  try {
+    const db = createAdminClient()
+    const { data } = await db.from('agency_settings').select('favicon_url, agency_name').single()
+    const faviconUrl  = (data as Record<string, unknown> | null)?.favicon_url as string | null
+    const agencyName  = (data as Record<string, unknown> | null)?.agency_name  as string | null
+    return {
+      title:   agencyName ? `${agencyName} Admin` : 'Agency Admin',
+      ...(faviconUrl ? { icons: { icon: faviconUrl } } : {}),
+    }
+  } catch {
+    return { title: 'Agency Admin' }
+  }
+}
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const db = createAdminClient()

@@ -30,6 +30,8 @@ interface DashRow {
   afSinceBill:           number | null
   avgDailyAf:            number | null
   pace:                  string
+  rawDailyBudget:        number
+  afDailyBudget:         number
   adFuelAlertMuted:      boolean
   autoPauseAds:          boolean
   autoResumeAds:         boolean
@@ -77,8 +79,10 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'billDay',      label: 'Bill Day',            visible: true  },
   { key: 'budget',       label: 'Budget',              visible: true  },
   { key: 'afSinceBill',  label: 'Ad Fuel Since Bill',  visible: true  },
-  { key: 'avgDaily',     label: 'Avg Daily',           visible: true  },
-  { key: 'pace',         label: 'Pace',                visible: true  },
+  { key: 'avgDaily',       label: 'Avg Daily',           visible: true  },
+  { key: 'pace',           label: 'Pace',                visible: true  },
+  { key: 'rawDailyBudget', label: 'Raw Daily Budget',    visible: false },
+  { key: 'afDailyBudget',  label: 'AF Daily Budget',     visible: false },
 ]
 
 const LS_KEY = 'adfuel_col_config'
@@ -122,7 +126,9 @@ function sortValue(row: DashRow, key: string): string | number {
     case 'billDay':            return row.billDay ?? -1
     case 'budget':             return row.monthlyBudget ?? -1
     case 'afSinceBill':        return row.afSinceBill ?? -1
-    case 'avgDaily':           return row.avgDailyAf ?? -1
+    case 'avgDaily':           return row.avgDailyAf    ?? -1
+    case 'rawDailyBudget':     return row.rawDailyBudget ?? -1
+    case 'afDailyBudget':      return row.afDailyBudget  ?? -1
     case 'pace': {
       const o: Record<string, number> = { 'Overspending': 2, 'On Pace': 1, 'Underspending': 0 }
       return o[row.pace] ?? -1
@@ -189,7 +195,19 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'billDay':      return <td key={key} style={{ textAlign: 'center', color: row.billDay ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.billDay ?? '—'}</td>
     case 'budget':       return <td key={key} style={{ textAlign: 'right', color: row.monthlyBudget ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : '—'}</td>
     case 'afSinceBill':  return <td key={key} style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(row.afSinceBill)}</td>
-    case 'avgDaily':     return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
+    case 'avgDaily':         return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
+    case 'rawDailyBudget':   return (
+      <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}
+          title="Current total daily budget across all active campaigns (Google + Meta) — not date-filtered">
+        {row.rawDailyBudget > 0 ? fmt$(row.rawDailyBudget) : '—'}
+      </td>
+    )
+    case 'afDailyBudget':    return (
+      <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}
+          title="Ad Fuel equivalent of raw daily budget (raw ÷ client split) — not date-filtered">
+        {row.afDailyBudget > 0 ? fmt$(row.afDailyBudget) : '—'}
+      </td>
+    )
     case 'pace': return (
       <td key={key}>
         {row.pace ? (
@@ -621,7 +639,7 @@ export default function AdFuelPage() {
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ maxWidth: 1600 }}>
+    <div>
       <div className="page-header">
         <h1 className="page-title">Ad Fuel</h1>
       </div>

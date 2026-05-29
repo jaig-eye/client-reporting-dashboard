@@ -10,6 +10,7 @@ interface GlobalSettings {
 
 interface AgencyWritingPrompt {
   master_writing_prompt?: string
+  service_area_master_prompt?: string
 }
 
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
@@ -85,13 +86,21 @@ export default function ContentSettingsPanel({
   const [writingPromptSaved,   setWritingPromptSaved]   = useState(false)
   const [writingPromptError,   setWritingPromptError]   = useState('')
 
+  const [saPrompt,        setSaPrompt]        = useState('')
+  const [saPromptSaving,  setSaPromptSaving]  = useState(false)
+  const [saPromptSaved,   setSaPromptSaved]   = useState(false)
+  const [saPromptError,   setSaPromptError]   = useState('')
+
   useEffect(() => {
     fetch('/api/admin/content/global-settings')
       .then(r => r.json())
       .then((d: GlobalSettings) => setGlobal({ post_structure: d.post_structure ?? '' }))
     fetch('/api/admin/settings')
       .then(r => r.json())
-      .then((d: AgencyWritingPrompt) => setWritingPrompt(d.master_writing_prompt ?? ''))
+      .then((d: AgencyWritingPrompt) => {
+        setWritingPrompt(d.master_writing_prompt ?? '')
+        setSaPrompt(d.service_area_master_prompt ?? '')
+      })
   }, [])
 
   async function purgeAll() {
@@ -130,6 +139,17 @@ export default function ContentSettingsPanel({
     setWritingPromptSaving(false)
     if (res.ok) { setWritingPromptSaved(true); setTimeout(() => setWritingPromptSaved(false), 2500) }
     else { const d = await res.json(); setWritingPromptError(d.error || 'Failed to save') }
+  }
+
+  async function saveSaPrompt() {
+    setSaPromptSaving(true); setSaPromptError(''); setSaPromptSaved(false)
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service_area_master_prompt: saPrompt }),
+    })
+    setSaPromptSaving(false)
+    if (res.ok) { setSaPromptSaved(true); setTimeout(() => setSaPromptSaved(false), 2500) }
+    else { const d = await res.json(); setSaPromptError(d.error || 'Failed to save') }
   }
 
   return (
@@ -198,6 +218,40 @@ export default function ContentSettingsPanel({
           </button>
           {writingPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
           {writingPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{writingPromptError}</span>}
+        </div>
+      </div>
+
+      {/* Service Area Pages Prompt */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Service Area Pages Prompt</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>
+            System prompt used for AI-generated service area landing pages (e.g. &ldquo;Tree Service in Palm Bay, FL&rdquo;).
+            Leave blank to use the built-in default.
+          </p>
+        </div>
+        <div>
+          <textarea
+            className="input"
+            rows={20}
+            style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
+            value={saPrompt}
+            onChange={e => setSaPrompt(e.target.value)}
+            placeholder="Paste your service area page prompt here…"
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            Template variables substituted automatically:{' '}
+            {['[BRAND_NAME]','[PRIMARY_SERVICE]','[CITY]','[STATE]','[SERVICE_LIST]','[NEARBY_AREAS]','[NEARBY_REGION]','[PHONE]','[PHONE_RAW]','[RESPONSE_TIME]','[COUNTY_OR_REGION]','[CATEGORY_TAGLINE]','[EEAT]','[CLIENT_CONTEXT]'].map(v => (
+              <code key={v} style={{ fontFamily: 'monospace', background: 'var(--bg-muted)', padding: '1px 4px', borderRadius: 3, marginRight: 4 }}>{v}</code>
+            ))}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="btn btn-primary" onClick={saveSaPrompt} disabled={saPromptSaving}>
+            {saPromptSaving ? 'Saving…' : 'Save Prompt'}
+          </button>
+          {saPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {saPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{saPromptError}</span>}
         </div>
       </div>
 

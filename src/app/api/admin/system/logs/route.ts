@@ -36,16 +36,17 @@ async function cleanupStuckJobs(db: ReturnType<typeof createAdminClient>): Promi
 export async function GET(req: NextRequest) {
   if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const db   = createAdminClient()
-  const url  = req.nextUrl
-  const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1'))
-  const from = (page - 1) * PER_PAGE
-  const to   = from + PER_PAGE - 1
+  const db       = createAdminClient()
+  const url      = req.nextUrl
+  const page     = Math.max(1, parseInt(url.searchParams.get('page') ?? '1'))
+  const clientId = url.searchParams.get('client_id') ?? null
+  const from     = (page - 1) * PER_PAGE
+  const to       = from + PER_PAGE - 1
 
   // Passive cleanup: mark stale running jobs before fetching
   await cleanupStuckJobs(db)
 
-  const { data, error, count } = await db
+  let query = db
     .from('sync_jobs')
     .select(`
       id, connection_id, client_id, job_type, status,
@@ -58,6 +59,10 @@ export async function GET(req: NextRequest) {
     `, { count: 'exact' })
     .order('started_at', { ascending: false })
     .range(from, to)
+
+  if (clientId) query = query.eq('client_id', clientId)
+
+  const { data, error, count } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

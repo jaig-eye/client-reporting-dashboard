@@ -7,6 +7,7 @@ import RationaleModal          from '@/components/admin/RationaleModal'
 export type CalendarItem = {
   id:               string
   type:             'topic' | 'post'
+  contentType?:     string
   clientId:         string
   clientName:       string
   status:           string
@@ -411,6 +412,16 @@ function ContentCard({
           }} />
           {badge.label}
         </span>
+
+        {item.contentType === 'service_area' && (
+          <span style={{
+            fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+            background: 'rgba(99,102,241,0.12)', color: '#6366f1',
+            letterSpacing: '0.04em', flexShrink: 0, textTransform: 'uppercase',
+          }}>
+            Page
+          </span>
+        )}
 
         <div style={{ flex: 1 }} />
 

@@ -27,6 +27,7 @@ const DEFAULT_OVERVIEW_COLUMNS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'sy
 interface Settings {
   agency_name:                    string
   agency_logo_url:                string
+  favicon_url:                    string
   benchmark_roas:                 number
   benchmark_ctr:                  number
   benchmark_cpc:                  number
@@ -78,6 +79,7 @@ interface Settings {
 const DEFAULT: Settings = {
   agency_name:                    '',
   agency_logo_url:                '',
+  favicon_url:                    '',
   benchmark_roas:                 3,
   benchmark_ctr:                  0.03,
   benchmark_cpc:                  3,
@@ -151,7 +153,8 @@ export default function AgencySettingsPage() {
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
   const [error,      setError]      = useState('')
-  const [uploading,  setUploading]  = useState(false)
+  const [uploading,      setUploading]      = useState(false)
+  const [faviconUploading, setFaviconUploading] = useState(false)
   const [testingEmail,   setTestingEmail]   = useState(false)
   const [testEmailMsg,   setTestEmailMsg]   = useState('')
   const [testingSerp,    setTestingSerp]    = useState(false)
@@ -219,6 +222,37 @@ export default function AgencySettingsPage() {
       setError(err instanceof Error ? err.message : 'Logo upload failed')
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function handleFaviconUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const allowed = ['image/png', 'image/x-icon', 'image/vnd.microsoft.icon']
+    if (!allowed.includes(file.type)) { setError('Favicon must be a PNG or .ico file'); return }
+    if (file.size > 512 * 1024) { setError('Favicon must be under 512 KB'); return }
+    setFaviconUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('folder', 'favicons')
+      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (data.url) {
+        field('favicon_url', data.url)
+        // Save immediately
+        await fetch('/api/admin/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ favicon_url: data.url }),
+        })
+      } else {
+        throw new Error(data.error || 'Upload failed')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Favicon upload failed')
+    } finally {
+      setFaviconUploading(false)
     }
   }
 
@@ -373,6 +407,26 @@ export default function AgencySettingsPage() {
                   onChange={e => field('agency_logo_url', e.target.value)}
                   placeholder="Or paste image URL…"
                 />
+              </div>
+            </FormField>
+            <FormField label="Browser Favicon" hint="PNG or .ico file shown as the browser tab icon across the admin platform. Max 512 KB.">
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  {form.favicon_url && (
+                    <img src={form.favicon_url} alt="Favicon preview" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4, border: '1px solid var(--border)' }} />
+                  )}
+                  <label className="btn btn-secondary cursor-pointer" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
+                    {faviconUploading ? 'Uploading…' : form.favicon_url ? 'Replace Favicon' : 'Upload Favicon'}
+                    <input type="file" accept=".png,.ico,image/png,image/x-icon" className="hidden" onChange={handleFaviconUpload} disabled={faviconUploading} />
+                  </label>
+                  {form.favicon_url && (
+                    <button type="button" className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                      onClick={() => field('favicon_url', '')}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs" style={{ color: 'var(--text-faint)' }}>PNG is recommended — supported by all modern browsers. ICO files also accepted.</p>
               </div>
             </FormField>
             <FormField label="CRM Integration Name" hint="White-label name shown to clients (e.g. 'CRM', 'Pipeline', 'GoHighLevel')">

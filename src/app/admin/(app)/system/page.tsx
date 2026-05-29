@@ -101,6 +101,8 @@ export default function SystemPage() {
   const [loading,       setLoading]       = useState(true)
   const [filter,        setFilter]        = useState<'all' | 'global' | 'client'>('all')
   const [statusFilter,  setStatusFilter]  = useState<'all' | 'success' | 'error' | 'running'>('all')
+  const [clientFilter,  setClientFilter]  = useState<string>('')
+  const [clients,       setClients]       = useState<{ id: string; name: string }[]>([])
   const [syncing,       setSyncing]       = useState(false)
   const [syncDays,      setSyncDays]      = useState(90)
   const [syncResults,   setSyncResults]   = useState<GlobalSyncResult[] | null>(null)
@@ -134,17 +136,29 @@ export default function SystemPage() {
     if (activeTab === 'activity') fetchActivity(actPage, actResType, actAction)
   }, [activeTab, actPage, actResType, actAction, fetchActivity])
 
-  const fetchJobs = useCallback(async (p: number) => {
+  // Fetch client list once for the filter dropdown
+  useEffect(() => {
+    fetch('/api/admin/clients')
+      .then(r => r.ok ? r.json() : { clients: [] })
+      .then(d => setClients((d.clients ?? d ?? []).map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))))
+      .catch(() => {})
+  }, [])
+
+  const fetchJobs = useCallback(async (p: number, cId?: string) => {
     setLoading(true)
     try {
-      const res  = await fetch(`/api/admin/system/logs?page=${p}&per_page=${PER_PAGE}`)
+      const params = new URLSearchParams({ page: String(p), per_page: String(PER_PAGE) })
+      const resolvedClientId = cId !== undefined ? cId : clientFilter
+      if (resolvedClientId) params.set('client_id', resolvedClientId)
+      const res  = await fetch(`/api/admin/system/logs?${params}`)
       const data = await res.json()
       setJobs(data.jobs ?? [])
       setTotal(data.total ?? 0)
     } finally {
       setLoading(false)
     }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientFilter])
 
   useEffect(() => { fetchJobs(page) }, [fetchJobs, page])
 
@@ -457,6 +471,23 @@ export default function SystemPage() {
                 </button>
               ))}
             </div>
+            {/* Client filter */}
+            {clients.length > 0 && (
+              <select
+                className="input"
+                style={{ fontSize: '0.75rem', padding: '4px 8px', height: 32, minWidth: 160 }}
+                value={clientFilter}
+                onChange={e => {
+                  const val = e.target.value
+                  setClientFilter(val)
+                  setPage(1)
+                  fetchJobs(1, val)
+                }}
+              >
+                <option value="">All clients</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            )}
           </div>
         </div>
 

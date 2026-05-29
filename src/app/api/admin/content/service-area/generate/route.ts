@@ -1,0 +1,334 @@
+// POST /api/admin/content/service-area/generate
+// Generates a service area landing page from an approved SA topic.
+// Body: { topic_id: string }
+
+import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil }                 from '@vercel/functions'
+import { cookies }                   from 'next/headers'
+import { createAdminClient }         from '@/lib/supabase/server'
+import { isAdminAuthed }             from '@/lib/auth'
+import { buildServiceAreaSlug }      from '@/lib/content/buildServiceAreaSlug'
+import type { SlugStructure }        from '@/lib/content/buildServiceAreaSlug'
+
+export const maxDuration = 300
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sanitizeEmDashes(html: string): string {
+  return html.replace(/(<[^>]*>)|([^<]+)/g, (_, tag, text) => {
+    if (tag) return tag
+    return text
+      .replace(/—/g, ' - ')
+      .replace(/–/g, '-')
+  })
+}
+
+function repairJsonStrings(json: string): string {
+  let out = '', inStr = false, esc = false
+  for (const ch of json) {
+    if (esc)                { out += ch; esc = false; continue }
+    if (ch === '\\' && inStr) { out += ch; esc = true; continue }
+    if (ch === '"')           { out += ch; inStr = !inStr; continue }
+    if (inStr && ch === '\n') { out += '\\n'; continue }
+    if (inStr && ch === '\r') { out += '\\r'; continue }
+    if (inStr && ch === '\t') { out += '\\t'; continue }
+    out += ch
+  }
+  return out
+}
+
+function parseResponse(rawText: string) {
+  const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+  const jsonMatch = stripped.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    for (const attempt of [jsonMatch[0], repairJsonStrings(jsonMatch[0])]) {
+      try {
+        const parsed = JSON.parse(attempt)
+        return {
+          title:           sanitizeEmDashes(String(parsed.title           || '')),
+          seoTitle:        sanitizeEmDashes(String(parsed.seoTitle        || parsed.title || '')),
+          content:         sanitizeEmDashes(String(parsed.content         || rawText)),
+          metaDescription: sanitizeEmDashes(String(parsed.metaDescription || '')),
+          focusKeyword:    String(parsed.focusKeyword || ''),
+        }
+      } catch { /* next attempt */ }
+    }
+  }
+  // Fallback: just return text as content
+  return {
+    title:           '',
+    seoTitle:        '',
+    content:         sanitizeEmDashes(rawText),
+    metaDescription: '',
+    focusKeyword:    '',
+  }
+}
+
+function formatEeat(eeatRaw: unknown): string {
+  if (!eeatRaw) return ''
+  const e = typeof eeatRaw === 'string' ? (() => { try { return JSON.parse(eeatRaw) } catch { return null } })() : eeatRaw
+  if (!e || typeof e !== 'object') return ''
+  const r = e as Record<string, unknown>
+  const parts: string[] = []
+  if (r.years_in_business)      parts.push(`${r.years_in_business} years in business`)
+  if (r.licenses)               parts.push(`licensed: ${r.licenses}`)
+  if (r.review_count)           parts.push(`${r.review_count} reviews`)
+  if (r.guarantees)             parts.push(`guarantees: ${r.guarantees}`)
+  if (r.emergency_availability) parts.push('24/7 emergency service available')
+  if (r.insurance)              parts.push(`insured: ${r.insurance}`)
+  return parts.join('. ')
+}
+
+// ─── Core generation ──────────────────────────────────────────────────────────
+
+async function generatePage(topicId: string) {
+  const db = createAdminClient()
+
+  // Fetch topic
+  const { data: topic } = await db
+    .from('content_topics')
+    .select('id, city, state_abbr, service_name, client_id, content_type, status')
+    .eq('id', topicId)
+    .single()
+
+  if (!topic || topic.content_type !== 'service_area') {
+    return { error: 'Topic not found or not a service_area topic' }
+  }
+  if (topic.status !== 'approved') {
+    return { error: 'Topic is not approved' }
+  }
+
+  const city         = (topic.city         as string | null) ?? ''
+  const stateAbbr    = (topic.state_abbr   as string | null) ?? ''
+  const serviceName  = (topic.service_name as string | null) ?? 'Service'
+  const clientId     = topic.client_id as string
+
+  // Mark as generating
+  await db.from('content_topics').update({ status: 'generating' }).eq('id', topicId)
+
+  // Parallel: SA settings, agency settings, content_settings (for brand context)
+  const [saRes, agencyRes, csRes] = await Promise.all([
+    db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token').single(),
+    db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data').eq('client_id', clientId).maybeSingle(),
+  ])
+
+  const saSettings    = (saRes.data    ?? {}) as Record<string, unknown>
+  const agency        = agencyRes.data
+  const cs            = (csRes.data    ?? {}) as Record<string, unknown>
+
+  const provider  = (agency?.ai_provider  as string | null) || 'anthropic'
+  const model     = (agency?.ai_model     as string | null) || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
+  const apiKey    = agency?.ai_api_key    as string | null
+  const masterPrompt = agency?.service_area_master_prompt as string | null
+
+  if (!apiKey) {
+    await db.from('content_topics').update({ status: 'approved', generation_error: 'AI API key not configured' }).eq('id', topicId)
+    return { error: 'AI not configured' }
+  }
+
+  // Build template variable substitutions
+  const slugStructure  = (saSettings.slug_structure as SlugStructure | null) ?? 'service_slash_city_state'
+  const targetLength   = (saSettings.target_length  as number | null)         ?? 1200
+  const locationNotes  = (saSettings.location_notes as string | null)          ?? ''
+  const nearbyTemplate = (saSettings.nearby_areas_template as string | null)   ?? ''
+
+  const brandName    = (agency?.agency_name as string | null) || (cs.business_background as string | null)?.slice(0, 40) || 'Our Team'
+  const phone        = (cs.phone_number    as string | null) || '(XXX) XXX-XXXX'
+  const phoneRaw     = phone.replace(/\D/g, '')
+  const eeat         = formatEeat(cs.eeat_data)
+  const services     = (cs.services       as string | null) || serviceName
+  const bgContext    = [cs.business_background, cs.brand_voice, cs.target_audience]
+    .filter(Boolean).join('. ')
+
+  const DEFAULT_SA_PROMPT = `You are an expert local SEO copywriter specializing in service area landing pages for home service businesses.
+
+Write a complete service area page for [BRAND_NAME] offering [PRIMARY_SERVICE] in [CITY], [STATE].
+
+NON-NEGOTIABLE RULES:
+- NEVER use em dashes (—) or en dashes (–). Use a comma or period instead.
+- Write in second person ("you", "your")
+- Include [CITY] naturally in every H2 heading
+- Phone [PHONE] must appear at least twice as: <a href="tel:[PHONE_RAW]">[PHONE]</a>
+- Sentences under 25 words. 7th-grade reading level.
+- Use only h2, h3, p, ul, li, strong, a HTML tags. No inline styles, no divs.
+- Target word count: [WORD_COUNT]
+
+Page Structure:
+H1: "[PRIMARY_SERVICE] in [CITY], [STATE]"
+Opening: vivid local scenario + brand positioning
+H2: Services we offer in [CITY]
+H2: Signs you need [PRIMARY_SERVICE] in [CITY] (5-7 bullets)
+H2: Why [CITY] homeowners trust [BRAND_NAME] (4-5 bullets with E-E-A-T signals)
+H2: Serving [CITY] and surrounding areas
+H2: Get a free estimate in [CITY]
+
+Brand Context: [CLIENT_CONTEXT]
+E-E-A-T Signals: [EEAT]
+Nearby areas to mention: [NEARBY_AREAS]
+[LOCATION_NOTES]
+
+Return ONLY valid JSON — no markdown fences, no explanation:
+{
+  "title": "H1 text",
+  "seoTitle": "SEO title ≤60 chars, city + service",
+  "content": "Full HTML body",
+  "metaDescription": "150-160 chars, includes city and primary service",
+  "focusKeyword": "primary service city state"
+}`
+
+  const promptTemplate = masterPrompt || DEFAULT_SA_PROMPT
+
+  const finalPrompt = promptTemplate
+    .replace(/\[BRAND_NAME\]/g, brandName)
+    .replace(/\[PRIMARY_SERVICE\]/g, serviceName)
+    .replace(/\[CITY\]/g, city)
+    .replace(/\[STATE\]/g, stateAbbr)
+    .replace(/\[SERVICE_LIST\]/g, services)
+    .replace(/\[NEARBY_AREAS\]/g, nearbyTemplate || `nearby communities around ${city}`)
+    .replace(/\[NEARBY_REGION\]/g, nearbyTemplate || `the ${city} area`)
+    .replace(/\[COUNTY_OR_REGION\]/g, `${city}, ${stateAbbr}`)
+    .replace(/\[PHONE\]/g, phone)
+    .replace(/\[PHONE_RAW\]/g, phoneRaw)
+    .replace(/\[RESPONSE_TIME\]/g, '24 hours')
+    .replace(/\[CATEGORY_TAGLINE\]/g, `Professional ${serviceName}`)
+    .replace(/\[EEAT\]/g, eeat || 'Licensed, insured, and locally trusted')
+    .replace(/\[CLIENT_CONTEXT\]/g, bgContext || brandName)
+    .replace(/\[LOCATION_NOTES\]/g, locationNotes ? `Additional guidance: ${locationNotes}` : '')
+    .replace(/\[WORD_COUNT\]/g, String(targetLength))
+
+  // Call AI
+  let rawText = ''
+  try {
+    if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: 'user', content: finalPrompt }] }),
+      })
+      const d = await res.json() as { content?: { text: string }[] }
+      rawText = d.content?.[0]?.text ?? ''
+    } else {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: finalPrompt }], max_tokens: 4096 }),
+      })
+      const d = await res.json() as { choices?: { message: { content: string } }[] }
+      rawText = d.choices?.[0]?.message?.content ?? ''
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'AI call failed'
+    await db.from('content_topics').update({ status: 'approved', generation_error: msg }).eq('id', topicId)
+    return { error: msg }
+  }
+
+  if (!rawText) {
+    await db.from('content_topics').update({ status: 'approved', generation_error: 'Empty AI response' }).eq('id', topicId)
+    return { error: 'Empty AI response' }
+  }
+
+  const parsed = parseResponse(rawText)
+  const slug   = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
+
+  // Find the service_page_url from sitemap pages flagged as service pages
+  const { data: servicePage } = await db
+    .from('content_sitemap_pages')
+    .select('url')
+    .eq('client_id', clientId)
+    .eq('is_service_page', true)
+    .ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`)
+    .maybeSingle()
+
+  const servicePageUrl = (servicePage as { url: string } | null)?.url ?? null
+
+  // Find connection_id from SA settings
+  const connectionId = (saSettings.connection_id as string | null) ?? null
+
+  // Save post
+  const wordCount    = parsed.content.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length
+  const headingCount = (parsed.content.match(/<h[234][^>]*>/gi) ?? []).length
+
+  const { data: post, error: postErr } = await db
+    .from('content_posts')
+    .insert({
+      client_id:         clientId,
+      connection_id:     connectionId,
+      content_type:      'service_area',
+      city,
+      state_abbr:        stateAbbr,
+      service_name:      serviceName,
+      service_page_url:  servicePageUrl,
+      title:             parsed.title   || `${serviceName} in ${city}, ${stateAbbr}`,
+      seo_title:         parsed.seoTitle,
+      content:           parsed.content,
+      meta_description:  parsed.metaDescription,
+      focus_keyword:     parsed.focusKeyword || `${serviceName.toLowerCase()} ${city.toLowerCase()} ${stateAbbr.toLowerCase()}`,
+      slug,
+      status:            'for_review',
+      word_count:        wordCount,
+      heading_count:     headingCount,
+      target_publish_date: null,
+      generated_at:      new Date().toISOString(),
+    })
+    .select('id')
+    .single()
+
+  if (postErr || !post) {
+    await db.from('content_topics').update({ status: 'approved', generation_error: postErr?.message ?? 'Failed to save post' }).eq('id', topicId)
+    return { error: postErr?.message ?? 'Failed to save post' }
+  }
+
+  // Mark topic as generated, link post
+  await db.from('content_topics')
+    .update({ status: 'generated', post_id: post.id })
+    .eq('id', topicId)
+
+  // Write admin_alert
+  await db.from('admin_alerts').insert({
+    type:     'content',
+    severity: 'info',
+    title:    `Service area page generated`,
+    message:  `"${parsed.title || `${serviceName} in ${city}, ${stateAbbr}`}" is ready for review`,
+    client_id: clientId,
+    meta:     { post_id: post.id, city, state_abbr: stateAbbr, service_name: serviceName },
+  }).then(null, () => {})
+
+  // Discord notification
+  const discordToken = agency?.discord_bot_token as string | null
+  if (discordToken) {
+    // Fire-and-forget
+    ;(async () => {
+      try {
+        const { data: client } = await db.from('clients').select('discord_channel_id').eq('id', clientId).single()
+        const channelId = (client as Record<string, unknown> | null)?.discord_channel_id as string | null
+        if (channelId) {
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${discordToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: `📍 **Service area page ready:** "${parsed.title || `${serviceName} in ${city}`}" — ready for review` }),
+          })
+        }
+      } catch { /* ignore */ }
+    })()
+  }
+
+  return { ok: true, post_id: post.id }
+}
+
+// ─── Route handler ────────────────────────────────────────────────────────────
+
+export async function POST(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const body = await request.json() as { topic_id: string }
+  const { topic_id } = body
+  if (!topic_id) return NextResponse.json({ error: 'topic_id required' }, { status: 400 })
+
+  // Use waitUntil for background generation (same as blog route)
+  waitUntil(generatePage(topic_id))
+  return NextResponse.json({ ok: true, queued: true })
+}

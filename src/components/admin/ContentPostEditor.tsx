@@ -600,7 +600,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     </a>
                   )}
                   {post?.bcPostId && post?.bcStoreHash && (
-                    <a href={`https://store-${post.bcStoreHash}.mybigcommerce.com/manage/site/content`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
+                    <a href={`https://store-${post.bcStoreHash}.mybigcommerce.com/manage/content/blog`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
                       Edit in BigCommerce ↗
                     </a>
                   )}

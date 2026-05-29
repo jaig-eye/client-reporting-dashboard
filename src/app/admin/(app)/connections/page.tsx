@@ -17,7 +17,9 @@ import {
 import { GoogleAdsLogo, GALogo, GSCLogo } from '@/components/ConnectorLogo'
 import type { Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
-import StripeAgencyCard from '@/components/admin/StripeAgencyCard'
+import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
+import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
+import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +36,10 @@ export default async function ConnectionsPage({
   ])
   const existing = (connectorsRes.data ?? []) as Connector[]
   const agencySettings = agencyRes.data as { stripe_api_key?: string; stripe_webhook_secret?: string } | null
+
+  // Ahrefs connector (if any)
+  const ahrefsConnector = existing.find(c => c.type === 'ahrefs')
+  const ahrefsApiKey    = ahrefsConnector ? String((ahrefsConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
@@ -119,7 +125,8 @@ export default async function ConnectionsPage({
               </div>
             </div>
 
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 flex items-center gap-2">
+              {googleStatus !== 'none' && <GoogleRefreshButton />}
               {googleStatus === 'none' ? (
                 <Link href="/admin/connections/new?type=google" className="btn btn-primary">
                   Connect Google Account
@@ -193,74 +200,72 @@ export default async function ConnectionsPage({
           )}
         </div>
 
-        {/* ── Ungrouped flat cards ───────────────────────────────────────────── */}
-        {UNGROUPED_CONNECTOR_TYPES.map(type => {
-          const def         = getConnectorDef(type)
-          const connector   = byType.get(type)
-          const implemented = isConnectorImplemented(type)
-          const status      = connector?.status ?? 'disconnected'
-          const isClientLevel = type === 'ghl' || type === 'wordpress' || type === 'bigcommerce'
+        {/* ── Ungrouped flat cards (agency-level only) ───────────────────────── */}
+        {UNGROUPED_CONNECTOR_TYPES
+          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs')
+          .map(type => {
+            const def         = getConnectorDef(type)
+            const connector   = byType.get(type)
+            const implemented = isConnectorImplemented(type)
+            const status      = connector?.status ?? 'disconnected'
 
-          return (
-            <div key={type} className="card p-5" style={isClientLevel ? { opacity: 0.6 } : undefined}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div
-                    className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-                    style={{ background: def.color }}
-                  >
-                    {def.icon}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {def.label}
-                      </h2>
-                      {connector && !isClientLevel && <ConnectorStatusBadge status={status} />}
-                      {!implemented && !isClientLevel && (
-                        <span className="badge badge-gray">Coming soon</span>
+            return (
+              <div key={type} className="card p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div
+                      className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
+                      style={{ background: def.color }}
+                    >
+                      {def.icon}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {def.label}
+                        </h2>
+                        {connector && <ConnectorStatusBadge status={status} />}
+                        {!implemented && (
+                          <span className="badge badge-gray">Coming soon</span>
+                        )}
+                      </div>
+                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                        {def.description}
+                      </p>
+                      {connector && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                          {connector.label || 'No label set'}
+                          {connector.last_checked_at && ` · Last checked ${new Date(connector.last_checked_at).toLocaleDateString()}`}
+                        </p>
                       )}
                     </div>
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                      {def.description}
-                    </p>
-                    {isClientLevel && (
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                        Configure in Client Settings → Direct Connections
-                      </p>
-                    )}
-                    {connector && !isClientLevel && (
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                        {connector.label || 'No label set'}
-                        {connector.last_checked_at && ` · Last checked ${new Date(connector.last_checked_at).toLocaleDateString()}`}
-                      </p>
+                  </div>
+
+                  <div className="flex-shrink-0">
+                    {!implemented ? (
+                      <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                        Not yet available
+                      </span>
+                    ) : connector ? (
+                      <Link href={`/admin/connections/${connector.id}`} className="btn btn-secondary">
+                        Configure
+                      </Link>
+                    ) : (
+                      <Link href={`/admin/connections/new?type=${type}`} className="btn btn-primary">
+                        Connect
+                      </Link>
                     )}
                   </div>
                 </div>
-
-                <div className="flex-shrink-0">
-                  {isClientLevel ? (
-                    <span className="text-xs font-medium" style={{ color: 'var(--text-faint)' }}>
-                      Client-level only
-                    </span>
-                  ) : !implemented ? (
-                    <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                      Not yet available
-                    </span>
-                  ) : connector ? (
-                    <Link href={`/admin/connections/${connector.id}`} className="btn btn-secondary">
-                      Configure
-                    </Link>
-                  ) : (
-                    <Link href={`/admin/connections/new?type=${type}`} className="btn btn-primary">
-                      Connect
-                    </Link>
-                  )}
-                </div>
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+
+        {/* ── Ahrefs ────────────────────────────────────────────────────────── */}
+        <AhrefsAgencyCard
+          initialApiKey={ahrefsApiKey}
+          connectorId={ahrefsConnector?.id}
+        />
         {/* ── Stripe ────────────────────────────────────────────────── */}
         <StripeAgencyCard
           initialApiKey={agencySettings?.stripe_api_key ?? ''}

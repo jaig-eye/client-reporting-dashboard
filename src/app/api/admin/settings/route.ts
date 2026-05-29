@@ -32,7 +32,7 @@ export async function PUT(request: NextRequest) {
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
 
   const allowed = [
-    'agency_name', 'agency_logo_url',
+    'agency_name', 'agency_logo_url', 'favicon_url',
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm',
     'default_date_range_days', 'default_conversion_value',
     'ad_fuel_cut',
@@ -60,6 +60,7 @@ export async function PUT(request: NextRequest) {
     'master_writing_prompt',
     'metric_alert_window_days',
     'serp_api_key', 'serp_api_provider',
+    'service_area_master_prompt',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

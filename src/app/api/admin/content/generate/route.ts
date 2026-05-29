@@ -211,10 +211,10 @@ function parseResponse(rawText: string) {
       try {
         const parsed = JSON.parse(attempt)
         return {
-          title:           String(parsed.title           || ''),
-          seoTitle:        String(parsed.seoTitle        || parsed.title || ''),
-          content:         sanitizeEmDashes(String(parsed.content || rawText)),
-          metaDescription: String(parsed.metaDescription || ''),
+          title:           sanitizeEmDashes(String(parsed.title           || '')),
+          seoTitle:        sanitizeEmDashes(String(parsed.seoTitle        || parsed.title || '')),
+          content:         sanitizeEmDashes(String(parsed.content         || rawText)),
+          metaDescription: sanitizeEmDashes(String(parsed.metaDescription || '')),
           slug:            String(parsed.slug            || ''),
           focusKeyword:    String(parsed.focusKeyword    || ''),
           suggestedTags:   Array.isArray(parsed.suggestedTags) ? parsed.suggestedTags.map(String) : [],
@@ -226,13 +226,13 @@ function parseResponse(rawText: string) {
     const m = rawText.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*?)(?:"|$)`, 's'))
     return m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : ''
   }
-  const title   = extractStr('title')
-  const content = extractStr('content')
+  const title   = sanitizeEmDashes(extractStr('title'))
+  const content = sanitizeEmDashes(extractStr('content') || rawText)
   return {
     title,
-    seoTitle:        extractStr('seoTitle') || title,
-    content:         sanitizeEmDashes(content || rawText),
-    metaDescription: extractStr('metaDescription'),
+    seoTitle:        sanitizeEmDashes(extractStr('seoTitle') || title),
+    content,
+    metaDescription: sanitizeEmDashes(extractStr('metaDescription')),
     slug:            extractStr('slug'),
     focusKeyword:    extractStr('focusKeyword'),
     suggestedTags:   [],

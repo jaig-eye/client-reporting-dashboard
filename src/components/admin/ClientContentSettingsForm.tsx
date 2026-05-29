@@ -164,6 +164,7 @@ export default function ClientContentSettingsForm({
       team_experience?: string; guarantees?: string; brands_used?: string
       financing_options?: string; warranties?: string; emergency_availability?: boolean
       case_studies?: string; before_after_proof?: string; common_objections?: string
+      cta_list?: string
     }
     setForm(prev => ({
       ...prev,
@@ -172,6 +173,7 @@ export default function ClientContentSettingsForm({
       target_audience:     d.target_audience     || prev.target_audience,
       geographic_focus:    d.geographic_focus    || prev.geographic_focus,
       brand_voice:         d.brand_voice         || prev.brand_voice,
+      ...(d.cta_list ? { cta_list: d.cta_list } : {}),
     }))
     // Merge any E-E-A-T signals the AI found — only overwrite non-empty values
     const EEAT_KEYS: (keyof EeatData)[] = [

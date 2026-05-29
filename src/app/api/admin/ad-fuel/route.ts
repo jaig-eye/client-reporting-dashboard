@@ -89,6 +89,7 @@ export async function GET(request: NextRequest) {
     mLifeRes,
     gCycleRes,
     mCycleRes,
+    budgetRes,
   ] = await Promise.all([
     db.from('clients').select('*').order('name'),
     db.from('ad_fuel_ledger')
@@ -101,6 +102,7 @@ export async function GET(request: NextRequest) {
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
     db.rpc('daily_google_spend_by_client', { floor_date: cycleFloor }),
     db.rpc('daily_meta_spend_by_client',   { floor_date: cycleFloor }),
+    db.rpc('latest_campaign_budget_by_client').catch(() => ({ data: [] })),
   ])
 
   // Round 3 (only when global filter active): fetch filter-range totals.
@@ -154,6 +156,12 @@ export async function GET(request: NextRequest) {
 
   const gCycleRows = (gCycleRes.data ?? []) as DayRow[]
   const mCycleRows = (mCycleRes.data ?? []) as DayRow[]
+
+  type BudgetRow = { client_id: string; google_daily_budget: number; meta_daily_budget: number }
+  const budgetMap: Record<string, { google: number; meta: number }> = {}
+  for (const r of ((budgetRes as { data?: unknown[] }).data ?? []) as BudgetRow[]) {
+    budgetMap[r.client_id] = { google: Number(r.google_daily_budget ?? 0), meta: Number(r.meta_daily_budget ?? 0) }
+  }
 
   const connections = (connectionsRes.data ?? []) as unknown as ConnRow[]
   const clients     = (clientsRes.data ?? []) as ClientRow[]
@@ -264,6 +272,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const budgetEntry    = budgetMap[client.id] ?? { google: 0, meta: 0 }
+    const rawDailyBudget = budgetEntry.google + budgetEntry.meta
+    const afDailyBudget  = cut < 1 ? rawDailyBudget / (1 - cut) : 0
+
     return {
       clientId:          client.id,
       clientName:        client.name,
@@ -288,6 +300,8 @@ export async function GET(request: NextRequest) {
       afSinceBill,
       avgDailyAf,
       pace,
+      rawDailyBudget,
+      afDailyBudget,
       adFuelAlertMuted:  client.ad_fuel_alert_muted  ?? false,
       autoPauseAds:      client.auto_pause_ads       ?? false,
       autoResumeAds:     client.auto_resume_ads      ?? false,

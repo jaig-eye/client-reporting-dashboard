@@ -34,8 +34,9 @@ interface CountData {
 }
 
 interface AlertsPageProps {
-  initialAlerts: Alert[]
-  initialCounts: CountData
+  initialAlerts:       Alert[]
+  initialCounts:       CountData
+  initialTotalCounts?: CountData
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -255,11 +256,12 @@ function AlertCard({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function AlertsPage({ initialAlerts, initialCounts }: AlertsPageProps) {
+export default function AlertsPage({ initialAlerts, initialCounts, initialTotalCounts }: AlertsPageProps) {
   const router     = useRouter()
-  const [activeTab, setActiveTab] = useState<TabKey>('all')
-  const [alerts,    setAlerts]    = useState<Alert[]>(initialAlerts)
-  const [counts,    setCounts]    = useState<CountData>(initialCounts)
+  const [activeTab,    setActiveTab]    = useState<TabKey>('all')
+  const [alerts,       setAlerts]       = useState<Alert[]>(initialAlerts)
+  const [counts,       setCounts]       = useState<CountData>(initialCounts)
+  const [totalCounts,  setTotalCounts]  = useState<CountData>(initialTotalCounts ?? initialCounts)
   const [marking,   setMarking]   = useState(false)
   const markedTabs  = useRef(new Set<string>())
 
@@ -306,8 +308,15 @@ export default function AlertsPage({ initialAlerts, initialCounts }: AlertsPageP
   }
 
   function handleDismiss(id: string) {
-    setAlerts(prev => prev.filter(a => a.id !== id))
-    // Refresh counts
+    setAlerts(prev => {
+      const next = prev.filter(a => a.id !== id)
+      // Recompute total counts from remaining alerts
+      const byType: Record<string, number> = { ad_insights: 0, ad_fuel: 0, content: 0, integration: 0 }
+      for (const a of next) { if (a.type in byType) byType[a.type]++ }
+      setTotalCounts({ total: next.length, byType })
+      return next
+    })
+    // Refresh unread counts (sidebar pill)
     fetch('/api/admin/alerts/count')
       .then(r => r.ok ? r.json() : null)
       .then(d => d && setCounts(d))
@@ -376,7 +385,7 @@ export default function AlertsPage({ initialAlerts, initialCounts }: AlertsPageP
           }}
         >
           {TABS.map(tab => {
-            const n      = tabCount(counts, tab.key)
+            const n      = tabCount(totalCounts, tab.key)
             const active = activeTab === tab.key
             return (
               <button

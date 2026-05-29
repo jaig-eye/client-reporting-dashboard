@@ -32,6 +32,8 @@ interface BrandDnaResult {
   case_studies?:           string
   before_after_proof?:     string
   common_objections?:      string
+  // Suggested CTAs
+  cta_list?:               string
 }
 
 async function fetchPageText(url: string): Promise<string> {
@@ -143,6 +145,11 @@ Optional trust & credibility keys — include only if the information is clearly
   "case_studies": "notable projects, success stories, or case studies mentioned",
   "before_after_proof": "any mentions of before/after photos, results, or transformations",
   "common_objections": "FAQs, common concerns, or objections addressed on the site"
+}
+
+Call-to-action key — always include this based on the business type and services:
+{
+  "cta_list": "2–3 short, compelling CTAs on separate lines, e.g.:\nCall for a free estimate\nBook online in 60 seconds\nGet your free quote today"
 }
 
 Website content:

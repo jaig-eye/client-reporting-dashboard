@@ -163,7 +163,7 @@ export async function POST(
 
     const bcPost = (await res.json()) as Record<string, unknown>
 
-    const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/site/content`
+    const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
 
     await db.from('content_posts').update({
       bc_post_id:    Number(bcPost.id),
