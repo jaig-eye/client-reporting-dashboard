@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
     db.rpc('daily_google_spend_by_client', { floor_date: cycleFloor }),
     db.rpc('daily_meta_spend_by_client',   { floor_date: cycleFloor }),
-    db.rpc('latest_campaign_budget_by_client').catch(() => ({ data: [] })),
+    db.rpc('latest_campaign_budget_by_client').then(r => r, () => ({ data: [] })),
   ])
 
   // Round 3 (only when global filter active): fetch filter-range totals.
