@@ -78,7 +78,8 @@ const getAdFuelBalance = unstable_cache(
       db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
       db.from('ad_fuel_ledger')
         .select('amount_af, split_override, date_of_payment')
-        .eq('client_id', clientId),
+        .eq('client_id', clientId)
+        .neq('ach_status', 'pending'),
     ])
 
     const googleLifetime = ((gRes.data ?? []) as SumRow[]).find(r => r.client_id === clientId)?.spend ?? 0

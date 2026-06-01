@@ -151,11 +151,15 @@ export async function GET(_request: NextRequest) {
     console.error('[pending-ach] backfill step failed (non-fatal):', backfillErr)
   }
 
-  // ── Step 2: return pending ledger amounts (already counted in balance) ──
+  // ── Step 2: return recent pending ledger amounts (last 14 days only) ──
+  // ACH clears in 3-5 business days. Anything older is stale/failed and the
+  // hourly cron should have cleaned it up, but we filter here as a safety net.
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const { data: pendingRows } = await db
     .from('ad_fuel_ledger')
     .select('client_id, amount_af')
     .eq('ach_status', 'pending')
+    .gte('date_of_payment', fourteenDaysAgo)
 
   const pending: Record<string, number> = {}
   for (const row of (pendingRows ?? []) as { client_id: string; amount_af: number }[]) {
