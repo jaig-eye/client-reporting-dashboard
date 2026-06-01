@@ -284,9 +284,15 @@ export default function AdFuelPage() {
   useEffect(() => { setCols(loadCols()) }, [])
   useEffect(() => {
     fetch('/api/admin/ad-fuel/pending-ach')
-      .then(r => r.ok ? r.json() : { pending: {} })
-      .then(({ pending }) => setPendingAch(pending ?? {}))
-      .catch(() => {})
+      .then(async r => {
+        if (!r.ok) {
+          console.warn('[ad-fuel] pending-ach fetch failed:', r.status)
+          return { pending: {} }
+        }
+        return r.json()
+      })
+      .then(data => setPendingAch((data?.pending) ?? {}))
+      .catch(e => console.error('[ad-fuel] pending-ach error:', e))
   }, [])
 
   function handleSortClick(key: string) {
