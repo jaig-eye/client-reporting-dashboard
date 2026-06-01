@@ -81,12 +81,12 @@ export async function GET(request: NextRequest) {
 
       await db.from('ad_fuel_ledger').insert({
         client_id:       clientId,
-        date_of_payment: invoiceDate,
+        date_of_payment: null,         // set when ACH clears (bank confirmation date)
         invoice_date:    invoiceDate,
         amount_af:       totalAf,
         invoice_id:      inv.id,
         ach_status:      'pending',
-        type:            isRecurring ? 'MRR' : 'One-Time',
+        type:            'ACH',
         created_by:      'auto-ach',
         note:            `ACH pending — ${inv.number ?? inv.id}`,
       })

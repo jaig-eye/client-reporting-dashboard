@@ -109,7 +109,7 @@ const PACE_STYLE: Record<string, { bg: string; color: string }> = {
   'Overspending':  { bg: '#fee2e2', color: '#991b1b' },
 }
 
-const ENTRY_TYPES = ['MRR', 'One-Time', 'Catch Up', 'Other']
+const ENTRY_TYPES = ['MRR', 'One-Time', 'ACH', 'Catch Up', 'Other']
 
 function sortValue(row: DashRow, key: string): string | number {
   switch (key) {
@@ -175,10 +175,10 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
         <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
           {fmt$(row.afBalance)}
           {pendingAch > 0 && (
-            <div style={{ fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>
-              <span style={{ color: '#16a34a' }}>+{fmt$(pendingAch)}</span> ACH pending
-              <br />
-              <span style={{ color: projectedBalance >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 500 }}>{fmt$(projectedBalance)}</span> projected
+            <div style={{ fontSize: '0.72rem', fontWeight: 400, marginTop: 1 }}>
+              <span style={{ color: projectedBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                ({fmt$(projectedBalance)} projected)
+              </span>
             </div>
           )}
         </td>
@@ -960,7 +960,11 @@ export default function AdFuelPage() {
                         <td style={{ textAlign: 'center' }}>
                           <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
                         </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{e.date_of_payment}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {e.date_of_payment ?? (
+                            <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Pending</span>
+                          )}
+                        </td>
                         <td style={{ whiteSpace: 'nowrap', color: e.invoice_date && e.invoice_date !== e.date_of_payment ? 'var(--text-muted)' : 'var(--text-faint)', fontSize: '0.8rem' }}>
                           {e.invoice_date ?? '—'}
                         </td>
