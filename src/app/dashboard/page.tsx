@@ -755,9 +755,16 @@ export default async function DashboardPage({
             {/* ── Platform cards (overview mode) ───────────────────── */}
             {!isFiltered && (hasGoogle || hasMeta) && (
               <div>
+                {(() => {
+                  const sourceUrl = (src: string) => {
+                    const qs = new URLSearchParams({ source: src, from: fmtDate(fromDate), to: fmtDate(toDate) })
+                    if (compare !== 'none') qs.set('compare', compare)
+                    return `?${qs}`
+                  }
+                  return (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {hasGoogle && (
-                    <a href="?source=google_ads" style={{ textDecoration: 'none' }}>
+                    <a href={sourceUrl('google_ads')} style={{ textDecoration: 'none' }}>
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -788,7 +795,7 @@ export default async function DashboardPage({
                     </a>
                   )}
                   {hasMeta && (
-                    <a href="?source=meta_ads" style={{ textDecoration: 'none' }}>
+                    <a href={sourceUrl('meta_ads')} style={{ textDecoration: 'none' }}>
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -819,6 +826,8 @@ export default async function DashboardPage({
                     </a>
                   )}
                 </div>
+                  )
+                })()}
               </div>
             )}
 
