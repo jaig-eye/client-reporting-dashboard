@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type CSSProperties } from 'react'
 
 /**
  * Renders a thumbnail image. Clicking opens a full-resolution lightbox.
@@ -30,18 +30,25 @@ export default function LightboxImage({
     return () => document.removeEventListener('keydown', onKey)
   }, [open])
 
+  const cropStyle: CSSProperties = {
+    width, height, borderRadius: 4, overflow: 'hidden', flexShrink: 0, display: 'block',
+  }
+  const imgStyle: CSSProperties = {
+    width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+  }
+
   if (videoId) {
     return (
       <a
         href={`https://www.youtube.com/watch?v=${videoId}`}
         target="_blank"
         rel="noopener noreferrer"
-        style={{ display: 'block', width, height, position: 'relative', flexShrink: 0 }}
+        style={{ ...cropStyle, position: 'relative' }}
       >
-        <img src={src} alt={alt} style={{ width, height, objectFit: 'cover', borderRadius: 4, display: 'block' }} />
+        <img src={src} alt={alt} style={imgStyle} />
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', background: 'rgba(0,0,0,0.35)', borderRadius: 4,
+          justifyContent: 'center', background: 'rgba(0,0,0,0.35)',
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="white">
             <polygon points="4,2 14,8 4,14" />
@@ -56,9 +63,9 @@ export default function LightboxImage({
       <button
         onClick={() => setOpen(true)}
         title="View full size"
-        style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', display: 'block', width, height, flexShrink: 0 }}
+        style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', ...cropStyle }}
       >
-        <img src={src} alt={alt} style={{ width, height, objectFit: 'cover', borderRadius: 4, display: 'block' }} />
+        <img src={src} alt={alt} style={imgStyle} />
       </button>
 
       {open && (
