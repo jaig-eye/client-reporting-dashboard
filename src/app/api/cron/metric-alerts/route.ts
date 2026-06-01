@@ -253,7 +253,7 @@ export async function GET(request: NextRequest) {
           date_label:  yesterday,
         })
 
-        void db.from('admin_alerts').insert({
+        const { error: alertErr } = await db.from('admin_alerts').insert({
           type:        'ad_insights',
           severity:    'warning',
           client_id:   client.id,
@@ -263,6 +263,7 @@ export async function GET(request: NextRequest) {
           meta:        { metric: key, current_val: cv, prior_val: pv, pct_change: pct * 100, direction, alert_type: 'daily', platform, date_label: yesterday },
           link_url:    `/admin/dashboard?highlight=${client.id}`,
         })
+        if (alertErr) console.error(`[metric-alerts] admin_alerts insert failed for ${client.name}:`, alertErr)
 
         newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'daily', platform })
       }
@@ -330,7 +331,7 @@ export async function GET(request: NextRequest) {
           date_label:  null,
         })
 
-        void db.from('admin_alerts').insert({
+        const { error: weeklyAlertErr } = await db.from('admin_alerts').insert({
           type:        'ad_insights',
           severity:    'info',
           client_id:   client.id,
@@ -340,6 +341,7 @@ export async function GET(request: NextRequest) {
           meta:        { metric: key, current_val: cv, prior_val: pv, pct_change: pct * 100, direction, alert_type: 'weekly', platform, date_label: null },
           link_url:    `/admin/dashboard?highlight=${client.id}`,
         })
+        if (weeklyAlertErr) console.error(`[metric-alerts] admin_alerts weekly insert failed for ${client.name}:`, weeklyAlertErr)
 
         newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'weekly', platform })
       }
