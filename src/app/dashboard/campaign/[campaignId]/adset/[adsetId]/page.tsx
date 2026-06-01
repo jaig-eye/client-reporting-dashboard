@@ -262,6 +262,7 @@ export default async function AdSetDetailPage({
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .eq('adset_id', adsetId)
+        .neq('ad_id', adsetId)
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('meta_ads_metrics')

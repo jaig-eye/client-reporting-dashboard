@@ -39,6 +39,8 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
 
       const url = new URL(`${BASE_URL}/${adId}`)
       url.searchParams.set('fields', 'creative{image_url,thumbnail_url}')
+      url.searchParams.set('thumbnail_width', '1080')
+      url.searchParams.set('thumbnail_height', '1080')
       url.searchParams.set('access_token', accessToken)
 
       const res = await fetch(url.toString(), { next: { revalidate: 0 } })
@@ -46,6 +48,7 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
 
       const data = await res.json() as Record<string, unknown>
       const creative = data.creative as Record<string, unknown> | undefined
+      // Prefer static image_url; fall back to thumbnail (may be 1080px if Meta honours the size params)
       return (creative?.image_url ?? creative?.thumbnail_url ?? null) as string | null
     },
     [`meta-img-${adId}-${clientId}`],

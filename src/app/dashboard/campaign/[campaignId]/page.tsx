@@ -115,7 +115,7 @@ export default async function CampaignDetailPage({
     conversions: number; conversions_value: number; all_conversions_value?: number | null
   }
   type MetaAdRow = {
-    ad_id: string; adset_id: string | null; adset_name: string | null; date: string
+    ad_id: string; adset_id: string | null; adset_name: string | null; ad_status: string | null; date: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     actions:      { action_type: string; value: string }[] | null
@@ -124,11 +124,11 @@ export default async function CampaignDetailPage({
 
   let campaignName = decodeURIComponent(campaignId)
 
-  // Map<setId, { setName, spend, impressions, clicks, conversions, conversionValue, adCount }>
-  type SetAgg = { setName: string; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
+  // Map<setId, { setName, status, spend, impressions, clicks, conversions, conversionValue, adIds }>
+  type SetAgg = { setName: string; status: string | null; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
   const setMap = new Map<string, SetAgg>()
 
-  function upsertSet(setId: string, setName: string, adId: string, sp: number, im: number, cl: number, co: number, cv: number) {
+  function upsertSet(setId: string, setName: string, adId: string, adStatus: string | null, sp: number, im: number, cl: number, co: number, cv: number) {
     const ex = setMap.get(setId)
     if (ex) {
       ex.spend           += sp
@@ -137,8 +137,12 @@ export default async function CampaignDetailPage({
       ex.conversions     += co
       ex.conversionValue += cv
       ex.adIds.add(adId)
+      // Promote status: ACTIVE beats PAUSED beats anything else
+      if (!ex.status || (adStatus && (adStatus.toUpperCase() === 'ACTIVE' || adStatus.toUpperCase() === 'ENABLED'))) {
+        ex.status = adStatus
+      }
     } else {
-      setMap.set(setId, { setName, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
+      setMap.set(setId, { setName, status: adStatus, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
     }
   }
 
@@ -208,7 +212,7 @@ export default async function CampaignDetailPage({
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
       const cv = Number(r.conversions_value) || 0
-      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, sp, im, cl, co, cv)
+      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, null, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
     for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[]) {
@@ -236,7 +240,7 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+        .select('ad_id,adset_id,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -286,7 +290,7 @@ export default async function CampaignDetailPage({
         co = resolved.conversions
         cv = resolved.conversionValue
       }
-      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, sp, im, cl, co, cv)
+      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, r.ad_status ?? null, sp, im, cl, co, cv)
     }
     // Prior period: campaign-level for compare deltas
     for (const r of (priorCampRows ?? []) as MetaCampRow[]) {
@@ -355,6 +359,7 @@ export default async function CampaignDetailPage({
       return {
         setId,
         setName:         s.setName,
+        status:          s.status ?? null,
         spend:           cost,
         impressions:     s.impressions,
         clicks:          s.clicks,

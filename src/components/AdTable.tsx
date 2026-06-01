@@ -15,6 +15,7 @@ import { CaretDown, CaretUp, Rows, SquaresFour } from '@phosphor-icons/react'
 export interface AdGroupRow {
   setId:            string
   setName:          string
+  status?:          string | null
   spend:            number   // cost after markup
   impressions:      number
   clicks:           number
@@ -98,6 +99,7 @@ export function AdGroupTable({
         <thead>
           <tr>
             <SortTh sk="setName" align="left">Ad Set / Group</SortTh>
+            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
             {showCol('spend') && <SortTh sk="spend">Cost</SortTh>}
             {showCol('impressions') && <SortTh sk="impressions">Impr.</SortTh>}
             {showCol('clicks') && <SortTh sk="clicks">Clicks</SortTh>}
@@ -113,12 +115,22 @@ export function AdGroupTable({
           </tr>
         </thead>
         <tbody>
-          {sorted.map(row => (
+          {sorted.map(row => {
+            const setStatusUpper = (row.status ?? '').toUpperCase()
+            const setIsActive = !row.status || setStatusUpper === 'ACTIVE' || setStatusUpper === 'ENABLED'
+            const setIsPaused = setStatusUpper === 'PAUSED'
+            return (
             <tr key={row.setId}>
               <td>
                 <a href={row.href} style={{ color: 'var(--blue)', fontWeight: 500, textDecoration: 'none', fontSize: '0.85rem' }}>
                   {row.setName || row.setId}
                 </a>
+              </td>
+              <td>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : 'var(--text-faint)' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : '#9ca3af' }} />
+                  {setIsActive ? 'Active' : setIsPaused ? 'Paused' : (setStatusUpper || '—')}
+                </span>
               </td>
               {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(row.spend)}</td>}
               {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>}
@@ -133,13 +145,14 @@ export function AdGroupTable({
               {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
               {showCol('ad_count') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>}
             </tr>
-          ))}
+          )})}
         </tbody>
         <tfoot>
           <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
             <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {rows.length} ad set{rows.length !== 1 ? 's' : ''}
             </td>
+            <td />
             {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>}
             {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>}
             {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>}
@@ -337,9 +350,20 @@ export function AdRowTable({
                 ) : (
                   <div style={{
                     width: '100%', aspectRatio: '1/1', background: 'var(--bg-subtle)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>No image</span>
+                    {row.video_id ? (
+                      <>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style={{ color: 'var(--text-muted)', marginLeft: 2 }}>
+                            <path d="M4 3l10 5-10 5V3z"/>
+                          </svg>
+                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Video</span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>No image</span>
+                    )}
                   </div>
                 )}
 
@@ -385,7 +409,7 @@ export function AdRowTable({
                     <div>
                       <p style={{ fontSize: '0.6rem', color: 'var(--text-faint)', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Results</p>
                       <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
-                        {row.conversions > 0 ? fmtNum(row.conversions) : fmtNum(row.clicks)}
+                        {row.conversions > 0 ? fmtNum(row.conversions) : '0'}
                       </p>
                     </div>
                     <div>
@@ -456,9 +480,18 @@ export function AdRowTable({
                         <div style={{
                           width: thumbSize, height: thumbSize, borderRadius: 6,
                           background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
                         }}>
-                          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Ad</span>
+                          {row.video_id ? (
+                            <>
+                              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style={{ color: 'var(--text-faint)' }}>
+                                <path d="M4 3l10 5-10 5V3z"/>
+                              </svg>
+                              <span style={{ fontSize: 8, color: 'var(--text-faint)', lineHeight: 1 }}>Video</span>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Ad</span>
+                          )}
                         </div>
                       )}
                     </td>
