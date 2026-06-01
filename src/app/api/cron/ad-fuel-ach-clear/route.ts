@@ -26,11 +26,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ skipped: true, reason: 'Stripe not configured' })
   }
 
-  // ── Step 1: detect new ACH-processing invoices (last 3 days only) ──────────
-  // Only look at recent invoices — older ones were already manually entered into
-  // the ledger and we must not create duplicate entries by backfilling.
+  // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
+  // Gate: status='open' + payment_intent.status='processing'.
+  // No date filter — open+processing means actively in-flight right now.
+  // Paid invoices don't appear in the open list so no historical backfill risk.
   let detected = 0
-  const threeDaysAgoUnix = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000)
   try {
     const { data: clients } = await db
       .from('clients')
@@ -43,10 +43,9 @@ export async function GET(request: NextRequest) {
     }
 
     const invoices = await stripe.invoices.list({
-      status:  'open',
-      limit:   100,
-      created: { gte: threeDaysAgoUnix },
-      expand:  ['data.payment_intent'],
+      status: 'open',
+      limit:  100,
+      expand: ['data.payment_intent'],
     })
 
     for (const inv of invoices.data) {

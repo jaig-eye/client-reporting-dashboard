@@ -1,12 +1,14 @@
 // GET /api/admin/ad-fuel/pending-ach
 //
 // Two responsibilities:
-//   1. For each Stripe invoice created in the last 3 days with ACH in-flight
+//   1. For any Stripe invoice currently open with ACH in-flight
 //      (payment_intent.status = 'processing'), auto-create a pending ledger
-//      entry if one doesn't exist yet.
-//   2. Return { pending: { clientId: amount } } — the sum of all recent
-//      ach_status='pending' ledger entries per client (last 3 days).
-//      These are NOT included in the confirmed balance — shown separately as projected.
+//      entry if one doesn't exist yet. No date filter — open+processing means
+//      it's actively in-flight right now. Already-paid invoices don't appear
+//      in the open list so there's no backfill risk.
+//   2. Return { pending: { clientId: amount } } — all ach_status='pending'
+//      ledger entries per client. These are shown as a projected balance only;
+//      they don't affect the confirmed balance calculation.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -22,14 +24,10 @@ export async function GET(_request: NextRequest) {
 
   const db = createAdminClient()
 
-  // Only look at invoices created in the last 3 days.
-  // ACH processing invoices older than this are either cleared or failed — the
-  // hourly cron handles resolution. We never backfill old invoices automatically
-  // because they were already manually entered into the ledger.
-  const threeDaysAgoUnix = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000)
-  const threeDaysAgoDate = new Date(threeDaysAgoUnix * 1000).toISOString().slice(0, 10)
-
-  // ── Step 1: detect new ACH-processing invoices (last 3 days only) ──────────
+  // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
+  // Gate: status='open' + payment_intent.status='processing'.
+  // Paid invoices never appear in the open list, so no historical backfill risk.
+  // Dedup by invoice_id prevents double-inserting the same invoice.
   try {
     const stripe = await getStripeClient()
     if (stripe) {
@@ -44,10 +42,9 @@ export async function GET(_request: NextRequest) {
       }
 
       const invoices = await stripe.invoices.list({
-        status:  'open',
-        limit:   100,
-        created: { gte: threeDaysAgoUnix },
-        expand:  ['data.payment_intent'],
+        status: 'open',
+        limit:  100,
+        expand: ['data.payment_intent'],
       })
 
       for (const inv of invoices.data) {
@@ -62,7 +59,7 @@ export async function GET(_request: NextRequest) {
         const clientId = customerToClient[customerId]
         if (!clientId) continue
 
-        // Deduplicate — only insert if no ledger entry for this invoice yet
+        // Only insert if no ledger entry already exists for this invoice
         const { data: existing } = await db
           .from('ad_fuel_ledger')
           .select('id')
@@ -79,11 +76,10 @@ export async function GET(_request: NextRequest) {
         if (totalAf <= 0) continue
 
         const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
-        const isRecurring = inv.lines.data.length > 1
 
         await db.from('ad_fuel_ledger').insert({
           client_id:       clientId,
-          date_of_payment: null,         // set when ACH clears (bank confirmation date)
+          date_of_payment: null,        // set when bank confirms (ACH clears)
           invoice_date:    invoiceDate,
           amount_af:       totalAf,
           invoice_id:      inv.id,
@@ -98,12 +94,13 @@ export async function GET(_request: NextRequest) {
     console.error('[pending-ach] Stripe step failed (non-fatal):', stripeErr)
   }
 
-  // ── Step 2: return recent pending ledger amounts (last 3 days only) ─────────
+  // ── Step 2: return all pending ledger amounts ────────────────────────────────
+  // No date filter — pending entries have date_of_payment=null and the hourly
+  // cron cleans them up (marks cleared or deletes if payment failed).
   const { data: pendingRows } = await db
     .from('ad_fuel_ledger')
     .select('client_id, amount_af')
     .eq('ach_status', 'pending')
-    .gte('date_of_payment', threeDaysAgoDate)
 
   const pending: Record<string, number> = {}
   for (const row of (pendingRows ?? []) as { client_id: string; amount_af: number }[]) {
