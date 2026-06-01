@@ -52,7 +52,9 @@ export async function GET(request: NextRequest) {
     for (const inv of invoices.data) {
       const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
       const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
-      if (pi?.status !== 'processing') continue
+      // Skip if no payment attempt, or if payment definitively failed/not started
+      if (!pi) continue
+      if (pi.status === 'requires_payment_method' || pi.status === 'canceled') continue
 
       const customerId = typeof inv.customer === 'string'
         ? inv.customer
