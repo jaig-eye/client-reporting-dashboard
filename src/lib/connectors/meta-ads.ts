@@ -360,7 +360,7 @@ async function fetchAdCreatives(
 
       const batchRequests = batch.map(adId => ({
         method: 'GET',
-        relative_url: `${adId}?fields=status,creative{${creativeFields}}`,
+        relative_url: `${adId}?fields=effective_status,creative{${creativeFields}}`,
       }))
 
       const batchUrl = new URL(`${BASE_URL}/`)
@@ -415,7 +415,7 @@ async function fetchAdCreatives(
             creative_body:     resolvedBody,
             creative_title:    resolvedTitle,
             creative_link_url: (creative?.link_url as string | undefined) ?? linkData?.link ?? '',
-            ad_status:         (body.status        as string | undefined) ?? '',
+            ad_status:         (body.effective_status as string | undefined) ?? '',
           }
 
           // Queue for subsequent passes
