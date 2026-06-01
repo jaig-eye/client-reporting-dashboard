@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
-  // Gate: status='open' + payment_intent.status='processing'.
-  // No date filter — open+processing means actively in-flight right now.
-  // Paid invoices don't appear in the open list so no historical backfill risk.
+  // Gate: status='open' + payment_intent.status='processing' + created last 14 days.
+  // 14 days covers the full ACH processing window. Anything older was manually entered.
+  const fourteenDaysAgoUnix = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000)
   let detected = 0
   try {
     const { data: clients } = await db
@@ -43,9 +43,10 @@ export async function GET(request: NextRequest) {
     }
 
     const invoices = await stripe.invoices.list({
-      status: 'open',
-      limit:  100,
-      expand: ['data.payment_intent'],
+      status:  'open',
+      limit:   100,
+      created: { gte: fourteenDaysAgoUnix },
+      expand:  ['data.payment_intent'],
     })
 
     for (const inv of invoices.data) {

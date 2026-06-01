@@ -25,9 +25,10 @@ export async function GET(_request: NextRequest) {
   const db = createAdminClient()
 
   // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
-  // Gate: status='open' + payment_intent.status='processing'.
-  // Paid invoices never appear in the open list, so no historical backfill risk.
-  // Dedup by invoice_id prevents double-inserting the same invoice.
+  // Gate: status='open' + payment_intent.status='processing' + created in last 14 days.
+  // 14 days covers the full ACH processing window (3-5 business days + buffer).
+  // Anything older was manually entered by the team; we must not duplicate it.
+  const fourteenDaysAgoUnix = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000)
   try {
     const stripe = await getStripeClient()
     if (stripe) {
@@ -42,9 +43,10 @@ export async function GET(_request: NextRequest) {
       }
 
       const invoices = await stripe.invoices.list({
-        status: 'open',
-        limit:  100,
-        expand: ['data.payment_intent'],
+        status:  'open',
+        limit:   100,
+        created: { gte: fourteenDaysAgoUnix },
+        expand:  ['data.payment_intent'],
       })
 
       for (const inv of invoices.data) {
