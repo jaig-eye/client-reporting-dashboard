@@ -139,52 +139,62 @@ export async function GET(request: NextRequest) {
         await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
       }
 
-      // ── Path B: subscriptions → latest_invoice ───────────────────────────────
-      // Catches subscription invoices that may not surface cleanly via invoices.list
+      // ── Path B: subscriptions → latest_invoice (retrieved directly) ────────────
+      // Stripe does not reliably expand payment_intent when nested inside
+      // subscriptions.list() — it returns null even when a payment exists.
+      // Fix: list subscriptions to get the invoice ID, then retrieve the full
+      // invoice directly so payment_intent and product data expand correctly.
       const subs = await stripe.subscriptions.list({
         status: 'all',
         limit:  100,
-        expand: [
-          'data.latest_invoice.payment_intent',
-          'data.latest_invoice.lines.data.pricing.price_details.price.product',
-        ],
+        expand: ['data.latest_invoice'],  // just enough to get the invoice ID + status
       })
 
       if (debug) debugLog.push({ path: 'B_subscriptions', total: subs.data.length })
 
       for (const sub of subs.data) {
-        const inv = sub.latest_invoice && typeof sub.latest_invoice === 'object'
+        const latestInv = sub.latest_invoice && typeof sub.latest_invoice === 'object'
           ? sub.latest_invoice as Stripe.Invoice
           : null
-        if (!inv) continue
-        if (inv.status !== 'open') {
-          if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: (inv as Stripe.Invoice).id, skip: `invoice status=${inv.status}` })
+        if (!latestInv || latestInv.status !== 'open') {
+          if (debug && latestInv) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, skip: `invoice status=${latestInv.status}` })
           continue
         }
-
-        const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
-        const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
-        const piStatus = pi?.status ?? null
 
         const customerId = typeof sub.customer === 'string'
           ? sub.customer
           : (sub.customer as Stripe.Customer | null)?.id
         const clientId = customerId ? customerToClient[customerId] : undefined
 
+        if (!customerId || !clientId) {
+          if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, customer_id: customerId, skip: !customerId ? 'no customer' : 'customer not mapped to client' })
+          continue
+        }
+
+        // Retrieve the full invoice directly — nested expand in subscriptions.list()
+        // does not reliably populate payment_intent
+        const inv = await stripe.invoices.retrieve(latestInv.id, {
+          expand: [
+            'payment_intent',
+            'lines.data.pricing.price_details.price.product',
+          ],
+        })
+
+        const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
+        const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
+        const piStatus = pi?.status ?? null
+
         if (debug) debugLog.push({
           path: 'B', subscription_id: sub.id, invoice_id: inv.id, invoice_number: inv.number,
-          customer_id: customerId, client_id: clientId ?? 'NOT IN DB',
+          customer_id: customerId, client_id: clientId,
           pi_status: piStatus,
           skip:
-            !pi                    ? 'no payment_intent' :
-            piStatus === 'canceled' ? 'payment_intent canceled' :
-            !customerId            ? 'no customer on subscription' :
-            !clientId              ? 'customer not mapped to client' :
+            !pi                     ? 'no payment_intent after direct retrieve' :
+            piStatus === 'canceled'  ? 'payment_intent canceled' :
             null,
         })
 
         if (!pi || piStatus === 'canceled') continue
-        if (!customerId || !clientId) continue
 
         await tryInsert(db, inv, clientId, debugLog, debug, 'subscription')
       }
