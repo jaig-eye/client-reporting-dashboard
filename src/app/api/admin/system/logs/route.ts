@@ -1,5 +1,5 @@
 // GET  /api/admin/system/logs   — paginated sync logs
-// POST /api/admin/system/logs   — clear stuck (running > 2h) jobs
+// POST /api/admin/system/logs   — clear stuck (running > 8min) jobs
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -12,12 +12,14 @@ function requireAdmin(req: NextRequest): boolean {
 }
 
 async function cleanupStuckJobs(db: ReturnType<typeof createAdminClient>): Promise<number> {
-  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  // 8 minutes — just above Vercel's 300s function limit. Jobs still running
+  // after this are almost certainly dead (function was killed by the platform).
+  const eightMinsAgo = new Date(Date.now() - 8 * 60 * 1000).toISOString()
   const { data: stuckJobs } = await db
     .from('sync_jobs')
     .select('id')
     .eq('status', 'running')
-    .lt('started_at', twoHoursAgo)
+    .lt('started_at', eightMinsAgo)
 
   if (!stuckJobs?.length) return 0
 

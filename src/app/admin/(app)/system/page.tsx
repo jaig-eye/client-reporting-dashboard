@@ -5,6 +5,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { CaretLeft, CaretRight, ArrowsCounterClockwise } from '@phosphor-icons/react'
+import ClientManualSync from '@/app/admin/(app)/clients/[id]/ClientManualSync'
 
 interface SyncJob {
   id: string
@@ -107,7 +108,8 @@ export default function SystemPage() {
   const [syncDays,      setSyncDays]      = useState(90)
   const [syncResults,   setSyncResults]   = useState<GlobalSyncResult[] | null>(null)
   const [syncError,     setSyncError]     = useState('')
-  const [clearingStuck, setClearingStuck] = useState(false)
+  const [clearingStuck,       setClearingStuck]       = useState(false)
+  const [selectedClientId,    setSelectedClientId]    = useState<string>('')
 
   // Activity log state
   const [actLogs,       setActLogs]       = useState<ActivityRow[]>([])
@@ -146,6 +148,8 @@ export default function SystemPage() {
 
   const fetchJobs = useCallback(async (p: number, cId?: string) => {
     setLoading(true)
+    // Auto-clear stuck jobs (>8 min) silently on every fetch so they don't linger
+    fetch('/api/admin/system/logs', { method: 'POST' }).catch(() => {})
     try {
       const params = new URLSearchParams({ page: String(p), per_page: String(PER_PAGE) })
       const resolvedClientId = cId !== undefined ? cId : clientFilter
@@ -177,13 +181,22 @@ export default function SystemPage() {
     setSyncResults(null)
     setSyncError('')
     try {
-      const res  = await fetch('/api/admin/sync/all', {
+      const res = await fetch('/api/admin/sync/all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days: syncDays }),
       })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
+      let data: { results?: GlobalSyncResult[]; error?: string } = {}
+      try {
+        data = await res.json()
+      } catch {
+        throw new Error(
+          res.status === 504
+            ? 'Sync timed out — data was partially saved. Try a shorter date range.'
+            : `Server error (${res.status})`
+        )
+      }
+      if (!res.ok) throw new Error(data.error || `Server error (${res.status})`)
       setSyncResults(data.results ?? [])
       setPage(1)
       await fetchJobs(1)
@@ -361,6 +374,22 @@ export default function SystemPage() {
 
       {activeTab === 'sync' && (
       <>
+      {/* ── Per-Client Sync ───────────────────────────────────────────── */}
+      <div className="card p-5 mb-5">
+        <h2 className="section-title mb-1">Sync Single Client</h2>
+        <p className="section-desc mb-4">Run a targeted sync for one client without affecting others.</p>
+        <select
+          value={selectedClientId}
+          onChange={e => setSelectedClientId(e.target.value)}
+          className="input mb-4"
+          style={{ maxWidth: 320 }}
+        >
+          <option value="">Select a client…</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {selectedClientId && <ClientManualSync clientId={selectedClientId} />}
+      </div>
+
       {/* ── Global Backfill ────────────────────────────────────────────── */}
       <div className="card p-5 mb-5">
         <h2 className="section-title mb-1">Global Historical Sync</h2>
