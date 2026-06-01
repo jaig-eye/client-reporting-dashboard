@@ -1,10 +1,13 @@
 // GET /api/admin/ad-fuel/pending-ach
 //
 // Two responsibilities:
-//   1. For any open Stripe invoice (last 14 days) with a non-canceled payment
-//      intent, auto-create a pending ledger entry if one doesn't exist yet.
-//   2. Return { pending: { clientId: amount } } — all ach_status='pending'
-//      ledger entries per client, shown as projected balance (not confirmed).
+//   1. For any open Stripe invoice with a non-canceled payment intent, auto-create
+//      a pending ledger entry if one doesn't exist yet. No date filter — subscription
+//      update invoices carry the original subscription created date, so a date filter
+//      would silently exclude them. Product data is expanded so isAdFuelLine() can
+//      check product names for subscription line items with null descriptions.
+//   2. Return { pending: { clientId: amount } } — all ach_status='pending' ledger
+//      entries per client, shown as projected balance (not included in confirmed balance).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -13,15 +16,12 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getStripeClient, isAdFuelLine } from '@/lib/stripe'
 import type Stripe from 'stripe'
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const debug = new URL(request.url).searchParams.get('debug') === '1'
   const db = createAdminClient()
-
-  const debugLog: unknown[] = []
 
   // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
   try {
@@ -37,61 +37,26 @@ export async function GET(request: NextRequest) {
         customerToClient[c.stripe_customer_id] = c.id
       }
 
-      // No created filter — subscription update invoices carry the subscription's
-      // original created date (e.g. 2024), not today's date, so a date filter
-      // would silently exclude them. open + non-canceled payment_intent is the
-      // correct gate: it means a payment is actively in-flight right now.
       const invoices = await stripe.invoices.list({
         status: 'open',
         limit:  100,
-        expand: ['data.payment_intent'],
+        expand: [
+          'data.payment_intent',
+          'data.lines.data.pricing.price_details.price.product',
+        ],
       })
-
-      if (debug) debugLog.push({ total_open_invoices: invoices.data.length, known_customer_ids: Object.keys(customerToClient) })
 
       for (const inv of invoices.data) {
         const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
         const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
+        if (!pi || pi.status === 'canceled') continue
 
         const customerId = typeof inv.customer === 'string'
           ? inv.customer
           : (inv.customer as Stripe.Customer | null)?.id
-
-        const clientId = customerId ? customerToClient[customerId] : undefined
-
-        // Compute ad fuel total from all lines (subscription invoices paginate lines,
-        // but first page covers nearly all real cases — usually 1-3 lines per invoice)
-        let totalAf = 0
-        const lineDetails: unknown[] = []
-        for (const line of inv.lines.data) {
-          const passes = isAdFuelLine(line) && (line.amount ?? 0) > 0
-          if (debug) lineDetails.push({ desc: line.description, amount: line.amount, passes_ad_fuel_check: passes })
-          if (passes) totalAf += line.amount / 100
-        }
-
-        if (debug) {
-          debugLog.push({
-            invoice_id:   inv.id,
-            invoice_number: inv.number,
-            customer_id:  customerId,
-            client_id:    clientId ?? 'NOT FOUND IN DB',
-            pi_status:    pi?.status ?? 'NO PAYMENT INTENT',
-            created:      new Date(inv.created * 1000).toISOString().slice(0, 10),
-            total_af:     totalAf,
-            lines:        lineDetails,
-            skip_reason:
-              !pi                  ? 'no payment_intent' :
-              pi.status === 'canceled' ? 'payment_intent canceled' :
-              !customerId          ? 'no customer on invoice' :
-              !clientId            ? 'customer not in clients table' :
-              totalAf <= 0         ? 'no ad fuel line items found' :
-              null,
-          })
-        }
-
-        if (!pi || pi.status === 'canceled') continue
-        if (!customerId || !clientId) continue
-        if (totalAf <= 0) continue
+        if (!customerId) continue
+        const clientId = customerToClient[customerId]
+        if (!clientId) continue
 
         const { data: existing } = await db
           .from('ad_fuel_ledger')
@@ -99,10 +64,17 @@ export async function GET(request: NextRequest) {
           .eq('invoice_id', inv.id)
           .eq('client_id', clientId)
           .maybeSingle()
-        if (existing) {
-          if (debug) debugLog.push({ invoice_id: inv.id, skip_reason: 'already in ledger' })
-          continue
+        if (existing) continue
+
+        let totalAf = 0
+        for (const line of inv.lines.data) {
+          if (!isAdFuelLine(line) || (line.amount ?? 0) <= 0) continue
+          totalAf += line.amount / 100
         }
+        if ((inv.lines as unknown as { has_more?: boolean }).has_more) {
+          console.warn(`[pending-ach] Invoice ${inv.id} has paginated line items — ad fuel total may be partial`)
+        }
+        if (totalAf <= 0) continue
 
         const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
 
@@ -117,14 +89,11 @@ export async function GET(request: NextRequest) {
           created_by:      'auto-ach',
           note:            `ACH pending — ${inv.number ?? inv.id}`,
         })
-
         console.log(`[pending-ach] inserted pending entry for invoice ${inv.id}, client ${clientId}, amount ${totalAf}`)
-        if (debug) debugLog.push({ inserted: inv.id, client_id: clientId, amount_af: totalAf })
       }
     }
   } catch (stripeErr) {
-    console.error('[pending-ach] Stripe step failed:', stripeErr)
-    if (debug) debugLog.push({ error: String(stripeErr) })
+    console.error('[pending-ach] Stripe step failed (non-fatal):', stripeErr)
   }
 
   // ── Step 2: return all pending ledger amounts ────────────────────────────────
@@ -138,6 +107,5 @@ export async function GET(request: NextRequest) {
     pending[row.client_id] = (pending[row.client_id] ?? 0) + Number(row.amount_af)
   }
 
-  if (debug) return NextResponse.json({ pending, debug: debugLog })
   return NextResponse.json({ pending })
 }

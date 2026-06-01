@@ -10,7 +10,14 @@ export async function getStripeClient(): Promise<Stripe | null> {
 
 export function isAdFuelLine(line: Stripe.InvoiceLineItem): boolean {
   const desc = (line.description ?? '').toLowerCase()
-  return desc.includes('ad fuel')
+  if (desc.includes('ad fuel')) return true
+
+  // Subscription line items often have null description — check product name and price nickname
+  const price = (line as unknown as { price?: { product?: { name?: string }; nickname?: string } }).price
+  if ((price?.product?.name ?? '').toLowerCase().includes('ad fuel')) return true
+  if ((price?.nickname ?? '').toLowerCase().includes('ad fuel')) return true
+
+  return false
 }
 
 /**
