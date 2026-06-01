@@ -274,6 +274,8 @@ export default function AdFuelPage() {
   const [cutoffDate,     setCutoffDate]     = useState('2025-01-01')
   const [loading,        setLoading]        = useState(false)
   const [pendingAch,     setPendingAch]     = useState<Record<string, number>>({})
+  const [syncingStripe,  setSyncingStripe]  = useState(false)
+  const [stripeMsg,      setStripeMsg]      = useState('')
   const [sortCol,        setSortCol]        = useState<string | null>(null)
   const [sortDir,        setSortDir]        = useState<'asc' | 'desc' | null>(null)
   const [datePickerOpen, setDatePickerOpen] = useState(false)
@@ -282,18 +284,34 @@ export default function AdFuelPage() {
   // Column config (persisted to localStorage)
   const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
   useEffect(() => { setCols(loadCols()) }, [])
-  useEffect(() => {
-    fetch('/api/admin/ad-fuel/pending-ach')
-      .then(async r => {
-        if (!r.ok) {
-          console.warn('[ad-fuel] pending-ach fetch failed:', r.status)
-          return { pending: {} }
-        }
-        return r.json()
-      })
-      .then(data => setPendingAch((data?.pending) ?? {}))
-      .catch(e => console.error('[ad-fuel] pending-ach error:', e))
-  }, [])
+  async function fetchPendingAch() {
+    try {
+      const r = await fetch('/api/admin/ad-fuel/pending-ach')
+      if (!r.ok) { console.warn('[ad-fuel] pending-ach fetch failed:', r.status); return }
+      const data = await r.json()
+      setPendingAch(data?.pending ?? {})
+    } catch (e) { console.error('[ad-fuel] pending-ach error:', e) }
+  }
+
+  useEffect(() => { fetchPendingAch() }, [])
+
+  async function syncStripeInvoices() {
+    setSyncingStripe(true)
+    setStripeMsg('')
+    try {
+      const r = await fetch('/api/admin/ad-fuel/pending-ach')
+      if (!r.ok) { setStripeMsg('Stripe sync failed — check API key.'); return }
+      const data = await r.json()
+      setPendingAch(data?.pending ?? {})
+      const count = Object.keys(data?.pending ?? {}).length
+      setStripeMsg(count > 0 ? `Found ${count} client(s) with pending ACH.` : 'No pending ACH invoices in Stripe.')
+    } catch (e) {
+      setStripeMsg('Error contacting Stripe.')
+      console.error('[ad-fuel] stripe sync error:', e)
+    } finally {
+      setSyncingStripe(false)
+    }
+  }
 
   function handleSortClick(key: string) {
     if (sortCol !== key) { setSortCol(key); setSortDir('asc') }
@@ -766,6 +784,16 @@ export default function AdFuelPage() {
             </div>
 
             <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Export CSV</button>
+            <button
+              onClick={syncStripeInvoices}
+              disabled={syncingStripe}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8125rem' }}
+              title="Check Stripe for new or unrecorded ACH invoices"
+            >
+              {syncingStripe ? 'Syncing…' : '↻ Sync Stripe'}
+            </button>
+            {stripeMsg && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stripeMsg}</span>}
           </div>
 
           {loading ? (
