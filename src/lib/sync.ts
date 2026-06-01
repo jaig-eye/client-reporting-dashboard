@@ -215,23 +215,34 @@ export async function syncClient(
         )
         // Ad-level sync (best-effort) — rows counted separately so the UI shows
         // the true total (campaign rows + ad rows) instead of just campaign rows.
+        // onRawRowsReady upserts raw insight rows immediately after all chunks are
+        // fetched so spend/click data is saved even if the creative fetch times out.
         onProgress(88, 'Fetching ad-level data…')
+        let rawAdCount = 0
         try {
           const adRows = await fetchMetaAdMetrics(
             connection.external_id,
             auth,
             resolvedFrom,
-            resolvedTo
+            resolvedTo,
+            async (rawRows) => {
+              console.log(`[sync] Meta ad-level (raw): ${rawRows.length} rows for connection ${connection.id}`)
+              onProgress(93, 'Saving ad-level insight data…')
+              rawAdCount = await upsertMetaAdsAdMetrics(db, connection.id, clientId, rawRows)
+            }
           )
-          console.log(`[sync] Meta ad-level: ${adRows.length} rows for connection ${connection.id}`)
+          console.log(`[sync] Meta ad-level (enriched): ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
-            onProgress(96, 'Saving ad-level data…')
+            onProgress(96, 'Saving ad creatives…')
             const adCount = await upsertMetaAdsAdMetrics(db, connection.id, clientId, adRows)
             recordCount += adCount
+          } else {
+            recordCount += rawAdCount
           }
         } catch (adErr) {
           adLevelError = `Ad-level sync failed: ${String(adErr)}`
           console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
+          recordCount += rawAdCount  // count any rows saved by the early upsert
         }
         onProgress(100, 'Done')
       } else if (connection.connector.type === 'ghl') {

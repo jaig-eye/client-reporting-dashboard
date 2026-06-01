@@ -172,7 +172,8 @@ export async function fetchMetaAdMetrics(
   externalId: string,
   auth: Record<string, unknown>,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  onRawRowsReady?: (rows: MetaAdRawRow[]) => Promise<void>
 ): Promise<MetaAdRawRow[]> {
   const accessToken = resolveToken(auth)
   if (!accessToken) return []
@@ -247,6 +248,25 @@ export async function fetchMetaAdMetrics(
       conversions:      actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
       conversion_value: actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
     })
+  }
+
+  // Upsert raw insight rows immediately so spend/clicks data is persisted even if
+  // the creative fetch below times out or errors on large accounts.
+  if (onRawRowsReady && rawRows.length > 0) {
+    const rawWithEmptyCreatives: MetaAdRawRow[] = rawRows.map(r => ({
+      ...r,
+      thumbnail_url:     '',
+      image_url:         '',
+      video_id:          '',
+      video_thumb_url:   '',
+      creative_body:     '',
+      creative_title:    '',
+      creative_link_url: '',
+      ad_status:         '',
+    }))
+    await onRawRowsReady(rawWithEmptyCreatives).catch(e =>
+      console.error('[meta] onRawRowsReady failed (non-fatal):', e)
+    )
   }
 
   // Batch-fetch creative assets for all unique ad_ids (once across all chunks)

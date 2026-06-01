@@ -15,7 +15,7 @@ import { getAgencySettings } from '@/lib/agency-settings'
 import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, resolveMetaConversions } from '@/lib/metrics'
 import type { Client } from '@/lib/types'
 import type { DisplayMode } from '@/components/AdSetCards'
-import { AdGroupTable } from '@/components/AdTable'
+import { AdGroupTable, type AdGroupRow } from '@/components/AdTable'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import MetricCard from '@/components/MetricCard'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
@@ -377,6 +377,29 @@ export default async function CampaignDetailPage({
       }
     })
     .filter(g => !isMetaDefaultName(g.setName))
+    // Merge entries with the same name (handles null adset_id rows creating duplicate buckets)
+    .reduce((acc: AdGroupRow[], g: AdGroupRow) => {
+      const existing = acc.find((x: AdGroupRow) => x.setName.toLowerCase() === g.setName.toLowerCase())
+      if (existing) {
+        existing.spend           += g.spend
+        existing.impressions     += g.impressions
+        existing.clicks          += g.clicks
+        existing.conversions     += g.conversions
+        existing.conversionValue += g.conversionValue
+        existing.adCount         += g.adCount
+        existing.cpl      = existing.conversions > 0 ? existing.spend / existing.conversions : 0
+        existing.ctr      = existing.impressions > 0 ? existing.clicks / existing.impressions : 0
+        existing.convRate = existing.clicks > 0 ? existing.conversions / existing.clicks : 0
+        existing.cpc      = existing.clicks > 0 ? existing.spend / existing.clicks : 0
+        existing.cpm      = existing.impressions > 0 ? (existing.spend / existing.impressions) * 1000 : 0
+        existing.roas     = existing.spend > 0 && existing.conversionValue > 0 ? existing.conversionValue / existing.spend : 0
+        existing.revenue  = existing.conversionValue
+        if (!existing.status && g.status) existing.status = g.status
+      } else {
+        acc.push(g)
+      }
+      return acc
+    }, [] as AdGroupRow[])
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the
