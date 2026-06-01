@@ -132,11 +132,12 @@ export default async function CampaignDetailPage({
 
   let campaignName = decodeURIComponent(campaignId)
 
-  // Map<setId, { setName, status, spend, impressions, clicks, conversions, conversionValue, adIds }>
-  type SetAgg = { setName: string; status: string | null; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
+  // Map<setId, { setName, status, latestDate, spend, impressions, clicks, conversions, conversionValue, adIds }>
+  type SetAgg = { setName: string; status: string | null; latestDate: string; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
   const setMap = new Map<string, SetAgg>()
 
-  function upsertSet(setId: string, setName: string, adId: string, adStatus: string | null, sp: number, im: number, cl: number, co: number, cv: number) {
+  function upsertSet(setId: string, setName: string, adId: string, adStatus: string | null, date: string, sp: number, im: number, cl: number, co: number, cv: number) {
+    const normalized = normalizeMetaAdStatus(adStatus)
     const ex = setMap.get(setId)
     if (ex) {
       ex.spend           += sp
@@ -145,11 +146,18 @@ export default async function CampaignDetailPage({
       ex.conversions     += co
       ex.conversionValue += cv
       ex.adIds.add(adId)
-      // Promote status: ACTIVE beats PAUSED; normalize raw Meta effective_status values
-      const normalized = normalizeMetaAdStatus(adStatus)
-      if (!ex.status || normalized === 'ACTIVE') ex.status = normalized
+      // Use status from the most recent date — not the historically dominant status.
+      // This ensures a recently paused ad set shows Paused even over a "last 7 days" range
+      // where it was active for most of the period.
+      if (date > ex.latestDate) {
+        ex.latestDate = date
+        ex.status = normalized
+      } else if (date === ex.latestDate) {
+        // Same day: promote ACTIVE over PAUSED within that day
+        if (!ex.status || normalized === 'ACTIVE') ex.status = normalized
+      }
     } else {
-      setMap.set(setId, { setName, status: normalizeMetaAdStatus(adStatus), spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
+      setMap.set(setId, { setName, status: normalized, latestDate: date, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
     }
   }
 
@@ -219,7 +227,7 @@ export default async function CampaignDetailPage({
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
       const cv = Number(r.conversions_value) || 0
-      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, null, sp, im, cl, co, cv)
+      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, null, r.date, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
     for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[]) {
@@ -297,7 +305,7 @@ export default async function CampaignDetailPage({
         co = resolved.conversions
         cv = resolved.conversionValue
       }
-      upsertSet(setId, r.adset_name ?? setId, r.ad_id, r.ad_status ?? null, sp, im, cl, co, cv)
+      upsertSet(setId, r.adset_name ?? setId, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
     }
     // Prior period: campaign-level for compare deltas
     for (const r of (priorCampRows ?? []) as MetaCampRow[]) {
