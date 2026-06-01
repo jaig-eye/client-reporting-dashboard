@@ -33,6 +33,14 @@ function isMetaDefaultName(name: string) {
   return !name.trim() || META_DEFAULT_NAMES.has(name.trim().toLowerCase())
 }
 
+function normalizeMetaAdStatus(status: string | null): string | null {
+  if (!status) return null
+  const s = status.toUpperCase()
+  if (s === 'ACTIVE' || s === 'ENABLED') return 'ACTIVE'
+  if (s === 'PAUSED' || s === 'CAMPAIGN_PAUSED' || s === 'ADSET_PAUSED') return 'PAUSED'
+  return status
+}
+
 export default async function CampaignDetailPage({
   params,
   searchParams,
@@ -137,12 +145,11 @@ export default async function CampaignDetailPage({
       ex.conversions     += co
       ex.conversionValue += cv
       ex.adIds.add(adId)
-      // Promote status: ACTIVE beats PAUSED beats anything else
-      if (!ex.status || (adStatus && (adStatus.toUpperCase() === 'ACTIVE' || adStatus.toUpperCase() === 'ENABLED'))) {
-        ex.status = adStatus
-      }
+      // Promote status: ACTIVE beats PAUSED; normalize raw Meta effective_status values
+      const normalized = normalizeMetaAdStatus(adStatus)
+      if (!ex.status || normalized === 'ACTIVE') ex.status = normalized
     } else {
-      setMap.set(setId, { setName, status: adStatus, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
+      setMap.set(setId, { setName, status: normalizeMetaAdStatus(adStatus), spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
     }
   }
 
@@ -400,6 +407,7 @@ export default async function CampaignDetailPage({
       }
       return acc
     }, [] as AdGroupRow[])
+    .filter((g: AdGroupRow) => !/^\d+$/.test(g.setName))
     .sort((a, b) => b.spend - a.spend)
 
   // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the

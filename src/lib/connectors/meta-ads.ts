@@ -224,6 +224,25 @@ export async function fetchMetaAdMetrics(
     console.log(`[meta] fetchMetaAdMetrics chunk ${ci+1} done: ${rawApiRows.length} total rows so far`)
   }
 
+  // Backfill adset names from the Adsets API — the Insights API occasionally omits
+  // adset_name even when requested, particularly for some ad types/configurations.
+  const adsetNameMap = new Map<string, string>()
+  try {
+    let adsetNextUrl: string | null = new URL(`${BASE_URL}/${externalId}/adsets`, 'https://graph.facebook.com').toString()
+    adsetNextUrl += `?fields=id%2Cname&limit=500&access_token=${encodeURIComponent(accessToken)}`
+    while (adsetNextUrl) {
+      const adsetData = await metaFetchWithRetry(adsetNextUrl)
+      for (const s of (adsetData.data || []) as Record<string, unknown>[]) {
+        if (s.id && s.name) adsetNameMap.set(String(s.id), String(s.name))
+      }
+      const pg = adsetData.paging as Record<string, unknown> | undefined
+      adsetNextUrl = typeof pg?.next === 'string' ? pg.next : null
+    }
+    console.log(`[meta] fetchMetaAdMetrics: fetched ${adsetNameMap.size} adset names for backfill`)
+  } catch (e) {
+    console.warn('[meta] adset name backfill failed (non-fatal):', e)
+  }
+
   for (const day of rawApiRows) {
     const rawActions      = (day.actions       || []) as Record<string, unknown>[]
     const rawActionValues = (day.action_values  || []) as Record<string, unknown>[]
@@ -231,11 +250,13 @@ export async function fetchMetaAdMetrics(
     const actionValues = rawActionValues.map(a => ({ action_type: String(a.action_type || ''), value: String(a.value || '0') }))
     const adId = String(day.ad_id || '')
     if (adId) adIdSet.add(adId)
+    const adsetId   = String(day.adset_id   || '')
+    const adsetName = String(day.adset_name || '') || (adsetNameMap.get(adsetId) ?? '')
     rawRows.push({
       campaign_id:      String(day.campaign_id   || ''),
       campaign_name:    String(day.campaign_name || ''),
-      adset_id:         String(day.adset_id      || ''),
-      adset_name:       String(day.adset_name    || ''),
+      adset_id:         adsetId,
+      adset_name:       adsetName,
       ad_id:            adId,
       ad_name:          String(day.ad_name       || ''),
       date:             String(day.date_start    || ''),
