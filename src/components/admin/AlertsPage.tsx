@@ -66,6 +66,12 @@ const SEVERITY_COLOR: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function renderMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/_(.+?)_/g, '<em>$1</em>')
+}
+
 function relativeTime(iso: string): string {
   const ms   = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(ms / 60_000)
@@ -208,12 +214,8 @@ function AlertCard({
               whiteSpace: 'pre-wrap',
               wordBreak:  'break-word',
             }}
-          >
-            {expanded ? alert.body : bodyPreview}
-            {!expanded && hasMore && (
-              <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>…</span>
-            )}
-          </div>
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(expanded ? (alert.body ?? '') : bodyPreview) + (!expanded && hasMore ? '<span style="color:var(--text-faint);margin-left:4px">…</span>' : '') }}
+          />
         )}
 
         {/* row 3: link + timestamp */}

@@ -423,9 +423,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── BC spot-check alert: draft_saved BC posts due today or tomorrow ────────
+    // ── BC spot-check alert: draft_saved BC posts due tomorrow (one per post) ──
     {
-      const today    = new Date().toISOString().slice(0, 10)
       const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
       const { data: bcDuePosts } = await db
         .from('content_posts')
@@ -433,7 +432,7 @@ export async function GET(request: NextRequest) {
         .eq('client_id', client_id)
         .eq('status', 'draft_saved')
         .not('bc_post_id', 'is', null)
-        .in('target_publish_date', [today, tomorrow])
+        .eq('target_publish_date', tomorrow)
 
       if (bcDuePosts && bcDuePosts.length > 0) {
         const { data: cl } = await db.from('clients').select('name, discord_channel_id').eq('id', client_id).single()
@@ -441,10 +440,22 @@ export async function GET(request: NextRequest) {
         const channelIdBc  = (cl as { discord_channel_id?: string | null } | null)?.discord_channel_id
         const discordBotTk = (agencySettings?.discord_bot_token as string | null) ?? null
 
+        // Dedup: skip posts already notified (check admin_alerts for prior bc_spot_check entry)
+        const { data: existingAlerts } = await db
+          .from('admin_alerts')
+          .select('meta')
+          .eq('client_id', client_id)
+          .eq('type', 'content')
+          .filter('meta->>content_type', 'eq', 'bc_spot_check')
+        const notifiedPostIds = new Set(
+          (existingAlerts ?? []).map((a: { meta: Record<string, unknown> }) => a.meta?.post_id as string).filter(Boolean)
+        )
+
         for (const bp of bcDuePosts as { id: string; title: string | null; target_publish_date: string | null; bc_store_hash: string | null }[]) {
-          const dueTiming = bp.target_publish_date === today ? 'TODAY' : 'tomorrow'
+          if (notifiedPostIds.has(bp.id)) continue
+
           const bcBlogUrl = `https://login.bigcommerce.com/manage/content/blog`
-          const alertMsg  = `⚠️ BC post due **${dueTiming}** — *${bp.title ?? '(untitled)'}* for **${clientNameBc}** needs manual publish: ${bcBlogUrl}`
+          const alertMsg  = `⚠️ BC post due tomorrow — ${bp.title ?? '(untitled)'} for ${clientNameBc} needs manual publish: ${bcBlogUrl}`
 
           if (discordBotTk && channelIdBc) {
             void sendDiscordMessage(discordBotTk, channelIdBc, alertMsg).catch(() => {})
@@ -455,8 +466,8 @@ export async function GET(request: NextRequest) {
             severity:    'warning',
             client_id:   client_id,
             client_name: clientNameBc,
-            title:       `BC post due ${dueTiming} — manual publish needed (${clientNameBc})`,
-            body:        `"${bp.title ?? '(untitled)'}" is a BigCommerce draft scheduled for ${bp.target_publish_date ?? 'today'}. Go to BigCommerce → Blog to publish it manually.`,
+            title:       `BC post due tomorrow — manual publish needed (${clientNameBc})`,
+            body:        `"${bp.title ?? '(untitled)'}" is a BigCommerce draft scheduled for ${bp.target_publish_date}. Go to BigCommerce → Blog to publish it manually.`,
             meta:        { content_type: 'bc_spot_check', post_id: bp.id, bc_blog_url: bcBlogUrl, target_publish_date: bp.target_publish_date },
             link_url:    bcBlogUrl,
           }).then(null, () => {})
@@ -704,9 +715,8 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // BC spot-check alert for SA pages due today or tomorrow
+        // BC spot-check alert for SA pages due tomorrow (one per post)
         {
-          const today    = new Date().toISOString().slice(0, 10)
           const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
           const { data: bcDueSaPosts } = await db
             .from('content_posts')
@@ -715,13 +725,26 @@ export async function GET(request: NextRequest) {
             .eq('content_type', 'service_area')
             .eq('status', 'draft_saved')
             .not('bc_post_id', 'is', null)
-            .in('target_publish_date', [today, tomorrow])
+            .eq('target_publish_date', tomorrow)
 
           const saDiscordTokenSpot = (agencySettings?.discord_bot_token as string | null) ?? null
+
+          // Dedup: skip posts already notified
+          const { data: saExistingAlerts } = await db
+            .from('admin_alerts')
+            .select('meta')
+            .eq('client_id', saClientId)
+            .eq('type', 'content')
+            .filter('meta->>content_type', 'eq', 'bc_sa_spot_check')
+          const saNotifiedPostIds = new Set(
+            (saExistingAlerts ?? []).map((a: { meta: Record<string, unknown> }) => a.meta?.post_id as string).filter(Boolean)
+          )
+
           for (const bp of (bcDueSaPosts ?? []) as { id: string; title: string | null; target_publish_date: string | null }[]) {
-            const dueTiming = bp.target_publish_date === today ? 'TODAY' : 'tomorrow'
+            if (saNotifiedPostIds.has(bp.id)) continue
+
             const bcPagesUrl = `https://login.bigcommerce.com/manage/content/pages`
-            const alertMsg   = `⚠️ BC service area page due **${dueTiming}** — *${bp.title ?? '(untitled)'}* for **${saClientName}** needs manual publish: ${bcPagesUrl}`
+            const alertMsg   = `⚠️ BC service area page due tomorrow — ${bp.title ?? '(untitled)'} for ${saClientName} needs manual publish: ${bcPagesUrl}`
 
             if (saDiscordTokenSpot && saChannelId) {
               void sendDiscordMessage(saDiscordTokenSpot, saChannelId, alertMsg).catch(() => {})
@@ -731,8 +754,8 @@ export async function GET(request: NextRequest) {
               severity:    'warning',
               client_id:   saClientId,
               client_name: saClientName,
-              title:       `BC service area page due ${dueTiming} — manual publish needed (${saClientName})`,
-              body:        `"${bp.title ?? '(untitled)'}" is a BigCommerce draft page scheduled for ${bp.target_publish_date ?? 'today'}. Go to BigCommerce → Pages to publish it manually.`,
+              title:       `BC service area page due tomorrow — manual publish needed (${saClientName})`,
+              body:        `"${bp.title ?? '(untitled)'}" is a BigCommerce draft page scheduled for ${bp.target_publish_date}. Go to BigCommerce → Pages to publish it manually.`,
               meta:        { content_type: 'bc_sa_spot_check', post_id: bp.id, bc_pages_url: bcPagesUrl, target_publish_date: bp.target_publish_date },
               link_url:    bcPagesUrl,
             }).then(null, () => {})
