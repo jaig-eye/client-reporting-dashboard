@@ -90,6 +90,67 @@ export async function GET(_request: NextRequest) {
     console.error('[pending-ach] Stripe step failed (non-fatal — returning DB pending entries):', stripeErr)
   }
 
+  // ── Step 1b: catch paid invoices that were missed during the processing window ──
+  // ACH has a 3-5 day processing window. If nobody visited while payment_intent was
+  // 'processing', the pending entry was never auto-created. This pass checks the last
+  // 90 days of PAID invoices and inserts any unrecorded ad-fuel lines as cleared entries.
+  try {
+    const stripe = await getStripeClient()
+    if (stripe) {
+      const since = Math.floor((Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000)
+      const { data: clients } = await db
+        .from('clients')
+        .select('id, stripe_customer_id')
+        .not('stripe_customer_id', 'is', null)
+
+      for (const c of (clients ?? []) as { id: string; stripe_customer_id: string }[]) {
+        const paidInvoices = await stripe.invoices.list({
+          customer: c.stripe_customer_id,
+          status:   'paid',
+          created:  { gte: since },
+          limit:    50,
+        })
+        for (const inv of paidInvoices.data) {
+          const { data: existing } = await db
+            .from('ad_fuel_ledger')
+            .select('id')
+            .eq('invoice_id', inv.id)
+            .eq('client_id', c.id)
+            .maybeSingle()
+          if (existing) continue
+
+          let totalAf = 0
+          for (const line of inv.lines.data) {
+            if (!isAdFuelLine(line) || (line.amount ?? 0) <= 0) continue
+            totalAf += line.amount / 100
+          }
+          if (totalAf <= 0) continue
+
+          const paidAt = inv.status_transitions?.paid_at
+          const dateOfPayment = paidAt
+            ? new Date(paidAt * 1000).toISOString().slice(0, 10)
+            : new Date(inv.created * 1000).toISOString().slice(0, 10)
+          const isRecurring = inv.lines.data.length > 1
+
+          await db.from('ad_fuel_ledger').insert({
+            client_id:       c.id,
+            date_of_payment: dateOfPayment,
+            invoice_date:    new Date(inv.created * 1000).toISOString().slice(0, 10),
+            amount_af:       totalAf,
+            invoice_id:      inv.id,
+            ach_status:      'cleared',
+            type:            isRecurring ? 'MRR' : 'One-Time',
+            created_by:      'auto-ach',
+            note:            `ACH cleared — ${inv.number ?? inv.id}`,
+          })
+          console.log(`[pending-ach] backfilled cleared invoice ${inv.id} for client ${c.id}`)
+        }
+      }
+    }
+  } catch (backfillErr) {
+    console.error('[pending-ach] backfill step failed (non-fatal):', backfillErr)
+  }
+
   // ── Step 2: return pending ledger amounts (already counted in balance) ──
   const { data: pendingRows } = await db
     .from('ad_fuel_ledger')
