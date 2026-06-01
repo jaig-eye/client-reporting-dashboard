@@ -290,7 +290,7 @@ export default async function CampaignDetailPage({
         co = resolved.conversions
         cv = resolved.conversionValue
       }
-      upsertSet(setId, r.adset_name ?? groupLabel, r.ad_id, r.ad_status ?? null, sp, im, cl, co, cv)
+      upsertSet(setId, r.adset_name ?? setId, r.ad_id, r.ad_status ?? null, sp, im, cl, co, cv)
     }
     // Prior period: campaign-level for compare deltas
     for (const r of (priorCampRows ?? []) as MetaCampRow[]) {

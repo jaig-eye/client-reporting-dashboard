@@ -50,6 +50,9 @@ export default async function AdSetDetailPage({
 
   const { campaignId, adsetId: rawAdsetId } = await params
   const adsetId  = decodeURIComponent(rawAdsetId)
+  // Meta adset IDs are always numeric strings. If the URL param is non-numeric it means
+  // the campaign page fell back to adset_name as the key (adset_id was null in DB).
+  const adsetIdIsNumeric = /^\d+$/.test(adsetId)
   const sp       = await searchParams
   const source   = sp.source ?? 'google_ads'
   const dateFrom = sp.from ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0] })()
@@ -257,29 +260,44 @@ export default async function AdSetDetailPage({
       ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length : null
   } else {
     const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
-      db.from('meta_ads_ad_metrics')
-        .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .eq('adset_id', adsetId)
-        .neq('ad_id', adsetId)
-        .gte('date', dateFrom)
-        .lte('date', dateTo),
+      (() => {
+        let q = db.from('meta_ads_ad_metrics')
+          .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+          .eq('client_id', client.id)
+          .eq('campaign_id', campaignId)
+          .gte('date', dateFrom)
+          .lte('date', dateTo)
+        if (adsetIdIsNumeric) {
+          q = q.eq('adset_id', adsetId).neq('ad_id', adsetId)
+        } else {
+          q = q.eq('adset_name', adsetId)
+        }
+        return q
+      })(),
       db.from('meta_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       showCompare
-        ? db.from('meta_ads_ad_metrics')
-            .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
-            .eq('client_id', client.id)
-            .eq('campaign_id', campaignId)
-            .eq('adset_id', adsetId)
-            .gte('date', priorFrom)
-            .lte('date', priorTo)
+        ? (() => {
+            let q = db.from('meta_ads_ad_metrics')
+              .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+              .eq('client_id', client.id)
+              .eq('campaign_id', campaignId)
+              .gte('date', priorFrom)
+              .lte('date', priorTo)
+            if (adsetIdIsNumeric) {
+              q = q.eq('adset_id', adsetId).neq('ad_id', adsetId)
+            } else {
+              q = q.eq('adset_name', adsetId)
+            }
+            return q
+          })()
         : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
 
     for (const r of (rows ?? []) as MetaAdRow[]) {
+      // When querying by name, filter out old stub rows (ad_name starts with '[Ad Set]')
+      if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
       if (r.adset_name) groupName = r.adset_name
       const sp = Number(r.spend) || 0
       const cl = Number(r.clicks) || 0
