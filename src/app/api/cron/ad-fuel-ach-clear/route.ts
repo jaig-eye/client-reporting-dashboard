@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
-  // Gate: status='open' + payment_intent.status='processing' + created last 14 days.
-  // 14 days covers the full ACH processing window. Anything older was manually entered.
-  const fourteenDaysAgoUnix = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000)
+  // Gate: status='open' + non-canceled payment_intent.
+  // No date filter — subscription update invoices carry the original subscription
+  // created date, so a date filter silently excludes them.
   let detected = 0
   try {
     const { data: clients } = await db
@@ -42,11 +42,12 @@ export async function GET(request: NextRequest) {
       customerToClient[c.stripe_customer_id] = c.id
     }
 
+      // No created filter — subscription update invoices carry the original
+      // subscription created date, not today. open + non-canceled pi is the gate.
     const invoices = await stripe.invoices.list({
-      status:  'open',
-      limit:   100,
-      created: { gte: fourteenDaysAgoUnix },
-      expand:  ['data.payment_intent'],
+      status: 'open',
+      limit:  100,
+      expand: ['data.payment_intent'],
     })
 
     for (const inv of invoices.data) {
