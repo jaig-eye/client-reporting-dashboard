@@ -143,13 +143,17 @@ export async function GET(request: NextRequest) {
 
       } else if (inv.status === 'open') {
         const raw      = (inv as unknown as { payment_intent?: { status: string } | string | null }).payment_intent
-        const piStatus = raw && typeof raw === 'object' ? (raw as { status: string }).status : null
+        const pi       = raw && typeof raw === 'object' ? raw as { status: string } : null
 
-        // Allowlist: only these two statuses mean ACH is actively in-flight
-        const inFlight = piStatus === 'processing' || piStatus === 'requires_action'
+        // No payment_intent = ACH credit transfer — customer pushes money to Stripe's
+        // bank account, invoice goes paid automatically. Leave the entry alone.
+        if (!pi) continue
+
+        // Allowlist: only these two statuses mean a PaymentIntent-based ACH is in-flight
+        const inFlight = pi.status === 'processing' || pi.status === 'requires_action'
         if (!inFlight) {
           await db.from('ad_fuel_ledger').delete().eq('id', entry.id)
-          console.log(`[ad-fuel-ach-clear] removed entry ${entry.id} — payment_intent ${piStatus ?? 'unknown'}`)
+          console.log(`[ad-fuel-ach-clear] removed entry ${entry.id} — payment_intent ${pi.status}`)
           failed++
         }
       }

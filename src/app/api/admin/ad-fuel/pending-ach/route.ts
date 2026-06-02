@@ -99,6 +99,9 @@ export async function GET(request: NextRequest) {
 
       if (debug) debugLog.push({ known_stripe_customers: Object.keys(customerToClient) })
 
+      // Track inserted invoice IDs so Path B doesn't duplicate what Path A inserted
+      const insertedInvoiceIds = new Set<string>()
+
       // ── Path A: open invoices list ───────────────────────────────────────────
       const openInvoices = await stripe.invoices.list({
         status: 'open',
@@ -135,7 +138,8 @@ export async function GET(request: NextRequest) {
         if (pi && piStatus === 'canceled') continue
         if (!customerId || !clientId) continue
 
-        await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
+        const inserted = await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
+        if (inserted) insertedInvoiceIds.add(inv.id)
       }
 
       // ── Path B: subscriptions → latest_invoice (retrieved directly) ────────────
@@ -170,6 +174,12 @@ export async function GET(request: NextRequest) {
           continue
         }
 
+        // Skip if Path A already handled this invoice in this same request
+        if (insertedInvoiceIds.has(latestInv.id)) {
+          if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, skip: 'already handled by path A' })
+          continue
+        }
+
         // Retrieve the full invoice directly — nested expand in subscriptions.list()
         // does not reliably populate payment_intent
         const inv = await stripe.invoices.retrieve(latestInv.id, {
@@ -196,7 +206,8 @@ export async function GET(request: NextRequest) {
           customer_id: customerId, client_id: clientId, pi_status: piStatus,
         })
 
-        await tryInsert(db, inv, clientId, debugLog, debug, 'subscription')
+        const inserted = await tryInsert(db, inv, clientId, debugLog, debug, 'subscription')
+        if (inserted) insertedInvoiceIds.add(inv.id)
       }
     }
   } catch (stripeErr) {
