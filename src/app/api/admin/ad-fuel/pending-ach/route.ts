@@ -134,12 +134,16 @@ export async function POST(request: NextRequest) {
       if (debug) debugLog.push({ known_stripe_customers: Object.keys(customerToClient) })
 
       const insertedInvoiceIds = new Set<string>()
+      // Only detect invoices created within the last 3 days. Old open invoices
+      // are either stale/uncollected or were already manually entered in the ledger.
+      const threeDaysAgoUnix = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000)
 
       // ── Path A: open invoices list ─────────────────────────────────────────
       const openInvoices = await stripe.invoices.list({
-        status: 'open',
-        limit:  100,
-        expand: [
+        status:  'open',
+        limit:   100,
+        created: { gte: threeDaysAgoUnix },
+        expand:  [
           'data.payment_intent',
           'data.lines.data.pricing.price_details.price.product',
         ],
@@ -212,6 +216,12 @@ export async function POST(request: NextRequest) {
         const inv = await stripe.invoices.retrieve(latestInv.id, {
           expand: ['payment_intent', 'lines.data.pricing.price_details.price.product'],
         })
+
+        // Skip if the invoice itself is older than 3 days
+        if (inv.created < threeDaysAgoUnix) {
+          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `invoice too old (${new Date(inv.created * 1000).toISOString().slice(0, 10)})` })
+          continue
+        }
 
         const raw      = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
         const pi       = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null

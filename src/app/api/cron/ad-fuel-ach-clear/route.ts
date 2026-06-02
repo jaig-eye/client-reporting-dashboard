@@ -28,10 +28,10 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 1: detect open Stripe invoices with ACH in-flight ──────────────────
-  // No date filter — subscription update invoices carry the original subscription
-  // created date, not today. open + non-canceled payment_intent is the correct gate.
-  // Product data is expanded so isAdFuelLine() can check product name for subscription
-  // line items that have null descriptions.
+  // Only look at invoices created in the last 3 days — older open invoices are
+  // stale/uncollected or were manually entered. Once an entry is inserted, the
+  // cron resolves it (Step 2) regardless of age.
+  const threeDaysAgoUnix = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000)
   let detected = 0
   try {
     const { data: clients } = await db
@@ -45,9 +45,10 @@ export async function GET(request: NextRequest) {
     }
 
     const invoices = await stripe.invoices.list({
-      status: 'open',
-      limit:  100,
-      expand: [
+      status:  'open',
+      limit:   100,
+      created: { gte: threeDaysAgoUnix },
+      expand:  [
         'data.payment_intent',
         'data.lines.data.pricing.price_details.price.product',
       ],
