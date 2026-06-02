@@ -11,6 +11,7 @@ import { GearSix }                   from '@phosphor-icons/react/dist/ssr'
 import DateRangePicker               from '@/components/DateRangePicker'
 import AdminDateSync                 from './AdminDateSync'
 import { calcEfficiencyScore }       from '@/lib/agency-settings'
+import { applyAdFuel }               from '@/lib/metrics'
 import type { AgencySettings }       from '@/lib/types'
 import { resolveMetaConversions, calcDelta } from '@/lib/metrics'
 
@@ -413,7 +414,10 @@ export default async function AdminOverviewPage({
     const conns        = connsByClient.get(client.id) ?? []
     const gData        = googleByClient.get(client.id)
     const mData        = metaByClient.get(client.id)
-    const spend        = (gData?.spend ?? 0) + (mData?.spend ?? 0)
+    // Apply Ad Fuel markup so admin sees the same spend as the client dashboard
+    const cut          = client.ad_fuel_cut ?? agencyAdFuelCut
+    const rawSpend     = (gData?.spend ?? 0) + (mData?.spend ?? 0)
+    const spend        = cut > 0 ? applyAdFuel(rawSpend, cut) : rawSpend
     const clicks       = (gData?.clicks ?? 0) + (mData?.clicks ?? 0)
     const impressions  = (gData?.impressions ?? 0) + (mData?.impressions ?? 0)
     const conversions  = Math.round((gData?.conv ?? 0) + (mData?.conv ?? 0))
@@ -422,8 +426,7 @@ export default async function AdminOverviewPage({
       ? enabledBenchmarks.includes('roas')
       : clientHasEcomMap.get(client.id) === true
     const totalValue   = (gData?.value ?? 0) + (mData?.value ?? 0)
-    const totalAdSpend = (gData?.spend ?? 0) + (mData?.spend ?? 0)
-    const roas         = showRoas && totalAdSpend > 0 && totalValue > 0 ? totalValue / totalAdSpend : null
+    const roas         = showRoas && spend > 0 && totalValue > 0 ? totalValue / spend : null
     const ctr          = impressions > 0 ? clicks / impressions : 0
     const cpl          = conversions > 0 ? spend / conversions : null
 
@@ -451,13 +454,13 @@ export default async function AdminOverviewPage({
     // Prior period metrics + deltas
     const pgData   = priorGoogleByClient.get(client.id)
     const pmData   = priorMetaByClient.get(client.id)
-    const priorSpend       = (pgData?.spend ?? 0) + (pmData?.spend ?? 0)
+    const priorRawSpend    = (pgData?.spend ?? 0) + (pmData?.spend ?? 0)
+    const priorSpend       = cut > 0 ? applyAdFuel(priorRawSpend, cut) : priorRawSpend
     const priorConversions = Math.round((pgData?.conv ?? 0) + (pmData?.conv ?? 0))
     const priorImpr        = (pgData?.impressions ?? 0) + (pmData?.impressions ?? 0)
     const priorClicks      = (pgData?.clicks ?? 0) + (pmData?.clicks ?? 0)
     const priorValue       = (pgData?.value ?? 0) + (pmData?.value ?? 0)
-    const priorAdSpend     = (pgData?.spend ?? 0) + (pmData?.spend ?? 0)
-    const priorRoas        = showRoas && priorAdSpend > 0 && priorValue > 0 ? priorValue / priorAdSpend : null
+    const priorRoas        = showRoas && priorSpend > 0 && priorValue > 0 ? priorValue / priorSpend : null
     const priorCpl         = priorConversions > 0 ? priorSpend / priorConversions : null
     const priorCtr         = priorImpr > 0 ? priorClicks / priorImpr : 0
 

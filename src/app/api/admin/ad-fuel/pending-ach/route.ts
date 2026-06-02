@@ -73,13 +73,27 @@ async function tryInsert(
     return false
   }
 
+  // Scale amount to only what's still owed — handles partial card payments
+  const amountDue       = inv.amount_due       ?? 0
+  const amountRemaining = inv.amount_remaining ?? amountDue
+  if (amountRemaining <= 0) {
+    if (debug) debugLog.push({ source, invoice_id: inv.id, skip: 'nothing remaining on invoice' })
+    return false
+  }
+  const remainingRatio = amountDue > 0 ? amountRemaining / amountDue : 1
+  const pendingAmount  = Math.round(totalAf * remainingRatio * 100) / 100
+  if (pendingAmount <= 0) {
+    if (debug) debugLog.push({ source, invoice_id: inv.id, skip: 'pendingAmount scaled to 0' })
+    return false
+  }
+
   const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
 
   const { error } = await db.from('ad_fuel_ach_pending').insert({
     client_id:    clientId,
     invoice_id:   inv.id,
     invoice_date: invoiceDate,
-    amount_af:    totalAf,
+    amount_af:    pendingAmount,
     note:         `ACH pending — ${inv.number ?? inv.id}`,
   })
 
@@ -159,15 +173,19 @@ export async function POST(request: NextRequest) {
           : (inv.customer as Stripe.Customer | null)?.id
         const clientId = customerId ? customerToClient[customerId] : undefined
 
+        // Allowlist: only genuine ACH states
+        // null PI = ACH credit transfer, processing = ACH in-transit, requires_action = bank verification
+        const achInFlight = !pi || piStatus === 'processing' || piStatus === 'requires_action'
+
         if (debug) debugLog.push({
           path: 'A', invoice_id: inv.id, invoice_number: inv.number,
           customer_id: customerId, client_id: clientId ?? 'NOT IN DB', pi_status: piStatus,
-          skip: (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) ? `payment_intent ${piStatus}` :
-                !customerId ? 'no customer on invoice' :
-                !clientId   ? 'customer not mapped to client' : null,
+          skip: !achInFlight ? `non-ACH payment_intent (${piStatus})` :
+                !customerId  ? 'no customer on invoice' :
+                !clientId    ? 'customer not mapped to client' : null,
         })
 
-        if (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) continue
+        if (!achInFlight) continue
         if (!customerId || !clientId) continue
 
         const inserted = await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
@@ -210,8 +228,9 @@ export async function POST(request: NextRequest) {
         const pi       = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
         const piStatus = pi?.status ?? null
 
-        if (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) {
-          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `payment_intent ${piStatus}` })
+        const achInFlightB = !pi || piStatus === 'processing' || piStatus === 'requires_action'
+        if (!achInFlightB) {
+          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `non-ACH payment_intent (${piStatus})` })
           continue
         }
 
