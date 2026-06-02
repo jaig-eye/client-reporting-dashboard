@@ -85,9 +85,9 @@ export async function GET(request: NextRequest) {
 
       const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
 
-      await db.from('ad_fuel_ledger').insert({
+      const { error: insertError } = await db.from('ad_fuel_ledger').insert({
         client_id:       clientId,
-        date_of_payment: null,
+        date_of_payment: invoiceDate,  // placeholder; updated to real payment date when ACH clears
         invoice_date:    invoiceDate,
         amount_af:       totalAf,
         invoice_id:      inv.id,
@@ -96,6 +96,10 @@ export async function GET(request: NextRequest) {
         created_by:      'auto-ach',
         note:            `ACH pending — ${inv.number ?? inv.id}`,
       })
+      if (insertError) {
+        console.error(`[ad-fuel-ach-clear] insert failed for invoice ${inv.id}:`, insertError.message)
+        continue
+      }
       console.log(`[ad-fuel-ach-clear] detected new pending ACH for invoice ${inv.id}, client ${clientId}, amount ${totalAf}`)
       detected++
     }

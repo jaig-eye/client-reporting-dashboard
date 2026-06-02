@@ -56,9 +56,9 @@ async function tryInsert(
 
   const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
 
-  await db.from('ad_fuel_ledger').insert({
+  const { error: insertError } = await db.from('ad_fuel_ledger').insert({
     client_id:       clientId,
-    date_of_payment: null,
+    date_of_payment: invoiceDate,  // use invoice date as placeholder; updated to real payment date when ACH clears
     invoice_date:    invoiceDate,
     amount_af:       totalAf,
     invoice_id:      inv.id,
@@ -67,6 +67,12 @@ async function tryInsert(
     created_by:      'auto-ach',
     note:            `ACH pending — ${inv.number ?? inv.id}`,
   })
+
+  if (insertError) {
+    console.error(`[pending-ach] insert failed for invoice ${inv.id}:`, insertError.message)
+    if (debug) debugLog.push({ source, invoice_id: inv.id, insert_error: insertError.message })
+    return false
+  }
 
   console.log(`[pending-ach] inserted pending entry (${source}) invoice=${inv.id} client=${clientId} amount=${totalAf}`)
   if (debug) debugLog.push({ source, invoice_id: inv.id, inserted: true, amount_af: totalAf, lines: lineDetails })
