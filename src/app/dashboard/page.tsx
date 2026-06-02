@@ -411,7 +411,7 @@ export default async function DashboardPage({
   for (const r of ((mAdSpendRes.data ?? []) as { campaign_id: string; spend: number }[])) {
     metaAdSpendByCapaign[r.campaign_id] = (metaAdSpendByCapaign[r.campaign_id] ?? 0) + Number(r.spend ?? 0)
   }
-  for (const [id, entry] of campMap.entries()) {
+  for (const [id, entry] of Array.from(campMap.entries())) {
     if (entry._source === 'meta_ads' && metaAdSpendByCapaign[id] != null) {
       entry.spend = metaAdSpendByCapaign[id]
     }
