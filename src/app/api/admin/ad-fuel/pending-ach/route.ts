@@ -165,7 +165,9 @@ export async function POST(request: NextRequest) {
                 !clientId   ? 'customer not mapped to client' : null,
         })
 
-        if (pi && piStatus === 'canceled') continue
+        // Skip failed payment intents — payment needs a new method or was canceled.
+        // Allow null payment_intent (ACH credit transfer — no PI, just awaiting bank transfer).
+        if (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) continue
         if (!customerId || !clientId) continue
 
         const inserted = await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
@@ -215,8 +217,8 @@ export async function POST(request: NextRequest) {
         const pi       = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
         const piStatus = pi?.status ?? null
 
-        if (pi && piStatus === 'canceled') {
-          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: 'payment_intent canceled' })
+        if (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) {
+          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `payment_intent ${piStatus}` })
           continue
         }
 
