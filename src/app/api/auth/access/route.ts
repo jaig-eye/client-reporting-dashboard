@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
         return conn?.config?.location_id === ghlToken
       })
       if (match) {
-        dashboardToken = (match.clients as { dashboard_token: string })?.dashboard_token ?? null
+        dashboardToken = (match.clients as unknown as { dashboard_token: string })?.dashboard_token ?? null
       }
     }
   }
