@@ -52,13 +52,14 @@ export async function GET(request: NextRequest) {
     is_ach_pending:  true,       // routes delete to pending-ach endpoint
   }))
 
+  type MergedRow = Record<string, unknown> & { is_ach_pending: boolean }
+
   // Merge and sort descending by payment date (pending rows use invoice_date)
-  const combined = [
-    ...(ledgerRes.data ?? []).map((e: Record<string, unknown>) => ({ ...e, is_ach_pending: false })),
-    ...pendingRows,
-  ].sort((a, b) => {
-    const aDate = (a.date_of_payment ?? a.invoice_date ?? a.created_at) as string
-    const bDate = (b.date_of_payment ?? b.invoice_date ?? b.created_at) as string
+  const confirmed: MergedRow[] = (ledgerRes.data ?? []).map((e: Record<string, unknown>) => ({ ...e, is_ach_pending: false }))
+  const combined: MergedRow[] = [...confirmed, ...pendingRows]
+  combined.sort((a, b) => {
+    const aDate = ((a.date_of_payment ?? a.invoice_date ?? a.created_at) as string) ?? ''
+    const bDate = ((b.date_of_payment ?? b.invoice_date ?? b.created_at) as string) ?? ''
     return bDate.localeCompare(aDate)
   })
 
