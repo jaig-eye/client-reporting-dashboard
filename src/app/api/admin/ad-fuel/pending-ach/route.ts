@@ -126,14 +126,13 @@ export async function GET(request: NextRequest) {
           customer_id: customerId, client_id: clientId ?? 'NOT IN DB',
           pi_status: piStatus,
           skip:
-            !pi                    ? 'no payment_intent' :
             piStatus === 'canceled' ? 'payment_intent canceled' :
             !customerId            ? 'no customer on invoice' :
             !clientId              ? 'customer not mapped to client' :
             null,
         })
 
-        if (!pi || piStatus === 'canceled') continue
+        if (pi && piStatus === 'canceled') continue
         if (!customerId || !clientId) continue
 
         await tryInsert(db, inv, clientId, debugLog, debug, 'open_invoices')
@@ -184,17 +183,18 @@ export async function GET(request: NextRequest) {
         const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
         const piStatus = pi?.status ?? null
 
+        // ACH Credit Transfer invoices have no payment_intent — the customer pushes
+        // money to Stripe's bank account and Stripe marks the invoice paid on arrival.
+        // We detect any open invoice for a known client; the cron resolves it when paid.
+        if (pi && piStatus === 'canceled') {
+          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: 'payment_intent canceled' })
+          continue
+        }
+
         if (debug) debugLog.push({
           path: 'B', subscription_id: sub.id, invoice_id: inv.id, invoice_number: inv.number,
-          customer_id: customerId, client_id: clientId,
-          pi_status: piStatus,
-          skip:
-            !pi                     ? 'no payment_intent after direct retrieve' :
-            piStatus === 'canceled'  ? 'payment_intent canceled' :
-            null,
+          customer_id: customerId, client_id: clientId, pi_status: piStatus,
         })
-
-        if (!pi || piStatus === 'canceled') continue
 
         await tryInsert(db, inv, clientId, debugLog, debug, 'subscription')
       }
