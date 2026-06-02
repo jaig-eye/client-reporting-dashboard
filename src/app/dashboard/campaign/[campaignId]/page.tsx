@@ -305,7 +305,13 @@ export default async function CampaignDetailPage({
         co = resolved.conversions
         cv = resolved.conversionValue
       }
-      upsertSet(setId, r.adset_name ?? setId, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
+      // Use a human-readable fallback when adset_name is missing (common for paused
+      // campaigns). Purely numeric names get filtered out downstream, so we need
+      // something that won't be caught by the /^\d+$/ guard.
+      const adsetDisplayName = (r.adset_name && r.adset_name.trim())
+        ? r.adset_name.trim()
+        : (r.adset_id ? `Ad Set ${String(r.adset_id).slice(-6)}` : 'Unknown Ad Set')
+      upsertSet(setId, adsetDisplayName, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
     }
     // Prior period: campaign-level for compare deltas
     for (const r of (priorCampRows ?? []) as MetaCampRow[]) {
