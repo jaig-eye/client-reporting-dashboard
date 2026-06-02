@@ -94,7 +94,6 @@ export async function GET(request: NextRequest) {
     db.from('clients').select('*').order('name'),
     db.from('ad_fuel_ledger')
       .select('client_id, date_of_payment, amount_af, split_override')
-      .or('ach_status.is.null,ach_status.eq.cleared')
       .then(r => r.error ? { data: [] } : r),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')

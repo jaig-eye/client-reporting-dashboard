@@ -1,11 +1,14 @@
-// GET  /api/admin/ad-fuel/pending-ach
-//   Read-only — returns { pending: { clientId: amount } } from DB only.
+// GET    /api/admin/ad-fuel/pending-ach
+//   Read-only — returns { pending: { clientId: amount } } from ad_fuel_ach_pending.
 //   Safe to call on every page load. No Stripe API calls.
 //
-// POST /api/admin/ad-fuel/pending-ach
+// POST   /api/admin/ad-fuel/pending-ach
 //   Triggers Stripe detection: scans open invoices + subscriptions, inserts
-//   missing pending ledger entries, then returns updated { pending }.
+//   unrecorded pending entries into ad_fuel_ach_pending, returns { pending }.
 //   Add ?debug=1 for full diagnostic breakdown per invoice.
+//
+// DELETE /api/admin/ad-fuel/pending-ach?id=<uuid>
+//   Removes a single pending ACH entry (e.g. manually voided before cron runs).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -14,40 +17,42 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getStripeClient, isAdFuelLine } from '@/lib/stripe'
 import type Stripe from 'stripe'
 
+type DB = ReturnType<typeof createAdminClient>
+
 function requireAdmin(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   return isAdminAuthed(cookieStore.get('admin_session')?.value)
 }
 
-async function getPendingAmounts(db: ReturnType<typeof createAdminClient>): Promise<Record<string, number>> {
-  const { data: pendingRows } = await db
-    .from('ad_fuel_ledger')
+async function getPendingAmounts(db: DB): Promise<Record<string, number>> {
+  const { data } = await db
+    .from('ad_fuel_ach_pending')
     .select('client_id, amount_af')
-    .eq('ach_status', 'pending')
 
   const pending: Record<string, number> = {}
-  for (const row of (pendingRows ?? []) as { client_id: string; amount_af: number }[]) {
+  for (const row of (data ?? []) as { client_id: string; amount_af: number }[]) {
     pending[row.client_id] = (pending[row.client_id] ?? 0) + Number(row.amount_af)
   }
   return pending
 }
 
 async function tryInsert(
-  db: ReturnType<typeof createAdminClient>,
+  db: DB,
   inv: Stripe.Invoice,
   clientId: string,
   debugLog: unknown[],
   debug: boolean,
   source: string,
 ): Promise<boolean> {
+  // Dedup against ad_fuel_ach_pending
   const { data: existing } = await db
-    .from('ad_fuel_ledger')
+    .from('ad_fuel_ach_pending')
     .select('id')
     .eq('invoice_id', inv.id)
     .eq('client_id', clientId)
     .maybeSingle()
 
   if (existing) {
-    if (debug) debugLog.push({ source, invoice_id: inv.id, skip: 'already in ledger' })
+    if (debug) debugLog.push({ source, invoice_id: inv.id, skip: 'already in pending table' })
     return false
   }
 
@@ -70,30 +75,26 @@ async function tryInsert(
 
   const invoiceDate = new Date(inv.created * 1000).toISOString().slice(0, 10)
 
-  const { error: insertError } = await db.from('ad_fuel_ledger').insert({
-    client_id:       clientId,
-    date_of_payment: invoiceDate,  // placeholder; overwritten with real bank date when ACH clears
-    invoice_date:    invoiceDate,
-    amount_af:       totalAf,
-    invoice_id:      inv.id,
-    ach_status:      'pending',
-    type:            'ACH',
-    created_by:      'auto-ach',
-    note:            `ACH pending — ${inv.number ?? inv.id}`,
+  const { error } = await db.from('ad_fuel_ach_pending').insert({
+    client_id:    clientId,
+    invoice_id:   inv.id,
+    invoice_date: invoiceDate,
+    amount_af:    totalAf,
+    note:         `ACH pending — ${inv.number ?? inv.id}`,
   })
 
-  if (insertError) {
-    console.error(`[pending-ach] insert failed for invoice ${inv.id}:`, insertError.message)
-    if (debug) debugLog.push({ source, invoice_id: inv.id, insert_error: insertError.message })
+  if (error) {
+    console.error(`[pending-ach] insert failed for invoice ${inv.id}:`, error.message)
+    if (debug) debugLog.push({ source, invoice_id: inv.id, insert_error: error.message })
     return false
   }
 
-  console.log(`[pending-ach] inserted pending entry (${source}) invoice=${inv.id} client=${clientId} amount=${totalAf}`)
+  console.log(`[pending-ach] inserted (${source}) invoice=${inv.id} client=${clientId} amount=${totalAf}`)
   if (debug) debugLog.push({ source, invoice_id: inv.id, inserted: true, amount_af: totalAf, lines: lineDetails })
   return true
 }
 
-// ── GET — read-only, no Stripe calls ────────────────────────────────────────
+// ── GET — read-only ──────────────────────────────────────────────────────────
 
 export async function GET(_request: NextRequest) {
   const cookieStore = await cookies()
@@ -101,11 +102,10 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const db = createAdminClient()
-  const pending = await getPendingAmounts(db)
-  return NextResponse.json({ pending })
+  return NextResponse.json({ pending: await getPendingAmounts(db) })
 }
 
-// ── POST — Stripe detection, inserts missing pending entries ─────────────────
+// ── POST — Stripe detection ──────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
@@ -134,8 +134,6 @@ export async function POST(request: NextRequest) {
       if (debug) debugLog.push({ known_stripe_customers: Object.keys(customerToClient) })
 
       const insertedInvoiceIds = new Set<string>()
-      // Only detect invoices created within the last 3 days. Old open invoices
-      // are either stale/uncollected or were already manually entered in the ledger.
       const threeDaysAgoUnix = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000)
 
       // ── Path A: open invoices list ─────────────────────────────────────────
@@ -164,13 +162,11 @@ export async function POST(request: NextRequest) {
         if (debug) debugLog.push({
           path: 'A', invoice_id: inv.id, invoice_number: inv.number,
           customer_id: customerId, client_id: clientId ?? 'NOT IN DB', pi_status: piStatus,
-          skip: piStatus === 'canceled' ? 'payment_intent canceled' :
+          skip: (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) ? `payment_intent ${piStatus}` :
                 !customerId ? 'no customer on invoice' :
                 !clientId   ? 'customer not mapped to client' : null,
         })
 
-        // Skip failed payment intents — payment needs a new method or was canceled.
-        // Allow null payment_intent (ACH credit transfer — no PI, just awaiting bank transfer).
         if (pi && (piStatus === 'canceled' || piStatus === 'requires_payment_method')) continue
         if (!customerId || !clientId) continue
 
@@ -179,8 +175,6 @@ export async function POST(request: NextRequest) {
       }
 
       // ── Path B: subscriptions → latest_invoice (retrieved directly) ───────
-      // Nested expand in subscriptions.list() does not reliably populate
-      // payment_intent, so we retrieve each open invoice directly.
       const subs = await stripe.subscriptions.list({
         status: 'all',
         limit:  100,
@@ -193,33 +187,22 @@ export async function POST(request: NextRequest) {
         const latestInv = sub.latest_invoice && typeof sub.latest_invoice === 'object'
           ? sub.latest_invoice as Stripe.Invoice
           : null
-        if (!latestInv || latestInv.status !== 'open') {
-          if (debug && latestInv) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, skip: `invoice status=${latestInv.status}` })
-          continue
-        }
+        if (!latestInv || latestInv.status !== 'open') continue
 
         const customerId = typeof sub.customer === 'string'
           ? sub.customer
           : (sub.customer as Stripe.Customer | null)?.id
         const clientId = customerId ? customerToClient[customerId] : undefined
+        if (!customerId || !clientId) continue
 
-        if (!customerId || !clientId) {
-          if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, customer_id: customerId, skip: !customerId ? 'no customer' : 'customer not mapped to client' })
-          continue
-        }
-
-        if (insertedInvoiceIds.has(latestInv.id)) {
-          if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, skip: 'already handled by path A' })
-          continue
-        }
+        if (insertedInvoiceIds.has(latestInv.id)) continue
 
         const inv = await stripe.invoices.retrieve(latestInv.id, {
           expand: ['payment_intent', 'lines.data.pricing.price_details.price.product'],
         })
 
-        // Skip if the invoice itself is older than 3 days
         if (inv.created < threeDaysAgoUnix) {
-          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `invoice too old (${new Date(inv.created * 1000).toISOString().slice(0, 10)})` })
+          if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: `too old (${new Date(inv.created * 1000).toISOString().slice(0, 10)})` })
           continue
         }
 
@@ -233,7 +216,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (debug) debugLog.push({
-          path: 'B', subscription_id: sub.id, invoice_id: inv.id, invoice_number: inv.number,
+          path: 'B', subscription_id: sub.id, invoice_id: inv.id,
           customer_id: customerId, client_id: clientId, pi_status: piStatus,
         })
 
@@ -241,12 +224,28 @@ export async function POST(request: NextRequest) {
         if (inserted) insertedInvoiceIds.add(inv.id)
       }
     }
-  } catch (stripeErr) {
-    console.error('[pending-ach] Stripe detection failed:', stripeErr)
-    if (debug) debugLog.push({ error: String(stripeErr) })
+  } catch (err) {
+    console.error('[pending-ach] Stripe detection failed:', err)
+    if (debug) debugLog.push({ error: String(err) })
   }
 
   const pending = await getPendingAmounts(db)
   if (debug) return NextResponse.json({ pending, debug: debugLog })
   return NextResponse.json({ pending })
+}
+
+// ── DELETE — remove a single pending entry ───────────────────────────────────
+
+export async function DELETE(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!requireAdmin(cookieStore))
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const id = new URL(request.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+
+  const db = createAdminClient()
+  const { error } = await db.from('ad_fuel_ach_pending').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ deleted: true })
 }

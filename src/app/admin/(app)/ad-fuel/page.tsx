@@ -42,7 +42,7 @@ interface DashRow {
 interface LedgerEntry {
   id:              string
   client_id:       string
-  date_of_payment: string
+  date_of_payment: string | null
   invoice_date:    string | null
   amount_af:       number
   split_override:  number | null
@@ -52,6 +52,7 @@ interface LedgerEntry {
   created_by:      string | null
   created_at:      string
   ach_status:      string | null
+  is_ach_pending?: boolean   // true = from ad_fuel_ach_pending, routes delete differently
 }
 
 interface ColConfig {
@@ -560,9 +561,13 @@ export default function AdFuelPage() {
   }
 
   // ── Delete ledger entry ─────────────────────────────────────────────────────
-  async function deleteEntry(id: string) {
-    if (!confirm('Delete this ledger entry?')) return
-    await fetch(`/api/admin/ad-fuel/ledger/${id}`, { method: 'DELETE' })
+  async function deleteEntry(id: string, isAchPending?: boolean) {
+    if (!confirm(`Delete this ${isAchPending ? 'pending ACH' : 'ledger'} entry?`)) return
+    if (isAchPending) {
+      await fetch(`/api/admin/ad-fuel/pending-ach?id=${id}`, { method: 'DELETE' })
+    } else {
+      await fetch(`/api/admin/ad-fuel/ledger/${id}`, { method: 'DELETE' })
+    }
     setSelectedIds(s => { const n = new Set(s); n.delete(id); return n })
     fetchLedger()
     fetchDashboard()
@@ -959,12 +964,15 @@ export default function AdFuelPage() {
                     const client  = rows.find(r => r.clientId === e.client_id)
                     const checked = selectedIds.has(e.id)
                     return (
-                      <tr key={e.id} style={{ background: checked ? 'var(--bg-subtle)' : undefined }}>
+                      <tr key={e.id} style={{ background: e.is_ach_pending ? 'var(--bg-subtle)' : checked ? 'var(--bg-subtle)' : undefined }}>
                         <td style={{ textAlign: 'center' }}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
+                          {e.is_ach_pending
+                            ? <span title="Pending ACH — managed by cron" style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                            : <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
+                          }
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {e.ach_status === 'pending'
+                          {e.is_ach_pending
                             ? <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Pending</span>
                             : (e.date_of_payment ?? '—')
                           }
@@ -999,9 +1007,9 @@ export default function AdFuelPage() {
                         <td style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{e.created_by ?? '—'}</td>
                         <td>
                           <button
-                            onClick={() => deleteEntry(e.id)}
+                            onClick={() => deleteEntry(e.id, e.is_ach_pending)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.875rem', padding: '0.15rem 0.4rem' }}
-                            title="Delete entry"
+                            title={e.is_ach_pending ? 'Remove pending ACH entry' : 'Delete entry'}
                           >✕</button>
                         </td>
                       </tr>

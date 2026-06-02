@@ -1,7 +1,6 @@
-﻿// GET    /api/admin/ad-fuel/ledger?client_id=...  — list entries
-// POST   /api/admin/ad-fuel/ledger                — add entry
-// DELETE /api/admin/ad-fuel/ledger  body: { ids: string[] } — bulk delete
-// Single-entry delete is handled by [id]/route.ts
+// GET    /api/admin/ad-fuel/ledger?client_id=...  — confirmed ledger + pending ACH merged
+// POST   /api/admin/ad-fuel/ledger                — add confirmed entry
+// DELETE /api/admin/ad-fuel/ledger  body: { ids: string[] } — bulk delete confirmed entries
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -18,16 +17,52 @@ export async function GET(request: NextRequest) {
   const clientId = new URL(request.url).searchParams.get('client_id')
   const db = createAdminClient()
 
-  let query = db
+  // Fetch confirmed ledger entries and pending ACH entries in parallel
+  let ledgerQuery = db
     .from('ad_fuel_ledger')
     .select('id, client_id, date_of_payment, invoice_date, amount_af, split_override, invoice_id, type, note, created_by, created_at, ach_status')
-    .order('date_of_payment', { ascending: false })
+  let pendingQuery = db
+    .from('ad_fuel_ach_pending')
+    .select('id, client_id, invoice_id, invoice_date, amount_af, note, created_at')
 
-  if (clientId) query = query.eq('client_id', clientId)
+  if (clientId) {
+    ledgerQuery  = ledgerQuery.eq('client_id', clientId)
+    pendingQuery = pendingQuery.eq('client_id', clientId)
+  }
 
-  const { data, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  const [ledgerRes, pendingRes] = await Promise.all([ledgerQuery, pendingQuery])
+
+  if (ledgerRes.error) return NextResponse.json({ error: ledgerRes.error.message }, { status: 500 })
+
+  // Shape pending rows to match the LedgerEntry interface, tagged with is_ach_pending
+  type PendingRow = { id: string; client_id: string; invoice_id: string; invoice_date: string; amount_af: number; note: string | null; created_at: string }
+  const pendingRows = ((pendingRes.data ?? []) as PendingRow[]).map(p => ({
+    id:              p.id,
+    client_id:       p.client_id,
+    date_of_payment: p.invoice_date,  // use invoice date as display placeholder
+    invoice_date:    p.invoice_date,
+    amount_af:       p.amount_af,
+    split_override:  null,
+    invoice_id:      p.invoice_id,
+    type:            'ACH',
+    note:            p.note,
+    created_by:      'auto-ach',
+    created_at:      p.created_at,
+    ach_status:      'pending',  // virtual — for badge display in UI
+    is_ach_pending:  true,       // routes delete to pending-ach endpoint
+  }))
+
+  // Merge and sort descending by payment date (pending rows use invoice_date)
+  const combined = [
+    ...(ledgerRes.data ?? []).map((e: Record<string, unknown>) => ({ ...e, is_ach_pending: false })),
+    ...pendingRows,
+  ].sort((a, b) => {
+    const aDate = (a.date_of_payment ?? a.invoice_date ?? a.created_at) as string
+    const bDate = (b.date_of_payment ?? b.invoice_date ?? b.created_at) as string
+    return bDate.localeCompare(aDate)
+  })
+
+  return NextResponse.json(combined)
 }
 
 export async function DELETE(request: NextRequest) {
@@ -42,22 +77,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   const db = createAdminClient()
-
-  // Block deletion of auto-detected pending ACH entries — these are managed by
-  // the Stripe cron and should not be manually deleted to prevent balance drift.
-  const { data: autoAch } = await db
-    .from('ad_fuel_ledger')
-    .select('id')
-    .in('id', ids)
-    .eq('created_by', 'auto-ach')
-    .eq('ach_status', 'pending')
-  if (autoAch?.length) {
-    return NextResponse.json(
-      { error: `Cannot delete ${autoAch.length} auto-detected pending ACH entr${autoAch.length === 1 ? 'y' : 'ies'} — wait for the payment to clear or fail in Stripe` },
-      { status: 400 }
-    )
-  }
-
   const { error } = await db.from('ad_fuel_ledger').delete().in('id', ids)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const adminSession = await getAdminSession()
