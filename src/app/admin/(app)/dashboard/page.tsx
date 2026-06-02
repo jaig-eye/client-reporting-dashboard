@@ -98,6 +98,7 @@ export default async function AdminOverviewPage({
     metaMetricsRes,
     settingsRes,
     campaignAssignmentsRes,
+    metaSpendRpcRes,
   ] = await Promise.all([
     db.from('clients')
       .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut, historic_bill_day')
@@ -118,7 +119,9 @@ export default async function AdminOverviewPage({
       .gte('date', dateFrom)
       .lte('date', dateTo),
 
-    db.from('meta_ads_ad_metrics')
+    // meta_ads_metrics (campaign-level) for impressions/clicks/conversions — manageable row
+    // count vs ad-level which can exceed PostgREST's row cap across all clients.
+    db.from('meta_ads_metrics')
       .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
       .gte('date', dateFrom)
       .lte('date', dateTo),
@@ -129,19 +132,32 @@ export default async function AdminOverviewPage({
 
     db.from('client_campaign_assignments')
       .select('client_id, campaign_id, display_mode'),
+
+    // RPC for exact Meta spend per client — aggregates meta_ads_ad_metrics at DB level,
+    // no row cap. Used to override the spend field from the campaign-level table above.
+    db.rpc('sum_meta_spend_by_client', { from_date: dateFrom, to_date: dateTo }),
   ])
 
+  // Override Meta spend in metaByClient with RPC totals (exact, from ad-level table)
+  type MetaSpendRow = { client_id: string; spend: number }
+  for (const r of ((metaSpendRpcRes.data ?? []) as MetaSpendRow[])) {
+    const entry = metaByClient.get(r.client_id)
+    if (entry) entry.spend = Number(r.spend ?? 0)
+    else metaByClient.set(r.client_id, { spend: Number(r.spend ?? 0), clicks: 0, conv: 0, value: 0, impressions: 0 })
+  }
+
   // Prior period queries — only fetched when comparison is active
-  const [priorGoogleRes, priorMetaRes] = compare !== 'none' && priorFromStr
+  const [priorGoogleRes, priorMetaRes, priorMetaSpendRpcRes] = compare !== 'none' && priorFromStr
     ? await Promise.all([
         db.from('google_ads_metrics')
           .select('client_id, spend, clicks, impressions, conversions, conversions_value')
           .gte('date', priorFromStr).lte('date', priorToStr),
-        db.from('meta_ads_ad_metrics')
+        db.from('meta_ads_metrics')
           .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
           .gte('date', priorFromStr).lte('date', priorToStr),
+        db.rpc('sum_meta_spend_by_client', { from_date: priorFromStr, to_date: priorToStr }),
       ])
-    : [{ data: null }, { data: null }]
+    : [{ data: null }, { data: null }, { data: null }]
 
   interface ConnRow {
     client_id: string
@@ -372,6 +388,13 @@ export default async function AdminOverviewPage({
       m.conv  += resolved.conversions
       m.value += resolved.conversionValue
     }
+  }
+
+  // Override prior-period Meta spend with RPC totals
+  for (const r of ((priorMetaSpendRpcRes?.data ?? []) as MetaSpendRow[])) {
+    const entry = priorMetaByClient.get(r.client_id)
+    if (entry) entry.spend = Number(r.spend ?? 0)
+    else priorMetaByClient.set(r.client_id, { spend: Number(r.spend ?? 0), clicks: 0, conv: 0, value: 0, impressions: 0 })
   }
 
   // Summary totals
