@@ -118,7 +118,7 @@ export default async function AdminOverviewPage({
       .gte('date', dateFrom)
       .lte('date', dateTo),
 
-    db.from('meta_ads_metrics')
+    db.from('meta_ads_ad_metrics')
       .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
       .gte('date', dateFrom)
       .lte('date', dateTo),
@@ -137,7 +137,7 @@ export default async function AdminOverviewPage({
         db.from('google_ads_metrics')
           .select('client_id, spend, clicks, impressions, conversions, conversions_value')
           .gte('date', priorFromStr).lte('date', priorToStr),
-        db.from('meta_ads_metrics')
+        db.from('meta_ads_ad_metrics')
           .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
           .gte('date', priorFromStr).lte('date', priorToStr),
       ])

@@ -15,14 +15,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { clientId?: string; connectionId?: string; jobType?: string; days?: number; excludeGsc?: boolean }
+  let body: { clientId?: string; connectionId?: string; jobType?: string; days?: number; excludeGsc?: boolean; adsOnly?: boolean }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const { clientId, connectionId, jobType, days, excludeGsc } = body
+  const { clientId, connectionId, jobType, days, excludeGsc, adsOnly } = body
   if (!clientId) {
     return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
   }
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       undefined,
       'admin',
       excludeGsc,
+      adsOnly ? ['google_ads', 'meta_ads'] : undefined,
     )
     return NextResponse.json({ ok: true, records })
   } catch (err) {

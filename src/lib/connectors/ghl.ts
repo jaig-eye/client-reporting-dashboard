@@ -362,8 +362,9 @@ async function fetchConversations(
       ex.totalCalls++
       if (isInbound) ex.incomingCalls++
       else           ex.outgoingCalls++
+      // Check missed on any direction — outbound calls can also be missed/unanswered
       const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
-      if (isInbound && (lastMsgType === 'TYPE_MISSED_CALL' || lastMsgType.includes('MISSED'))) ex.missedCalls++
+      if (lastMsgType === 'TYPE_MISSED_CALL' || lastMsgType.includes('MISSED')) ex.missedCalls++
     } else if (EMAIL_TYPES.has(typ)) {
       ex.emailsSent++
     } else if (SMS_TYPES.has(typ)) {

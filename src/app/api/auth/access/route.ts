@@ -8,9 +8,9 @@ import { createAdminClient } from '@/lib/supabase/server'
 //   ?token=<dashboard_token>       — existing UUID token link
 //   ?ghl_token=<ghl_location_id>   — GoHighLevel location ID (resolved via client_connections)
 export async function GET(request: NextRequest) {
-  const appUrl    = process.env.NEXT_PUBLIC_APP_URL!
-  const tokenParam  = request.nextUrl.searchParams.get('token')
-  const ghlToken    = request.nextUrl.searchParams.get('ghl_token')
+  const appUrl     = process.env.NEXT_PUBLIC_APP_URL!
+  const tokenParam = request.nextUrl.searchParams.get('token')
+  const ghlToken   = request.nextUrl.searchParams.get('ghl_token')
 
   if (!tokenParam && !ghlToken) {
     return NextResponse.redirect(`${appUrl}/access`)
@@ -27,20 +27,37 @@ export async function GET(request: NextRequest) {
       .eq('dashboard_token', tokenParam)
       .single()
     dashboardToken = data?.dashboard_token ?? null
+
   } else if (ghlToken) {
-    // Resolve GHL location ID → client → dashboard_token
-    // client_connections.external_id is the GHL location ID for ghl-type connectors
+    // Path A: look up by external_id (set on client_connections during sync)
+    // Avoids filtering on a joined table which can silently return null in PostgREST.
     const { data } = await db
       .from('client_connections')
-      .select('client_id, clients!inner(dashboard_token), connectors!inner(type)')
+      .select('client_id, clients!inner(dashboard_token)')
       .eq('external_id', ghlToken)
-      .eq('connectors.type', 'ghl')
       .eq('status', 'active')
       .limit(1)
       .maybeSingle()
 
-    const clientRow = data?.clients as { dashboard_token: string } | null | undefined
-    dashboardToken = clientRow?.dashboard_token ?? null
+    dashboardToken = (data?.clients as { dashboard_token: string } | null)?.dashboard_token ?? null
+
+    // Path B: fallback for connections not yet synced — external_id may not be set yet.
+    // Scan active GHL connections and match by config.location_id.
+    if (!dashboardToken) {
+      const { data: allGhl } = await db
+        .from('client_connections')
+        .select('clients!inner(dashboard_token), connectors!inner(config)')
+        .eq('status', 'active')
+        .limit(200)
+
+      const match = (allGhl ?? []).find((row: Record<string, unknown>) => {
+        const conn = row.connectors as { config?: { location_id?: string } } | null
+        return conn?.config?.location_id === ghlToken
+      })
+      if (match) {
+        dashboardToken = (match.clients as { dashboard_token: string })?.dashboard_token ?? null
+      }
+    }
   }
 
   if (!dashboardToken) {

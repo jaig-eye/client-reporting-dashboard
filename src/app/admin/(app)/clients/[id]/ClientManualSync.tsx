@@ -3,14 +3,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
-type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string }
+type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string; adsOnly?: boolean }
 
 const SYNC_JOBS: SyncJob[] = [
-  { jobType: 'manual',  days: 3,   label: 'Sync 3 days'          },
-  { jobType: 'manual',  days: 7,   label: 'Sync 7 days'          },
-  { jobType: 'manual',  days: 30,  label: 'Sync 30 days'         },
-  { jobType: 'manual',  days: 90,  label: 'Sync 90 days'         },
-  { jobType: 'backfill',           label: 'Full backfill (2 yrs)' },
+  { jobType: 'manual',   days: 3,   label: 'Sync 3 days'                },
+  { jobType: 'manual',   days: 7,   label: 'Sync 7 days'                },
+  { jobType: 'manual',   days: 30,  label: 'Sync 30 days'               },
+  { jobType: 'manual',   days: 90,  label: 'Sync 90 days'               },
+  { jobType: 'backfill',            label: 'Full backfill (2 yrs)'       },
+  { jobType: 'backfill', adsOnly: true, label: 'Ads backfill (2 yrs — Google + Meta only)' },
 ]
 
 type JobStatus = {
@@ -33,6 +34,7 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
   const [activeLabel, setActiveLabel] = useState('')
   const [elapsed,     setElapsed]     = useState(0)
   const [excludeGsc,  setExcludeGsc]  = useState(false)
+  const [adsOnly,     setAdsOnly]     = useState(false)
   const [jobStatuses, setJobStatuses] = useState<JobStatus[]>([])
   const sinceRef  = useRef<string | null>(null)
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -72,7 +74,7 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
     setRecords(null)
     setJobStatuses([])
     try {
-      const body: Record<string, unknown> = { clientId, jobType: job.jobType, excludeGsc }
+      const body: Record<string, unknown> = { clientId, jobType: job.jobType, excludeGsc, adsOnly: job.adsOnly ?? adsOnly }
       if (job.days) body.days = job.days
       const res = await fetch('/api/admin/sync', {
         method: 'POST',
@@ -133,17 +135,29 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
         ))}
       </div>
 
-      {/* Skip GSC option */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-        <input
-          type="checkbox"
-          checked={excludeGsc}
-          onChange={e => setExcludeGsc(e.target.checked)}
-          disabled={isSyncing}
-          style={{ width: 14, height: 14 }}
-        />
-        Skip Search Console (faster sync)
-      </label>
+      {/* Options */}
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <input
+            type="checkbox"
+            checked={excludeGsc}
+            onChange={e => setExcludeGsc(e.target.checked)}
+            disabled={isSyncing}
+            style={{ width: 14, height: 14 }}
+          />
+          Skip Search Console (faster sync)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <input
+            type="checkbox"
+            checked={adsOnly}
+            onChange={e => setAdsOnly(e.target.checked)}
+            disabled={isSyncing}
+            style={{ width: 14, height: 14 }}
+          />
+          Ads only (Google + Meta, skip GHL/GA4/GSC)
+        </label>
+      </div>
 
       {/* Progress bar + per-source status */}
       {isSyncing && (
