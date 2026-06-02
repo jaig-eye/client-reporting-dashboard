@@ -151,9 +151,9 @@ export default async function DashboardPage({
           .eq('client_id', client.id).eq('source', 'meta_ads')
       : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
 
-    // Ad-level spend for Meta — source of truth for spend; includes date for per-day override
+    // Ad-level metrics for Meta — source of truth; campaign-level table can lag or diverge
     hasMeta
-      ? db.from('meta_ads_ad_metrics').select('campaign_id, date, spend')
+      ? db.from('meta_ads_ad_metrics').select('campaign_id, date, spend, impressions, clicks')
           .eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -305,13 +305,21 @@ export default async function DashboardPage({
   // Build ad-level spend maps for Meta — used to override campaign-level spend which can
   // lag or report differently. CBO campaigns (budget at campaign level) are correctly
   // handled because Meta's API always reports actual spend broken down to the ad level.
-  type AdSpendRow = { campaign_id: string; date: string; spend: number }
-  const metaAdSpendByCampaignDate: Record<string, number> = {}
-  const metaAdSpendByCampaign:     Record<string, number> = {}
-  for (const r of ((mAdSpendRes.data ?? []) as AdSpendRow[])) {
+  type AdMetricRow = { campaign_id: string; date: string; spend: number; impressions: number; clicks: number }
+  const metaAdSpendByCampaignDate:       Record<string, number> = {}
+  const metaAdImprByCampaignDate:        Record<string, number> = {}
+  const metaAdClicksByCampaignDate:      Record<string, number> = {}
+  const metaAdSpendByCampaign:           Record<string, number> = {}
+  const metaAdImprByCampaign:            Record<string, number> = {}
+  const metaAdClicksByCampaign:          Record<string, number> = {}
+  for (const r of ((mAdSpendRes.data ?? []) as AdMetricRow[])) {
     const key = `${r.campaign_id}_${r.date}`
-    metaAdSpendByCampaignDate[key] = (metaAdSpendByCampaignDate[key] ?? 0) + Number(r.spend ?? 0)
-    metaAdSpendByCampaign[r.campaign_id] = (metaAdSpendByCampaign[r.campaign_id] ?? 0) + Number(r.spend ?? 0)
+    metaAdSpendByCampaignDate[key]  = (metaAdSpendByCampaignDate[key]  ?? 0) + Number(r.spend       ?? 0)
+    metaAdImprByCampaignDate[key]   = (metaAdImprByCampaignDate[key]   ?? 0) + Number(r.impressions ?? 0)
+    metaAdClicksByCampaignDate[key] = (metaAdClicksByCampaignDate[key] ?? 0) + Number(r.clicks      ?? 0)
+    metaAdSpendByCampaign[r.campaign_id]  = (metaAdSpendByCampaign[r.campaign_id]  ?? 0) + Number(r.spend       ?? 0)
+    metaAdImprByCampaign[r.campaign_id]   = (metaAdImprByCampaign[r.campaign_id]   ?? 0) + Number(r.impressions ?? 0)
+    metaAdClicksByCampaign[r.campaign_id] = (metaAdClicksByCampaign[r.campaign_id] ?? 0) + Number(r.clicks      ?? 0)
   }
 
   const currentMetrics = [
@@ -319,14 +327,14 @@ export default async function DashboardPage({
     ...normalise((mRes.data  ?? []) as Record<string, unknown>[], 'meta_ads'),
   ]
 
-  // Override Meta spend in currentMetrics before summarizeMetrics so top cards,
-  // platform card, and daily chart all use ad-level spend as source of truth.
+  // Override Meta spend, impressions, clicks in currentMetrics before summarizeMetrics
+  // so top cards, platform card, and daily chart all use ad-level data as source of truth.
   for (const row of currentMetrics) {
     if (row._source === 'meta_ads') {
       const key = `${row.campaign_id}_${row.date}`
-      if (metaAdSpendByCampaignDate[key] != null) {
-        row.spend = metaAdSpendByCampaignDate[key]
-      }
+      if (metaAdSpendByCampaignDate[key]  != null) row.spend       = metaAdSpendByCampaignDate[key]
+      if (metaAdImprByCampaignDate[key]   != null) row.impressions = metaAdImprByCampaignDate[key]
+      if (metaAdClicksByCampaignDate[key] != null) row.clicks      = metaAdClicksByCampaignDate[key]
     }
   }
 
@@ -429,11 +437,13 @@ export default async function DashboardPage({
     }
   }
 
-  // campMap is built from currentMetrics which is already overridden above,
-  // but override again here as a safety net for any rounding/accumulation drift.
+  // Safety-net override on campMap — currentMetrics is already corrected above,
+  // but this ensures the campaign breakdown table matches exactly.
   for (const [id, entry] of Array.from(campMap.entries())) {
-    if (entry._source === 'meta_ads' && metaAdSpendByCampaign[id] != null) {
-      entry.spend = metaAdSpendByCampaign[id]
+    if (entry._source === 'meta_ads') {
+      if (metaAdSpendByCampaign[id]  != null) entry.spend       = metaAdSpendByCampaign[id]
+      if (metaAdImprByCampaign[id]   != null) entry.impressions = metaAdImprByCampaign[id]
+      if (metaAdClicksByCampaign[id] != null) entry.clicks      = metaAdClicksByCampaign[id]
     }
   }
 
