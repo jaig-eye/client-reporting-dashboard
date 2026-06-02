@@ -36,7 +36,9 @@ export async function GET(request: NextRequest) {
     db.from('clients')
       .select('id, name, ad_fuel_cut, historic_bill_day, discord_channel_id, auto_pause_ads, auto_resume_ads, campaigns_paused_at')
       .eq('auto_pause_ads', true),
-    db.from('ad_fuel_ledger').select('client_id, amount_af, split_override, date_of_payment'),
+    db.from('ad_fuel_ledger')
+      .select('client_id, amount_af, split_override, date_of_payment')
+      .or('ach_status.is.null,ach_status.eq.cleared'),
     db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }),
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
   ])
