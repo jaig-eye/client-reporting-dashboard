@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
       .limit(1)
       .maybeSingle()
 
-    dashboardToken = (data?.clients as { dashboard_token: string } | null)?.dashboard_token ?? null
+    dashboardToken = (data?.clients as unknown as { dashboard_token: string } | null)?.dashboard_token ?? null
 
     // Path B: fallback for connections not yet synced — external_id may not be set yet.
     // Scan active GHL connections and match by config.location_id.
