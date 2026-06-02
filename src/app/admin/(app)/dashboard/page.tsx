@@ -138,14 +138,6 @@ export default async function AdminOverviewPage({
     db.rpc('sum_meta_spend_by_client', { from_date: dateFrom, to_date: dateTo }),
   ])
 
-  // Override Meta spend in metaByClient with RPC totals (exact, from ad-level table)
-  type MetaSpendRow = { client_id: string; spend: number }
-  for (const r of ((metaSpendRpcRes.data ?? []) as MetaSpendRow[])) {
-    const entry = metaByClient.get(r.client_id)
-    if (entry) entry.spend = Number(r.spend ?? 0)
-    else metaByClient.set(r.client_id, { spend: Number(r.spend ?? 0), clicks: 0, conv: 0, value: 0, impressions: 0 })
-  }
-
   // Prior period queries — only fetched when comparison is active
   const [priorGoogleRes, priorMetaRes, priorMetaSpendRpcRes] = compare !== 'none' && priorFromStr
     ? await Promise.all([
@@ -349,6 +341,14 @@ export default async function AdminOverviewPage({
       m.conv  += resolved.conversions
       m.value += resolved.conversionValue
     }
+  }
+
+  // Override Meta spend with RPC totals (exact, from ad-level table via RPC)
+  type MetaSpendRow = { client_id: string; spend: number }
+  for (const r of ((metaSpendRpcRes.data ?? []) as MetaSpendRow[])) {
+    const entry = metaByClient.get(r.client_id)
+    if (entry) entry.spend = Number(r.spend ?? 0)
+    else metaByClient.set(r.client_id, { spend: Number(r.spend ?? 0), clicks: 0, conv: 0, value: 0, impressions: 0 })
   }
 
   // Aggregate prior-period Google Ads metrics per client
