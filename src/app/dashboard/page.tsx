@@ -116,7 +116,7 @@ export default async function DashboardPage({
   }
 
   // ─── Data fetching ────────────────────────────────────────────────────────
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes] = await Promise.all([
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -150,6 +150,13 @@ export default async function DashboardPage({
       ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
           .eq('client_id', client.id).eq('source', 'meta_ads')
       : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
+
+    // Ad-level spend for Meta — used to override campaign-level spend which can lag or diverge
+    hasMeta
+      ? db.from('meta_ads_ad_metrics').select('campaign_id, spend')
+          .eq('client_id', client.id)
+          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
   const assignmentsData = [
@@ -395,6 +402,18 @@ export default async function DashboardPage({
         display_mode: mode, _source: row._source, status: row.campaign_status,
         daily_budget: row.daily_budget ?? null,
       })
+    }
+  }
+
+  // Override Meta campaign spend with ad-level aggregated totals — ad-level data
+  // is the source of truth; campaign-level (meta_ads_metrics) can lag or diverge.
+  const metaAdSpendByCapaign: Record<string, number> = {}
+  for (const r of ((mAdSpendRes.data ?? []) as { campaign_id: string; spend: number }[])) {
+    metaAdSpendByCapaign[r.campaign_id] = (metaAdSpendByCapaign[r.campaign_id] ?? 0) + Number(r.spend ?? 0)
+  }
+  for (const [id, entry] of campMap.entries()) {
+    if (entry._source === 'meta_ads' && metaAdSpendByCapaign[id] != null) {
+      entry.spend = metaAdSpendByCapaign[id]
     }
   }
 

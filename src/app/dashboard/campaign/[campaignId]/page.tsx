@@ -418,10 +418,16 @@ export default async function CampaignDetailPage({
     .filter((g: AdGroupRow) => !/^\d+$/.test(g.setName))
     .sort((a, b) => b.spend - a.spend)
 
-  // Campaign-level totals: for Meta use dailyMap (campaign-level source) to match the
-  // dashboard campaign list; for Google adGroups are already from campaign-level ad_metrics.
+  // KPI totals: prefer ad-level data (adGroups) as the source of truth — it matches
+  // the ad set breakdown table. Fall back to dailyMap only when no ad-level data exists.
   let totSpend = 0, totImpressions = 0, totClicks = 0, totConversions = 0, totConversionValue = 0
-  if (!isGoogleAds && dailyMap.size > 0) {
+  if (adGroups.length > 0) {
+    totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
+    totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
+    totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
+    totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
+    totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
+  } else if (dailyMap.size > 0) {
     for (const v of Array.from(dailyMap.values())) {
       totSpend           += effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend
       totImpressions     += v.impressions
@@ -429,12 +435,6 @@ export default async function CampaignDetailPage({
       totConversions     += v.conversions
       totConversionValue += v.conversionValue
     }
-  } else {
-    totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
-    totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
-    totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
-    totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
-    totConversionValue = adGroups.reduce((t, s) => t + s.conversionValue, 0)
   }
 
   // KPI derived values (totSpend is already after markup)
