@@ -299,12 +299,15 @@ export default function AdFuelPage() {
     setSyncingStripe(true)
     setStripeMsg('')
     try {
-      const r = await fetch('/api/admin/ad-fuel/pending-ach')
+      const r = await fetch('/api/admin/ad-fuel/pending-ach', { method: 'POST' })
       if (!r.ok) { setStripeMsg('Stripe sync failed — check API key.'); return }
       const data = await r.json()
       setPendingAch(data?.pending ?? {})
       const count = Object.keys(data?.pending ?? {}).length
-      setStripeMsg(count > 0 ? `Found ${count} client(s) with pending ACH.` : 'No pending ACH invoices in Stripe.')
+      setStripeMsg(count > 0 ? `Found ${count} client(s) with pending ACH.` : 'No new pending ACH invoices found.')
+      // Refresh balance and ledger so projected totals and entries update immediately
+      fetchDashboard()
+      if (tab === 'ledger') fetchLedger()
     } catch (e) {
       setStripeMsg('Error contacting Stripe.')
       console.error('[ad-fuel] stripe sync error:', e)
@@ -961,9 +964,10 @@ export default function AdFuelPage() {
                           <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {e.date_of_payment ?? (
-                            <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Pending</span>
-                          )}
+                          {e.ach_status === 'pending'
+                            ? <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Pending</span>
+                            : (e.date_of_payment ?? '—')
+                          }
                         </td>
                         <td style={{ whiteSpace: 'nowrap', color: e.invoice_date && e.invoice_date !== e.date_of_payment ? 'var(--text-muted)' : 'var(--text-faint)', fontSize: '0.8rem' }}>
                           {e.invoice_date ?? '—'}

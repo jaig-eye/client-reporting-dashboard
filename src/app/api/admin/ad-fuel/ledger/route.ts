@@ -42,6 +42,22 @@ export async function DELETE(request: NextRequest) {
   }
 
   const db = createAdminClient()
+
+  // Block deletion of auto-detected pending ACH entries — these are managed by
+  // the Stripe cron and should not be manually deleted to prevent balance drift.
+  const { data: autoAch } = await db
+    .from('ad_fuel_ledger')
+    .select('id')
+    .in('id', ids)
+    .eq('created_by', 'auto-ach')
+    .eq('ach_status', 'pending')
+  if (autoAch?.length) {
+    return NextResponse.json(
+      { error: `Cannot delete ${autoAch.length} auto-detected pending ACH entr${autoAch.length === 1 ? 'y' : 'ies'} — wait for the payment to clear or fail in Stripe` },
+      { status: 400 }
+    )
+  }
+
   const { error } = await db.from('ad_fuel_ledger').delete().in('id', ids)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const adminSession = await getAdminSession()
@@ -68,6 +84,9 @@ export async function POST(request: NextRequest) {
 
   if (!body.client_id || !body.date_of_payment || body.amount_af == null) {
     return NextResponse.json({ error: 'client_id, date_of_payment, and amount_af are required' }, { status: 400 })
+  }
+  if (body.split_override != null && (body.split_override < 0 || body.split_override > 1)) {
+    return NextResponse.json({ error: 'split_override must be between 0 and 1 (e.g. 0.80 for 80%)' }, { status: 400 })
   }
 
   const db = createAdminClient()

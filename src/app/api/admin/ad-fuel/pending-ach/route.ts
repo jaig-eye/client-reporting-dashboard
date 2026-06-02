@@ -1,15 +1,11 @@
-// GET /api/admin/ad-fuel/pending-ach
+// GET  /api/admin/ad-fuel/pending-ach
+//   Read-only — returns { pending: { clientId: amount } } from DB only.
+//   Safe to call on every page load. No Stripe API calls.
 //
-// Two responsibilities:
-//   1. Detect open/pending ACH invoices in Stripe (two paths):
-//      a. stripe.invoices.list(status:'open') — catches manual and one-off invoices
-//      b. stripe.subscriptions.list() via latest_invoice — catches subscription billing
-//      For each unrecorded invoice with a non-canceled payment_intent, insert a
-//      pending ledger entry (date_of_payment=null until ACH clears).
-//   2. Return { pending: { clientId: amount } } — all ach_status='pending' ledger
-//      entries per client, shown as projected balance (not included in confirmed balance).
-//
-// Add ?debug=1 to see a full diagnostic breakdown of every invoice checked.
+// POST /api/admin/ad-fuel/pending-ach
+//   Triggers Stripe detection: scans open invoices + subscriptions, inserts
+//   missing pending ledger entries, then returns updated { pending }.
+//   Add ?debug=1 for full diagnostic breakdown per invoice.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -18,8 +14,25 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getStripeClient, isAdFuelLine } from '@/lib/stripe'
 import type Stripe from 'stripe'
 
+function requireAdmin(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  return isAdminAuthed(cookieStore.get('admin_session')?.value)
+}
+
+async function getPendingAmounts(db: ReturnType<typeof createAdminClient>): Promise<Record<string, number>> {
+  const { data: pendingRows } = await db
+    .from('ad_fuel_ledger')
+    .select('client_id, amount_af')
+    .eq('ach_status', 'pending')
+
+  const pending: Record<string, number> = {}
+  for (const row of (pendingRows ?? []) as { client_id: string; amount_af: number }[]) {
+    pending[row.client_id] = (pending[row.client_id] ?? 0) + Number(row.amount_af)
+  }
+  return pending
+}
+
 async function tryInsert(
-  db: ReturnType<typeof import('@/lib/supabase/server').createAdminClient>,
+  db: ReturnType<typeof createAdminClient>,
   inv: Stripe.Invoice,
   clientId: string,
   debugLog: unknown[],
@@ -46,8 +59,9 @@ async function tryInsert(
     if (passes) totalAf += line.amount / 100
   }
 
-  const hasMore = (inv.lines as unknown as { has_more?: boolean })?.has_more
-  if (hasMore) console.warn(`[pending-ach] Invoice ${inv.id} has paginated line items — total may be partial`)
+  if ((inv.lines as unknown as { has_more?: boolean })?.has_more) {
+    console.warn(`[pending-ach] Invoice ${inv.id} has paginated line items — total may be partial`)
+  }
 
   if (totalAf <= 0) {
     if (debug) debugLog.push({ source, invoice_id: inv.id, skip: 'no ad fuel lines', lines: lineDetails })
@@ -58,7 +72,7 @@ async function tryInsert(
 
   const { error: insertError } = await db.from('ad_fuel_ledger').insert({
     client_id:       clientId,
-    date_of_payment: invoiceDate,  // use invoice date as placeholder; updated to real payment date when ACH clears
+    date_of_payment: invoiceDate,  // placeholder; overwritten with real bank date when ACH clears
     invoice_date:    invoiceDate,
     amount_af:       totalAf,
     invoice_id:      inv.id,
@@ -79,9 +93,23 @@ async function tryInsert(
   return true
 }
 
-export async function GET(request: NextRequest) {
+// ── GET — read-only, no Stripe calls ────────────────────────────────────────
+
+export async function GET(_request: NextRequest) {
   const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
+  if (!requireAdmin(cookieStore))
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const db = createAdminClient()
+  const pending = await getPendingAmounts(db)
+  return NextResponse.json({ pending })
+}
+
+// ── POST — Stripe detection, inserts missing pending entries ─────────────────
+
+export async function POST(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!requireAdmin(cookieStore))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const debug = new URL(request.url).searchParams.get('debug') === '1'
@@ -105,10 +133,9 @@ export async function GET(request: NextRequest) {
 
       if (debug) debugLog.push({ known_stripe_customers: Object.keys(customerToClient) })
 
-      // Track inserted invoice IDs so Path B doesn't duplicate what Path A inserted
       const insertedInvoiceIds = new Set<string>()
 
-      // ── Path A: open invoices list ───────────────────────────────────────────
+      // ── Path A: open invoices list ─────────────────────────────────────────
       const openInvoices = await stripe.invoices.list({
         status: 'open',
         limit:  100,
@@ -121,8 +148,8 @@ export async function GET(request: NextRequest) {
       if (debug) debugLog.push({ path: 'A_open_invoices', total: openInvoices.data.length })
 
       for (const inv of openInvoices.data) {
-        const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
-        const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
+        const raw      = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
+        const pi       = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
         const piStatus = pi?.status ?? null
 
         const customerId = typeof inv.customer === 'string'
@@ -132,13 +159,10 @@ export async function GET(request: NextRequest) {
 
         if (debug) debugLog.push({
           path: 'A', invoice_id: inv.id, invoice_number: inv.number,
-          customer_id: customerId, client_id: clientId ?? 'NOT IN DB',
-          pi_status: piStatus,
-          skip:
-            piStatus === 'canceled' ? 'payment_intent canceled' :
-            !customerId            ? 'no customer on invoice' :
-            !clientId              ? 'customer not mapped to client' :
-            null,
+          customer_id: customerId, client_id: clientId ?? 'NOT IN DB', pi_status: piStatus,
+          skip: piStatus === 'canceled' ? 'payment_intent canceled' :
+                !customerId ? 'no customer on invoice' :
+                !clientId   ? 'customer not mapped to client' : null,
         })
 
         if (pi && piStatus === 'canceled') continue
@@ -148,15 +172,13 @@ export async function GET(request: NextRequest) {
         if (inserted) insertedInvoiceIds.add(inv.id)
       }
 
-      // ── Path B: subscriptions → latest_invoice (retrieved directly) ────────────
-      // Stripe does not reliably expand payment_intent when nested inside
-      // subscriptions.list() — it returns null even when a payment exists.
-      // Fix: list subscriptions to get the invoice ID, then retrieve the full
-      // invoice directly so payment_intent and product data expand correctly.
+      // ── Path B: subscriptions → latest_invoice (retrieved directly) ───────
+      // Nested expand in subscriptions.list() does not reliably populate
+      // payment_intent, so we retrieve each open invoice directly.
       const subs = await stripe.subscriptions.list({
         status: 'all',
         limit:  100,
-        expand: ['data.latest_invoice'],  // just enough to get the invoice ID + status
+        expand: ['data.latest_invoice'],
       })
 
       if (debug) debugLog.push({ path: 'B_subscriptions', total: subs.data.length })
@@ -180,28 +202,19 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        // Skip if Path A already handled this invoice in this same request
         if (insertedInvoiceIds.has(latestInv.id)) {
           if (debug) debugLog.push({ path: 'B', subscription_id: sub.id, invoice_id: latestInv.id, skip: 'already handled by path A' })
           continue
         }
 
-        // Retrieve the full invoice directly — nested expand in subscriptions.list()
-        // does not reliably populate payment_intent
         const inv = await stripe.invoices.retrieve(latestInv.id, {
-          expand: [
-            'payment_intent',
-            'lines.data.pricing.price_details.price.product',
-          ],
+          expand: ['payment_intent', 'lines.data.pricing.price_details.price.product'],
         })
 
-        const raw = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
-        const pi  = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
+        const raw      = (inv as unknown as { payment_intent?: Stripe.PaymentIntent | string | null }).payment_intent
+        const pi       = raw && typeof raw === 'object' ? raw as Stripe.PaymentIntent : null
         const piStatus = pi?.status ?? null
 
-        // ACH Credit Transfer invoices have no payment_intent — the customer pushes
-        // money to Stripe's bank account and Stripe marks the invoice paid on arrival.
-        // We detect any open invoice for a known client; the cron resolves it when paid.
         if (pi && piStatus === 'canceled') {
           if (debug) debugLog.push({ path: 'B', invoice_id: inv.id, skip: 'payment_intent canceled' })
           continue
@@ -217,21 +230,11 @@ export async function GET(request: NextRequest) {
       }
     }
   } catch (stripeErr) {
-    console.error('[pending-ach] Stripe step failed:', stripeErr)
+    console.error('[pending-ach] Stripe detection failed:', stripeErr)
     if (debug) debugLog.push({ error: String(stripeErr) })
   }
 
-  // ── Step 2: return all pending ledger amounts ────────────────────────────────
-  const { data: pendingRows } = await db
-    .from('ad_fuel_ledger')
-    .select('client_id, amount_af')
-    .eq('ach_status', 'pending')
-
-  const pending: Record<string, number> = {}
-  for (const row of (pendingRows ?? []) as { client_id: string; amount_af: number }[]) {
-    pending[row.client_id] = (pending[row.client_id] ?? 0) + Number(row.amount_af)
-  }
-
+  const pending = await getPendingAmounts(db)
   if (debug) return NextResponse.json({ pending, debug: debugLog })
   return NextResponse.json({ pending })
 }

@@ -133,9 +133,14 @@ export async function GET(request: NextRequest) {
           ? new Date(paidAtUnix * 1000).toISOString().slice(0, 10)
           : new Date().toISOString().slice(0, 10)
 
-        await db.from('ad_fuel_ledger')
+        const { error: updateError } = await db.from('ad_fuel_ledger')
           .update({ date_of_payment: clearedDate, ach_status: 'cleared' })
           .eq('id', entry.id)
+
+        if (updateError) {
+          console.error(`[ad-fuel-ach-clear] update failed for entry ${entry.id}:`, updateError.message)
+          continue
+        }
 
         console.log(`[ad-fuel-ach-clear] cleared entry ${entry.id} for client ${entry.client_id} on ${clearedDate}`)
         cleared++
