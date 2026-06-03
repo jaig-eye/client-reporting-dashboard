@@ -752,17 +752,17 @@ async function metaPost(
 export async function pauseMetaCampaigns(
   externalId: string,
   auth: Record<string, unknown>
-): Promise<{ paused: number; campaignIds: string[]; error?: string }> {
+): Promise<{ paused: number; campaignIds: string[]; campaignNames: string[]; error?: string }> {
   try {
     const accessToken = resolveToken(auth)
-    if (!accessToken) return { paused: 0, campaignIds: [], error: 'No access token' }
+    if (!accessToken) return { paused: 0, campaignIds: [], campaignNames: [], error: 'No access token' }
 
     const acctId = externalId.startsWith('act_') ? externalId : `act_${externalId}`
 
-    // Get all active campaigns
+    // Get all active campaigns (include name for Discord alerts)
     const url = new URL(`${BASE_URL}/${acctId}/campaigns`)
     url.searchParams.set('access_token', accessToken)
-    url.searchParams.set('fields', 'id,status')
+    url.searchParams.set('fields', 'id,name,status')
     url.searchParams.set('effective_status', JSON.stringify(['ACTIVE']))
     url.searchParams.set('limit', '500')
 
@@ -771,21 +771,23 @@ export async function pauseMetaCampaigns(
       const text = await res.text()
       throw new Error(`Meta campaigns fetch failed ${res.status}: ${text}`)
     }
-    const data = await res.json() as { data: { id: string; status: string }[] }
+    const data = await res.json() as { data: { id: string; name?: string; status: string }[] }
     const campaigns = data.data ?? []
 
-    if (campaigns.length === 0) return { paused: 0, campaignIds: [] }
+    if (campaigns.length === 0) return { paused: 0, campaignIds: [], campaignNames: [] }
 
     // Pause each campaign
-    const campaignIds: string[] = []
+    const campaignIds:   string[] = []
+    const campaignNames: string[] = []
     for (const camp of campaigns) {
       await metaPost(`/${camp.id}`, accessToken, { status: 'PAUSED' })
       campaignIds.push(camp.id)
+      campaignNames.push(camp.name || camp.id)
     }
 
-    return { paused: campaignIds.length, campaignIds }
+    return { paused: campaignIds.length, campaignIds, campaignNames }
   } catch (err) {
-    return { paused: 0, campaignIds: [], error: String(err) }
+    return { paused: 0, campaignIds: [], campaignNames: [], error: String(err) }
   }
 }
 

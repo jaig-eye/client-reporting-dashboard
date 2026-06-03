@@ -48,16 +48,16 @@ const BADGE_PALETTE = [
   { bg: 'rgba(239,68,68,0.12)',  text: '#ef4444' },
 ]
 
-const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string }> = {
-  pending:     { label: 'Pending',      dot: '#f59e0b', color: '#b45309' },
-  scheduled:   { label: 'Approved',     dot: '#3b82f6', color: '#1d4ed8' },
-  approved:    { label: 'Approved',     dot: '#3b82f6', color: '#1d4ed8' },
-  generating:  { label: 'Generating',   dot: '#f97316', color: '#c2410c' },
-  generated:   { label: 'For Review',   dot: '#10b981', color: '#065f46' },
-  for_review:  { label: 'For Review',   dot: '#10b981', color: '#065f46' },
-  draft_saved: { label: 'Published',    dot: '#059669', color: '#065f46' },
-  published:   { label: 'Published',    dot: '#059669', color: '#065f46' },
-  rejected:    { label: 'Rejected',     dot: '#ef4444', color: '#991b1b' },
+const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string; bg: string; border: string }> = {
+  pending:     { label: 'Pending',    dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
+  scheduled:   { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
+  approved:    { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
+  generating:  { label: 'Generating',dot: '#f97316', color: '#c2410c', bg: '#ffedd5', border: '#f97316' },
+  generated:   { label: 'For Review',dot: '#10b981', color: '#065f46', bg: '#d1fae5', border: '#10b981' },
+  for_review:  { label: 'For Review',dot: '#10b981', color: '#065f46', bg: '#d1fae5', border: '#10b981' },
+  draft_saved: { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
+  published:   { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
+  rejected:    { label: 'Rejected',  dot: '#ef4444', color: '#991b1b', bg: '#fee2e2', border: '#ef4444' },
 }
 
 function getStatusCfg(status: string) {
@@ -76,9 +76,11 @@ function getBadge(item: CalendarItem): { label: string; bg: string; text: string
     return { label: item.clusterGroup, bg: c.bg, text: c.text, dot: c.text }
   }
   const cfg = getStatusCfg(item.status)
-  const idx = Object.keys(STATUS_CONFIG).indexOf(item.status)
-  const c   = BADGE_PALETTE[Math.max(0, idx) % BADGE_PALETTE.length]
-  return { label: cfg.label, bg: c.bg, text: cfg.color, dot: cfg.dot }
+  return { label: cfg.label, bg: cfg.bg, text: cfg.color, dot: cfg.dot }
+}
+
+function getStatusBorder(status: string): string {
+  return STATUS_CONFIG[status]?.border ?? '#e5e7eb'
 }
 
 function shortDate(dateStr: string): string {
@@ -182,15 +184,30 @@ export default function ContentCalendar({
   const themeSet      = new Set(filtered.map(i => i.clusterGroup ?? getStatusCfg(i.status).label))
   const uniqueThemes  = themeSet.size
 
-  // Group by month
-  const byMonth = new Map<string, CalendarItem[]>()
-  for (const item of filtered) {
-    const d   = new Date(item.targetPublishDate! + 'T00:00:00')
-    const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
-    const arr = byMonth.get(key) ?? []
-    arr.push(item)
-    byMonth.set(key, arr)
+  // Split by contentType
+  const blogFiltered = filtered.filter(i => !i.contentType || i.contentType === 'blog')
+  const saFiltered   = filtered.filter(i => i.contentType === 'service_area')
+
+  // Group by month — sorted by date within each month
+  function groupByMonth(items: CalendarItem[]) {
+    const map = new Map<string, CalendarItem[]>()
+    for (const item of items) {
+      const d   = new Date(item.targetPublishDate! + 'T00:00:00')
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
+      const arr = map.get(key) ?? []
+      arr.push(item)
+      map.set(key, arr)
+    }
+    // Sort within each month by targetPublishDate ascending
+    for (const [key, arr] of Array.from(map)) {
+      arr.sort((a: CalendarItem, b: CalendarItem) => (a.targetPublishDate ?? '').localeCompare(b.targetPublishDate ?? ''))
+      map.set(key, arr)
+    }
+    return map
   }
+
+  const byMonth   = groupByMonth(blogFiltered)
+  const saByMonth = groupByMonth(saFiltered)
 
   const filterTabStyle = (active: boolean): React.CSSProperties => ({
     fontSize: '0.75rem', fontWeight: active ? 600 : 400, padding: '0.25rem 0.75rem',
@@ -273,81 +290,95 @@ export default function ContentCalendar({
           </p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {windowMonths.map(({ year, month, key }) => {
-            const monthItems = byMonth.get(key) ?? []
-            if (monthItems.length === 0) return null
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
 
-            const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
-
-            return (
-              <div key={key}>
-                {/* Month heading */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                  <span style={{
-                    fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
-                    background: pillColor + '20', color: pillColor, letterSpacing: '0.08em',
-                    flexShrink: 0,
-                  }}>
-                    {MONTH_ABBREV[month]}
-                  </span>
-                  <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {MONTH_NAMES[month]} {year}
-                  </span>
-                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
-                    {monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'}
-                  </span>
-                </div>
-
-                {/* Card grid */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                  gap: 12,
-                }}>
-                  {monthItems.map(item => (
-                    <ContentCard
-                      key={item.id}
-                      item={item}
-                      onViewRationale={setRationaleFor}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-
-          {/* Unscheduled section */}
-          {unscheduled.length > 0 && (
+          {/* ── Blog Posts ── */}
+          {blogFiltered.length > 0 && (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <span style={{
-                  fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
-                  background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em',
-                  flexShrink: 0,
-                }}>
-                  —
-                </span>
-                <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                  Unscheduled
-                </span>
-                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
-                  {unscheduled.length} {unscheduled.length === 1 ? 'item' : 'items'}
-                </span>
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                gap: 12,
-              }}>
-                {unscheduled.map(item => (
-                  <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />
-                ))}
+              <h3 style={{ margin: '0 0 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>Blog Posts</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+                {windowMonths.map(({ year, month, key }) => {
+                  const monthItems = byMonth.get(key) ?? []
+                  if (monthItems.length === 0) return null
+                  const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
+                  return (
+                    <div key={key}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                        <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
+                          {MONTH_ABBREV[month]}
+                        </span>
+                        <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>{monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                        {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
+                      </div>
+                    </div>
+                  )
+                })}
+                {/* Unscheduled blog items */}
+                {unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
+                      <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled</span>
+                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                      {unscheduled.filter(i => !i.contentType || i.contentType === 'blog').map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
+
+          {/* ── Service Area Pages ── */}
+          {saFiltered.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 8 }}>
+                Service Area Pages
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(99,102,241,0.12)', color: '#6366f1', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Pages</span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+                {windowMonths.map(({ year, month, key }) => {
+                  const monthItems = saByMonth.get(key) ?? []
+                  if (monthItems.length === 0) return null
+                  const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
+                  return (
+                    <div key={key}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                        <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
+                          {MONTH_ABBREV[month]}
+                        </span>
+                        <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>{monthItems.length} page{monthItems.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                        {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
+                      </div>
+                    </div>
+                  )
+                })}
+                {/* Unscheduled SA items */}
+                {unscheduled.filter(i => i.contentType === 'service_area').length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
+                      <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled Pages</span>
+                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                      {unscheduled.filter(i => i.contentType === 'service_area').map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
@@ -378,6 +409,7 @@ function ContentCard({
       style={{
         borderRadius: 10,
         border: '1px solid var(--border)',
+        borderLeft: `4px solid ${getStatusBorder(item.status)}`,
         background: 'var(--bg-surface)',
         padding: '12px 14px',
         display: 'flex', flexDirection: 'column', gap: 6,

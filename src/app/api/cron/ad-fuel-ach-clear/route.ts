@@ -243,14 +243,22 @@ export async function GET(request: NextRequest) {
         const inv = await stripe.invoices.retrieve(invoiceId)
         const amountDue  = inv.amount_due  ?? 0
         const amountPaid = amountDue - (inv.amount_remaining ?? 0)
+        // Recalculate from line items — using ledger sum as base gives delta=0 always
+        let totalInvoiceAf = 0
+        for (const line of (inv.lines?.data ?? [])) {
+          if (isAdFuelLine(line) && (line.amount ?? 0) > 0) totalInvoiceAf += line.amount / 100
+        }
+        if (totalInvoiceAf === 0) totalInvoiceAf = entry.amountAf
         const shouldCredit = amountDue > 0
-          ? Math.round(entry.amountAf * (amountPaid / amountDue) * 100) / 100
-          : entry.amountAf
+          ? Math.round(totalInvoiceAf * (amountPaid / amountDue) * 100) / 100
+          : totalInvoiceAf
         const delta = Math.round((shouldCredit - entry.amountAf) * 100) / 100
         if (delta > 0.01) {
+          const paidAt     = inv.status_transitions?.paid_at
+          const creditDate = paidAt ? new Date(paidAt * 1000).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
           await db.from('ad_fuel_ledger').insert({
             client_id:       entry.clientId,
-            date_of_payment: new Date().toISOString().slice(0, 10),
+            date_of_payment: creditDate,
             invoice_id:      invoiceId,
             amount_af:       delta,
             type:            'ACH',

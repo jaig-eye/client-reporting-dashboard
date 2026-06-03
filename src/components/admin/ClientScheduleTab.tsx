@@ -17,6 +17,7 @@ interface SaSettings {
   pages_per_run?:      number
   schedule_frequency?: string | null
   schedule_day_of_week?: number | null
+  auto_generate?:      boolean
   auto_approve_pages?: boolean
   auto_push_pages?:    boolean
   service_pages?:      { url: string; name: string; wp_page_id?: number }[]
@@ -234,6 +235,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [schedLoading, setSchedLoading] = useState(true)
   const [scheduleOpen, setScheduleOpen] = useState(false)
 
+  // Image generation — separate state (new columns not in ClientScheduleSettings type)
+  const [imageGen,    setImageGen]    = useState(false)
+  const [imagePrompt, setImagePrompt] = useState('')
+
+  // Pill: Blog Posts vs Service Pages
+  const [activePill, setActivePill] = useState<'blog' | 'service'>('blog')
+
   // Pipeline data
   const [topics,      setTopics]      = useState<Topic[]>([])
   const [posts,       setPosts]       = useState<Post[]>([])
@@ -317,8 +325,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           auto_push_posts:       (d.auto_push_posts          as boolean)        ?? false,
         }
         setSchedule(loaded)
-        // Collapsed by default if already configured
-        setScheduleOpen(!loaded.schedule_frequency || !loaded.schedule_start_date)
+        // Always collapsed by default
+        setScheduleOpen(false)
+        setImageGen(!!(d.content_image_generation as boolean | null))
+        setImagePrompt(String(d.content_image_prompt ?? ''))
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
         setSchedLoading(false)
@@ -397,7 +407,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, ...schedule }),
+      body: JSON.stringify({ client_id: clientId, ...schedule, content_image_generation: imageGen, content_image_prompt: imagePrompt || null }),
     })
     setSchedSaving(false)
     if (res.ok) { setSchedSaved(true); setTimeout(() => setSchedSaved(false), 2500) }
@@ -704,6 +714,36 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
+      {/* ── Pill switcher: Blog Posts / Service Pages ───────────────────── */}
+      <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)' }}>
+        {(['blog', 'service'] as const).map(pill => (
+          <button
+            key={pill}
+            onClick={() => setActivePill(pill)}
+            style={{
+              padding: '0.3125rem 0.875rem',
+              fontSize: '0.8125rem',
+              fontWeight: activePill === pill ? 600 : 400,
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              background: activePill === pill ? 'var(--bg-surface, #fff)' : 'transparent',
+              color: activePill === pill ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: activePill === pill ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'all 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {pill === 'blog' ? 'Blog Posts' : 'Service Pages'}
+            {pill === 'service' && (saSettings.auto_generate ?? saSettings.auto_approve_pages) && (
+              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {activePill === 'blog' && <>
+
       {/* ═══════════════════════════════════════════════════════════════════
           SECTION A — SCHEDULE CONFIGURATION (collapsible)
       ═══════════════════════════════════════════════════════════════════ */}
@@ -731,18 +771,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
         {/* Expanded form */}
         {scheduleOpen && (
-          <div className="card p-6 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-              <div>
-                <p className="section-desc" style={{ marginTop: 0 }}>Controls how often content is generated and published for this client.</p>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-                <Toggle checked={schedule.auto_generate ?? false} onChange={v => setSched('auto_generate', v)} />
-                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{schedule.auto_generate ? 'Auto-generate On' : 'Auto-generate Off'}</span>
-              </label>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
+          <div className="card p-5 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+            <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
               <div>
                 <Label>Start Date</Label>
                 <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />
@@ -763,15 +793,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 </div>
               )}
               <div>
-                <Label hint="topic ideas per cycle">Topics per Run</Label>
+                <Label>Topics per Run</Label>
                 <input className="input" type="number" min={1} max={20} value={schedule.topics_per_run ?? 5} onChange={e => setSched('topics_per_run', Number(e.target.value))} />
               </div>
               <div>
-                <Label hint="posts that must be approved per cycle">Posts per Run</Label>
+                <Label>Posts per Run</Label>
                 <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
               </div>
               <div>
-                <Label hint="how far ahead to plan topics">Weeks Ahead</Label>
+                <Label>Weeks Ahead</Label>
                 <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
               </div>
               <div>
@@ -779,35 +809,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
               </div>
               <div>
-                <Label hint="time posts are scheduled in WordPress">Publish Time</Label>
+                <Label>Publish Time</Label>
                 <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <Label hint="controls WP status when posts are approved or auto-pushed">WordPress Publish Mode</Label>
-                <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.375rem' }}>
-                  {(['scheduled_draft', 'draft_only'] as const).map(mode => (
-                    <label key={mode} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="radio"
-                        name="wp_publish_mode"
-                        value={mode}
-                        checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode}
-                        onChange={() => setSched('wp_publish_mode', mode)}
-                        style={{ marginTop: '0.2rem', flexShrink: 0 }}
-                      />
-                      <span>
-                        <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-                          {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
-                        </span>
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          {mode === 'scheduled_draft'
-                            ? 'Saved with scheduled publish date (status: future) — WordPress publishes automatically'
-                            : 'Always saved as plain draft — use when you need to add images or edits before publishing'}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
               </div>
               <div>
                 <Label>Default Author</Label>
@@ -816,53 +819,68 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <Label>WordPress Publish Mode</Label>
+                <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.375rem' }}>
+                  {(['scheduled_draft', 'draft_only'] as const).map(mode => (
+                    <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                      <input type="radio" name="wp_publish_mode" value={mode} checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode} onChange={() => setSched('wp_publish_mode', mode)} />
+                      {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            <div style={{ marginTop: '1rem' }}>
-              <Label hint="appended to the AI system prompt for this client">Custom Post Structure</Label>
-              <textarea
-                className="input"
-                rows={4}
-                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
-                value={schedule.post_structure ?? ''}
-                onChange={e => setSched('post_structure', e.target.value)}
-                placeholder={`e.g.\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite years of experience, named staff expertise.\nNever link to excluded pages.`}
-              />
-            </div>
-
-            <div style={{ marginTop: '1rem' }}>
-              <Label hint="keywords, topics, or angles the AI should never generate">Topic Guidelines & Restrictions</Label>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <Label>Custom Post Structure</Label>
               <textarea
                 className="input"
                 rows={3}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+                value={schedule.post_structure ?? ''}
+                onChange={e => setSched('post_structure', e.target.value)}
+                placeholder={`e.g.\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite years of experience, named staff expertise.`}
+              />
+            </div>
+
+            <div style={{ marginBottom: '0.75rem' }}>
+              <Label>Topic Guidelines & Restrictions</Label>
+              <textarea
+                className="input"
+                rows={2}
                 style={{ width: '100%', resize: 'vertical' }}
                 value={schedule.topic_guidelines ?? ''}
                 onChange={e => setSched('topic_guidelines', e.target.value || null)}
-                placeholder="e.g. Avoid bad credit financing, payday loans, or any topics with negative brand associations. Do not generate topics targeting keywords below $5 CPC."
+                placeholder="e.g. Avoid bad credit financing, payday loans, or any topics with negative brand associations."
               />
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                Injected into the topic generation AI prompt. Use this to steer away from brand-sensitive keywords or topics outside the client&apos;s target market.
-              </p>
             </div>
 
-            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Toggle checked={schedule.auto_approve_topics ?? false} onChange={v => setSched('auto_approve_topics', v)} />
-                <div>
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)', display: 'block', lineHeight: 1.3 }}>Auto-approve topics</span>
-                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Topics still pending 2 days before their review deadline are automatically approved.</span>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '0.75rem' }}>
+              {/* Auto Generate consolidates auto_generate, auto_approve_topics, and auto_push_posts */}
+              <label className="flex items-center gap-3 cursor-pointer">
+                <Toggle
+                  checked={schedule.auto_generate ?? false}
+                  onChange={v => { setSched('auto_generate', v); setSched('auto_approve_topics', v); setSched('auto_push_posts', v) }}
+                />
+                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Auto Generate — generates, approves, and publishes automatically</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Toggle checked={schedule.auto_push_posts ?? false} onChange={v => setSched('auto_push_posts', v)} />
-                <div>
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)', display: 'block', lineHeight: 1.3 }}>Auto-push posts to site</span>
-                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Generated posts not yet pushed will upload to WordPress 2 days before the publish date.</span>
-                </div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <Toggle checked={imageGen} onChange={setImageGen} />
+                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Generate featured image with AI</span>
               </label>
+              {imageGen && (
+                <input
+                  className="input"
+                  value={imagePrompt}
+                  onChange={e => setImagePrompt(e.target.value)}
+                  placeholder="e.g. Outdoor lifestyle photo, warm tones, no text overlays"
+                  style={{ fontSize: '0.8125rem', marginLeft: '2.25rem' }}
+                />
+              )}
             </div>
 
-            <div className="flex items-center gap-3" style={{ marginTop: '1rem' }}>
+            <div className="flex items-center gap-3">
               <button className="btn btn-primary" onClick={saveSchedule} disabled={schedSaving}>
                 {schedSaving ? 'Saving…' : 'Save Schedule'}
               </button>
@@ -1367,10 +1385,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         </div>
       </details>
 
+      </> /* end activePill === 'blog' */}
+
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION D — SERVICE AREA PAGES (collapsible)
+          SECTION D — SERVICE AREA PAGES (pill: service)
       ═══════════════════════════════════════════════════════════════════ */}
-      {!saLoading && (
+      {activePill === 'service' && !saLoading && (
         <div>
           <div
             className="card p-4 cursor-pointer select-none"
@@ -1380,11 +1400,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <span style={{ fontSize: '0.9rem' }}>📍</span>
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Area Pages</span>
             <span style={{ flex: 1 }} />
-            {saSettings.auto_approve_pages && (
-              <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto-approve</span>
-            )}
-            {saSettings.auto_push_pages && (
-              <span className="badge badge-blue" style={{ fontSize: '0.62rem' }}>Auto-push</span>
+            {(saSettings.auto_generate ?? saSettings.auto_approve_pages) && (
+              <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
             <span className="badge badge-gray" style={{ fontSize: '0.62rem' }}>{saTopics.filter(t => t.status !== 'rejected').length} queued</span>
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
@@ -1457,14 +1474,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               </div>
 
               {/* Toggles */}
-              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8125rem' }}>
-                  <Toggle checked={saSettings.auto_approve_pages ?? false} onChange={v => setSa('auto_approve_pages', v)} />
-                  <span style={{ color: 'var(--text-muted)' }}>Auto-approve</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.8125rem' }}>
-                  <Toggle checked={saSettings.auto_push_pages ?? false} onChange={v => setSa('auto_push_pages', v)} />
-                  <span style={{ color: 'var(--text-muted)' }}>Auto-push to site</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.8125rem' }}>
+                  <Toggle
+                    checked={saSettings.auto_generate ?? false}
+                    onChange={v => { setSa('auto_generate', v); setSa('auto_approve_pages', v); setSa('auto_push_pages', v) }}
+                  />
+                  <span style={{ color: 'var(--text-muted)' }}>Auto Generate — generates, approves, and publishes pages automatically</span>
                 </label>
               </div>
 

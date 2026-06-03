@@ -33,13 +33,13 @@ export default async function ContentPage({
     db.from('clients').select('id, name').order('name'),
     db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, generated_at, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale, content_type')
+      .or(`status.not.in.(published,draft_saved),target_publish_date.gte.${new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`)
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
     db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
-      .eq('content_type', 'blog')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
-      .limit(300),
+      .limit(400),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))

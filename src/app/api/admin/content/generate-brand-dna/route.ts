@@ -68,18 +68,30 @@ export async function POST(request: NextRequest) {
 
   const db = createAdminClient()
 
-  // Resolve site_url — from body or WordPress connection
+  // Resolve site_url — from body or WordPress connection.
+  // Two-step lookup: PostgREST join filters on joined tables silently return null
+  // (see docs/CONVENTIONS.md), so we find connector IDs first, then query connections.
   let siteUrl = body.site_url?.trim()
   if (!siteUrl) {
-    const { data: conn } = await db
-      .from('client_connections')
-      .select('connector:connectors!inner(config)')
-      .eq('client_id', client_id)
-      .eq('connectors.type', 'wordpress')
-      .eq('status', 'active')
-      .maybeSingle()
-    const config = (conn as unknown as { connector: { config: { site_url?: string } } } | null)?.connector?.config
-    siteUrl = config?.site_url?.trim()
+    const { data: wpConnectors } = await db
+      .from('connectors')
+      .select('id, config, auth')
+      .eq('type', 'wordpress')
+    for (const wpc of (wpConnectors ?? [])) {
+      const { data: conn } = await db
+        .from('client_connections')
+        .select('config')
+        .eq('client_id', client_id)
+        .eq('connector_id', wpc.id)
+        .eq('status', 'active')
+        .maybeSingle()
+      if (!conn) continue
+      const connConfig = conn.config as { site_url?: string } | null
+      const wpcConfig  = wpc.config  as { site_url?: string } | null
+      const wpcAuth    = wpc.auth    as { siteUrl?: string; site_url?: string } | null
+      siteUrl = connConfig?.site_url || wpcConfig?.site_url || wpcAuth?.siteUrl || wpcAuth?.site_url
+      if (siteUrl) break
+    }
   }
 
   if (!siteUrl) {

@@ -142,18 +142,21 @@ export async function GET(request: NextRequest) {
       let googleCount = 0, metaCount = 0
       let googleError: string | undefined, metaError: string | undefined
       let googleResourceNames: string[] = [], metaCampaignIds: string[] = []
+      let googleCampaignNames: string[] = [], metaCampaignNames: string[] = []
 
       if (googleConn) {
         const result = await pauseGoogleCampaigns(googleConn.external_id, googleConn.connector.auth, googleConn.connector.config)
         googleCount         = result.paused
         googleError         = result.error
         googleResourceNames = result.resourceNames
+        googleCampaignNames = result.campaignNames
       }
       if (metaConn) {
         const result = await pauseMetaCampaigns(metaConn.external_id, metaConn.connector.auth)
-        metaCount       = result.paused
-        metaError       = result.error
-        metaCampaignIds = result.campaignIds
+        metaCount        = result.paused
+        metaError        = result.error
+        metaCampaignIds  = result.campaignIds
+        metaCampaignNames = result.campaignNames
       }
 
       const anySuccess = googleCount > 0 || metaCount > 0
@@ -169,14 +172,19 @@ export async function GET(request: NextRequest) {
           google_campaigns_affected: googleCount,
           meta_campaigns_affected:   metaCount,
           paused_campaign_ids:       { google: googleResourceNames, meta: metaCampaignIds },
+          paused_campaign_names:     { google: googleCampaignNames, meta: metaCampaignNames },
           error:                     errorMsg,
         }),
       ])
 
       if (botToken && client.discord_channel_id) {
-        const total   = googleCount + metaCount
-        const balStr  = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
-        const msg = `🚨 **Ad Fuel Auto-Pause — ${client.name}**: Balance is -${balStr}. ${total} campaign(s) paused (${googleCount} Google, ${metaCount} Meta).${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
+        const total  = googleCount + metaCount
+        const balStr = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+        const nameLines = [
+          googleCampaignNames.length > 0 ? `Google: ${googleCampaignNames.join(', ')}` : '',
+          metaCampaignNames.length   > 0 ? `Meta: ${metaCampaignNames.join(', ')}`     : '',
+        ].filter(Boolean).join('\n')
+        const msg = `🚨 **Ad Fuel Auto-Pause — ${client.name}**: Balance is -${balStr}. ${total} campaign(s) paused (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
         try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
       }
 
@@ -185,18 +193,46 @@ export async function GET(request: NextRequest) {
 
     // ── AUTO-RESUME ────────────────────────────────────────────────────────────
     else if (balance >= 0 && isPaused && client.auto_resume_ads) {
-      // Look up stored campaign IDs from the most recent pause log
+      // Look up stored campaign IDs + names from the most recent pause log
       const { data: lastLog } = await db
         .from('ad_pause_log')
-        .select('paused_campaign_ids')
+        .select('paused_campaign_ids, paused_campaign_names, google_campaigns_affected, meta_campaigns_affected')
         .eq('client_id', client.id)
         .eq('action', 'paused')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
 
-      type PausedIds = { google?: string[]; meta?: string[] }
-      const storedIds = (lastLog?.paused_campaign_ids ?? {}) as PausedIds
+      type PausedIds   = { google?: string[]; meta?: string[] }
+      type PausedNames = { google?: string[]; meta?: string[] }
+      const storedIds   = (lastLog?.paused_campaign_ids   ?? {}) as PausedIds
+      const storedNames = (lastLog?.paused_campaign_names ?? {}) as PausedNames
+      const storedGoogleCount = (lastLog?.google_campaigns_affected ?? 0) as number
+      const storedMetaCount   = (lastLog?.meta_campaigns_affected   ?? 0) as number
+      const totalStored = storedGoogleCount + storedMetaCount
+
+      // Guard: if 0 campaigns were actually paused, don't call resume APIs.
+      // Just clear the paused state and send a manual-action Discord message.
+      if (totalStored === 0) {
+        const balStr = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+        await Promise.all([
+          db.from('clients').update({ campaigns_paused_at: null }).eq('id', client.id),
+          db.from('ad_pause_log').insert({
+            client_id:                 client.id,
+            action:                    'resumed',
+            trigger:                   'auto',
+            balance:                   Number(balance.toFixed(2)),
+            google_campaigns_affected: 0,
+            meta_campaigns_affected:   0,
+          }),
+        ])
+        if (botToken && client.discord_channel_id) {
+          const msg = `✅ **Ad Fuel Balance Restored — ${client.name}**: Balance is ${balStr}. No campaigns were recorded from auto-pause — please re-enable campaigns manually if needed.`
+          try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+        }
+        resumed.push(client.name)
+        continue
+      }
 
       let googleCount = 0, metaCount = 0
       let googleError: string | undefined, metaError: string | undefined
@@ -229,9 +265,15 @@ export async function GET(request: NextRequest) {
       ])
 
       if (botToken && client.discord_channel_id) {
-        const total  = googleCount + metaCount
-        const balStr = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
-        const msg = `✅ **Ad Fuel Auto-Resume — ${client.name}**: Balance restored to ${balStr}. ${total} campaign(s) resumed (${googleCount} Google, ${metaCount} Meta).${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
+        const total     = googleCount + metaCount
+        const balStr    = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+        const gNames    = storedNames.google ?? []
+        const mNames    = storedNames.meta   ?? []
+        const nameLines = [
+          gNames.length > 0 ? `Google: ${gNames.join(', ')}` : '',
+          mNames.length > 0 ? `Meta: ${mNames.join(', ')}`   : '',
+        ].filter(Boolean).join('\n')
+        const msg = `✅ **Ad Fuel Auto-Resume — ${client.name}**: Balance restored to ${balStr}. ${total} campaign(s) resumed (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
         try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
       }
 

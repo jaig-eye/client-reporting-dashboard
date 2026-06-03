@@ -44,6 +44,11 @@ interface Props {
     approvedTopicsCount:  number
     forReviewPostsCount:  number
     publishedPostsCount:  number
+    // Service area page counts
+    saPendingTopicsCount:  number
+    saApprovedTopicsCount: number
+    saForReviewPostsCount: number
+    saPublishedPostsCount: number
   }
   gscData:        GscData
   postsPerRun?:   number
@@ -122,12 +127,22 @@ export default function ClientContentTabPanel({
       )}
 
       {/* Sub-tab nav */}
-      <div className="no-scrollbar" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto' }}>
+      <div className="no-scrollbar" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto', alignItems: 'flex-end' }}>
         {SUB_TABS.map(tab => (
           <button key={tab.id} style={tabStyle(activeTab === tab.id)} onClick={() => handleTabChange(tab.id)}>
             {tab.label}
           </button>
         ))}
+        <div style={{ marginLeft: 'auto', paddingBottom: 6, flexShrink: 0 }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', whiteSpace: 'nowrap' }}
+            onClick={() => setShowWizard(true)}
+            title="Re-open the content setup wizard"
+          >
+            ⚡ Setup Wizard
+          </button>
+        </div>
       </div>
 
       {/* Overview is lightweight — always conditional (no keep-alive needed) */}
@@ -184,6 +199,31 @@ const FREQ_LABELS: Record<string, string> = {
 }
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
+function PipelineRow({ items, label }: {
+  items: { label: string; count: number; color: string; borderColor: string }[]
+  label?: string
+}) {
+  return (
+    <div>
+      {label && <p style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>{label}</p>}
+      <div className="card" style={{ display: 'flex', alignItems: 'stretch', overflow: 'hidden', padding: 0 }}>
+        {items.flatMap((stage, i) => {
+          const box = (
+            <div key={stage.label} style={{ flex: 1, textAlign: 'center', padding: '12px 8px', borderBottom: `3px solid ${stage.borderColor}`, minWidth: 0 }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: stage.color, lineHeight: 1, marginBottom: 3 }}>{stage.count}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 500 }}>{stage.label}</div>
+            </div>
+          )
+          if (i < items.length - 1) {
+            return [box, <div key={`sep-${i}`} style={{ display: 'flex', alignItems: 'center', padding: '0 4px', color: 'var(--text-faint)', fontSize: '0.875rem', flexShrink: 0 }}>→</div>]
+          }
+          return [box]
+        })}
+      </div>
+    </div>
+  )
+}
+
 function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
   clientId:   string
   settings:   ContentSettings
@@ -204,30 +244,26 @@ function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
     { label: 'Published',   count: stats.publishedPostsCount, color: '#059669', borderColor: '#059669' },
   ]
 
+  const saPipeline: { label: string; count: number; color: string; borderColor: string }[] = [
+    { label: 'Pending',    count: stats.saPendingTopicsCount,  color: '#f59e0b', borderColor: '#f59e0b' },
+    { label: 'Approved',   count: stats.saApprovedTopicsCount, color: '#2563eb', borderColor: '#2563eb' },
+    { label: 'For Review', count: stats.saForReviewPostsCount, color: '#10b981', borderColor: '#10b981' },
+    { label: 'Published',  count: stats.saPublishedPostsCount, color: '#059669', borderColor: '#059669' },
+  ]
+
   const aiModel    = s?.ai_model    as string | null | undefined
   const aiProvider = s?.ai_provider as string | null | undefined
 
   return (
     <div style={{ maxWidth: 680 }}>
-      {/* Pipeline visualization */}
-      <div className="card" style={{ display: 'flex', alignItems: 'stretch', marginBottom: 16, overflow: 'hidden', padding: 0 }}>
-        {pipeline.flatMap((stage, i) => {
-          const box = (
-            <div
-              key={stage.label}
-              style={{ flex: 1, textAlign: 'center', padding: '16px 8px', borderBottom: `3px solid ${stage.borderColor}`, minWidth: 0 }}
-            >
-              <div style={{ fontSize: '1.75rem', fontWeight: 700, color: stage.color, lineHeight: 1, marginBottom: 4 }}>
-                {stage.count}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>{stage.label}</div>
-            </div>
-          )
-          if (i < pipeline.length - 1) {
-            return [box, <div key={`sep-${i}`} style={{ display: 'flex', alignItems: 'center', padding: '0 4px', color: 'var(--text-faint)', fontSize: '0.875rem', flexShrink: 0 }}>→</div>]
-          }
-          return [box]
-        })}
+      {/* Blog Posts pipeline */}
+      <div style={{ marginBottom: 12 }}>
+        <PipelineRow items={pipeline} label="Blog Posts" />
+      </div>
+
+      {/* Service Area Pages pipeline */}
+      <div style={{ marginBottom: 16 }}>
+        <PipelineRow items={saPipeline} label="Service Area Pages" />
       </div>
 
       {/* AI info row */}

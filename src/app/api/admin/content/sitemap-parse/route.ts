@@ -40,29 +40,50 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const pageUrls = new Set<string>()
-  const headers  = { 'User-Agent': 'Mozilla/5.0 (compatible; LaunchLocal/1.0)' }
+  const pageUrls   = new Set<string>()
+  const fetchErrors: string[] = []
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (compatible; LaunchLocal/1.0)',
+    'Accept':     'application/xml,text/xml,*/*',
+  }
 
   for (const sitemapUrl of sitemapUrls) {
     try {
-      const res = await fetch(sitemapUrl, { headers })
-      if (!res.ok) continue
-      const xml  = await res.text()
+      const res = await fetch(sitemapUrl, { headers, redirect: 'follow' })
+      if (!res.ok) {
+        fetchErrors.push(`${sitemapUrl} → HTTP ${res.status}`)
+        continue
+      }
+      // Detect HTML redirect (WP login page, Cloudflare challenge, etc.)
+      const contentType = res.headers.get('content-type') ?? ''
+      const xml = await res.text()
+      if (!xml.includes('<') || contentType.startsWith('text/html')) {
+        fetchErrors.push(`${sitemapUrl} → returned HTML (may require authentication or is redirected)`)
+        continue
+      }
+
       const locs = extractLocs(xml)
 
       if (xml.includes('<sitemapindex')) {
         // Sitemap index — recurse one level into each sub-sitemap
         for (const subUrl of locs) {
           try {
-            const subRes = await fetch(subUrl, { headers })
-            if (!subRes.ok) continue
+            const subRes = await fetch(subUrl, { headers, redirect: 'follow' })
+            if (!subRes.ok) {
+              fetchErrors.push(`${subUrl} → HTTP ${subRes.status}`)
+              continue
+            }
             for (const loc of extractLocs(await subRes.text())) pageUrls.add(loc)
-          } catch { /* skip */ }
+          } catch (e) {
+            fetchErrors.push(`${subUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
+          }
         }
       } else {
         for (const loc of locs) pageUrls.add(loc)
       }
-    } catch { /* skip */ }
+    } catch (e) {
+      fetchErrors.push(`${sitemapUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
+    }
   }
 
   const urls = Array.from(pageUrls)
@@ -70,7 +91,8 @@ export async function POST(request: NextRequest) {
     .slice(0, 500)
 
   if (urls.length === 0) {
-    return NextResponse.json({ error: 'No pages found in sitemap' }, { status: 400 })
+    const detail = fetchErrors.length > 0 ? ` Errors: ${fetchErrors.join('; ')}` : ''
+    return NextResponse.json({ error: `No pages found in sitemap.${detail}` }, { status: 400 })
   }
 
   // Upsert URLs — preserve existing title/flags, only insert new rows

@@ -1096,33 +1096,35 @@ export async function pauseGoogleCampaigns(
   externalId: string,
   auth: Record<string, unknown>,
   config: Record<string, unknown>
-): Promise<{ paused: number; resourceNames: string[]; error?: string }> {
+): Promise<{ paused: number; resourceNames: string[]; campaignNames: string[]; error?: string }> {
   try {
     const accessToken = await resolveGoogleToken(auth)
-    if (!accessToken) return { paused: 0, resourceNames: [], error: 'No access token' }
+    if (!accessToken) return { paused: 0, resourceNames: [], campaignNames: [], error: 'No access token' }
 
     const mccId    = (config.mcc_customer_id as string | undefined) || externalId
     const devToken = (auth.developer_token   as string | undefined) || process.env.GOOGLE_DEVELOPER_TOKEN || ''
 
     const results = await runQuery(
       externalId, mccId, accessToken,
-      `SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`,
+      `SELECT campaign.id, campaign.name, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`,
       devToken
     )
 
-    if (results.length === 0) return { paused: 0, resourceNames: [] }
+    if (results.length === 0) return { paused: 0, resourceNames: [], campaignNames: [] }
 
-    type CampResult = { campaign: { id: string; resourceName: string } }
-    const resourceNames = (results as unknown as CampResult[]).map(r => r.campaign.resourceName)
+    type CampResult = { campaign: { id: string; name: string; resourceName: string } }
+    const typed         = results as unknown as CampResult[]
+    const resourceNames = typed.map(r => r.campaign.resourceName)
+    const campaignNames = typed.map(r => r.campaign.name || r.campaign.resourceName)
 
     await mutateCampaigns(
       externalId, mccId, accessToken, devToken,
       resourceNames.map(rn => ({ update: { resourceName: rn, status: 'PAUSED' }, updateMask: 'status' }))
     )
 
-    return { paused: resourceNames.length, resourceNames }
+    return { paused: resourceNames.length, resourceNames, campaignNames }
   } catch (err) {
-    return { paused: 0, resourceNames: [], error: String(err) }
+    return { paused: 0, resourceNames: [], campaignNames: [], error: String(err) }
   }
 }
 
