@@ -103,13 +103,10 @@ export default function ClientContentTabPanel({
     fontSize: '0.8125rem',
     fontWeight: active ? 600 : 400,
     color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-    borderBottom: active ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
     textDecoration: 'none',
     background: 'none',
     border: 'none',
-    borderBottomStyle: 'solid',
-    borderBottomWidth: 2,
-    borderBottomColor: active ? 'var(--accent, var(--blue))' : 'transparent',
+    borderBottom: `2px solid ${active ? 'var(--accent, var(--blue))' : 'transparent'}`,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     marginBottom: -1,
@@ -240,14 +237,14 @@ function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
   const pipeline: { label: string; count: number; color: string; borderColor: string }[] = [
     { label: 'Pending',     count: stats.pendingTopicsCount,  color: '#f59e0b', borderColor: '#f59e0b' },
     { label: 'Approved',    count: stats.approvedTopicsCount, color: '#2563eb', borderColor: '#2563eb' },
-    { label: 'For Review',  count: stats.forReviewPostsCount, color: '#10b981', borderColor: '#10b981' },
+    { label: 'For Review',  count: stats.forReviewPostsCount, color: '#059669', borderColor: '#059669' },
     { label: 'Published',   count: stats.publishedPostsCount, color: '#059669', borderColor: '#059669' },
   ]
 
   const saPipeline: { label: string; count: number; color: string; borderColor: string }[] = [
     { label: 'Pending',    count: stats.saPendingTopicsCount,  color: '#f59e0b', borderColor: '#f59e0b' },
     { label: 'Approved',   count: stats.saApprovedTopicsCount, color: '#2563eb', borderColor: '#2563eb' },
-    { label: 'For Review', count: stats.saForReviewPostsCount, color: '#10b981', borderColor: '#10b981' },
+    { label: 'For Review', count: stats.saForReviewPostsCount, color: '#059669', borderColor: '#059669' },
     { label: 'Published',  count: stats.saPublishedPostsCount, color: '#059669', borderColor: '#059669' },
   ]
 

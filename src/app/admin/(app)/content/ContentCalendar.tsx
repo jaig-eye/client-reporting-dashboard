@@ -53,8 +53,8 @@ const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string;
   scheduled:   { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
   approved:    { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
   generating:  { label: 'Generating',dot: '#f97316', color: '#c2410c', bg: '#ffedd5', border: '#f97316' },
-  generated:   { label: 'For Review',dot: '#10b981', color: '#065f46', bg: '#d1fae5', border: '#10b981' },
-  for_review:  { label: 'For Review',dot: '#10b981', color: '#065f46', bg: '#d1fae5', border: '#10b981' },
+  generated:   { label: 'For Review',dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
+  for_review:  { label: 'For Review',dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
   draft_saved: { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
   published:   { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
   rejected:    { label: 'Rejected',  dot: '#ef4444', color: '#991b1b', bg: '#fee2e2', border: '#ef4444' },
@@ -222,7 +222,7 @@ export default function ContentCalendar({
       {/* ── Stats bar ──────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         {[
-          { value: filtered.length + unscheduled.length, label: 'posts / topics' },
+          { value: blogFiltered.length + saFiltered.length + unscheduled.length, label: 'total items' },
           { value: activeMonths,  label: 'months' },
           { value: uniqueClients, label: 'clients' },
           { value: uniqueThemes,  label: 'themes' },

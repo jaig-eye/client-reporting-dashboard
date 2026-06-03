@@ -10,6 +10,12 @@ import { pauseMetaCampaigns,  resumeMetaCampaigns  }   from '@/lib/connectors/me
 
 export const maxDuration = 300
 
+// Discord messages are capped at 2000 chars — truncate long campaign name lists.
+function fmtNames(names: string[], max = 10): string {
+  if (names.length <= max) return names.join(', ')
+  return names.slice(0, max).join(', ') + ` …+${names.length - max} more`
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -181,8 +187,8 @@ export async function GET(request: NextRequest) {
         const total  = googleCount + metaCount
         const balStr = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const nameLines = [
-          googleCampaignNames.length > 0 ? `Google: ${googleCampaignNames.join(', ')}` : '',
-          metaCampaignNames.length   > 0 ? `Meta: ${metaCampaignNames.join(', ')}`     : '',
+          googleCampaignNames.length > 0 ? `Google: ${fmtNames(googleCampaignNames)}` : '',
+          metaCampaignNames.length   > 0 ? `Meta: ${fmtNames(metaCampaignNames)}`     : '',
         ].filter(Boolean).join('\n')
         const msg = `🚨 **Ad Fuel Auto-Pause — ${client.name}**: Balance is -${balStr}. ${total} campaign(s) paused (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
         try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
@@ -270,8 +276,8 @@ export async function GET(request: NextRequest) {
         const gNames    = storedNames.google ?? []
         const mNames    = storedNames.meta   ?? []
         const nameLines = [
-          gNames.length > 0 ? `Google: ${gNames.join(', ')}` : '',
-          mNames.length > 0 ? `Meta: ${mNames.join(', ')}`   : '',
+          gNames.length > 0 ? `Google: ${fmtNames(gNames)}` : '',
+          mNames.length > 0 ? `Meta: ${fmtNames(mNames)}`   : '',
         ].filter(Boolean).join('\n')
         const msg = `✅ **Ad Fuel Auto-Resume — ${client.name}**: Balance restored to ${balStr}. ${total} campaign(s) resumed (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
         try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}

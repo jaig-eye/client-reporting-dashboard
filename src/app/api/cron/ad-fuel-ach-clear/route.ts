@@ -17,6 +17,30 @@ import type Stripe from 'stripe'
 
 export const maxDuration = 60
 
+// Paginate through ALL invoice line items and return the total ad-fuel amount.
+// stripe.invoices.retrieve() only returns the first 10 lines in inv.lines.data;
+// invoices with >10 items require explicit pagination via listLineItems().
+async function fetchAdFuelTotal(stripe: Stripe, invoiceId: string): Promise<number> {
+  let total = 0
+  let hasMore = true
+  let startingAfter: string | undefined
+  while (hasMore) {
+    const page = await stripe.invoices.listLineItems(invoiceId, {
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    })
+    for (const line of page.data) {
+      if (isAdFuelLine(line as unknown as Stripe.InvoiceLineItem) && (line.amount ?? 0) > 0) {
+        total += line.amount / 100
+      }
+    }
+    hasMore = page.has_more
+    if (hasMore && page.data.length > 0) startingAfter = page.data[page.data.length - 1].id
+    else break
+  }
+  return total
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -78,14 +102,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle()
       if (existing) continue
 
-      let totalAf = 0
-      for (const line of inv.lines.data) {
-        if (!isAdFuelLine(line) || (line.amount ?? 0) <= 0) continue
-        totalAf += line.amount / 100
-      }
-      if ((inv.lines as unknown as { has_more?: boolean }).has_more) {
-        console.warn(`[ad-fuel-ach-clear] Invoice ${inv.id} has paginated line items — total may be partial`)
-      }
+      const totalAf = await fetchAdFuelTotal(stripe, inv.id)
       if (totalAf <= 0) continue
 
       // Scale amount to what's actually still owed (handles partial card payments)
@@ -154,15 +171,12 @@ export async function GET(request: NextRequest) {
       // Using entry.amount_af fails when it represents only the REMAINING portion
       // (e.g. $2,500) while a manual entry already covers the first portion ($5,000)
       // — the delta would be negative and the final payment would never be credited.
+      // For paid invoices recalculate from all line items (paginated) — using
+      // entry.amount_af as the base gives delta=0 when it stores only the remaining portion.
       let totalInvoiceAf = entry.amount_af
       if (inv.status === 'paid') {
-        totalInvoiceAf = 0
-        for (const line of (inv.lines?.data ?? [])) {
-          if (isAdFuelLine(line) && (line.amount ?? 0) > 0) {
-            totalInvoiceAf += line.amount / 100
-          }
-        }
-        if (totalInvoiceAf === 0) totalInvoiceAf = entry.amount_af  // fallback
+        const fromLines = await fetchAdFuelTotal(stripe, entry.invoice_id)
+        if (fromLines > 0) totalInvoiceAf = fromLines
       }
 
       const shouldCredit = amountDue > 0
@@ -243,12 +257,9 @@ export async function GET(request: NextRequest) {
         const inv = await stripe.invoices.retrieve(invoiceId)
         const amountDue  = inv.amount_due  ?? 0
         const amountPaid = amountDue - (inv.amount_remaining ?? 0)
-        // Recalculate from line items — using ledger sum as base gives delta=0 always
-        let totalInvoiceAf = 0
-        for (const line of (inv.lines?.data ?? [])) {
-          if (isAdFuelLine(line) && (line.amount ?? 0) > 0) totalInvoiceAf += line.amount / 100
-        }
-        if (totalInvoiceAf === 0) totalInvoiceAf = entry.amountAf
+        // Paginate all line items — inv.lines.data only has the first 10
+        const fromLines    = await fetchAdFuelTotal(stripe, invoiceId)
+        const totalInvoiceAf = fromLines > 0 ? fromLines : entry.amountAf
         const shouldCredit = amountDue > 0
           ? Math.round(totalInvoiceAf * (amountPaid / amountDue) * 100) / 100
           : totalInvoiceAf

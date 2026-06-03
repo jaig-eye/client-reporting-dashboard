@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       }
       // Detect HTML redirect (WP login page, Cloudflare challenge, etc.)
       const contentType = res.headers.get('content-type') ?? ''
-      const xml = await res.text()
+      const xml = (await res.text()).replace(/^﻿/, '') // strip UTF-8 BOM
       if (!xml.includes('<') || contentType.startsWith('text/html')) {
         fetchErrors.push(`${sitemapUrl} → returned HTML (may require authentication or is redirected)`)
         continue

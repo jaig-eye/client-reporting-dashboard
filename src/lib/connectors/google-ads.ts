@@ -1115,7 +1115,7 @@ export async function pauseGoogleCampaigns(
     type CampResult = { campaign: { id: string; name: string; resourceName: string } }
     const typed         = results as unknown as CampResult[]
     const resourceNames = typed.map(r => r.campaign.resourceName)
-    const campaignNames = typed.map(r => r.campaign.name || r.campaign.resourceName)
+    const campaignNames = typed.map(r => (r.campaign.name?.trim() || r.campaign.resourceName || '').trim()).filter(Boolean)
 
     await mutateCampaigns(
       externalId, mccId, accessToken, devToken,

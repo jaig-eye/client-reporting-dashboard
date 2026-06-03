@@ -782,7 +782,7 @@ export async function pauseMetaCampaigns(
     for (const camp of campaigns) {
       await metaPost(`/${camp.id}`, accessToken, { status: 'PAUSED' })
       campaignIds.push(camp.id)
-      campaignNames.push(camp.name || camp.id)
+      campaignNames.push((camp.name?.trim() || camp.id).trim())
     }
 
     return { paused: campaignIds.length, campaignIds, campaignNames }

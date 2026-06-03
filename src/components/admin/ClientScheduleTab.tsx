@@ -337,20 +337,23 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   }, [clientId])
 
   // ── Load SA settings + topics ──────────────────────────────────────────────
+  const [saSettingsError, setSaSettingsError] = useState('')
+  const [saTopicsError,   setSaTopicsError]   = useState('')
+
   useEffect(() => {
-    setSaLoading(true)
+    setSaLoading(true); setSaSettingsError('')
     fetch(`/api/admin/content/service-area-settings?client_id=${clientId}`)
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d: SaSettings) => { setSaSettings(d); setSaLoading(false) })
-      .catch(() => setSaLoading(false))
+      .catch(e => { setSaSettingsError(String(e)); setSaLoading(false) })
   }, [clientId])
 
   const loadSaTopics = useCallback(() => {
-    setSaTopicsLoading(true)
+    setSaTopicsLoading(true); setSaTopicsError('')
     fetch(`/api/admin/content/topics?client_id=${clientId}&content_type=service_area`)
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d: SaTopic[]) => { setSaTopics(Array.isArray(d) ? d : []); setSaTopicsLoading(false) })
-      .catch(() => setSaTopicsLoading(false))
+      .catch(e => { setSaTopicsError(String(e)); setSaTopicsLoading(false) })
   }, [clientId])
 
   useEffect(() => { loadSaTopics() }, [loadSaTopics])
@@ -739,7 +742,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             }}
           >
             {pill === 'blog' ? 'Blog Posts' : 'Service Pages'}
-            {pill === 'service' && (saSettings.auto_generate ?? saSettings.auto_approve_pages) && (
+            {pill === 'service' && (saSettings.auto_generate || saSettings.auto_approve_pages) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
             )}
           </button>
@@ -1048,7 +1051,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           : getTopicDisplayStatus(t)
                         const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
                         const hasReview     = linkedPost && (linkedPost.status === 'for_review' || linkedPost.status === 'generated' || linkedPost.status === 'draft_saved')
-                        const hasError      = !!t.generation_error && t.status === 'scheduled'
+                        const hasError      = !!t.generation_error && !['rejected', 'generated'].includes(t.status)
 
                         return [
                           <tr
@@ -1394,7 +1397,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       {/* ═══════════════════════════════════════════════════════════════════
           SECTION D — SERVICE AREA PAGES (pill: service)
       ═══════════════════════════════════════════════════════════════════ */}
-      {activePill === 'service' && !saLoading && (
+      {activePill === 'service' && saLoading && (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading service area settings…</p>
+      )}
+      {activePill === 'service' && !saLoading && saSettingsError && (
+        <p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load service area settings: {saSettingsError}</p>
+      )}
+      {activePill === 'service' && !saLoading && !saSettingsError && (
         <div>
           <div
             className="card p-4 cursor-pointer select-none"
@@ -1404,7 +1413,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <span style={{ fontSize: '0.9rem' }}>📍</span>
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Area Pages</span>
             <span style={{ flex: 1 }} />
-            {(saSettings.auto_generate ?? saSettings.auto_approve_pages) && (
+            {(saSettings.auto_generate || saSettings.auto_approve_pages) && (
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
             <span className="badge badge-gray" style={{ fontSize: '0.62rem' }}>{saTopics.filter(t => t.status !== 'rejected').length} queued</span>
@@ -1575,6 +1584,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 {/* Queue table */}
                 {saTopicsLoading ? (
                   <p className="text-xs" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+                ) : saTopicsError ? (
+                  <p className="text-xs" style={{ color: 'var(--red)' }}>Failed to load topics: {saTopicsError}</p>
                 ) : saTopics.length === 0 ? (
                   <p className="text-xs" style={{ color: 'var(--text-faint)' }}>No service area topics queued yet. Use &ldquo;Generate Service Area Plan&rdquo; or add cities manually.</p>
                 ) : (

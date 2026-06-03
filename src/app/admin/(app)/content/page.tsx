@@ -38,7 +38,7 @@ export default async function ContentPage({
     db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
-      .limit(400),
+      .limit(500),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
@@ -80,7 +80,9 @@ export default async function ContentPage({
     clientName:         allClientsMap.get(String(t.client_id)) ?? 'Unknown',
     status:             String(t.status),
     targetPublishDate:  t.target_publish_date  ? String(t.target_publish_date)  : null,
-    topicText:          String(t.topic),
+    topicText:          (t as Record<string, unknown>).content_type === 'service_area'
+      ? [t.service_name, t.city, t.state_abbr].filter(Boolean).join(', ') || String(t.topic)
+      : String(t.topic),
     title:              null,
     targetKeyword:      t.target_keyword       ? String(t.target_keyword)       : null,
     wpPostId:           null,

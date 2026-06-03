@@ -733,10 +733,11 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
     { count: pendingCount }, { count: approvedCount }, { count: forReviewCount }, { count: publishedCount },
     { count: saPendingCount }, { count: saApprovedCount }, { count: saForReviewCount }, { count: saPublishedCount },
   ] = await Promise.all([
-    db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['pending', 'scheduled']).eq('content_type', 'blog'),
-    db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'approved').eq('content_type', 'blog'),
-    db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'for_review').eq('content_type', 'blog'),
-    db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['draft_saved', 'published']).eq('content_type', 'blog'),
+    // Include NULL content_type rows — topics created before the column was added are blog posts.
+    db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['pending', 'scheduled']).or('content_type.eq.blog,content_type.is.null'),
+    db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'approved').or('content_type.eq.blog,content_type.is.null'),
+    db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'for_review').or('content_type.eq.blog,content_type.is.null'),
+    db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['draft_saved', 'published']).or('content_type.eq.blog,content_type.is.null'),
     db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['pending', 'scheduled']).eq('content_type', 'service_area'),
     db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'approved').eq('content_type', 'service_area'),
     db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'for_review').eq('content_type', 'service_area'),

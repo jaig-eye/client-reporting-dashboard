@@ -80,17 +80,19 @@ export async function POST(request: NextRequest) {
     for (const wpc of (wpConnectors ?? [])) {
       const { data: conn } = await db
         .from('client_connections')
-        .select('config')
+        .select('config, external_id')
         .eq('client_id', client_id)
         .eq('connector_id', wpc.id)
         .eq('status', 'active')
         .maybeSingle()
       if (!conn) continue
-      const connConfig = conn.config as { site_url?: string } | null
-      const wpcConfig  = wpc.config  as { site_url?: string } | null
-      const wpcAuth    = wpc.auth    as { siteUrl?: string; site_url?: string } | null
-      siteUrl = connConfig?.site_url || wpcConfig?.site_url || wpcAuth?.siteUrl || wpcAuth?.site_url
-      if (siteUrl) break
+      // WP auth stores { username, app_password } only — site URL is in
+      // client_connections.config.site_url, connectors.config.site_url, or external_id.
+      type ConnRow = { config: { site_url?: string } | null; external_id?: string }
+      const c         = conn as unknown as ConnRow
+      const wpcConfig = wpc.config as { site_url?: string } | null
+      const candidate = c.config?.site_url?.trim() || wpcConfig?.site_url?.trim() || c.external_id?.trim()
+      if (candidate) { siteUrl = candidate; break }
     }
   }
 
