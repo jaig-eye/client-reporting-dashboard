@@ -696,10 +696,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     groups.set(date, arr)
   }
 
-  // Published section (terminal posts)
-  const publishedItems = allItems.filter(item =>
-    item.kind === 'topic' ? false : (item.data.status === 'draft_saved' || item.data.status === 'published')
-  )
+  // Published section (terminal posts) — only show posts published within last 28 days
+  const cutoff28 = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const publishedItems = allItems.filter(item => {
+    if (item.kind === 'topic') return false
+    const p = item.data as Post
+    if (p.status !== 'draft_saved' && p.status !== 'published') return false
+    return !p.target_publish_date || p.target_publish_date >= cutoff28
+  })
 
   // Sort date keys: chronological, unscheduled last
   const dateKeys = Array.from(groups.keys())

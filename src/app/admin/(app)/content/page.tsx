@@ -33,7 +33,6 @@ export default async function ContentPage({
     db.from('clients').select('id, name').order('name'),
     db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, generated_at, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale, content_type')
-      .or(`status.not.in.(published,draft_saved),target_publish_date.gte.${new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`)
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
     db.from('content_topics')
