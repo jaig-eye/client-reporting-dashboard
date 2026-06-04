@@ -259,7 +259,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [topics,      setTopics]      = useState<Topic[]>([])
   const [posts,       setPosts]       = useState<Post[]>([])
   const [dataLoading, setDataLoading] = useState(true)
-  const [reviewPost,  setReviewPost]  = useState<Post | null>(null)
+  const [reviewPost,    setReviewPost]    = useState<Post | null>(null)
+  const [reviewSaPost,  setReviewSaPost]  = useState<{ id: string } | null>(null)
 
   // ── Service Area state ─────────────────────────────────────────────────────
   const [saSettings,     setSaSettings]     = useState<SaSettings>({})
@@ -294,6 +295,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       setCalendarModalOpen(false)
       setSaCalendarModalOpen(false)
       setReviewPost(null)
+      setReviewSaPost(null)
     }
   }, [isActive])
 
@@ -1858,7 +1860,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
                                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                                       {hasPost && (
-                                        <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                        <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setReviewSaPost({ id: t.post!.id })}>
                                           <ArrowRight size={11} weight="bold" /> Review
                                         </button>
                                       )}
@@ -1911,6 +1913,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                 </td>
                                 <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
                                   <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                    {(p.status === 'for_review' || p.status === 'generated') && (
+                                      <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setReviewSaPost({ id: p.id })}>
+                                        <ArrowRight size={11} weight="bold" /> Review
+                                      </button>
+                                    )}
                                     {p.published_url && (
                                       <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ View</a>
                                     )}
@@ -2063,6 +2070,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           sites={clientSites}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+        />
+      )}
+
+      {/* SA post review — uses SA connection ID and reloads SA data */}
+      {reviewSaPost && (
+        <ContentPostEditor
+          postId={reviewSaPost.id}
+          defaultConnectionId={saSettings.connection_id ?? null}
+          sites={clientSites}
+          onClose={() => setReviewSaPost(null)}
+          onUpdate={() => { setReviewSaPost(null); loadSaPosts(); loadSaTopics() }}
         />
       )}
     </div>
