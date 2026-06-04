@@ -26,13 +26,14 @@ interface SaSettings {
 }
 
 interface SaTopic {
-  id:            string
-  city:          string | null
-  state_abbr:    string | null
-  service_name:  string | null
-  status:        string
-  created_at:    string
-  post?:         { id: string; status: string; published_url: string | null } | null
+  id:                  string
+  city:                string | null
+  state_abbr:          string | null
+  service_name:        string | null
+  status:              string
+  created_at:          string
+  target_publish_date: string | null
+  post?:               { id: string; status: string; published_url: string | null } | null
 }
 
 interface SaDiscoverySuggestion {
@@ -290,6 +291,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   useEffect(() => {
     if (!isActive) {
       setCalendarModalOpen(false)
+      setSaCalendarModalOpen(false)
       setReviewPost(null)
     }
   }, [isActive])
@@ -311,6 +313,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [modalStartDate,    setModalStartDate]    = useState(today())
   const [modalWeeks,        setModalWeeks]        = useState(6)
   const [generating,        setGenerating]        = useState(false)
+
+  // SA calendar modal
+  const [saCalendarModalOpen, setSaCalendarModalOpen] = useState(false)
+  const [saModalStartDate,    setSaModalStartDate]    = useState(today())
+  const [saModalWeeks,        setSaModalWeeks]        = useState(8)
+  const [saGenerating,        setSaGenerating]        = useState(false)
 
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
@@ -656,6 +664,26 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }
   }
 
+  // ── SA calendar generation ─────────────────────────────────────────────────
+  async function generateSaCalendar(e: React.FormEvent) {
+    e.preventDefault()
+    setSaGenerating(true)
+    const res = await fetch('/api/admin/content/service-area/calendar/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, start_date: saModalStartDate, weeks_ahead: saModalWeeks }),
+    })
+    const data = await res.json()
+    setSaGenerating(false)
+    if (res.ok) {
+      setSaCalendarModalOpen(false)
+      showToast(`${data.count} service area page${data.count !== 1 ? 's' : ''} scheduled across ${data.slots?.length ?? saModalWeeks} dates`)
+      loadSaTopics()
+    } else {
+      showToast(data.error || 'Generation failed', 'error')
+    }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const postsPerRun  = schedule.posts_per_run  ?? 2
   const topicsPerRun = schedule.topics_per_run ?? 5
@@ -763,6 +791,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             }}
           >
             {pill === 'blog' ? 'Blog Posts' : 'Service Pages'}
+            {pill === 'blog' && !!schedule.auto_generate && (
+              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
+            )}
             {pill === 'service' && (!!saSettings.auto_generate) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
             )}
@@ -1431,8 +1462,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setSaSettingsOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>📍</span>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Area Pages</span>
+            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
             <span style={{ flex: 1 }} />
             {!!saSettings.auto_generate && (
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
@@ -1443,7 +1474,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
                 : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>
             })()}
-            <span className="badge badge-gray" style={{ fontSize: '0.62rem' }}>{saTopics.filter(t => t.status !== 'rejected').length} queued</span>
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
               {saSettingsOpen ? '▲' : '▼'}
             </span>
@@ -1530,7 +1560,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           )}
 
         {/* ── Service Area Plan card (mirrors AI Content Plan) ───────────── */}
-        <div className="card" style={{ borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+        <div className="card" style={{ borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, marginTop: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle, #eff6ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2563eb)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3m-4.22-7.78-2.12 2.12M6.34 17.66l-2.12 2.12m0-13.56 2.12 2.12m11.32 11.32-2.12-2.12"/>
@@ -1539,15 +1569,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>Service Area Plan</div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Discover new city/service combinations using GSC data and sitemap
+              Generate a schedule of service area pages for the weeks ahead
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
             <button className="btn btn-secondary btn-sm" onClick={() => setSaAddOpen(o => !o)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
               + Add Manually
             </button>
-            <button className="btn btn-primary btn-sm" onClick={discoverSaAreas} disabled={saDiscovering} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
-              {saDiscovering ? 'Discovering…' : 'Generate Plan'}
+            <button className="btn btn-primary btn-sm" onClick={() => setSaCalendarModalOpen(true)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
+              Generate Plan
             </button>
           </div>
         </div>
@@ -1592,143 +1622,241 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         )}
 
         {/* ── Service Area Content Calendar ──────────────────────────────── */}
-        <div className="card p-6">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <h4 className="section-title" style={{ margin: 0 }}>Service Area Pages</h4>
-          </div>
+        {(() => {
+          // Build combined SA items (topics + orphan posts) grouped by date — mirrors blog calendar
+          const SA_STATUS_CFG: Record<string, { label: string; bg: string; color: string; dot: string }> = {
+            pending:    { label: 'Pending',     bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f59e0b' },
+            approved:   { label: 'Approved',    bg: 'var(--blue-subtle)',   color: 'var(--blue)',   dot: '#2563eb' },
+            generating: { label: 'Generating',  bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f97316' },
+            generated:  { label: 'For Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
+            for_review: { label: 'For Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
+            draft_saved:{ label: 'Published',   bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
+            published:  { label: 'Published',   bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
+            rejected:   { label: 'Rejected',    bg: 'var(--red-subtle)',    color: 'var(--red)',    dot: '#ef4444' },
+          }
 
-          {/* Status bar */}
-          {!saTopicsLoading && !saPostsLoading && (
-            <div style={{ display: 'flex', gap: 12, marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6, fontSize: '0.75rem', flexWrap: 'wrap' }}>
-              {[
-                { label: 'Pending',    count: saTopics.filter(t => t.status === 'pending').length,    color: '#f59e0b' },
-                { label: 'Approved',   count: saTopics.filter(t => t.status === 'approved').length,   color: '#2563eb' },
-                { label: 'Generating', count: saTopics.filter(t => t.status === 'generating').length, color: '#f97316' },
-                { label: 'Generated',  count: saTopics.filter(t => t.status === 'generated').length,  color: '#059669' },
-                { label: 'Published',  count: saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length, color: '#059669' },
-              ].filter(s => s.count > 0).map(s => (
-                <span key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.color, display: 'inline-block' }} />
-                  {s.count} {s.label}
-                </span>
-              ))}
-              <span style={{ marginLeft: 'auto', color: 'var(--text-faint)' }}>
-                {saTopics.filter(t => t.status !== 'rejected').length + saPosts.length} items
-              </span>
+          // Map post IDs to their topics for linking
+          const saPostIdToTopic = new Map<string, SaTopic>()
+          const seenSaPostIds   = new Set<string>()
+          for (const t of saTopics) {
+            if (t.post?.id) { saPostIdToTopic.set(t.post.id, t); seenSaPostIds.add(t.post.id) }
+          }
+
+          type SARowItem = { kind: 'topic'; data: SaTopic } | { kind: 'post'; data: SaPost }
+          const saAllItems: SARowItem[] = [
+            ...saTopics.filter(t => t.status !== 'rejected').map(t => ({ kind: 'topic' as const, data: t })),
+            ...saPosts.filter(p => !seenSaPostIds.has(p.id) && (p.status === 'for_review' || p.status === 'draft_saved' || p.status === 'published')).map(p => ({ kind: 'post' as const, data: p })),
+          ]
+          const saGroups = new Map<string, SARowItem[]>()
+          for (const item of saAllItems) {
+            const dateKey = item.kind === 'topic'
+              ? (item.data.target_publish_date ?? 'unscheduled')
+              : (item.data.target_publish_date ?? 'unscheduled')
+            const arr = saGroups.get(dateKey) ?? []
+            arr.push(item)
+            saGroups.set(dateKey, arr)
+          }
+          const saDateKeys = Array.from(saGroups.keys()).filter(k => k !== 'unscheduled').sort()
+          if (saGroups.has('unscheduled')) saDateKeys.push('unscheduled')
+
+          const pagesPerSlot = saSettings.pages_per_run ?? 1
+          const saRejectedCount = saTopics.filter(t => t.status === 'rejected').length
+          const [showSaRejected, setShowSaRejected_] = [false, () => {}] // rejected toggle placeholder
+
+          const statusCounts = {
+            pending:    saTopics.filter(t => t.status === 'pending').length,
+            approved:   saTopics.filter(t => t.status === 'approved').length,
+            generating: saTopics.filter(t => t.status === 'generating').length,
+            generated:  saTopics.filter(t => ['generated','for_review'].includes(t.status)).length,
+            published:  saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length,
+          }
+
+          return (
+            <div className="card p-6">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <h4 className="section-title" style={{ margin: 0 }}>Service Area Pages</h4>
+              </div>
+
+              {!saTopicsLoading && !saPostsLoading && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: '0.75rem' }}>
+                    {Object.entries(statusCounts).filter(([,v]) => v > 0).map(([label, count]) => (
+                      <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: SA_STATUS_CFG[label === 'published' ? 'published' : label === 'generated' ? 'generated' : label]?.dot ?? '#9ca3af', display: 'inline-block' }} />
+                        {count} {label}
+                      </span>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0, marginLeft: 12 }}>{saAllItems.length} items</span>
+                </div>
+              )}
+
+              {saTopicsLoading || saPostsLoading ? (
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+              ) : saTopicsError ? (
+                <p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load: {saTopicsError}</p>
+              ) : saAllItems.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
+                  No service area pages yet — click &quot;Generate Plan&quot; to create a schedule of pages for the weeks ahead.
+                </p>
+              ) : (
+                <div>
+                  <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+                    <colgroup>
+                      <col style={{ width: 130 }} />
+                      <col />
+                      <col style={{ width: 110 }} />
+                      <col style={{ width: 130 }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
+                        <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Page</th>
+                        <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Publish Date</th>
+                        <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saDateKeys.map(dateKey => {
+                        const group = saGroups.get(dateKey) ?? []
+                        if (group.length === 0) return null
+
+                        const topicsInGroup    = group.filter(r => r.kind === 'topic').map(r => r.data as SaTopic)
+                        const approvedInGroup  = topicsInGroup.filter(t => ['approved','generating','generated','for_review'].includes(t.status)).length
+                        const generatableCount = topicsInGroup.filter(t => t.status === 'approved' && !t.post?.id).length
+                        const slotReady        = approvedInGroup >= pagesPerSlot && generatableCount > 0
+
+                        return [
+                          <tr key={`sa-hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)' }}>
+                            <td colSpan={4} style={{ padding: '5px 8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
+                                  {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
+                                </span>
+                                <div style={{ display: 'flex', gap: 3 }}>
+                                  {Array.from({ length: pagesPerSlot }).map((_, i) => (
+                                    <span key={i} style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: i < approvedInGroup ? 'var(--green)' : 'var(--border)' }} />
+                                  ))}
+                                </div>
+                                <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
+                                  {approvedInGroup}/{pagesPerSlot}{slotReady ? ' ✓' : ''}
+                                </span>
+                                {slotReady && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--blue)', marginLeft: 4 }}
+                                    onClick={() => topicsInGroup.filter(t => t.status === 'approved' && !t.post?.id).forEach(t => generateSaPost(t.id))}
+                                  >
+                                    <Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>,
+                          ...group.map(item => {
+                            if (item.kind === 'topic') {
+                              const t = item.data as SaTopic
+                              const cfg = SA_STATUS_CFG[t.status] ?? { label: t.status, bg: 'var(--bg-muted)', color: 'var(--text-muted)', dot: '#9ca3af' }
+                              const pageLabel = [t.service_name ?? saSettings.primary_service, t.city, t.state_abbr].filter(Boolean).join(' — ')
+                              const hasPost = !!(t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved'))
+
+                              return (
+                                <tr key={`sa-t-${t.id}`}>
+                                  <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                                    <StatusPill status={t.status === 'generated' ? 'generated' : t.status as DisplayStatus} generating={t.status === 'generating'} />
+                                  </td>
+                                  <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {pageLabel || '—'}
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                    {fmtDate(t.target_publish_date ?? null)}
+                                  </td>
+                                  <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
+                                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                      {hasPost && (
+                                        <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                          <ArrowRight size={11} weight="bold" /> Review
+                                        </button>
+                                      )}
+                                      {t.status === 'approved' && !hasPost && (
+                                        <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }} onClick={() => generateSaPost(t.id)}>
+                                          <Play size={12} weight="fill" />
+                                        </button>
+                                      )}
+                                      {!['approved','generating','generated','for_review'].includes(t.status) && (
+                                        <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'approved')}>
+                                          <Check size={12} weight="bold" />
+                                        </button>
+                                      )}
+                                      {t.status !== 'generating' && (
+                                        <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'rejected')}>
+                                          <X size={12} weight="bold" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            }
+
+                            // Post row
+                            const p = item.data as SaPost
+                            const postCfg = SA_STATUS_CFG[p.status] ?? SA_STATUS_CFG['published']
+                            const pageLabel = p.title ?? [p.service_name, p.city, p.state_abbr].filter(Boolean).join(' — ') ?? '—'
+
+                            return (
+                              <tr key={`sa-p-${p.id}`}>
+                                <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                                  <StatusPill status={p.status === 'draft_saved' || p.status === 'published' ? 'published' : 'generated'} />
+                                </td>
+                                <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {pageLabel}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                  {fmtDate(p.target_publish_date)}
+                                </td>
+                                <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                                  <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                    {p.published_url && (
+                                      <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ View</a>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          }),
+                        ]
+                      })}
+
+                      {/* Published section (orphan posts) */}
+                      {saPosts.filter(p => seenSaPostIds.has(p.id) && (p.status === 'published' || p.status === 'draft_saved')).map(p => {
+                        const pageLabel = p.title ?? [p.service_name, p.city, p.state_abbr].filter(Boolean).join(' — ') ?? '—'
+                        return (
+                          <tr key={`sa-pub-${p.id}`}>
+                            <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                              <StatusPill status="published" />
+                            </td>
+                            <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pageLabel}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{fmtDate(p.target_publish_date)}</td>
+                            <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                              {p.published_url && <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ Live</a>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+
+                  {saRejectedCount > 0 && (
+                    <button style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>
+                      Show Rejected ({saRejectedCount})
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-
-          {saTopicsLoading || saPostsLoading ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
-          ) : saTopicsError ? (
-            <p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load: {saTopicsError}</p>
-          ) : saTopics.filter(t => t.status !== 'rejected').length === 0 && saPosts.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
-              No service area pages yet — click &quot;Generate Plan&quot; to discover new city/service combinations.
-            </p>
-          ) : (
-            <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
-              <colgroup>
-                <col style={{ width: 120 }} />
-                <col />
-                <col style={{ width: 110 }} />
-                <col style={{ width: 120 }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
-                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Page</th>
-                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Date</th>
-                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Topic rows */}
-                {saTopics.filter(t => t.status !== 'rejected').map(t => {
-                  const SA_STATUS: Record<string, { label: string; bg: string; color: string; dot: string }> = {
-                    pending:    { label: 'Pending',     bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f59e0b' },
-                    approved:   { label: 'Approved',    bg: 'var(--blue-subtle)',   color: 'var(--blue)',   dot: '#2563eb' },
-                    generating: { label: 'Generating',  bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f97316' },
-                    generated:  { label: 'For Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
-                  }
-                  const cfg = SA_STATUS[t.status] ?? { label: t.status, bg: 'var(--bg-muted)', color: 'var(--text-muted)', dot: '#9ca3af' }
-                  const pageLabel = [t.service_name ?? saSettings.primary_service, t.city, t.state_abbr].filter(Boolean).join(' — ')
-                  const hasPost = t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved')
-
-                  return (
-                    <tr key={`t-${t.id}`}>
-                      <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap' }}>
-                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.dot, animation: t.status === 'generating' ? 'pulse 1.2s ease-in-out infinite' : 'none' }} />
-                          {cfg.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {pageLabel || '—'}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {t.created_at ? new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
-                      </td>
-                      <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
-                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                          {hasPost && (
-                            <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px' }} onClick={() => { /* review handled inline */ }}>→ Review</button>
-                          )}
-                          {t.status === 'approved' && !hasPost && (
-                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }} onClick={() => generateSaPost(t.id)}>
-                              <Play size={12} weight="fill" />
-                            </button>
-                          )}
-                          {t.status === 'pending' && (
-                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'approved')}>
-                              <Check size={12} weight="bold" />
-                            </button>
-                          )}
-                          {t.status !== 'generating' && (
-                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'rejected')}>
-                              <X size={12} weight="bold" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {/* Post rows */}
-                {saPosts.map(p => {
-                  const isPublished = p.status === 'published' || p.status === 'draft_saved'
-                  const statusLabel = isPublished ? 'Published' : 'For Review'
-                  const statusColor = '#059669'
-                  const pageLabel = p.title ?? [p.service_name, p.city, p.state_abbr].filter(Boolean).join(' — ') ?? '—'
-
-                  return (
-                    <tr key={`p-${p.id}`}>
-                      <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: 'var(--green-subtle)', color: statusColor, whiteSpace: 'nowrap' }}>
-                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor }} />
-                          {statusLabel}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {pageLabel}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {p.target_publish_date ? new Date(p.target_publish_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
-                      </td>
-                      <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
-                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                          {p.published_url && (
-                            <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ View</a>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
+          )
+        })()}
         </div>
       )}
 
@@ -1771,6 +1899,50 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={generating}>
                   {generating ? 'Generating…' : 'Generate →'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── SA Generate Plan Modal ──────────────────────────────────────── */}
+      {saCalendarModalOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+          onClick={() => setSaCalendarModalOpen(false)}
+        >
+          <div
+            style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
+              <span className="font-semibold text-sm">Generate Service Area Page Schedule</span>
+              <button type="button" onClick={() => setSaCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
+            </div>
+            <form onSubmit={generateSaCalendar} style={{ padding: '1.375rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+                <div>
+                  <Label>Start Date</Label>
+                  <input className="input" type="date" style={{ width: '100%' }} value={saModalStartDate} onChange={e => setSaModalStartDate(e.target.value)} required />
+                </div>
+                <div>
+                  <Label>Weeks Ahead</Label>
+                  <input className="input" type="number" min={1} max={52} style={{ width: '100%' }} value={saModalWeeks} onChange={e => setSaModalWeeks(Number(e.target.value))} required />
+                </div>
+                <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+                  <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
+                    <strong>Schedule:</strong> {FREQ_LABEL[saSettings.schedule_frequency ?? 'monthly'] ?? 'Monthly'} · {saSettings.pages_per_run ?? 1} page{(saSettings.pages_per_run ?? 1) !== 1 ? 's' : ''}/run
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--blue)' }}>
+                    Cycles through your configured service areas, assigning one location per publish slot.
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setSaCalendarModalOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={saGenerating}>
+                  {saGenerating ? 'Generating…' : 'Generate →'}
                 </button>
               </div>
             </form>

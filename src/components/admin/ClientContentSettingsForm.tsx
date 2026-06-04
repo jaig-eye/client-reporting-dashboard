@@ -88,9 +88,11 @@ export default function ClientContentSettingsForm({
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState('')
   const [aiSuggested, setAiSuggested] = useState(false)
-  const [aiBlocked,   setAiBlocked]   = useState(false)  // site is blocking server-side fetches
-  const [siteUrlInput, setSiteUrlInput] = useState('')
+  const [aiBlocked,     setAiBlocked]     = useState(false)  // site is blocking server-side fetches
+  const [siteUrlInput,  setSiteUrlInput]  = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
+  const [siteTextInput, setSiteTextInput] = useState('')
+  const [showSiteText,  setShowSiteText]  = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -140,12 +142,16 @@ export default function ClientContentSettingsForm({
   }
   function removeManualLink(i: number)             { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
-  async function autoFill(siteUrl?: string) {
+  async function autoFill(siteUrl?: string, siteText?: string) {
     setAiLoading(true); setAiError(''); setAiSuggested(false); setAiBlocked(false)
     const res = await fetch('/api/admin/content/generate-brand-dna', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, ...(siteUrl ? { site_url: siteUrl } : {}) }),
+      body: JSON.stringify({
+        client_id: clientId,
+        ...(siteUrl  ? { site_url:  siteUrl  } : {}),
+        ...(siteText ? { site_text: siteText } : {}),
+      }),
     })
     setAiLoading(false)
     if (res.status === 422) {
@@ -280,6 +286,39 @@ export default function ClientContentSettingsForm({
               onClick={() => { setShowSiteInput(false); setAiBlocked(false) }}
             >✕</button>
           </div>
+          {/* Paste text fallback — shown when site is blocking automated fetches */}
+          {aiBlocked && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                style={{ fontSize: '0.8125rem', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                onClick={() => setShowSiteText(s => !s)}
+              >
+                {showSiteText ? 'Hide' : 'Or paste your website text instead'}
+              </button>
+              {showSiteText && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <textarea
+                    className="input"
+                    rows={6}
+                    style={{ resize: 'vertical', fontSize: '0.8125rem' }}
+                    placeholder="Paste your homepage or about page text here…"
+                    value={siteTextInput}
+                    onChange={e => setSiteTextInput(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.8125rem', alignSelf: 'flex-start' }}
+                    onClick={() => autoFill(undefined, siteTextInput)}
+                    disabled={aiLoading || !siteTextInput.trim()}
+                  >
+                    {aiLoading ? 'Analyzing…' : 'Analyze Text'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           </div>
         )}
 

@@ -63,7 +63,14 @@ async function fetchPageText(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
       signal:  AbortSignal.timeout(10_000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BrandAnalyzer/1.0)' },
+      headers: {
+        'User-Agent':                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language':           'en-US,en;q=0.5',
+        'Accept-Encoding':           'gzip, deflate, br',
+        'Connection':                'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      },
     })
     if (!res.ok) return ''
     const html = await res.text()
@@ -85,7 +92,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { client_id: string; site_url?: string }
+  const body = await request.json() as { client_id: string; site_url?: string; site_text?: string }
   const { client_id } = body
   if (!client_id) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
 
@@ -119,28 +126,34 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (!siteUrl) {
+  if (!siteUrl && !body.site_text?.trim()) {
     return NextResponse.json({ error: 'site_url_required' }, { status: 422 })
   }
 
-  if (!/^https?:\/\//i.test(siteUrl)) siteUrl = `https://${siteUrl}`
-  if (!isPublicUrl(siteUrl)) {
-    return NextResponse.json({ error: 'Invalid or non-public site URL' }, { status: 422 })
-  }
-  const base = siteUrl.replace(/\/$/, '')
+  // If the user pasted their own site text, skip fetching entirely
+  let content: string
+  let resolvedBase: string | undefined
+  if (body.site_text?.trim()) {
+    content = body.site_text.trim().slice(0, 6000)
+  } else {
+    const su = siteUrl!
+    const normalized = /^https?:\/\//i.test(su) ? su : `https://${su}`
+    if (!isPublicUrl(normalized)) {
+      return NextResponse.json({ error: 'Invalid or non-public site URL' }, { status: 422 })
+    }
+    resolvedBase = normalized.replace(/\/$/, '')
 
-  // Fetch homepage + about + services + contact for full context
-  const [home, about, services, contact] = await Promise.all([
-    fetchPageText(base),
-    fetchPageText(`${base}/about`),
-    fetchPageText(`${base}/services`),
-    fetchPageText(`${base}/contact`),
-  ])
-  const content = [home, about, services, contact].filter(Boolean).join('\n\n').slice(0, 6000)
+    const [home, about, services, contact] = await Promise.all([
+      fetchPageText(resolvedBase),
+      fetchPageText(`${resolvedBase}/about`),
+      fetchPageText(`${resolvedBase}/services`),
+      fetchPageText(`${resolvedBase}/contact`),
+    ])
+    content = [home, about, services, contact].filter(Boolean).join('\n\n').slice(0, 6000)
+  }
 
   if (!content.trim()) {
-    // Return the detected site URL so the client can pre-fill the input
-    return NextResponse.json({ error: 'blocked', site_url: base }, { status: 422 })
+    return NextResponse.json({ error: 'blocked', site_url: resolvedBase ?? siteUrl }, { status: 422 })
   }
 
   // Load AI credentials from agency_settings
