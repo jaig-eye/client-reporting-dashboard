@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { fetchBCOrders, fetchBCStoreTimezone } from '@/lib/connectors/bigcommerce'
 import { sendDiscordMessage } from '@/lib/discord'
@@ -60,7 +61,7 @@ function localMonthStart(tzName: string, now: Date): Date {
 // Called daily at 09:00 UTC by Vercel Cron.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

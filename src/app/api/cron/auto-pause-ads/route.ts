@@ -3,6 +3,7 @@
 // Sends Discord notification and logs every action to ad_pause_log.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { pauseGoogleCampaigns, resumeGoogleCampaigns } from '@/lib/connectors/google-ads'
@@ -18,7 +19,7 @@ function fmtNames(names: string[], max = 10): string {
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

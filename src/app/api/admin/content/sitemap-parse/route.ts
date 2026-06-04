@@ -10,6 +10,27 @@ function extractLocs(xml: string): string[] {
     .map(u => u.replace(/&amp;/g, '&').replace(/\s/g, ''))
 }
 
+// Block private/internal IP ranges and dangerous schemes to prevent SSRF.
+function isPublicUrl(rawUrl: string): boolean {
+  let u: URL
+  try { u = new URL(rawUrl) } catch { return false }
+  if (!['http:', 'https:'].includes(u.protocol)) return false
+  const host = u.hostname.toLowerCase()
+  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false
+  if (host === 'metadata.google.internal' || host === 'metadata.goog') return false
+  const oct = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (oct) {
+    const [a, b] = [Number(oct[1]), Number(oct[2])]
+    if (a === 10 || a === 127 || a === 0) return false
+    if (a === 172 && b >= 16 && b <= 31)  return false
+    if (a === 192 && b === 168)            return false
+    if (a === 169 && b === 254)            return false
+    if (a === 100 && b >= 64 && b <= 127) return false
+  }
+  if (host === '::1' || host === '[::1]' || host.startsWith('fe80')) return false
+  return true
+}
+
 export async function POST(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
   if (!isAdminAuthed(session)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -48,6 +69,10 @@ export async function POST(request: NextRequest) {
   }
 
   for (const sitemapUrl of sitemapUrls) {
+    if (!isPublicUrl(sitemapUrl)) {
+      fetchErrors.push(`${sitemapUrl} → blocked (private or non-HTTP URL)`)
+      continue
+    }
     try {
       const res = await fetch(sitemapUrl, { headers, redirect: 'follow' })
       if (!res.ok) {
@@ -65,8 +90,9 @@ export async function POST(request: NextRequest) {
       const locs = extractLocs(xml)
 
       if (xml.includes('<sitemapindex')) {
-        // Sitemap index — recurse one level into each sub-sitemap
-        for (const subUrl of locs) {
+        // Sitemap index — recurse one level into sub-sitemaps, capped at 20 to prevent DoS
+        const subUrls = locs.filter(isPublicUrl).slice(0, 20)
+        for (const subUrl of subUrls) {
           try {
             const subRes = await fetch(subUrl, { headers, redirect: 'follow' })
             if (!subRes.ok) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { upsertGoogleAdsMetrics, upsertGoogleAdsAdMetrics } from '@/lib/sync'
 import type { GoogleAdsAdRawRow } from '@/lib/connectors/google-ads'
@@ -28,7 +29,7 @@ import type { GoogleAdsAdRawRow } from '@/lib/connectors/google-ads'
  */
 export async function POST(request: NextRequest) {
   const secret = request.headers.get('x-ingest-secret')
-  if (!secret || secret !== process.env.INGEST_SECRET) {
+  if (!timingSafeCompare(secret, process.env.INGEST_SECRET)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

@@ -16,7 +16,26 @@
 
 import { cookies } from 'next/headers'
 import { createAdminClient } from './supabase/server'
-import { createHash } from 'crypto'
+import { createHash, timingSafeEqual } from 'crypto'
+
+/**
+ * Timing-safe string comparison for secrets and tokens.
+ * Prevents timing-attack enumeration of CRON_SECRET, ADMIN_PASSWORD, etc.
+ * Returns false (not throws) when lengths differ or either value is missing.
+ */
+export function timingSafeCompare(
+  provided: string | null | undefined,
+  expected: string | undefined,
+): boolean {
+  if (!provided || !expected) return false
+  try {
+    const a = Buffer.from(provided)
+    const b = Buffer.from(expected)
+    return a.length === b.length && timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
+}
 
 export interface AdminSession {
   isSuperAdmin: boolean
@@ -31,7 +50,7 @@ export interface AdminSession {
 export async function getAdminSession(): Promise<AdminSession | null> {
   const cookieStore = await cookies()
   const session = cookieStore.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) return null
+  if (!timingSafeCompare(session, process.env.ADMIN_PASSWORD)) return null
 
   const userId = cookieStore.get('admin_user_id')?.value
   if (!userId) {
@@ -62,7 +81,7 @@ export async function getAdminSession(): Promise<AdminSession | null> {
 
 /** Quick synchronous check — use in API routes that just need auth (not role). */
 export function isAdminAuthed(session: string | undefined): boolean {
-  return !!session && session === process.env.ADMIN_PASSWORD
+  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
 }
 
 /** SHA-256 password hash — consistent with existing password routes. */

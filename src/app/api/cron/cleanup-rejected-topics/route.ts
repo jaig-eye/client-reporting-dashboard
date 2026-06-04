@@ -2,6 +2,7 @@
 // Weekly cron: deletes content_topics with status='rejected' older than 7 days.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 
 export async function GET(request: NextRequest) {

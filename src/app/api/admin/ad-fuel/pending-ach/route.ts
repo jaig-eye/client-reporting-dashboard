@@ -264,7 +264,20 @@ export async function DELETE(request: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
   const db = createAdminClient()
-  const { error } = await db.from('ad_fuel_ach_pending').delete().eq('id', id)
+  // Fetch first to verify the entry exists — delete is scoped by both id + client_id
+  // to prevent one client's entry being deleted by guessing another's UUID.
+  const { data: entry } = await db
+    .from('ad_fuel_ach_pending')
+    .select('client_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!entry) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const { error } = await db
+    .from('ad_fuel_ach_pending')
+    .delete()
+    .eq('id', id)
+    .eq('client_id', entry.client_id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ deleted: true })
 }

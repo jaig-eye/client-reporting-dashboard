@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { timingSafeCompare } from '@/lib/auth'
 
 function getEffectiveCutoff(cutoffDate: string, historicBillDay: number): string {
   const c = new Date(cutoffDate + 'T00:00:00Z')
@@ -117,7 +118,7 @@ const getAdFuelBalance = unstable_cache(
 
 export async function GET(request: NextRequest) {
   const apiKey = request.headers.get('x-api-key')
-  if (!apiKey || apiKey !== process.env.ADFUEL_API_KEY) {
+  if (!timingSafeCompare(apiKey, process.env.ADFUEL_API_KEY)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: CORS_HEADERS })
   }
 
