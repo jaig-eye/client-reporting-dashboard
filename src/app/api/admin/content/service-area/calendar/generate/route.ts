@@ -1,7 +1,7 @@
 // POST /api/admin/content/service-area/calendar/generate
 // Generates scheduled service area topics across a content calendar window.
-// Mirrors the blog calendar/generate endpoint but reads from service_area_settings
-// and cycles through the configured service_areas list (city/state combos).
+// Uses configured service_areas list if available; falls back to AI+GSC discovery
+// (same logic as the discover endpoint) when no areas are pre-configured.
 //
 // Body: { client_id, start_date?, weeks_ahead? }
 // Returns: { ok: true, count, slots }
@@ -25,28 +25,112 @@ export async function POST(request: NextRequest) {
 
   const db = createAdminClient()
 
-  // ── Load service area schedule config ──────────────────────────────────────
-  const { data: sa } = await db
-    .from('service_area_settings')
-    .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service')
-    .eq('client_id', client_id)
-    .maybeSingle()
+  // ── Load service area config + agency settings in parallel ─────────────────
+  const [saRes, agencyRes, contentRes] = await Promise.all([
+    db.from('service_area_settings')
+      .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service, location_notes')
+      .eq('client_id', client_id)
+      .maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
+    db.from('content_settings').select('geographic_focus, services, business_background').eq('client_id', client_id).maybeSingle(),
+  ])
 
-  const frequency   = (sa?.schedule_frequency   as string  | null) ?? 'monthly'
-  const dayOfWeek   = (sa?.schedule_day_of_week  as number  | null) ?? 1
-  const pagesPerRun = (sa?.pages_per_run         as number  | null) ?? 1
-  const weeksAhead  = weeksAheadParam ?? 8
-  const anchor      = start_date ? new Date(start_date) : new Date()
+  const sa = saRes.data
+  const frequency      = (sa?.schedule_frequency  as string | null) ?? 'monthly'
+  const dayOfWeek      = (sa?.schedule_day_of_week as number | null) ?? 1
+  const pagesPerRun    = (sa?.pages_per_run        as number | null) ?? 1
+  const weeksAhead     = weeksAheadParam ?? 8
+  const anchor         = start_date ? new Date(start_date) : new Date()
+  const primaryService = (sa?.primary_service as string | null)
+    ?? (contentRes.data?.services as string | null)?.split(',')[0]?.trim()
+    ?? 'Service'
 
   type ServiceArea = { city: string; state: string }
-  const serviceAreas = (sa?.service_areas as ServiceArea[] | null) ?? []
-  const primaryService = (sa?.primary_service as string | null) ?? 'Service'
+  let serviceAreas = (sa?.service_areas as ServiceArea[] | null) ?? []
 
+  // ── If no service areas configured, use AI+GSC to discover them ────────────
   if (serviceAreas.length === 0) {
-    return NextResponse.json(
-      { error: 'No service areas configured. Add locations in the service area settings first.' },
-      { status: 400 }
-    )
+    const apiKey = agencyRes.data?.ai_api_key as string | null
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'No service areas configured and no AI key set. Add service areas in settings or configure AI in Agency Settings.' },
+        { status: 400 }
+      )
+    }
+
+    // Load GSC data for geographic signals
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90)
+    const { data: gscRows } = await db
+      .from('gsc_metrics')
+      .select('query, impressions, clicks')
+      .eq('client_id', client_id)
+      .gte('date', cutoff.toISOString().slice(0, 10))
+      .not('query', 'is', null)
+      .order('impressions', { ascending: false })
+      .limit(500)
+
+    const geoPatterns = [
+      /\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),?\s*([A-Z]{2})\b/,
+      /\bnear\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/i,
+      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:fl|tx|ca|ny|ga|nc|va|oh|pa|az|co|wa|or|mn|wi|mo|tn|sc|al|la|ky|ok|ar|ms|ia|ks|ut|nv|nm|ne|id|nh|me|ri|ct|de|vt|mt|wy|sd|nd|ak|hi|wv|in|mi|il|md|nj|ma)\b/i,
+    ]
+    const geoSignals: string[] = []
+    for (const row of (gscRows ?? []) as { query: string | null; impressions: number; clicks: number }[]) {
+      if (!row.query) continue
+      for (const p of geoPatterns) {
+        if (row.query.match(p)) { geoSignals.push(`"${row.query}" — ${row.impressions} impr`); break }
+      }
+    }
+
+    const geoBullet = geoSignals.slice(0, 20).join('\n') || 'No GSC data — infer from business context'
+    const geoFocus = (contentRes.data?.geographic_focus as string | null) ?? ''
+    const bizBg    = (contentRes.data?.business_background as string | null) ?? ''
+
+    const prompt = `You are a local SEO strategist. Suggest city/state combinations for service area pages.
+
+Business: ${bizBg}
+Primary service: ${primaryService}
+Known service area: ${geoFocus || 'unknown'}
+GSC geographic signals:\n${geoBullet}
+
+Return ONLY a JSON array of 10-15 city/state combos (no markdown):
+[{"city":"City","state":"FL"},...]`
+
+    try {
+      const provider = (agencyRes.data?.ai_provider as string | null) ?? 'anthropic'
+      const model    = (agencyRes.data?.ai_model    as string | null) ?? (provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini')
+      let rawText = ''
+
+      if (provider === 'anthropic') {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+        })
+        const d = await res.json() as { content?: { text: string }[] }
+        rawText = d.content?.[0]?.text ?? ''
+      } else {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 1024 }),
+        })
+        const d = await res.json() as { choices?: { message: { content: string } }[] }
+        rawText = d.choices?.[0]?.message?.content ?? ''
+      }
+
+      const match = rawText.match(/\[[\s\S]*\]/)
+      if (match) serviceAreas = JSON.parse(match[0]) as ServiceArea[]
+    } catch {
+      // AI failed — fall through to error below
+    }
+
+    if (serviceAreas.length === 0) {
+      return NextResponse.json(
+        { error: 'Could not determine service areas. Add GSC data or configure service areas manually in settings.' },
+        { status: 400 }
+      )
+    }
   }
 
   // ── Compute publish slots ───────────────────────────────────────────────────

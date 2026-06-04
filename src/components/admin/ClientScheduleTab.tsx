@@ -1528,6 +1528,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     </select>
                   </div>
                 )}
+                <div>
+                  <Label>Primary Service</Label>
+                  <input
+                    className="input"
+                    value={saSettings.primary_service ?? ''}
+                    onChange={e => setSa('primary_service', e.target.value || undefined)}
+                    placeholder="e.g. Tree Service"
+                    style={{ width: '100%' }}
+                  />
+                </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <Label>Location Notes</Label>
                   <textarea
@@ -1538,6 +1548,62 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     onChange={e => setSa('location_notes', e.target.value || undefined)}
                     placeholder="e.g. Mention hurricane season for Florida clients. Use 'yard' not 'garden'."
                   />
+                </div>
+                {/* Service Areas list — used by Generate Plan to cycle through locations */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                      Service Areas <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — used by Generate Plan (optional — AI will infer from GSC if empty)</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.72rem', padding: '1px 8px' }}
+                      onClick={() => setSa('service_areas', [...(saSettings.service_areas ?? []), { city: '', state: '' }])}
+                    >
+                      + Add Location
+                    </button>
+                  </div>
+                  {(saSettings.service_areas ?? []).length === 0 ? (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>
+                      No locations added — Generate Plan will use GSC data and brand DNA to find your service area automatically.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {(saSettings.service_areas ?? []).map((area, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            className="input"
+                            style={{ flex: 1, fontSize: '0.8125rem' }}
+                            value={area.city}
+                            onChange={e => {
+                              const updated = [...(saSettings.service_areas ?? [])]
+                              updated[i] = { ...updated[i], city: e.target.value }
+                              setSa('service_areas', updated)
+                            }}
+                            placeholder="City"
+                          />
+                          <input
+                            className="input"
+                            style={{ width: 56, fontSize: '0.8125rem' }}
+                            value={area.state}
+                            maxLength={2}
+                            onChange={e => {
+                              const updated = [...(saSettings.service_areas ?? [])]
+                              updated[i] = { ...updated[i], state: e.target.value.toUpperCase().slice(0, 2) }
+                              setSa('service_areas', updated)
+                            }}
+                            placeholder="FL"
+                          />
+                          <button
+                            type="button"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.875rem', padding: '0 4px', lineHeight: 1 }}
+                            onClick={() => setSa('service_areas', (saSettings.service_areas ?? []).filter((_, j) => j !== i))}
+                          >✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '0.75rem' }}>
