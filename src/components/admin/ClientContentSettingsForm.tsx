@@ -88,7 +88,8 @@ export default function ClientContentSettingsForm({
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState('')
   const [aiSuggested, setAiSuggested] = useState(false)
-  const [aiBlocked,     setAiBlocked]     = useState(false)  // site is blocking server-side fetches
+  const [aiBlocked,     setAiBlocked]     = useState(false)
+  const [eeatOpen,      setEeatOpen]      = useState(false)  // auto-opens when AI fills EEAT fields
   const [siteUrlInput,  setSiteUrlInput]  = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
   const [siteTextInput, setSiteTextInput] = useState('')
@@ -208,7 +209,10 @@ export default function ClientContentSettingsForm({
         (eeatUpdate as Record<string, unknown>)[k] = v
       }
     }
-    if (Object.keys(eeatUpdate).length > 0) setEeat(prev => ({ ...prev, ...eeatUpdate }))
+    if (Object.keys(eeatUpdate).length > 0) {
+      setEeat(prev => ({ ...prev, ...eeatUpdate }))
+      setEeatOpen(true) // auto-expand so users can see the populated fields
+    }
     setAiSuggested(true)
     setShowSiteInput(false)
   }
@@ -415,10 +419,10 @@ export default function ClientContentSettingsForm({
       </div>
 
       {/* ── Trust & Credibility (E-E-A-T) ────────────────────────────────── */}
-      <details className="card" style={{ overflow: 'hidden' }}>
+      <details className="card" style={{ overflow: 'hidden' }} open={eeatOpen} onToggle={e => setEeatOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary className="p-6 cursor-pointer font-semibold text-sm flex items-center justify-between" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
           <span>Trust &amp; Credibility <span className="text-xs font-normal ml-1" style={{ color: 'var(--text-muted)' }}>(E-E-A-T signals — used in every AI prompt)</span></span>
-          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>▸</span>
+          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{eeatOpen ? '▾' : '▸'}</span>
         </summary>
 
         <div className="p-6 pt-0 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
