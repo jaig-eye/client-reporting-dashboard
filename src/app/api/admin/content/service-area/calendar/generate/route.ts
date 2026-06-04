@@ -209,17 +209,27 @@ export async function POST(request: NextRequest) {
 Primary service: ${primaryService}
 Business: ${bizBg || 'Not provided'}
 Primary service area (brand DNA geographic focus): ${geoFocus || 'Not specified'}
-Cities already have live pages — DO NOT include these: ${alreadyHas}
+Cities that already have live pages — DO NOT include these: ${alreadyHas}
 
 Top GSC queries (last 90 days):
 ${topQueries || 'No GSC data'}
 
-Task: Suggest 12 NEW cities/towns in the same region that do NOT already have pages.
-Use the geographic focus as the anchor — list nearby cities in the same county or metro area.
-For each city include a brief rationale (1 sentence, e.g. why GSC signals or proximity makes it a good target).
+Task: Suggest 12 NEW target cities for service area pages.
+
+STRICT RULES — follow exactly:
+1. Suggest only REAL incorporated cities or towns — NEVER counties, regions, or unincorporated areas.
+   BAD examples: "Brevard", "Brevard County", "Central Florida", "Space Coast" — these are NOT cities.
+   GOOD examples: "Palm Bay", "Melbourne", "Titusville", "Cocoa", "Rockledge".
+2. Every city MUST be in the same county as the primary service area. If the focus is Brevard County, FL,
+   every city must be an actual city IN Brevard County. Do NOT suggest cities from adjacent counties
+   (e.g. Port Orange is Volusia County — wrong).
+3. Do NOT repeat any city from the "already have live pages" list above.
+4. Each city must be a place a home service business would realistically travel to.
+
+For each suggestion include a one-sentence rationale.
 
 Return ONLY valid JSON array, no markdown:
-[{"city":"Melbourne","state":"FL","rationale":"High search volume for tree service melbourne fl (320 impressions)"},...]`
+[{"city":"Melbourne","state":"FL","rationale":"Second largest city in Brevard County, high residential density for landscaping"},...]`
 
     let aiError = ''
     try {
