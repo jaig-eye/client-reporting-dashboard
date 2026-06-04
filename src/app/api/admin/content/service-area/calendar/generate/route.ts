@@ -110,8 +110,8 @@ Return ONLY valid JSON, no markdown, no explanation — just the array:
 
     let aiError = ''
     try {
-      const provider = (agencyRes.data?.ai_provider as string | null) ?? 'anthropic'
-      const model    = (agencyRes.data?.ai_model    as string | null) ?? (provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini')
+      const provider = (agencyRes.data?.ai_provider as string | null) || 'anthropic'
+      const model    = (agencyRes.data?.ai_model    as string | null) || (provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini')
       let rawText = ''
 
       if (provider === 'anthropic') {
