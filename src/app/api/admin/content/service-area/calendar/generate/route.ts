@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
   // ── Load everything in one round-trip ──────────────────────────────────────
   const [saRes, agencyRes, contentRes, sitemapRes, existingTopicsRes, gscRes] = await Promise.all([
     db.from('service_area_settings')
-      .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service, slug_structure, location_notes')
+      .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service, slug_structure, location_notes, service_pages')
       .eq('client_id', client_id)
       .maybeSingle(),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
@@ -154,18 +154,27 @@ export async function POST(request: NextRequest) {
     .map(p => parseSitemapUrl(p.url, slugStructure))
     .filter((p): p is ParsedPage => p !== null)
 
-  // Detect primary service from sitemap if not configured
-  // (most common service slug across all parsed service pages)
-  const sitemapServices = sitemapParsed.map(p => p.service)
-  const serviceFreq     = new Map<string, number>()
-  for (const s of sitemapServices) serviceFreq.set(s, (serviceFreq.get(s) ?? 0) + 1)
-  const topSitemapService = Array.from(serviceFreq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  // Build ordered list of services to cycle through:
+  //   1. service_pages from SA settings (explicit list, in order)
+  //   2. Unique services parsed from sitemap service page URLs
+  //   3. Comma-separated services from brand DNA
+  type ServicePage = { name: string; url?: string }
+  const saServicePages = (sa?.service_pages as ServicePage[] | null) ?? []
 
-  const primaryService =
-    (sa?.primary_service as string | null)?.trim() ||
-    topSitemapService ||
-    (contentRes.data?.services as string | null)?.split(',')[0]?.trim() ||
-    'Service'
+  const sitemapServices = Array.from(new Set(sitemapParsed.map(p => p.service)))
+
+  const brandDnaServices = ((contentRes.data?.services as string | null) ?? '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+
+  // Merge, deduplicate (case-insensitive), preserve order
+  const serviceSet = new Map<string, string>() // normalised → display
+  const addService = (s: string) => { const k = s.toLowerCase(); if (!serviceSet.has(k)) serviceSet.set(k, s) }
+  saServicePages.forEach(p => addService(p.name))
+  sitemapServices.forEach(addService)
+  brandDnaServices.forEach(addService)
+
+  const services = Array.from(serviceSet.values())
+  const primaryService = services[0] ?? 'Service'
 
   // Build dedup set: sitemap live pages + queued DB topics
   const existingCombos = new Set<string>()
@@ -204,9 +213,10 @@ export async function POST(request: NextRequest) {
     const bizBg      = (contentRes.data?.business_background as string | null) ?? ''
     const alreadyHas = servedCities.slice(0, 20).join(', ') || 'none yet'
 
+    const serviceList = services.length > 1 ? services.join(', ') : primaryService
     const prompt = `You are a local SEO strategist. A home service business needs new service area landing pages.
 
-Primary service: ${primaryService}
+Services offered: ${serviceList}
 Business: ${bizBg || 'Not provided'}
 Primary service area (brand DNA geographic focus): ${geoFocus || 'Not specified'}
 Cities that already have live pages — DO NOT include these: ${alreadyHas}
@@ -279,29 +289,33 @@ Return ONLY valid JSON array, no markdown:
     return NextResponse.json({ error: 'No publish slots computed for the given schedule' }, { status: 400 })
   }
 
-  // ── Create topics, skipping duplicates ─────────────────────────────────────
+  // ── Create topics, cycling through both services and locations ────────────
+  // Strategy: for each slot, try service[serviceIndex % services.length] paired
+  // with area[areaIndex % areas.length]. Advance both indices together so we
+  // distribute across services AND locations, not just locations.
   const toInsert: {
     client_id: string; content_type: string
     city: string; state_abbr: string; service_name: string
     topic: string; rationale: string | null; status: string; target_publish_date: string
   }[] = []
-  let skipped = 0
+  let skipped    = 0
+  let areaIndex    = 0
+  let serviceIndex = 0
 
-  let areaIndex = 0
   for (const slot of slots) {
     for (let p = 0; p < pagesPerRun; p++) {
+      // Try up to services.length × areas.length combos to find one not already existing
+      const maxAttempts = Math.max(1, services.length * serviceAreas.length)
       let placed = false
-      let attempts = 0
-      while (!placed && attempts < serviceAreas.length) {
-        const area = serviceAreas[areaIndex % serviceAreas.length]
-        areaIndex++
-        attempts++
 
-        const key = comboKey(area.city, area.state, primaryService)
-        if (existingCombos.has(key)) {
-          skipped++
-          continue
-        }
+      for (let attempt = 0; attempt < maxAttempts && !placed; attempt++) {
+        const area    = serviceAreas[areaIndex    % serviceAreas.length]
+        const service = services[serviceIndex % services.length]
+        areaIndex++
+        serviceIndex++
+
+        const key = comboKey(area.city, area.state, service)
+        if (existingCombos.has(key)) { skipped++; continue }
 
         existingCombos.add(key)
         toInsert.push({
@@ -309,8 +323,8 @@ Return ONLY valid JSON array, no markdown:
           content_type:        'service_area',
           city:                area.city,
           state_abbr:          area.state,
-          service_name:        primaryService,
-          topic:               `${primaryService} in ${area.city}, ${area.state}`,
+          service_name:        service,
+          topic:               `${service} in ${area.city}, ${area.state}`,
           rationale:           (area as ServiceArea & { rationale?: string }).rationale ?? null,
           status:              'pending',
           target_publish_date: slot,
