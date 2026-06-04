@@ -33,6 +33,7 @@ interface SaTopic {
   status:              string
   created_at:          string
   target_publish_date: string | null
+  generation_error?:   string | null
   post?:               { id: string; status: string; published_url: string | null } | null
 }
 
@@ -376,6 +377,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       .then((d: SaTopic[]) => { setSaTopics(Array.isArray(d) ? d : []); setSaTopicsLoading(false) })
       .catch(e => { setSaTopicsError(String(e)); setSaTopicsLoading(false) })
   }, [clientId])
+
+  async function retrySaGenerate(topicId: string) {
+    // Reset error and set back to approved so retry works
+    await fetch(`/api/admin/content/topics/${topicId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'approved', generation_error: null }),
+    })
+    setSaTopics(p => p.map(t => t.id === topicId ? { ...t, status: 'approved', generation_error: null } : t))
+    generateSaPost(topicId)
+  }
 
   const loadSaPosts = useCallback(() => {
     setSaPostsLoading(true)
@@ -1824,12 +1836,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               const t = item.data as SaTopic
                               const cfg = SA_STATUS_CFG[t.status] ?? { label: t.status, bg: 'var(--bg-muted)', color: 'var(--text-muted)', dot: '#9ca3af' }
                               const pageLabel = [t.service_name ?? saSettings.primary_service, t.city, t.state_abbr].filter(Boolean).join(' — ')
-                              const hasPost = !!(t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved'))
+                              const hasPost   = !!(t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved'))
+                              const hasError  = !!t.generation_error && t.status === 'approved'
 
                               return (
-                                <tr key={`sa-t-${t.id}`}>
+                                <tr key={`sa-t-${t.id}`} style={{ borderLeft: hasError ? '2px solid #f59e0b' : undefined }}>
                                   <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
-                                    <StatusPill status={t.status === 'generated' ? 'generated' : t.status as DisplayStatus} generating={t.status === 'generating'} />
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                      <StatusPill status={t.status === 'generated' ? 'generated' : t.status as DisplayStatus} generating={t.status === 'generating'} />
+                                      {hasError && (
+                                        <span title={t.generation_error ?? ''} style={{ fontSize: '0.7rem', color: '#f59e0b', cursor: 'help', lineHeight: 1 }}>⚠</span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {pageLabel || '—'}
@@ -1844,7 +1862,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                           <ArrowRight size={11} weight="bold" /> Review
                                         </button>
                                       )}
-                                      {t.status === 'approved' && !hasPost && (
+                                      {hasError && (
+                                        <button
+                                          className="btn btn-secondary"
+                                          style={{ padding: '2px 6px', color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.65rem' }}
+                                          onClick={() => retrySaGenerate(t.id)}
+                                          title={`Retry — last error: ${t.generation_error}`}
+                                        >
+                                          <ArrowClockwise size={11} weight="bold" /> Retry
+                                        </button>
+                                      )}
+                                      {t.status === 'approved' && !hasPost && !hasError && (
                                         <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }} onClick={() => generateSaPost(t.id)}>
                                           <Play size={12} weight="fill" />
                                         </button>

@@ -197,7 +197,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
     .replace(/\[LOCATION_NOTES\]/g, locationNotes ? `Additional guidance: ${locationNotes}` : '')
     .replace(/\[WORD_COUNT\]/g, String(targetLength))
 
-  // Call AI
+  // Call AI — check res.ok so API errors surface the real message, not just "Empty AI response"
   let rawText = ''
   try {
     if (provider === 'anthropic') {
@@ -206,26 +206,36 @@ Return ONLY valid JSON — no markdown fences, no explanation:
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: 'user', content: finalPrompt }] }),
       })
-      const d = await res.json() as { content?: { text: string }[] }
-      rawText = d.content?.[0]?.text ?? ''
+      if (!res.ok) {
+        const errBody = await res.text()
+        throw new Error(`Anthropic API ${res.status}: ${errBody.slice(0, 300)}`)
+      }
+      const d = await res.json() as { content?: { type: string; text: string }[] }
+      rawText = d.content?.find(b => b.type === 'text')?.text ?? ''
     } else {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, messages: [{ role: 'user', content: finalPrompt }], max_tokens: 4096 }),
       })
+      if (!res.ok) {
+        const errBody = await res.text()
+        throw new Error(`OpenAI API ${res.status}: ${errBody.slice(0, 300)}`)
+      }
       const d = await res.json() as { choices?: { message: { content: string } }[] }
       rawText = d.choices?.[0]?.message?.content ?? ''
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'AI call failed'
+    console.error(`[SA generate] topic ${topicId} AI error:`, msg)
     await db.from('content_topics').update({ status: 'approved', generation_error: msg }).eq('id', topicId)
     return { error: msg }
   }
 
-  if (!rawText) {
-    await db.from('content_topics').update({ status: 'approved', generation_error: 'Empty AI response' }).eq('id', topicId)
-    return { error: 'Empty AI response' }
+  if (!rawText.trim()) {
+    const msg = 'AI returned empty response — model may be overloaded, try again'
+    await db.from('content_topics').update({ status: 'approved', generation_error: msg }).eq('id', topicId)
+    return { error: msg }
   }
 
   const parsed = parseResponse(rawText)
