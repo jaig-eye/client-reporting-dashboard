@@ -76,7 +76,10 @@ export async function POST(request: NextRequest) {
     try {
       const res = await fetch(sitemapUrl, { headers, redirect: 'follow' })
       if (!res.ok) {
-        fetchErrors.push(`${sitemapUrl} → HTTP ${res.status}`)
+        const hint = res.status === 403
+          ? `HTTP 403 — site is blocking server-side requests (may be Cloudflare or bot protection)`
+          : `HTTP ${res.status}`
+        fetchErrors.push(`${sitemapUrl} → ${hint}`)
         continue
       }
       // Detect HTML redirect (WP login page, Cloudflare challenge, etc.)
@@ -96,7 +99,10 @@ export async function POST(request: NextRequest) {
           try {
             const subRes = await fetch(subUrl, { headers, redirect: 'follow' })
             if (!subRes.ok) {
-              fetchErrors.push(`${subUrl} → HTTP ${subRes.status}`)
+              const hint = subRes.status === 403
+                ? `HTTP 403 — site is blocking server-side requests`
+                : `HTTP ${subRes.status}`
+              fetchErrors.push(`${subUrl} → ${hint}`)
               continue
             }
             for (const loc of extractLocs(await subRes.text())) pageUrls.add(loc)

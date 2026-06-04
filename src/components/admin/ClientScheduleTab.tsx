@@ -43,6 +43,17 @@ interface SaDiscoverySuggestion {
   estimated_opportunity: 'high' | 'medium' | 'low'
 }
 
+interface SaPost {
+  id:                  string
+  title:               string | null
+  status:              string
+  published_url:       string | null
+  target_publish_date: string | null
+  city:                string | null
+  state_abbr:          string | null
+  service_name:        string | null
+}
+
 interface Author {
   id:   number
   name: string
@@ -258,6 +269,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [saTopics,       setSaTopics]       = useState<SaTopic[]>([])
   const [saTopicsLoading, setSaTopicsLoading] = useState(false)
   const [saTopicAction,  setSaTopicAction]  = useState<Record<string, boolean>>({})
+  const [saPosts,        setSaPosts]        = useState<SaPost[]>([])
+  const [saPostsLoading, setSaPostsLoading] = useState(false)
   const [saDiscovering,  setSaDiscovering]  = useState(false)
   const [saSuggestions,  setSaSuggestions]  = useState<SaDiscoverySuggestion[]>([])
   const [saAddCity,      setSaAddCity]      = useState('')
@@ -356,7 +369,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       .catch(e => { setSaTopicsError(String(e)); setSaTopicsLoading(false) })
   }, [clientId])
 
-  useEffect(() => { loadSaTopics() }, [loadSaTopics])
+  const loadSaPosts = useCallback(() => {
+    setSaPostsLoading(true)
+    fetch(`/api/admin/content/posts?client_id=${clientId}&content_type=service_area`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then((d: SaPost[]) => { setSaPosts(Array.isArray(d) ? d : []); setSaPostsLoading(false) })
+      .catch(() => setSaPostsLoading(false))
+  }, [clientId])
+
+  useEffect(() => { loadSaTopics(); loadSaPosts() }, [loadSaTopics, loadSaPosts])
 
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -742,7 +763,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             }}
           >
             {pill === 'blog' ? 'Blog Posts' : 'Service Pages'}
-            {pill === 'service' && (saSettings.auto_generate || saSettings.auto_approve_pages) && (
+            {pill === 'service' && (!!saSettings.auto_generate) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
             )}
           </button>
@@ -1413,9 +1434,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             <span style={{ fontSize: '0.9rem' }}>📍</span>
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Area Pages</span>
             <span style={{ flex: 1 }} />
-            {(saSettings.auto_generate || saSettings.auto_approve_pages) && (
+            {!!saSettings.auto_generate && (
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
+            {(() => {
+              const saIsConfigured = !!(saSettings.connection_id && saSettings.schedule_frequency && saSettings.slug_structure)
+              return saIsConfigured
+                ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
+                : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>
+            })()}
             <span className="badge badge-gray" style={{ fontSize: '0.62rem' }}>{saTopics.filter(t => t.status !== 'rejected').length} queued</span>
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
               {saSettingsOpen ? '▲' : '▼'}
@@ -1423,10 +1450,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           </div>
 
           {saSettingsOpen && (
-            <div className="card p-6 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
-
-              {/* ── Config ── */}
-              <div className="grid grid-cols-3 gap-4" style={{ marginBottom: '1rem' }}>
+            <div className="card p-5 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+              <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
                 <div>
                   <Label>Connection</Label>
                   <select className="input" value={saSettings.connection_id ?? ''} onChange={e => setSa('connection_id', e.target.value || null)}>
@@ -1452,11 +1477,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </select>
                 </div>
                 <div>
-                  <Label hint="target word count for generated pages">Target Length</Label>
+                  <Label>Target Length</Label>
                   <input className="input" type="number" min={600} max={3000} step={100} value={saSettings.target_length ?? 1200} onChange={e => setSa('target_length', Number(e.target.value))} />
                 </div>
                 <div>
-                  <Label hint="pages to generate per cron run">Pages per Run</Label>
+                  <Label>Pages per Run</Label>
                   <input className="input" type="number" min={1} max={10} value={saSettings.pages_per_run ?? 1} onChange={e => setSa('pages_per_run', Number(e.target.value))} />
                 </div>
                 <div>
@@ -1474,7 +1499,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </div>
                 )}
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <Label hint="extra guidance for the AI (climate, regional details, tone)">Location Notes</Label>
+                  <Label>Location Notes</Label>
                   <textarea
                     className="input"
                     rows={2}
@@ -1485,9 +1510,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   />
                 </div>
               </div>
-
-              {/* Toggles */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '0.75rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.8125rem' }}>
                   <Toggle
                     checked={saSettings.auto_generate ?? false}
@@ -1496,181 +1519,216 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <span style={{ color: 'var(--text-muted)' }}>Auto Generate — generates, approves, and publishes pages automatically</span>
                 </label>
               </div>
-
-              {/* Save config */}
-              <div className="flex items-center gap-3" style={{ marginBottom: '1.5rem' }}>
+              <div className="flex items-center gap-3">
                 <button className="btn btn-primary" onClick={saveSaSettings} disabled={saSaving} style={{ fontSize: '0.8125rem' }}>
                   {saSaving ? 'Saving…' : 'Save Configuration'}
                 </button>
                 {saSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
                 {saError && <span className="text-xs" style={{ color: 'var(--red)' }}>{saError}</span>}
               </div>
-
-              {/* ── Service Area Queue ── */}
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.75rem' }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.8125rem' }}>Service Area Queue</span>
-                  <span style={{ flex: 1 }} />
-                  <button
-                    className="btn btn-secondary"
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
-                    onClick={discoverSaAreas}
-                    disabled={saDiscovering}
-                  >
-                    {saDiscovering ? 'Discovering…' : '🔍 Generate Service Area Plan'}
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
-                    onClick={() => setSaAddOpen(o => !o)}
-                  >
-                    + Add Manually
-                  </button>
-                </div>
-
-                {/* Add manually form */}
-                {saAddOpen && (
-                  <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                    <div>
-                      <Label>City</Label>
-                      <input className="input" style={{ width: 140 }} value={saAddCity} onChange={e => setSaAddCity(e.target.value)} placeholder="Palm Bay" />
-                    </div>
-                    <div>
-                      <Label>State</Label>
-                      <input className="input" style={{ width: 60 }} value={saAddState} onChange={e => setSaAddState(e.target.value.toUpperCase().slice(0, 2))} placeholder="FL" maxLength={2} />
-                    </div>
-                    <div>
-                      <Label>Service</Label>
-                      <input className="input" style={{ width: 160 }} value={saAddService} onChange={e => setSaAddService(e.target.value)} placeholder={saSettings.primary_service ?? 'Tree Service'} />
-                    </div>
-                    <button className="btn btn-primary" style={{ fontSize: '0.8125rem' }} onClick={addSaTopic} disabled={!saAddCity.trim() || !saAddState.trim()}>
-                      Add
-                    </button>
-                    <button className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={() => setSaAddOpen(false)}>
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                {/* AI Suggestions */}
-                {saSuggestions.length > 0 && (
-                  <div style={{ marginBottom: '0.75rem', padding: '0.75rem', borderRadius: 8, background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
-                    <p className="text-xs font-semibold" style={{ color: 'var(--blue)', marginBottom: '0.5rem' }}>
-                      AI Suggestions — click to add to queue
-                    </p>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {saSuggestions.map((s, i) => (
-                        <button
-                          key={i}
-                          className="btn btn-secondary"
-                          style={{ fontSize: '0.72rem', padding: '2px 8px' }}
-                          title={s.rationale}
-                          onClick={() => addSuggestionToQueue(s)}
-                        >
-                          {s.city}, {s.state}
-                          {s.estimated_opportunity === 'high' && ' ⭐'}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => setSaSuggestions([])}
-                      style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer' }}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                )}
-
-                {/* Queue table */}
-                {saTopicsLoading ? (
-                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>Loading…</p>
-                ) : saTopicsError ? (
-                  <p className="text-xs" style={{ color: 'var(--red)' }}>Failed to load topics: {saTopicsError}</p>
-                ) : saTopics.length === 0 ? (
-                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>No service area topics queued yet. Use &ldquo;Generate Service Area Plan&rdquo; or add cities manually.</p>
-                ) : (
-                  <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: 'var(--text-faint)', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                        <th style={{ padding: '4px 8px' }}>Service</th>
-                        <th style={{ padding: '4px 8px' }}>City</th>
-                        <th style={{ padding: '4px 8px' }}>State</th>
-                        <th style={{ padding: '4px 8px' }}>Status</th>
-                        <th style={{ padding: '4px 8px' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {saTopics.filter(t => t.status !== 'rejected').map(t => (
-                        <tr key={t.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                          <td style={{ padding: '5px 8px' }}>{t.service_name ?? saSettings.primary_service ?? '—'}</td>
-                          <td style={{ padding: '5px 8px' }}>{t.city ?? '—'}</td>
-                          <td style={{ padding: '5px 8px' }}>{t.state_abbr ?? '—'}</td>
-                          <td style={{ padding: '5px 8px' }}>
-                            <span className={`badge ${
-                              t.status === 'pending'    ? 'badge-gray'  :
-                              t.status === 'approved'   ? 'badge-blue'  :
-                              t.status === 'generating' ? 'badge-amber' :
-                              t.status === 'generated'  ? 'badge-green' :
-                              'badge-gray'
-                            }`} style={{ fontSize: '0.65rem' }}>
-                              {t.status === 'pending' ? 'Pending' :
-                               t.status === 'approved' ? 'Approved' :
-                               t.status === 'generating' ? 'Generating…' :
-                               t.status === 'generated' ? 'Ready' : t.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '5px 8px' }}>
-                            <div style={{ display: 'flex', gap: 4 }}>
-                              {t.status === 'pending' && (
-                                <button
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                                  disabled={saTopicAction[t.id]}
-                                  onClick={() => saTopicAction_fn(t.id, 'approved')}
-                                >
-                                  Approve
-                                </button>
-                              )}
-                              {t.status === 'approved' && (
-                                <button
-                                  className="btn btn-primary"
-                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                                  onClick={() => generateSaPost(t.id)}
-                                >
-                                  Generate
-                                </button>
-                              )}
-                              {t.status === 'generated' && t.post?.published_url && (
-                                <a
-                                  href={t.post.published_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                                >
-                                  ↗ View
-                                </a>
-                              )}
-                              {t.status !== 'generating' && (
-                                <button
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: '0.65rem', padding: '2px 6px', color: 'var(--red)' }}
-                                  disabled={saTopicAction[t.id]}
-                                  onClick={() => saTopicAction_fn(t.id, 'rejected')}
-                                >
-                                  Reject
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
             </div>
           )}
+
+        {/* ── Service Area Plan card (mirrors AI Content Plan) ───────────── */}
+        <div className="card" style={{ borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle, #eff6ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2563eb)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3m-4.22-7.78-2.12 2.12M6.34 17.66l-2.12 2.12m0-13.56 2.12 2.12m11.32 11.32-2.12-2.12"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>Service Area Plan</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Discover new city/service combinations using GSC data and sitemap
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setSaAddOpen(o => !o)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
+              + Add Manually
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={discoverSaAreas} disabled={saDiscovering} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
+              {saDiscovering ? 'Discovering…' : 'Generate Plan'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Add manually form ──────────────────────────────────────────── */}
+        {saAddOpen && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div><Label>City</Label><input className="input" style={{ width: 140 }} value={saAddCity} onChange={e => setSaAddCity(e.target.value)} placeholder="Palm Bay" /></div>
+            <div><Label>State</Label><input className="input" style={{ width: 60 }} value={saAddState} onChange={e => setSaAddState(e.target.value.toUpperCase().slice(0, 2))} placeholder="FL" maxLength={2} /></div>
+            <div><Label>Service</Label><input className="input" style={{ width: 160 }} value={saAddService} onChange={e => setSaAddService(e.target.value)} placeholder={saSettings.primary_service ?? 'Tree Service'} /></div>
+            <button className="btn btn-primary" style={{ fontSize: '0.8125rem' }} onClick={addSaTopic} disabled={!saAddCity.trim() || !saAddState.trim()}>Add</button>
+            <button className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={() => setSaAddOpen(false)}>Cancel</button>
+          </div>
+        )}
+
+        {/* ── AI Suggestions ─────────────────────────────────────────────── */}
+        {saSuggestions.length > 0 && (
+          <div style={{ marginBottom: '0.75rem', padding: '0.75rem', borderRadius: 8, background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+            <p className="text-xs font-semibold" style={{ color: 'var(--blue)', marginBottom: '0.5rem' }}>AI Suggestions — click to add to queue</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {saSuggestions.map((s, i) => (
+                <button key={i} className="btn btn-secondary" style={{ fontSize: '0.72rem', padding: '2px 8px' }} title={s.rationale} onClick={() => addSuggestionToQueue(s)}>
+                  {s.city}, {s.state}{s.estimated_opportunity === 'high' ? ' ⭐' : ''}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setSaSuggestions([])} style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer' }}>Dismiss</button>
+          </div>
+        )}
+
+        {/* ── Publish to row ─────────────────────────────────────────────── */}
+        {saSettings.connection_id && clientSites.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Publish to:</span>
+            {clientSites.filter(s => s.connectionId === saSettings.connection_id).map(site => (
+              <span key={site.connectionId} style={{ display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
+                {site.siteName}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* ── Service Area Content Calendar ──────────────────────────────── */}
+        <div className="card p-6">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+            <h4 className="section-title" style={{ margin: 0 }}>Service Area Pages</h4>
+          </div>
+
+          {/* Status bar */}
+          {!saTopicsLoading && !saPostsLoading && (
+            <div style={{ display: 'flex', gap: 12, marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6, fontSize: '0.75rem', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Pending',    count: saTopics.filter(t => t.status === 'pending').length,    color: '#f59e0b' },
+                { label: 'Approved',   count: saTopics.filter(t => t.status === 'approved').length,   color: '#2563eb' },
+                { label: 'Generating', count: saTopics.filter(t => t.status === 'generating').length, color: '#f97316' },
+                { label: 'Generated',  count: saTopics.filter(t => t.status === 'generated').length,  color: '#059669' },
+                { label: 'Published',  count: saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length, color: '#059669' },
+              ].filter(s => s.count > 0).map(s => (
+                <span key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.color, display: 'inline-block' }} />
+                  {s.count} {s.label}
+                </span>
+              ))}
+              <span style={{ marginLeft: 'auto', color: 'var(--text-faint)' }}>
+                {saTopics.filter(t => t.status !== 'rejected').length + saPosts.length} items
+              </span>
+            </div>
+          )}
+
+          {saTopicsLoading || saPostsLoading ? (
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          ) : saTopicsError ? (
+            <p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load: {saTopicsError}</p>
+          ) : saTopics.filter(t => t.status !== 'rejected').length === 0 && saPosts.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
+              No service area pages yet — click &quot;Generate Plan&quot; to discover new city/service combinations.
+            </p>
+          ) : (
+            <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: 120 }} />
+                <col />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 120 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Page</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Date</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* Topic rows */}
+                {saTopics.filter(t => t.status !== 'rejected').map(t => {
+                  const SA_STATUS: Record<string, { label: string; bg: string; color: string; dot: string }> = {
+                    pending:    { label: 'Pending',     bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f59e0b' },
+                    approved:   { label: 'Approved',    bg: 'var(--blue-subtle)',   color: 'var(--blue)',   dot: '#2563eb' },
+                    generating: { label: 'Generating',  bg: 'var(--amber-subtle)',  color: 'var(--amber)',  dot: '#f97316' },
+                    generated:  { label: 'For Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',  dot: '#059669' },
+                  }
+                  const cfg = SA_STATUS[t.status] ?? { label: t.status, bg: 'var(--bg-muted)', color: 'var(--text-muted)', dot: '#9ca3af' }
+                  const pageLabel = [t.service_name ?? saSettings.primary_service, t.city, t.state_abbr].filter(Boolean).join(' — ')
+                  const hasPost = t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved')
+
+                  return (
+                    <tr key={`t-${t.id}`}>
+                      <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap' }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.dot, animation: t.status === 'generating' ? 'pulse 1.2s ease-in-out infinite' : 'none' }} />
+                          {cfg.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {pageLabel || '—'}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {t.created_at ? new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          {hasPost && (
+                            <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px' }} onClick={() => { /* review handled inline */ }}>→ Review</button>
+                          )}
+                          {t.status === 'approved' && !hasPost && (
+                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }} onClick={() => generateSaPost(t.id)}>
+                              <Play size={12} weight="fill" />
+                            </button>
+                          )}
+                          {t.status === 'pending' && (
+                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'approved')}>
+                              <Check size={12} weight="bold" />
+                            </button>
+                          )}
+                          {t.status !== 'generating' && (
+                            <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }} disabled={saTopicAction[t.id]} onClick={() => saTopicAction_fn(t.id, 'rejected')}>
+                              <X size={12} weight="bold" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {/* Post rows */}
+                {saPosts.map(p => {
+                  const isPublished = p.status === 'published' || p.status === 'draft_saved'
+                  const statusLabel = isPublished ? 'Published' : 'For Review'
+                  const statusColor = '#059669'
+                  const pageLabel = p.title ?? [p.service_name, p.city, p.state_abbr].filter(Boolean).join(' — ') ?? '—'
+
+                  return (
+                    <tr key={`p-${p.id}`}>
+                      <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: 'var(--green-subtle)', color: statusColor, whiteSpace: 'nowrap' }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor }} />
+                          {statusLabel}
+                        </span>
+                      </td>
+                      <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {pageLabel}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {p.target_publish_date ? new Date(p.target_publish_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          {p.published_url && (
+                            <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ View</a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
         </div>
       )}
 

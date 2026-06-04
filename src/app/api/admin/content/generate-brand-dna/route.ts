@@ -139,7 +139,8 @@ export async function POST(request: NextRequest) {
   const content = [home, about, services, contact].filter(Boolean).join('\n\n').slice(0, 6000)
 
   if (!content.trim()) {
-    return NextResponse.json({ error: 'Could not fetch website content. Check the URL and try again.' }, { status: 422 })
+    // Return the detected site URL so the client can pre-fill the input
+    return NextResponse.json({ error: 'blocked', site_url: base }, { status: 422 })
   }
 
   // Load AI credentials from agency_settings

@@ -109,11 +109,12 @@ export default function ContentCalendar({
   const router   = useRouter()
   const today    = new Date()
 
-  const [windowStart,  setWindowStart]  = useState({ year: today.getFullYear(), month: today.getMonth() })
-  const [clientFilter, setClientFilter] = useState<string>('all')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [items,        setItems]        = useState(initialItems)
-  const [rationaleFor, setRationaleFor] = useState<CalendarItem | null>(null)
+  const [windowStart,   setWindowStart]   = useState({ year: today.getFullYear(), month: today.getMonth() })
+  const [clientFilter,  setClientFilter]  = useState<string>('all')
+  const [statusFilter,  setStatusFilter]  = useState<string>('all')
+  const [items,         setItems]         = useState(initialItems)
+  const [rationaleFor,  setRationaleFor]  = useState<CalendarItem | null>(null)
+  const [activeCalView, setActiveCalView] = useState<'blog' | 'service'>('blog')
 
   useEffect(() => { setItems(initialItems) }, [initialItems])
 
@@ -282,6 +283,34 @@ export default function ContentCalendar({
         </div>
       </div>
 
+      {/* ── View switcher pill (only when SA content exists) ────────────────── */}
+      {(saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
+        <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)', marginBottom: 20 }}>
+          {(['blog', 'service'] as const).map(view => {
+            const count = view === 'blog'
+              ? blogFiltered.length + unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length
+              : saFiltered.length + unscheduled.filter(i => i.contentType === 'service_area').length
+            return (
+              <button
+                key={view}
+                onClick={() => setActiveCalView(view)}
+                style={{
+                  padding: '0.3125rem 0.875rem', fontSize: '0.8125rem',
+                  fontWeight: activeCalView === view ? 600 : 400,
+                  borderRadius: 6, border: 'none', cursor: 'pointer',
+                  background: activeCalView === view ? 'var(--bg-surface, #fff)' : 'transparent',
+                  color: activeCalView === view ? 'var(--text-primary)' : 'var(--text-muted)',
+                  boxShadow: activeCalView === view ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                  transition: 'all 0.15s', whiteSpace: 'nowrap',
+                }}
+              >
+                {view === 'blog' ? 'Blog Posts' : 'Service Area'} ({count})
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* ── Month sections ───────────────────────────────────────────────────── */}
       {filtered.length === 0 && unscheduled.length === 0 ? (
         <div className="card p-8" style={{ textAlign: 'center' }}>
@@ -290,12 +319,11 @@ export default function ContentCalendar({
           </p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
 
-          {/* ── Blog Posts ── */}
-          {blogFiltered.length > 0 && (
+          {/* ── Blog Posts (active when blog pill selected) ── */}
+          {activeCalView === 'blog' && blogFiltered.length > 0 && (
             <div>
-              <h3 style={{ margin: '0 0 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>Blog Posts</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 {windowMonths.map(({ year, month, key }) => {
                   const monthItems = byMonth.get(key) ?? []
@@ -318,7 +346,7 @@ export default function ContentCalendar({
                   )
                 })}
                 {/* Unscheduled blog items */}
-                {unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length > 0 && (
+                {activeCalView === 'blog' && unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length > 0 && (
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                       <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
@@ -334,13 +362,9 @@ export default function ContentCalendar({
             </div>
           )}
 
-          {/* ── Service Area Pages ── */}
-          {saFiltered.length > 0 && (
+          {/* ── Service Area Pages (active when service pill selected) ── */}
+          {activeCalView === 'service' && saFiltered.length > 0 && (
             <div>
-              <h3 style={{ margin: '0 0 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 8 }}>
-                Service Area Pages
-                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(99,102,241,0.12)', color: '#6366f1', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Pages</span>
-              </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 {windowMonths.map(({ year, month, key }) => {
                   const monthItems = saByMonth.get(key) ?? []
@@ -363,7 +387,7 @@ export default function ContentCalendar({
                   )
                 })}
                 {/* Unscheduled SA items */}
-                {unscheduled.filter(i => i.contentType === 'service_area').length > 0 && (
+                {activeCalView === 'service' && unscheduled.filter(i => i.contentType === 'service_area').length > 0 && (
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                       <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>

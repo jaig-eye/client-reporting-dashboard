@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const clientId         = searchParams.get('client_id')
   const status           = searchParams.get('status')
+  const contentType      = searchParams.get('content_type')
   const excludePublished = searchParams.get('exclude_published') === 'true'
 
   if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
@@ -22,12 +23,16 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   let query = db
     .from('content_posts')
-    .select('id, client_id, status, title, seo_title, target_keyword, meta_description, slug, word_count, wp_post_id, wp_site_url, published_url, target_publish_date, generated_at, seo_score, schema_type, excerpt')
+    .select('id, client_id, status, title, seo_title, target_keyword, meta_description, slug, word_count, wp_post_id, wp_site_url, published_url, target_publish_date, generated_at, seo_score, schema_type, excerpt, content_type, city, state_abbr, service_name')
     .eq('client_id', clientId)
     .order('target_publish_date', { ascending: false, nullsFirst: false })
 
   if (status) {
     query = query.eq('status', status) as typeof query
+  }
+
+  if (contentType) {
+    query = query.eq('content_type', contentType) as typeof query
   }
 
   if (excludePublished) {

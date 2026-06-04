@@ -88,6 +88,7 @@ export default function ClientContentSettingsForm({
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState('')
   const [aiSuggested, setAiSuggested] = useState(false)
+  const [aiBlocked,   setAiBlocked]   = useState(false)  // site is blocking server-side fetches
   const [siteUrlInput, setSiteUrlInput] = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
 
@@ -140,7 +141,7 @@ export default function ClientContentSettingsForm({
   function removeManualLink(i: number)             { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
   async function autoFill(siteUrl?: string) {
-    setAiLoading(true); setAiError(''); setAiSuggested(false)
+    setAiLoading(true); setAiError(''); setAiSuggested(false); setAiBlocked(false)
     const res = await fetch('/api/admin/content/generate-brand-dna', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -148,7 +149,20 @@ export default function ClientContentSettingsForm({
     })
     setAiLoading(false)
     if (res.status === 422) {
-      setShowSiteInput(true)
+      const body = await res.json().catch(() => ({} as Record<string, unknown>)) as { error?: string; site_url?: string }
+      if (body.error === 'blocked') {
+        // Site was detected but is blocking server-side fetches (Cloudflare/bot protection)
+        setAiBlocked(true)
+        setSiteUrlInput(body.site_url ?? siteUrl ?? '')
+        setShowSiteInput(true)
+      } else if (body.error === 'site_url_required') {
+        // No WP connection found — prompt for manual URL entry
+        setAiBlocked(false)
+        setShowSiteInput(true)
+      } else {
+        // Other 422 (e.g. invalid URL) — show as error
+        setAiError(body.error || 'Could not analyze site')
+      }
       return
     }
     if (!res.ok) {
@@ -234,8 +248,14 @@ export default function ClientContentSettingsForm({
           </button>
         </div>
 
-        {/* Site URL input — shown when no WordPress connection found */}
+        {/* Site URL input — shown when WP URL not found or site is blocking fetches */}
         {showSiteInput && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {aiBlocked && (
+            <p style={{ fontSize: '0.8125rem', color: 'var(--amber, #f59e0b)', margin: 0, lineHeight: 1.4 }}>
+              ⚠ Your site is blocking automated access (likely Cloudflare or security rules). Enter your site URL below to try again, or fill in your business info manually.
+            </p>
+          )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               className="input"
@@ -257,8 +277,9 @@ export default function ClientContentSettingsForm({
               type="button"
               className="btn btn-secondary"
               style={{ fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
-              onClick={() => setShowSiteInput(false)}
+              onClick={() => { setShowSiteInput(false); setAiBlocked(false) }}
             >✕</button>
+          </div>
           </div>
         )}
 
