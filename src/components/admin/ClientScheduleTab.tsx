@@ -1743,13 +1743,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           const saRejectedCount = saTopics.filter(t => t.status === 'rejected').length
           const [showSaRejected, setShowSaRejected_] = [false, () => {}] // rejected toggle placeholder
 
-          const statusCounts = {
-            pending:    saTopics.filter(t => t.status === 'pending').length,
-            approved:   saTopics.filter(t => t.status === 'approved').length,
-            generating: saTopics.filter(t => t.status === 'generating').length,
-            generated:  saTopics.filter(t => ['generated','for_review'].includes(t.status)).length,
-            published:  saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length,
-          }
+          const statusItems = [
+            { label: 'Pending',    dot: '#f59e0b', count: saTopics.filter(t => t.status === 'pending').length    },
+            { label: 'Approved',   dot: '#2563eb', count: saTopics.filter(t => t.status === 'approved').length   },
+            { label: 'Generating', dot: '#f97316', count: saTopics.filter(t => t.status === 'generating').length },
+            { label: 'For Review', dot: '#059669', count: saTopics.filter(t => ['generated','for_review'].includes(t.status)).length },
+            { label: 'Published',  dot: '#059669', count: saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length },
+          ].filter(s => s.count > 0)
 
           return (
             <div className="card p-6">
@@ -1760,10 +1760,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               {!saTopicsLoading && !saPostsLoading && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: '0.75rem' }}>
-                    {Object.entries(statusCounts).filter(([,v]) => v > 0).map(([label, count]) => (
-                      <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: SA_STATUS_CFG[label === 'published' ? 'published' : label === 'generated' ? 'generated' : label]?.dot ?? '#9ca3af', display: 'inline-block' }} />
-                        {count} {label}
+                    {statusItems.map(s => (
+                      <span key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.dot, display: 'inline-block' }} />
+                        {s.count} {s.label}
                       </span>
                     ))}
                   </div>

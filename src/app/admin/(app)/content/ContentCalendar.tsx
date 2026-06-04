@@ -182,9 +182,6 @@ export default function ContentCalendar({
     return `${d.getFullYear()}-${d.getMonth()}`
   })).size
   const uniqueClients = new Set(filtered.map(i => i.clientId)).size
-  const themeSet      = new Set(filtered.map(i => i.clusterGroup ?? getStatusCfg(i.status).label))
-  const uniqueThemes  = themeSet.size
-
   // Split by contentType
   const blogFiltered = filtered.filter(i => !i.contentType || i.contentType === 'blog')
   const saFiltered   = filtered.filter(i => i.contentType === 'service_area')
@@ -226,7 +223,6 @@ export default function ContentCalendar({
           { value: blogFiltered.length + saFiltered.length + unscheduled.length, label: 'total items' },
           { value: activeMonths,  label: 'months' },
           { value: uniqueClients, label: 'clients' },
-          { value: uniqueThemes,  label: 'themes' },
         ].map(stat => (
           <div key={stat.label} style={{
             display: 'flex', alignItems: 'baseline', gap: 6,
@@ -419,13 +415,13 @@ function ContentCard({
   item:            CalendarItem
   onViewRationale: (item: CalendarItem) => void
 }) {
-  const badge   = getBadge(item)
-  const past    = item.targetPublishDate ? isPast(item.targetPublishDate) : false
-  const title   = item.type === 'post'
+  const statusCfg    = getStatusCfg(item.status)
+  const past         = item.targetPublishDate ? isPast(item.targetPublishDate) : false
+  const title        = item.type === 'post'
     ? (item.title ?? item.targetKeyword ?? 'Untitled Post')
     : (item.topicText ?? item.targetKeyword ?? 'Untitled Topic')
-  const preview = previewText(item)
   const hasRationale = !!(item.rationale || item.keywordOpportunity)
+  const isSA         = item.contentType === 'service_area'
 
   return (
     <div
@@ -445,39 +441,39 @@ function ContentCard({
       onMouseEnter={e => { if (hasRationale) (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)' }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)' }}
     >
-      {/* Top row: date + badge + actions */}
+      {/* Top row: date + status pill + type tag + actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         {item.targetPublishDate && (
           <span style={{
             fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-            background: 'var(--bg-muted)', color: 'var(--text-muted)',
-            flexShrink: 0,
+            background: 'var(--bg-muted)', color: 'var(--text-muted)', flexShrink: 0,
           }}>
             {shortDate(item.targetPublishDate)}
           </span>
         )}
 
+        {/* Status pill — always uses status config, never cluster group */}
         <span style={{
           fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-          background: badge.bg, color: badge.text,
+          background: statusCfg.bg, color: statusCfg.color,
           display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
         }}>
           <span style={{
-            width: 5, height: 5, borderRadius: '50%', background: badge.dot, flexShrink: 0,
+            width: 5, height: 5, borderRadius: '50%', background: statusCfg.dot, flexShrink: 0,
             animation: item.status === 'generating' ? 'pulse 1.5s ease-in-out infinite' : 'none',
           }} />
-          {badge.label}
+          {statusCfg.label}
         </span>
 
-        {item.contentType === 'service_area' && (
-          <span style={{
-            fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-            background: 'rgba(99,102,241,0.12)', color: '#6366f1',
-            letterSpacing: '0.04em', flexShrink: 0, textTransform: 'uppercase',
-          }}>
-            Page
-          </span>
-        )}
+        {/* Content type tag */}
+        <span style={{
+          fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+          background: isSA ? 'rgba(99,102,241,0.12)' : 'rgba(107,114,128,0.1)',
+          color: isSA ? '#6366f1' : '#6b7280',
+          letterSpacing: '0.04em', flexShrink: 0, textTransform: 'uppercase',
+        }}>
+          {isSA ? 'Page' : 'Blog'}
+        </span>
 
         <div style={{ flex: 1 }} />
 
@@ -509,7 +505,7 @@ function ContentCard({
         {item.clientName}
       </a>
 
-      {/* Title */}
+      {/* Title only — no preview text excerpt */}
       <p style={{
         margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)',
         lineHeight: 1.35,
@@ -518,15 +514,6 @@ function ContentCard({
         {title}
       </p>
 
-      {/* Preview text */}
-      {preview && (
-        <p style={{
-          margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4,
-          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-        }}>
-          {preview}
-        </p>
-      )}
     </div>
   )
 }
