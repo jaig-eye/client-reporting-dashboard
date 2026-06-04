@@ -58,44 +58,57 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Load GSC data for geographic signals
+    // Load GSC top queries + sitemap service pages in parallel
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90)
-    const { data: gscRows } = await db
-      .from('gsc_metrics')
-      .select('query, impressions, clicks')
-      .eq('client_id', client_id)
-      .gte('date', cutoff.toISOString().slice(0, 10))
-      .not('query', 'is', null)
-      .order('impressions', { ascending: false })
-      .limit(500)
+    const [gscRes, sitemapRes] = await Promise.all([
+      db.from('gsc_metrics')
+        .select('query, impressions, clicks')
+        .eq('client_id', client_id)
+        .gte('date', cutoff.toISOString().slice(0, 10))
+        .not('query', 'is', null)
+        .order('impressions', { ascending: false })
+        .limit(200),
+      db.from('content_sitemap_pages')
+        .select('url')
+        .eq('client_id', client_id)
+        .limit(100),
+    ])
 
-    const geoPatterns = [
-      /\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),?\s*([A-Z]{2})\b/,
-      /\bnear\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/i,
-      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:fl|tx|ca|ny|ga|nc|va|oh|pa|az|co|wa|or|mn|wi|mo|tn|sc|al|la|ky|ok|ar|ms|ia|ks|ut|nv|nm|ne|id|nh|me|ri|ct|de|vt|mt|wy|sd|nd|ak|hi|wv|in|mi|il|md|nj|ma)\b/i,
-    ]
-    const geoSignals: string[] = []
-    for (const row of (gscRows ?? []) as { query: string | null; impressions: number; clicks: number }[]) {
-      if (!row.query) continue
-      for (const p of geoPatterns) {
-        if (row.query.match(p)) { geoSignals.push(`"${row.query}" — ${row.impressions} impr`); break }
-      }
-    }
+    // Top 30 queries by impressions — sent raw to the AI without regex pre-filtering
+    // (previous regex was case-sensitive, missing lowercase GSC queries)
+    const topQueries = (gscRes.data ?? [] as { query: string | null; impressions: number }[])
+      .slice(0, 30)
+      .map((r: { query: string | null; impressions: number }) => `"${r.query}" (${r.impressions} impr)`)
+      .join('\n')
 
-    const geoBullet = geoSignals.slice(0, 20).join('\n') || 'No GSC data — infer from business context'
+    // Service page URLs from sitemap give strong city/region signals
+    const sitemapUrls = ((sitemapRes.data ?? []) as { url: string }[])
+      .map(p => p.url).join('\n')
+
     const geoFocus = (contentRes.data?.geographic_focus as string | null) ?? ''
     const bizBg    = (contentRes.data?.business_background as string | null) ?? ''
 
-    const prompt = `You are a local SEO strategist. Suggest city/state combinations for service area pages.
+    // Build a rich prompt — geographic_focus is the primary anchor
+    const prompt = `You are a local SEO strategist helping a home service business create service area landing pages.
 
-Business: ${bizBg}
 Primary service: ${primaryService}
-Known service area: ${geoFocus || 'unknown'}
-GSC geographic signals:\n${geoBullet}
+Business description: ${bizBg || 'Not provided'}
+Primary service area (from brand settings): ${geoFocus || 'Not specified'}
 
-Return ONLY a JSON array of 10-15 city/state combos (no markdown):
-[{"city":"City","state":"FL"},...]`
+Top Google Search Console queries (last 90 days):
+${topQueries || 'No GSC data available'}
 
+Existing sitemap URLs (shows current targeting):
+${sitemapUrls || 'None'}
+
+Using the primary service area and surrounding region as the anchor, suggest 12 city/town targets for new service area pages.
+Include the primary city plus nearby cities in the same county or metro area.
+Focus on real cities the business likely serves based on the service area and GSC signals.
+
+Return ONLY valid JSON, no markdown, no explanation — just the array:
+[{"city":"Palm Bay","state":"FL"},{"city":"Melbourne","state":"FL"},...]`
+
+    let aiError = ''
     try {
       const provider = (agencyRes.data?.ai_provider as string | null) ?? 'anthropic'
       const model    = (agencyRes.data?.ai_model    as string | null) ?? (provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini')
@@ -107,6 +120,7 @@ Return ONLY a JSON array of 10-15 city/state combos (no markdown):
           headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
           body: JSON.stringify({ model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
         })
+        if (!res.ok) { const t = await res.text(); throw new Error(`AI API error ${res.status}: ${t}`) }
         const d = await res.json() as { content?: { text: string }[] }
         rawText = d.content?.[0]?.text ?? ''
       } else {
@@ -115,19 +129,22 @@ Return ONLY a JSON array of 10-15 city/state combos (no markdown):
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 1024 }),
         })
+        if (!res.ok) { const t = await res.text(); throw new Error(`AI API error ${res.status}: ${t}`) }
         const d = await res.json() as { choices?: { message: { content: string } }[] }
         rawText = d.choices?.[0]?.message?.content ?? ''
       }
 
       const match = rawText.match(/\[[\s\S]*\]/)
       if (match) serviceAreas = JSON.parse(match[0]) as ServiceArea[]
-    } catch {
-      // AI failed — fall through to error below
+      else aiError = `AI returned unexpected format: ${rawText.slice(0, 200)}`
+    } catch (err) {
+      aiError = String(err)
+      console.error('[SA calendar/generate] AI discovery failed:', aiError)
     }
 
     if (serviceAreas.length === 0) {
       return NextResponse.json(
-        { error: 'Could not determine service areas. Add GSC data or configure service areas manually in settings.' },
+        { error: `Could not determine service areas. ${aiError ? `AI error: ${aiError}` : 'Try adding service areas manually in settings.'}` },
         { status: 400 }
       )
     }
