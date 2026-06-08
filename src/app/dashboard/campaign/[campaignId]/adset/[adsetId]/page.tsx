@@ -484,6 +484,37 @@ export default async function AdSetDetailPage({
     void agNegIds  // suppress unused warning
   }
 
+  // ── Search terms for this ad group (Google Search only) ─────────────────────
+  type StDbRow = { search_term: string; match_type: string | null; status: string | null; impressions: number; clicks: number; spend: number; conversions: number; conversion_value: number }
+  const searchTermMap = new Map<string, { matchType: string | null; status: string | null; impressions: number; clicks: number; spend: number; conversions: number; convValue: number }>()
+  if (isGoogleAds && !isPMaxGroup && adsetIdIsNumeric) {
+    const { data: stData } = await db
+      .from('google_ads_search_terms')
+      .select('search_term,match_type,status,impressions,clicks,spend,conversions,conversion_value')
+      .eq('client_id', client.id)
+      .eq('ad_group_id', adsetId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .order('impressions', { ascending: false })
+      .limit(500)
+    for (const st of (stData ?? []) as StDbRow[]) {
+      const ex = searchTermMap.get(st.search_term)
+      if (ex) {
+        ex.impressions += Number(st.impressions)||0; ex.clicks += Number(st.clicks)||0
+        ex.spend += Number(st.spend)||0; ex.conversions += Number(st.conversions)||0
+        ex.convValue += Number(st.conversion_value)||0
+      } else {
+        searchTermMap.set(st.search_term, { matchType: st.match_type, status: st.status, impressions: Number(st.impressions)||0, clicks: Number(st.clicks)||0, spend: Number(st.spend)||0, conversions: Number(st.conversions)||0, convValue: Number(st.conversion_value)||0 })
+      }
+    }
+  }
+  const searchTermRows = Array.from(searchTermMap.entries())
+    .map(([term, v]) => {
+      const dSpend = effectiveAdFuelCut > 0 ? applyAdFuel(v.spend, effectiveAdFuelCut) : v.spend
+      return { term, matchType: v.matchType, status: v.status, impressions: v.impressions, clicks: v.clicks, spend: v.spend, displaySpend: dSpend, conversions: v.conversions, convValue: v.convValue, ctr: v.impressions > 0 ? v.clicks / v.impressions : 0, cpc: v.clicks > 0 ? dSpend / v.clicks : 0, cpl: v.conversions > 0 ? dSpend / v.conversions : 0 }
+    })
+    .sort((a, b) => b.impressions - a.impressions)
+
   const searchAdCopyRows: SearchAdCopyRow[] = isGoogleAds && !isPMaxGroup
     ? adCardList.map(a => ({
         ad_id:        a.ad_id,
@@ -768,7 +799,7 @@ export default async function AdSetDetailPage({
         {/* ── pMax Asset Gallery OR Tabbed breakdown ───── */}
         {isPMaxGroup ? (
           <PMaxAssetGallery assets={pMaxAssets} groupName={groupName} />
-        ) : isGoogleAds && (keywordRows.length > 0 || negativeKeywords.length > 0) ? (
+        ) : isGoogleAds && (keywordRows.length > 0 || negativeKeywords.length > 0 || searchTermRows.length > 0) ? (
           /* Google Search: tabbed view with Keywords, Ads, Negative Keywords */
           <div className="card p-6">
             {/* Keyword Intelligence summary (above tabs) */}
@@ -842,6 +873,49 @@ export default async function AdSetDetailPage({
                         clientId={client.id}
                       />
                     )}
+                  </div>
+                )
+              }
+
+              if (searchTermRows.length > 0) {
+                tabDefs.push({ label: 'Search Terms', count: searchTermRows.length })
+                panels.push(
+                  <div key="st">
+                    <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+                      Actual search queries that triggered ads in this ad group during the selected period.
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="data-table" style={{ minWidth: 600 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left' }}>Search Term</th>
+                            <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>Match</th>
+                            <th style={{ textAlign: 'right' }}>Impr.</th>
+                            <th style={{ textAlign: 'right' }}>Clicks</th>
+                            <th style={{ textAlign: 'right' }}>CTR</th>
+                            <th style={{ textAlign: 'right' }}>Cost</th>
+                            <th style={{ textAlign: 'right' }}>CPC</th>
+                            <th style={{ textAlign: 'right' }}>Conv.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {searchTermRows.map((st, i) => (
+                            <tr key={i}>
+                              <td className="font-medium" style={{ maxWidth: 280, wordBreak: 'break-word' }}>{st.term}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                                {st.matchType ? <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: 3, background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>{String(st.matchType).replace('_', ' ')}</span> : '—'}
+                              </td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{st.impressions.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{st.clicks.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{st.ctr > 0 ? `${(st.ctr * 100).toFixed(2)}%` : '—'}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtCurrency(st.displaySpend)}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{st.cpc > 0 ? fmtCurrency(st.cpc) : '—'}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{st.conversions > 0 ? st.conversions.toFixed(1) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )
               }

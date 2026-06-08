@@ -165,7 +165,8 @@ export default async function CampaignDetailPage({
   let isPMax             = false
   let avgImprShare:      number | null = null
   let priorAvgImprShare: number | null = null
-  let campTypeRaw  = ''
+  let campTypeRaw       = ''
+  let campaignStartDate: string | null = null
 
   // Daily series for sparklines
   type DayAgg = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
@@ -189,7 +190,7 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name,campaign_type,search_impression_share')
+        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date')
         .eq('client_id', client.id).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       showCompare
@@ -209,7 +210,7 @@ export default async function CampaignDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
     ])
-    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null }[] | null) ?? []
+    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null }[] | null) ?? []
     const firstCamp = campRows[0] ?? null
     if (firstCamp) campaignName = firstCamp.campaign_name
     isPMax = firstCamp?.campaign_type === 'PERFORMANCE_MAX'
@@ -222,7 +223,8 @@ export default async function CampaignDetailPage({
     priorAvgImprShare = priorIsFiltered.length > 0
       ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length
       : null
-    campTypeRaw  = (firstCamp?.campaign_type ?? '').toUpperCase()
+    campTypeRaw       = (firstCamp?.campaign_type ?? '').toUpperCase()
+    campaignStartDate = firstCamp?.campaign_start_date ?? null
     for (const r of (rows ?? []) as GoogleAdRow[]) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
@@ -360,6 +362,8 @@ export default async function CampaignDetailPage({
     const dSpend = effectiveAdFuelCut > 0 ? applyAdFuel(k.spend, effectiveAdFuelCut) : k.spend
     return { keyword_text: k.text, match_type: k.matchType, keyword_status: k.status, impressions: k.impressions, clicks: k.clicks, conversions: k.conversions, spend: k.spend, displaySpend: dSpend, ctr: k.impressions > 0 ? k.clicks / k.impressions : 0, cpc: k.clicks > 0 ? dSpend / k.clicks : 0, cpl: k.conversions > 0 ? dSpend / k.conversions : 0 }
   }).sort((a, b) => b.impressions - a.impressions)
+
+  // Search terms are shown at the ad group level (adset page), not campaign level
 
   const convertingKeywords = keywordRows.filter(k => k.conversions > 0).sort((a, b) => b.conversions - a.conversions)
   const totalKeywords      = keywordRows.length
@@ -612,6 +616,11 @@ export default async function CampaignDetailPage({
                 <span className={`badge ${displayMode === 'ecommerce' ? 'badge-blue' : 'badge-green'}`}>
                   {displayMode === 'ecommerce' ? 'Ecommerce' : 'Lead Gen'}
                 </span>
+                {campaignStartDate && (
+                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                    Started {new Date(campaignStartDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                )}
                 <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
                   {dateFrom} – {dateTo}
                 </span>

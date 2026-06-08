@@ -15,7 +15,8 @@
 import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
 import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords, fetchGoogleNegativeKeywords } from './connectors/google-ads'
-import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow } from './connectors/google-ads'
+import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow, GoogleAdsSearchTermRawRow } from './connectors/google-ads'
+import { fetchGoogleSearchTerms } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
@@ -167,11 +168,12 @@ export async function syncClient(
           result.rows as GoogleAdsRawRow[]
         )
         // Run all Google Ads sub-fetches in parallel (best-effort — each is independent)
-        const [adResult, assetResult, kwResult, negResult] = await Promise.allSettled([
+        const [adResult, assetResult, kwResult, negResult, stResult] = await Promise.allSettled([
           fetchGoogleAdMetrics(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGooglePMaxAssets(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchKeywords(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGoogleNegativeKeywords(connection.external_id, auth, connection.connector.config),
+          fetchGoogleSearchTerms(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
         ])
 
         if (adResult.status === 'fulfilled') {
@@ -203,6 +205,13 @@ export async function syncClient(
           await upsertGoogleAdsNegativeKeywords(db, connection.id, clientId, negResult.value)
         } else if (negResult.status === 'rejected') {
           console.error(`[sync] Google Ads negative keywords failed for connection ${connection.id}:`, negResult.reason)
+        }
+
+        if (stResult.status === 'fulfilled' && stResult.value.length > 0) {
+          console.log(`[sync] Google Ads search terms: ${stResult.value.length} rows for connection ${connection.id}`)
+          await upsertGoogleSearchTerms(db, connection.id, clientId, stResult.value)
+        } else if (stResult.status === 'rejected') {
+          console.error(`[sync] Google Ads search terms failed for connection ${connection.id}:`, stResult.reason)
         }
       } else if (connection.connector.type === 'meta_ads') {
         onProgress(80, 'Saving campaign data…')
@@ -522,6 +531,8 @@ export async function upsertGoogleAdsMetrics(
       search_impression_share:         r.search_impression_share         ?? null,
       search_abs_top_impression_share: r.search_abs_top_impression_share ?? null,
       search_top_impression_share:     r.search_top_impression_share     ?? null,
+      // Campaign start date — synced from campaign.start_date in GAQL
+      campaign_start_date: (r as GoogleAdsRawRow).campaign_start_date || undefined,
     }
   })
 
@@ -823,6 +834,50 @@ export async function upsertGoogleAdsNegativeKeywords(
   }
 
   return deduped.length
+}
+
+/**
+ * Upsert Google Ads search terms into google_ads_search_terms.
+ * On conflict (connection_id, ad_group_id, search_term, date) the row is updated.
+ */
+export async function upsertGoogleSearchTerms(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: GoogleAdsSearchTermRawRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.search_term && r.date)
+  if (!valid.length) return 0
+
+  const mapped = valid.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    campaign_id:      r.campaign_id,
+    campaign_name:    r.campaign_name || '',
+    ad_group_id:      r.ad_group_id,
+    ad_group_name:    r.ad_group_name || '',
+    search_term:      r.search_term,
+    match_type:       r.match_type || null,
+    status:           r.status     || null,
+    date:             String(r.date).split('T')[0],
+    impressions:      Number(r.impressions)      || 0,
+    clicks:           Number(r.clicks)           || 0,
+    spend:            Number(r.cost_micros)      / 1_000_000,
+    conversions:      Number(r.conversions)      || 0,
+    conversion_value: Number(r.conversion_value) || 0,
+  }))
+
+  for (let i = 0; i < mapped.length; i += 200) {
+    const { error } = await db
+      .from('google_ads_search_terms')
+      .upsert(mapped.slice(i, i + 200), {
+        onConflict: 'connection_id,ad_group_id,search_term,date',
+        ignoreDuplicates: false,
+      })
+    if (error) throw new Error(`google_ads_search_terms upsert failed: ${error.message}`)
+  }
+
+  return mapped.length
 }
 
 /**

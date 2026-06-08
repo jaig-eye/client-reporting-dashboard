@@ -23,6 +23,7 @@ export interface GoogleAdsRawRow {
   campaign_name: string
   campaign_status: string
   campaign_type: string
+  campaign_start_date?: string | null  // campaign.start_date — YYYY-MM-DD
   date: string              // YYYY-MM-DD
   cost_micros: number
   daily_budget_micros: number  // campaign.campaign_budget.amount_micros

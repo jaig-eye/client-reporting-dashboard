@@ -361,6 +361,102 @@ export async function fetchGoogleSearchKeywords(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Search terms fetch — actual user queries that triggered ads (search_term_view)
+// Distinct from bidded keywords (keyword_view) — these are what users typed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GoogleAdsSearchTermRawRow {
+  campaign_id:       string
+  campaign_name:     string
+  ad_group_id:       string
+  ad_group_name:     string
+  search_term:       string
+  match_type:        string | null
+  status:            string | null
+  date:              string
+  cost_micros:       number
+  impressions:       number
+  clicks:            number
+  conversions:       number
+  conversion_value:  number
+}
+
+export async function fetchGoogleSearchTerms(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string
+): Promise<GoogleAdsSearchTermRawRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token   as string | undefined) || undefined
+
+  const raw = await runQuery(
+    externalId,
+    mccId,
+    accessToken,
+    `SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      search_term_view.search_term,
+      search_term_view.status,
+      segments.keyword.info.match_type,
+      segments.date,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM search_term_view
+    WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+      AND metrics.impressions > 0
+    ORDER BY metrics.impressions DESC`,
+    devToken
+  )
+
+  return raw.map(row => {
+    const campaign  = row.campaign  as Record<string, unknown>
+    const adGroup   = row.adGroup   as Record<string, unknown>
+    const stView    = row.searchTermView as Record<string, unknown>
+    const kw        = (row.segments as Record<string, unknown>)?.keyword as Record<string, unknown> | undefined
+    const kwInfo    = kw?.info as Record<string, unknown> | undefined
+    const metrics   = row.metrics   as Record<string, unknown>
+    const segments  = row.segments  as Record<string, unknown>
+
+    return {
+      campaign_id:      String(campaign?.id    || ''),
+      campaign_name:    String(campaign?.name  || ''),
+      ad_group_id:      String(adGroup?.id     || ''),
+      ad_group_name:    String(adGroup?.name   || ''),
+      search_term:      String(stView?.searchTerm || ''),
+      match_type:       kwInfo?.matchType ? String(kwInfo.matchType) : null,
+      status:           stView?.status    ? String(stView.status)    : null,
+      date:             String(segments?.date  || '').split('T')[0],
+      cost_micros:      Number(metrics?.costMicros      || 0),
+      impressions:      Number(metrics?.impressions      || 0),
+      clicks:           Number(metrics?.clicks           || 0),
+      conversions:      Number(metrics?.conversions      || 0),
+      conversion_value: Number(metrics?.conversionsValue || 0),
+    }
+  }).filter(r => r.search_term && r.date)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ad-level metrics fetch (for campaign drill-down)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -817,6 +913,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         campaign.name,
         campaign.status,
         campaign.advertising_channel_type,
+        campaign.start_date,
         campaign_budget.amount_micros,
         segments.date,
         metrics.cost_micros,
@@ -855,6 +952,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         campaign_name:            String(campaign?.name  || ''),
         campaign_status:          String(campaign?.status || ''),
         campaign_type:            String(campaign?.advertisingChannelType || ''),
+        campaign_start_date:      campaign?.startDate ? String(campaign.startDate) : null,
         date:                     String(segments?.date  || ''),
         cost_micros:              Number(metrics?.costMicros              || 0),
         daily_budget_micros:      Number(campaignBudget?.amountMicros    || 0),
