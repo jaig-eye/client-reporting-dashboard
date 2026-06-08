@@ -138,6 +138,7 @@ export default async function AdSetDetailPage({
   function upsertAd(ad: AdCardData) {
     const ex = adMap.get(ad.ad_id)
     if (ex) {
+      // Accumulate metrics
       ex.spend           += ad.spend
       ex.impressions     += ad.impressions
       ex.clicks          += ad.clicks
@@ -147,6 +148,14 @@ export default async function AdSetDetailPage({
       ex.roas             = ex.adFuelSpend > 0 && ex.conversionValue > 0 ? ex.conversionValue / ex.adFuelSpend : 0
       ex.cpl              = ex.conversions > 0 ? ex.adFuelSpend / ex.conversions : 0
       ex.ctr              = ex.impressions > 0 ? ex.clicks / ex.impressions : 0
+      // Prefer non-empty metadata — later rows (more recent dates) override stale/empty values
+      if (ad.ad_name)        ex.ad_name        = ad.ad_name
+      if (ad.image_url)      ex.image_url      = ad.image_url
+      if (ad.thumbnail_url)  ex.thumbnail_url  = ad.thumbnail_url
+      if (ad.video_id)       ex.video_id       = ad.video_id
+      if (ad.ad_status)      ex.ad_status      = ad.ad_status
+      if (ad.creative_body)  ex.creative_body  = ad.creative_body
+      if (ad.creative_title) ex.creative_title = ad.creative_title
     } else {
       adMap.set(ad.ad_id, { ...ad })
     }

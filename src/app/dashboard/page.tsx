@@ -174,10 +174,11 @@ export default async function DashboardPage({
   const balanceSplit  = 1 - realAdFuelCut
 
   type SumRow = { client_id: string; spend: number }
-  const [gLifeRpc, mLifeRpc, ledgerBalRes] = await Promise.all([
+  const [gLifeRpc, mLifeRpc, ledgerBalRes, achPendingRes] = await Promise.all([
     db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }).eq('client_id', client.id),
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }).eq('client_id', client.id),
     db.from('ad_fuel_ledger').select('amount_af').eq('client_id', client.id).gte('date_of_payment', cutoffDate),
+    db.from('ad_fuel_ach_pending').select('amount_af').eq('client_id', client.id),
   ])
 
   let gRawLife = Number(((gLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
@@ -202,6 +203,7 @@ export default async function DashboardPage({
   const afLifetime    = balanceSplit > 0 ? rawLifetime / balanceSplit : rawLifetime
   const afPurchased   = ((ledgerBalRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
   const adFuelBalance = afPurchased - afLifetime
+  const pendingAch    = ((achPendingRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
 
 
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
@@ -650,7 +652,7 @@ export default async function DashboardPage({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {afPurchased > 0 && (
-              <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} />
+              <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
             )}
             <Suspense fallback={null}>
               <DateRangePicker
@@ -797,6 +799,7 @@ export default async function DashboardPage({
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
                   compare={showCompare ? fmtDate(priorFrom) : undefined}
+                  columns={activeLayout.table_columns}
                 />
               </div>
             )}

@@ -61,6 +61,7 @@ export type ColumnKey =
   | 'roas'
   | 'revenue'
   | 'daily_budget'
+  | 'adset_budget'    // Meta: individual ad set daily budget (when CBO is off)
 
 export type AdGroupColumnKey =
   | 'spend'
@@ -170,6 +171,7 @@ export const COLUMN_LABELS: Record<ColumnKey, string> = {
   roas:          'ROAS',
   revenue:       'Revenue',
   daily_budget:  'Daily Budget',
+  adset_budget:  'Ad Set Budget',
 }
 
 export const ADGROUP_COLUMN_LABELS: Record<AdGroupColumnKey, string> = {
@@ -295,7 +297,7 @@ export const ALL_PLATFORM_CARD_KEYS: PlatformCardKey[] = [
 
 export const ALL_COLUMN_KEYS: ColumnKey[] = [
   'campaign_name', 'status', 'spend', 'impressions', 'clicks',
-  'ctr', 'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'daily_budget',
+  'ctr', 'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'daily_budget', 'adset_budget',
 ]
 
 export const ALL_ADGROUP_COLUMN_KEYS: AdGroupColumnKey[] = [

@@ -94,8 +94,10 @@ export function calcDelta(current: number, prior: number): number | undefined {
 }
 
 export function fmt$(n: number): string {
-  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
+  if (n >= 10_000) return `$${(n / 1000).toFixed(1)}k`
+  if (n >= 1_000)  return `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  // Under $1,000: show full cents — rounding $56.68 to $57 loses meaningful precision
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function fmtNum(n: number): string {

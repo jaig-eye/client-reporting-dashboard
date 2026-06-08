@@ -21,6 +21,7 @@ export interface Campaign {
   cpl: number        // CPA — kept as cpl for backwards compat
   display_mode?: string | null
   daily_budget?: number | null
+  adset_budget?: number | null  // Meta: per-ad-set budget when CBO is off
 }
 
 type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'convRate' | 'cpl'
@@ -208,6 +209,11 @@ export default function CampaignTable({
     daily_budget: {
       header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Daily Budget</th>,
       cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.daily_budget ? fmtCurrency(c.daily_budget) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
+      foot: () => <td></td>,
+    },
+    adset_budget: {
+      header: () => <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Ad Set Budget</th>,
+      cell: (c) => <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{c.adset_budget ? fmtCurrency(c.adset_budget) : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>,
       foot: () => <td></td>,
     },
   }

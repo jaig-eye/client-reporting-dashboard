@@ -838,33 +838,44 @@ export async function upsertMetaAdsAdMetrics(
   const valid = rows.filter(r => r.date && r.ad_id)
   if (!valid.length) return 0
 
-  const mapped = valid.map(r => ({
-    connection_id:     connectionId,
-    client_id:         clientId,
-    campaign_id:       String(r.campaign_id),
-    campaign_name:     String(r.campaign_name || ''),
-    adset_id:          r.adset_id   || null,
-    adset_name:        r.adset_name || null,
-    ad_id:             String(r.ad_id),
-    ad_name:           String(r.ad_name || ''),
-    thumbnail_url:     r.thumbnail_url     || null,
-    image_url:         r.image_url         || null,
-    video_id:          r.video_id          || null,
-    video_thumb_url:   r.video_thumb_url   || null,
-    creative_body:     r.creative_body     || null,
-    creative_title:    r.creative_title    || null,
-    creative_link_url: r.creative_link_url || null,
-    ad_status:         r.ad_status         || null,
-    date:              String(r.date).split('T')[0],
-    spend:             Number(r.spend)       || 0,
-    impressions:       Number(r.impressions) || 0,
-    clicks:            Number(r.clicks)      || 0,
-    reach:             Number(r.reach)       || 0,
-    actions:           r.actions,
-    action_values:     r.action_values,
-    conversions:       Number(r.conversions)       || 0,
-    conversion_value:  Number(r.conversion_value)  || 0,
-  }))
+  const mapped = valid.map(r => {
+    // Use `|| undefined` for creative/metadata fields so that JSON serialization
+    // omits them when empty — this prevents re-syncs from overwriting stored
+    // ad names / images with empty values from Pass-1 (metrics-only) upserts.
+    // Supabase's REST layer excludes undefined keys from INSERT...ON CONFLICT DO UPDATE SET.
+    const row: Record<string, unknown> = {
+      connection_id:    connectionId,
+      client_id:        clientId,
+      campaign_id:      String(r.campaign_id),
+      campaign_name:    r.campaign_name || undefined,
+      adset_id:         r.adset_id      || undefined,
+      adset_name:       r.adset_name    || undefined,
+      ad_id:            String(r.ad_id),
+      ad_name:          r.ad_name       || undefined,
+      // Creative fields: omit when empty so existing DB values are preserved
+      thumbnail_url:    r.thumbnail_url     || undefined,
+      image_url:        r.image_url         || undefined,
+      video_id:         r.video_id          || undefined,
+      video_thumb_url:  r.video_thumb_url   || undefined,
+      creative_body:    r.creative_body     || undefined,
+      creative_title:   r.creative_title    || undefined,
+      creative_link_url:r.creative_link_url || undefined,
+      ad_status:        r.ad_status         || undefined,
+      // Metrics always overwrite (explicit values, never undefined)
+      date:             String(r.date).split('T')[0],
+      spend:            Number(r.spend)       || 0,
+      impressions:      Number(r.impressions) || 0,
+      clicks:           Number(r.clicks)      || 0,
+      reach:            Number(r.reach)       || 0,
+      actions:          r.actions,
+      action_values:    r.action_values,
+      conversions:      Number(r.conversions)      || 0,
+      conversion_value: Number(r.conversion_value) || 0,
+    }
+    // Remove undefined keys so they're truly absent from JSON payload
+    Object.keys(row).forEach(k => row[k] === undefined && delete row[k])
+    return row
+  })
 
   for (let i = 0; i < mapped.length; i += 200) {
     const { error } = await db

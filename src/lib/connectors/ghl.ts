@@ -12,11 +12,15 @@ import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
-// Conversation channel types (thread-level) + message action types (message-level)
-const CALL_TYPES  = new Set([
-  'TYPE_PHONE',                                                              // conversation channel
-  'TYPE_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL',  // message action types
+// Voice call message types — these appear in lastMessageType when the most recent
+// activity on a thread was an actual voice call. TYPE_PHONE is the conversation
+// channel type but also covers SMS threads — checking lastMessageType ensures we
+// only count real voice calls, not text messages on a phone number thread.
+const VOICE_CALL_MSG_TYPES = new Set([
+  'TYPE_CALL', 'TYPE_MISSED_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL',
 ])
+// Keep for backward-compat reference but not used for counting
+const CALL_TYPES = VOICE_CALL_MSG_TYPES
 const EMAIL_TYPES = new Set([
   'TYPE_EMAIL', 'TYPE_CUSTOM_EMAIL', 'TYPE_CAMPAIGN_EMAIL', 'TYPE_CUSTOM_PROVIDER_EMAIL',
 ])
@@ -356,14 +360,16 @@ async function fetchConversations(
     typeCounts[typ] = (typeCounts[typ] ?? 0) + 1
     const ex = byDate.get(parsed.date) ?? { totalCalls: 0, incomingCalls: 0, outgoingCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
 
-    if (CALL_TYPES.has(typ)) {
+    // Use lastMessageType to detect actual voice calls — TYPE_PHONE conversation channel
+    // also covers SMS threads, so checking conv.type alone over-counts.
+    const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
+    const isVoiceCall = VOICE_CALL_MSG_TYPES.has(lastMsgType) || VOICE_CALL_MSG_TYPES.has(typ)
+    if (isVoiceCall) {
       const direction = String(conv.direction || '').toLowerCase()
-      const isInbound = direction === 'inbound' || direction === ''
+      const isInbound = direction === 'inbound'
       ex.totalCalls++
       if (isInbound) ex.incomingCalls++
       else           ex.outgoingCalls++
-      // Check missed on any direction — outbound calls can also be missed/unanswered
-      const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
       if (lastMsgType === 'TYPE_MISSED_CALL' || lastMsgType.includes('MISSED')) ex.missedCalls++
     } else if (EMAIL_TYPES.has(typ)) {
       ex.emailsSent++

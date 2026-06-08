@@ -19,10 +19,12 @@ export default function AdFuelBadge({
   balance,
   clientName,
   monthlyBudget,
+  pendingAmount,
 }: {
-  balance:        number
-  clientName:     string
-  monthlyBudget?: number
+  balance:         number
+  clientName:      string
+  monthlyBudget?:  number
+  pendingAmount?:  number  // ACH payment in transit — shown as projected addition
 }) {
   const [mounted, setMounted] = useState(false)
 
@@ -121,8 +123,19 @@ export default function AdFuelBadge({
           }}>
             {formatted}
           </p>
-          {isLow && (
+          {pendingAmount && pendingAmount > 0 && (
+            <p style={{ fontSize: '0.575rem', color: 'var(--text-faint)', margin: '2px 0 0', lineHeight: 1 }}
+               title="Pending ACH payment — will be credited once cleared">
+              +${pendingAmount.toLocaleString('en-US', { maximumFractionDigits: 0 })} pending
+            </p>
+          )}
+          {isLow && !pendingAmount && (
             <p style={{ fontSize: '0.575rem', color: '#d97706', margin: '2px 0 0', lineHeight: 1 }}>
+              Low balance
+            </p>
+          )}
+          {isLow && pendingAmount && pendingAmount > 0 && (
+            <p style={{ fontSize: '0.575rem', color: '#d97706', margin: '1px 0 0', lineHeight: 1 }}>
               Low balance
             </p>
           )}
