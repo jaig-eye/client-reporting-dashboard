@@ -20,9 +20,35 @@ declare global {
 export default function SoundToggle() {
   const [armed, setArmed] = useState(false)
 
-  // Restore armed state on mount (persisted across page navigations)
+  // Restore armed state on mount and recreate AudioContext on first interaction.
+  // AudioContext is destroyed when the browser closes, but localStorage persists.
+  // Rather than making the user click the toggle again, we register a one-time
+  // listener so the context is silently recreated on their first click/keypress
+  // after reopening the app — which happens within seconds of normal use.
   useEffect(() => {
-    setArmed(localStorage.getItem(STORAGE_KEY) === 'true')
+    if (localStorage.getItem(STORAGE_KEY) !== 'true') return
+    setArmed(true)
+
+    function rearm() {
+      try {
+        if (!window.__paymentAudioCtx || window.__paymentAudioCtx.state === 'closed') {
+          window.__paymentAudioCtx = new AudioContext()
+        } else if (window.__paymentAudioCtx.state === 'suspended') {
+          window.__paymentAudioCtx.resume()
+        }
+      } catch { /* unavailable */ }
+    }
+
+    // Try immediately — succeeds if browser has stored site autoplay permission
+    rearm()
+
+    // Fallback: recreate on the first user interaction after a cold start
+    window.addEventListener('click',   rearm, { once: true, capture: true })
+    window.addEventListener('keydown', rearm, { once: true, capture: true })
+    return () => {
+      window.removeEventListener('click',   rearm, { capture: true })
+      window.removeEventListener('keydown', rearm, { capture: true })
+    }
   }, [])
 
   function toggle() {
