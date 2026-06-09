@@ -146,15 +146,18 @@ export default async function CampaignDetailPage({
       ex.conversions     += co
       ex.conversionValue += cv
       ex.adIds.add(adId)
-      // Use status from the most recent date — not the historically dominant status.
-      // This ensures a recently paused ad set shows Paused even over a "last 7 days" range
-      // where it was active for most of the period.
       if (date > ex.latestDate) {
         ex.latestDate = date
-        ex.status = normalized
+        // Update name from the most recent row — ad set names can change over time
+        if (setName?.trim()) ex.setName = setName.trim()
+        // Only update status with a real value; recent rows often have ad_status=null
+        // (omitted from upsert payloads) — don't overwrite a known status with null.
+        if (normalized !== null) ex.status = normalized
       } else if (date === ex.latestDate) {
-        // Same day: promote ACTIVE over PAUSED within that day
-        if (!ex.status || normalized === 'ACTIVE') ex.status = normalized
+        // Same day: prefer ACTIVE over PAUSED; keep existing if new is null
+        if (normalized === 'ACTIVE') ex.status = normalized
+        else if (normalized !== null && !ex.status) ex.status = normalized
+        if (setName?.trim()) ex.setName = setName.trim()
       }
     } else {
       setMap.set(setId, { setName, status: normalized, latestDate: date, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
