@@ -233,11 +233,27 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
             />
             <LayoutSection
               title="Table Columns"
-              description="Campaign/adset table columns in display order"
+              description="Campaign table columns in display order"
               items={paidAdsLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
               labels={COLUMN_LABELS as Record<string, string>}
               onChange={items => updatePaidAdsLayout(innerTab, { table_columns: items as ColumnKey[] })}
+            />
+            <LayoutSection
+              title="Ad Set Columns"
+              description="Columns shown in the ad set breakdown table on campaign detail pages"
+              items={paidAdsLayout.adgroup_table_columns ?? (innerTab === 'ecom' ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN).adgroup_table_columns!}
+              allKeys={ALL_ADGROUP_COLUMN_KEYS}
+              labels={ADGROUP_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updatePaidAdsLayout(innerTab, { adgroup_table_columns: items })}
+            />
+            <LayoutSection
+              title="Ads Columns"
+              description="Columns shown in the individual ads table on ad set detail pages"
+              items={paidAdsLayout.ads_table_columns ?? (innerTab === 'ecom' ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN).ads_table_columns!}
+              allKeys={ALL_AD_COLUMN_KEYS}
+              labels={AD_COLUMN_LABELS as Record<string, string>}
+              onChange={items => updatePaidAdsLayout(innerTab, { ads_table_columns: items })}
             />
           </>
         )}
