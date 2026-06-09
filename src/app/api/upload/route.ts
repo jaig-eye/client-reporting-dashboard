@@ -43,20 +43,22 @@ export async function POST(request: NextRequest) {
 
     const db = createAdminClient()
 
-    // Try with the real MIME type first. If the bucket's MIME allowlist rejects it
-    // (common when the bucket is image-only), retry with application/octet-stream —
-    // audio files play correctly regardless of stored content type because browsers
-    // detect format from file content and the URL extension.
-    let uploadError = await db.storage
-      .from(BUCKET)
-      .upload(filename, buffer, { contentType: file.type || 'application/octet-stream', upsert: false })
-      .then(r => r.error)
+    // Determine the content type to send. The 'uploads' bucket may have a strict
+    // MIME allowlist (image-only). Audio files play correctly in the browser via
+    // URL + extension regardless of the stored Content-Type, so we try progressively
+    // less-specific types until the bucket accepts the upload.
+    const contentTypesToTry = isAudio
+      ? [file.type, 'audio/mpeg', 'application/octet-stream', 'image/png']
+      : [file.type || 'image/png']
 
-    if (uploadError && /mime type|not supported|invalid.*type/i.test(uploadError.message)) {
-      const retry = await db.storage
+    let uploadError: Error | { message: string } | null = null
+    for (const ct of contentTypesToTry) {
+      const result = await db.storage
         .from(BUCKET)
-        .upload(filename, buffer, { contentType: 'application/octet-stream', upsert: false })
-      uploadError = retry.error
+        .upload(filename, buffer, { contentType: ct, upsert: false })
+      uploadError = result.error
+      if (!uploadError) break  // succeeded
+      if (!/mime type|not supported|invalid.*type/i.test(uploadError.message)) break  // non-MIME error, stop retrying
     }
 
     if (uploadError) throw new Error(uploadError.message)
