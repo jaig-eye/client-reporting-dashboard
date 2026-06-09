@@ -381,20 +381,36 @@ export default async function CampaignDetailPage({
     }
     // Apply current metadata to existing setMap entries AND surface any adsets
     // that have current rows but zero metrics in the selected date range.
+    //
+    // Key-mismatch handling: Meta's sync stores an adset-level summary row with
+    // ad_id = adset_id. In adsetMetaRows, that row's sid = adset_id (numeric). But in
+    // setMap, the same adset's key may be adset_name (because the per-ad rows have
+    // adset_id=NULL). When the keys differ we fall back to a name-based lookup so the
+    // correct current status is always applied to the right setMap entry.
     for (const [sid, meta] of Array.from(currentAdsetMeta)) {
       if (setMap.has(sid)) {
-        // Update name/status from current data
+        // Direct key match — update name/status from current data
         const ex = setMap.get(sid)!
         if (meta.name)          ex.setName = meta.name
-        if (meta.status != null) ex.status  = meta.status  // != null: only override with a real status
+        if (meta.status != null) ex.status  = meta.status
       } else if (meta.name && !isMetaDefaultName(meta.name)) {
-        // Adset exists in current data but had no activity in the date range →
-        // show it with zero metrics so it's never invisible due to date selection.
-        setMap.set(sid, {
-          setName: meta.name, status: meta.status,
-          latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
-          adIds: new Set(),
-        })
+        // No direct key match. Try to find an existing setMap entry by name
+        // (handles the case where setMap key = adset_name but currentAdsetMeta key = adset_id).
+        let matchByName: SetAgg | undefined
+        for (const v of Array.from(setMap.values())) {
+          if (v.setName.toLowerCase() === meta.name.toLowerCase()) { matchByName = v; break }
+        }
+        if (matchByName) {
+          // Found the same adset under a different key — update its status
+          if (meta.status != null) matchByName.status = meta.status
+        } else {
+          // Truly new adset — had no activity in the date range → add with zero metrics
+          setMap.set(sid, {
+            setName: meta.name, status: meta.status,
+            latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
+            adIds: new Set(),
+          })
+        }
       }
     }
   }

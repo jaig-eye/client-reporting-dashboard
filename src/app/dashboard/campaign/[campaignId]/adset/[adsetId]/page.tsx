@@ -280,11 +280,17 @@ export default async function AdSetDetailPage({
     // adset_name instead — which is always populated and catches ALL rows for the adset.
 
     // Step 1 — current metadata (no date filter)
+    // NOTE: neq('ad_id', adsetId) is intentionally ABSENT from metaQ.
+    // Meta's sync stores an adset-level summary row with ad_id = adset_id alongside the
+    // per-ad rows. That summary row is the only row that has adset_id set (non-null) — the
+    // real per-ad rows have adset_id=NULL. Including the summary row here lets us extract
+    // the adset_name so that metricsQ can filter by name and find the actual per-ad rows.
+    // The summary row is skipped when building currentMeta below to avoid showing it as an ad.
     const { data: metaRows } = await (adsetIdIsNumeric
       ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
-          .eq('adset_id', adsetId).neq('ad_id', adsetId)
+          .eq('adset_id', adsetId)
           .order('date', { ascending: false }).limit(1000)
       : db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
@@ -294,13 +300,6 @@ export default async function AdSetDetailPage({
 
     // Extract adset_name from metadata — this is always present even in rows where adset_id was null
     const resolvedAdsetName = (metaRows as MetaAdRow[] | null)?.find(r => r.adset_name)?.adset_name ?? null
-
-    // If the metadata query returned nothing (no rows with this adset_id in the entire DB),
-    // it means all historical rows had adset_id=NULL. Use the last 6 digits of the numeric
-    // ID as a minimal label so the page doesn't show the generic "Ad Set" placeholder.
-    if (adsetIdIsNumeric && !resolvedAdsetName && !(metaRows as MetaAdRow[] | null)?.length) {
-      groupName = `Ad Set …${adsetId.slice(-6)}`
-    }
 
     // Step 2 — date-filtered metrics query.
     // When adsetIdIsNumeric: prefer filtering by adset_name (covers old rows where adset_id=NULL)
@@ -356,6 +355,13 @@ export default async function AdSetDetailPage({
     const currentMeta = new Map<string, MetaAdRow>()
     for (const r of (metaRows ?? []) as MetaAdRow[]) {
       if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
+      // Skip the adset-level summary row (ad_id = adset_id) — Meta's sync stores one
+      // aggregate row per adset per day alongside the per-ad rows. We use it only to
+      // capture the adset_name (groupName); we don't want it displayed as an individual ad.
+      if (adsetIdIsNumeric && r.ad_id === adsetId) {
+        if (r.adset_name) groupName = r.adset_name
+        continue
+      }
       if (!currentMeta.has(r.ad_id)) {
         currentMeta.set(r.ad_id, r)  // first row = most recent date
         if (r.adset_name) groupName = r.adset_name
