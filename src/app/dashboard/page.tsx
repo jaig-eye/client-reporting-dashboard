@@ -231,6 +231,9 @@ export default async function DashboardPage({
     (client.metric_layout_override as MetricLayouts | null | undefined),
     isEcomDash
   )
+  // Filtered source views (?source=meta_ads/google_ads) show campaign/adset-level detail
+  // and should use the Paid Ads layout, not the Summary Page layout.
+  const displayLayout = isFiltered ? paidAdsLayout : activeLayout
 
   // ─── CRM (GHL) data ───────────────────────────────────────────────────────
   let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0, newOpps: 0, wonOpps: 0, wonValue: 0 }
@@ -700,9 +703,9 @@ export default async function DashboardPage({
               </div>
             )}
 
-            {/* ── KPI cards (sparklines) — driven by activeLayout.kpi_cards ─── */}
-            <div className={`grid grid-cols-2 lg:grid-cols-${activeLayout.kpi_cards.length || 3} gap-4`}>
-              {activeLayout.kpi_cards.map((key, i) => {
+            {/* ── KPI cards (sparklines) — driven by displayLayout.kpi_cards ─── */}
+            <div className={`grid grid-cols-2 lg:grid-cols-${displayLayout.kpi_cards.length || 3} gap-4`}>
+              {displayLayout.kpi_cards.map((key, i) => {
                 const m = metricValMap[key]
                 if (!m) return null
                 return (
@@ -720,10 +723,10 @@ export default async function DashboardPage({
               })}
             </div>
 
-            {/* ── Top metrics (compact, no sparkline) — driven by activeLayout.top_metrics ─── */}
-            {activeLayout.top_metrics.length > 0 && (
-              <div className={`grid grid-cols-2 lg:grid-cols-${activeLayout.top_metrics.length} gap-4`}>
-                {activeLayout.top_metrics.map(key => {
+            {/* ── Top metrics (compact, no sparkline) — driven by displayLayout.top_metrics ─── */}
+            {displayLayout.top_metrics.length > 0 && (
+              <div className={`grid grid-cols-2 lg:grid-cols-${displayLayout.top_metrics.length} gap-4`}>
+                {displayLayout.top_metrics.map(key => {
                   const m = metricValMap[key]
                   if (!m) return null
                   const isGood = m.delta !== undefined ? (m.invertDelta ? m.delta <= 0 : m.delta >= 0) : null
@@ -819,7 +822,7 @@ export default async function DashboardPage({
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
                   compare={showCompare ? fmtDate(priorFrom) : undefined}
-                  columns={activeLayout.table_columns}
+                  columns={displayLayout.table_columns}
                 />
               </div>
             )}

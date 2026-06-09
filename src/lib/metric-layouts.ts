@@ -390,20 +390,12 @@ export function resolvePaidAdsLayout(
   clientOverride: MetricLayouts | null | undefined,
   isEcom: boolean
 ): MetricLayout {
-  if (isEcom) {
-    return (
-      clientOverride?.paid_ads_ecom ??
-      agencyLayouts?.paid_ads_ecom  ??
-      clientOverride?.ecom          ??
-      agencyLayouts?.ecom           ??
-      DEFAULT_PAID_ADS_ECOM
-    )
-  }
-  return (
-    clientOverride?.paid_ads_lead_gen ??
-    agencyLayouts?.paid_ads_lead_gen  ??
-    clientOverride?.lead_gen          ??
-    agencyLayouts?.lead_gen           ??
-    DEFAULT_PAID_ADS_LEAD_GEN
-  )
+  const def        = isEcom ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN
+  const configured = isEcom
+    ? (clientOverride?.paid_ads_ecom    ?? agencyLayouts?.paid_ads_ecom)
+    : (clientOverride?.paid_ads_lead_gen ?? agencyLayouts?.paid_ads_lead_gen)
+  // Spread defaults first so new optional fields (adgroup_table_columns, ads_table_columns)
+  // are always present even for configs saved before those fields were added.
+  // Configured values win over defaults for every field they define.
+  return configured ? { ...def, ...configured } : def
 }

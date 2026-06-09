@@ -295,6 +295,13 @@ export default async function AdSetDetailPage({
     // Extract adset_name from metadata — this is always present even in rows where adset_id was null
     const resolvedAdsetName = (metaRows as MetaAdRow[] | null)?.find(r => r.adset_name)?.adset_name ?? null
 
+    // If the metadata query returned nothing (no rows with this adset_id in the entire DB),
+    // it means all historical rows had adset_id=NULL. Use the last 6 digits of the numeric
+    // ID as a minimal label so the page doesn't show the generic "Ad Set" placeholder.
+    if (adsetIdIsNumeric && !resolvedAdsetName && !(metaRows as MetaAdRow[] | null)?.length) {
+      groupName = `Ad Set …${adsetId.slice(-6)}`
+    }
+
     // Step 2 — date-filtered metrics query.
     // When adsetIdIsNumeric: prefer filtering by adset_name (covers old rows where adset_id=NULL)
     // over filtering by adset_id (misses any row where adset_id was omitted during upsert).
