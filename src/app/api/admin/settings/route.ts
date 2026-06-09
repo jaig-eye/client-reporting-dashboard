@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import { getAdminSession } from '@/lib/auth'
+import { getAdminSession, timingSafeCompare } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
 
 function isAdminAuthed(session: string | undefined) {
-  return session && session === process.env.ADMIN_PASSWORD
+  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
 }
 
 export async function GET(request: NextRequest) {
@@ -61,6 +61,7 @@ export async function PUT(request: NextRequest) {
     'metric_alert_window_days',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
+    'payment_sound_url',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

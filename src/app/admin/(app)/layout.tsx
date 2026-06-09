@@ -9,6 +9,7 @@ import Sidebar from '@/components/admin/Sidebar'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
 import ThemeProvider from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
+import PaymentNotifier from '@/components/admin/PaymentNotifier'
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -32,7 +33,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   // Resolve current user, agency settings, and unread alert count concurrently
   const [settingsResult, sessionUserResult, alertCountResult] = await Promise.all([
-    db.from('agency_settings').select('agency_name, agency_logo_url, app_version, brand_primary').single(),
+    db.from('agency_settings').select('agency_name, agency_logo_url, app_version, brand_primary, payment_sound_url').single(),
     userId
       ? db.from('users').select('name, email, avatar_url, theme, accent_color').eq('id', userId).single()
       : Promise.resolve({ data: null }),
@@ -42,7 +43,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       .is('dismissed_at', null),
   ])
 
-  const settings         = settingsResult.data    ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0', brand_primary: null }
+  const settings         = settingsResult.data    ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0', brand_primary: null, payment_sound_url: null }
   const sessionUser      = sessionUserResult.data
   const unreadAlertCount = alertCountResult.count ?? 0
 
@@ -68,6 +69,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           unreadAlertCount={unreadAlertCount}
         />
         <NavigationRefresher />
+        <PaymentNotifier soundUrl={(settings as Record<string, unknown>).payment_sound_url as string | null} />
         <div className="flex-1 min-w-0">
           <main className="p-8">{children}</main>
         </div>

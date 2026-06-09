@@ -66,6 +66,7 @@ interface Settings {
   hidden_connector_types:         string[]
   discord_bot_token:              string
   crm_name:                       string
+  payment_sound_url:              string
   brand_primary:                  string
   stripe_api_key:                 string
   stripe_webhook_secret:          string
@@ -126,6 +127,7 @@ const DEFAULT: Settings = {
   master_writing_prompt:          '',
   serp_api_key:                   '',
   serp_api_provider:              'serpapi',
+  payment_sound_url:              '',
 }
 
 const TABS = [
@@ -153,8 +155,10 @@ export default function AgencySettingsPage() {
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
   const [error,      setError]      = useState('')
-  const [uploading,      setUploading]      = useState(false)
+  const [uploading,        setUploading]        = useState(false)
   const [faviconUploading, setFaviconUploading] = useState(false)
+  const [soundUploading,   setSoundUploading]   = useState(false)
+  const [soundTesting,     setSoundTesting]     = useState(false)
   const [testingEmail,   setTestingEmail]   = useState(false)
   const [testEmailMsg,   setTestEmailMsg]   = useState('')
   const [testingSerp,    setTestingSerp]    = useState(false)
@@ -253,6 +257,53 @@ export default function AgencySettingsPage() {
       setError(err instanceof Error ? err.message : 'Favicon upload failed')
     } finally {
       setFaviconUploading(false)
+    }
+  }
+
+  async function handleSoundUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const allowed = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/aac']
+    if (!allowed.includes(file.type) && !file.name.match(/\.(mp3|wav|ogg|aac|m4a)$/i)) {
+      setError('Sound must be an MP3, WAV, OGG, or AAC file'); return
+    }
+    if (file.size > 10 * 1024 * 1024) { setError('Sound file must be under 10 MB'); return }
+    setSoundUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('folder', 'sounds')
+      const res  = await fetch('/api/upload', { method: 'POST', body: fd })
+      const data = await res.json() as { url?: string; error?: string }
+      if (data.url) {
+        field('payment_sound_url', data.url)
+        // Auto-save immediately like favicon
+        await fetch('/api/admin/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_sound_url: data.url }),
+        })
+      } else {
+        throw new Error(data.error || 'Upload failed')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sound upload failed')
+    } finally {
+      setSoundUploading(false)
+    }
+  }
+
+  async function handleTestSound() {
+    if (!form.payment_sound_url) return
+    setSoundTesting(true)
+    try {
+      const audio = new Audio(form.payment_sound_url)
+      audio.volume = 0.7
+      await audio.play()
+      setTimeout(() => setSoundTesting(false), 2000)
+    } catch {
+      setSoundTesting(false)
+      setError('Could not play sound — check browser autoplay settings')
     }
   }
 
@@ -945,6 +996,64 @@ export default function AgencySettingsPage() {
                 onChange={v => field('notify_connector_errors', v)}
               />
             </div>
+          </div>
+
+          {/* ── Payment Sound ───────────────────────────────────────── */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Payment Sound</h2>
+              <p className="section-desc">
+                Upload an MP3 or WAV that plays in the browser whenever a Stripe payment is successfully processed. Requires the admin dashboard to be open.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <label className="btn btn-secondary" style={{ cursor: 'pointer', position: 'relative' }}>
+                {soundUploading ? 'Uploading…' : form.payment_sound_url ? 'Replace Sound' : 'Upload Sound'}
+                <input
+                  type="file"
+                  accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/aac,.mp3,.wav,.ogg,.aac,.m4a"
+                  className="hidden"
+                  onChange={handleSoundUpload}
+                  disabled={soundUploading}
+                />
+              </label>
+
+              {form.payment_sound_url && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleTestSound}
+                    disabled={soundTesting}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    {soundTesting ? '🔊 Playing…' : '▶ Test Sound'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ color: 'var(--red)' }}
+                    onClick={async () => {
+                      field('payment_sound_url', '')
+                      await fetch('/api/admin/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ payment_sound_url: '' }),
+                      })
+                    }}
+                  >
+                    Remove
+                  </button>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                    {form.payment_sound_url.split('/').pop()}
+                  </span>
+                </>
+              )}
+            </div>
+            <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+              MP3, WAV, OGG, or AAC · max 10 MB · sounds play automatically in the admin browser when a payment is received
+            </p>
           </div>
 
           <div className="card p-6 space-y-4">
