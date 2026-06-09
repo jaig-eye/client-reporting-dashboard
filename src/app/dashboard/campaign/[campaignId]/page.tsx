@@ -210,8 +210,10 @@ export default async function CampaignDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
     ])
-    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null }[] | null) ?? []
-    const firstCamp = campRows[0] ?? null
+    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null; date?: string }[] | null) ?? []
+    // Sort desc by date so the most-recent row's name/type is used — not the oldest
+    const sortedRows = [...campRows].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
+    const firstCamp  = sortedRows[0] ?? null
     if (firstCamp) campaignName = firstCamp.campaign_name
     isPMax = firstCamp?.campaign_type === 'PERFORMANCE_MAX'
       || campaignName.toLowerCase().startsWith('pmax')
@@ -280,8 +282,11 @@ export default async function CampaignDetailPage({
         : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
     if ((campRows ?? []).length > 0) {
-      const firstMeta = (campRows as (MetaCampRow & { campaign_created_at?: string | null })[])
-        .find(r => r.campaign_name)
+      // Sort desc by date so we always use the current name, not an old one from the range
+      const sortedMeta = [...(campRows as (MetaCampRow & { campaign_created_at?: string | null })[])].sort(
+        (a, b) => ((b as { date?: string }).date ?? '').localeCompare((a as { date?: string }).date ?? '')
+      )
+      const firstMeta = sortedMeta.find(r => r.campaign_name)
       if (firstMeta) {
         campaignName = firstMeta.campaign_name
         campaignStartDate = firstMeta.campaign_created_at ?? null

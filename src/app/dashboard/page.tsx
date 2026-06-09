@@ -414,6 +414,7 @@ export default async function DashboardPage({
     name: string; spend: number; impressions: number; clicks: number
     conversions: number; conversionValue: number; display_mode: string; _source: string
     status?: string | null; daily_budget?: number | null
+    _latestDate: string   // tracks which row has the most recent date for name/status
   }>()
   for (const row of currentMetrics) {
     const assignment = assignmentMap.get(row.campaign_id)
@@ -429,12 +430,19 @@ export default async function DashboardPage({
       if (row.daily_budget != null && (ex.daily_budget == null || row.daily_budget > ex.daily_budget)) {
         ex.daily_budget = row.daily_budget
       }
+      // Name and status must reflect the CURRENT state, not whichever date appeared first.
+      // Always update from the most recent row so renames and pauses are shown correctly.
+      if (row.date > ex._latestDate) {
+        ex._latestDate = row.date
+        if (row.campaign_name)   ex.name   = row.campaign_name
+        if (row.campaign_status) ex.status = row.campaign_status
+      }
     } else {
       campMap.set(row.campaign_id, {
         name: row.campaign_name, spend: row.spend, impressions: row.impressions,
         clicks: row.clicks, conversions: row.conversions, conversionValue: row.conversion_value,
         display_mode: mode, _source: row._source, status: row.campaign_status,
-        daily_budget: row.daily_budget ?? null,
+        daily_budget: row.daily_budget ?? null, _latestDate: row.date ?? '',
       })
     }
   }
