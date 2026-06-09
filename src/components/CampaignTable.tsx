@@ -26,9 +26,11 @@ export interface Campaign {
 
 type SortKey = 'campaign_name' | 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'convRate' | 'cpl'
 
+// DEFAULT_COLUMNS is only used when no layout is passed (should not happen in production).
+// Layout-driven column selection happens in dashboard/page.tsx via activeLayout.table_columns.
 const DEFAULT_COLUMNS: ColumnKey[] = [
   'campaign_name', 'status', 'spend', 'impressions', 'clicks',
-  'ctr', 'conversions', 'conv_rate', 'cpa', 'daily_budget',
+  'ctr', 'conversions', 'conv_rate', 'cpa',
 ]
 
 export default function CampaignTable({

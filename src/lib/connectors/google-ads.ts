@@ -408,6 +408,8 @@ export async function fetchGoogleSearchTerms(
     externalId,
     mccId,
     accessToken,
+    // LIMIT 5000: search_term_view can have tens of thousands of rows for active accounts.
+    // Without a limit, a large account's backfill will exceed Vercel's function timeout.
     `SELECT
       campaign.id,
       campaign.name,
@@ -415,7 +417,6 @@ export async function fetchGoogleSearchTerms(
       ad_group.name,
       search_term_view.search_term,
       search_term_view.status,
-      segments.keyword.info.match_type,
       segments.date,
       metrics.cost_micros,
       metrics.impressions,
@@ -425,7 +426,8 @@ export async function fetchGoogleSearchTerms(
     FROM search_term_view
     WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
       AND metrics.impressions > 0
-    ORDER BY metrics.impressions DESC`,
+    ORDER BY metrics.impressions DESC
+    LIMIT 5000`,
     devToken
   )
 
@@ -433,8 +435,6 @@ export async function fetchGoogleSearchTerms(
     const campaign  = row.campaign  as Record<string, unknown>
     const adGroup   = row.adGroup   as Record<string, unknown>
     const stView    = row.searchTermView as Record<string, unknown>
-    const kw        = (row.segments as Record<string, unknown>)?.keyword as Record<string, unknown> | undefined
-    const kwInfo    = kw?.info as Record<string, unknown> | undefined
     const metrics   = row.metrics   as Record<string, unknown>
     const segments  = row.segments  as Record<string, unknown>
 
@@ -444,8 +444,8 @@ export async function fetchGoogleSearchTerms(
       ad_group_id:      String(adGroup?.id     || ''),
       ad_group_name:    String(adGroup?.name   || ''),
       search_term:      String(stView?.searchTerm || ''),
-      match_type:       kwInfo?.matchType ? String(kwInfo.matchType) : null,
-      status:           stView?.status    ? String(stView.status)    : null,
+      match_type:       null, // match_type via segments.keyword.info is not reliably available
+      status:           stView?.status ? String(stView.status) : null,
       date:             String(segments?.date  || '').split('T')[0],
       cost_micros:      Number(metrics?.costMicros      || 0),
       impressions:      Number(metrics?.impressions      || 0),

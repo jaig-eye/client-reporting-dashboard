@@ -251,7 +251,7 @@ export default async function CampaignDetailPage({
     }
     const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }] = await Promise.all([
       db.from('meta_ads_metrics')
-        .select('campaign_name,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+        .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -279,7 +279,14 @@ export default async function CampaignDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as MetaAdRow[] }),
     ])
-    if ((campRows ?? []).length > 0) campaignName = ((campRows as MetaCampRow[])[0]).campaign_name
+    if ((campRows ?? []).length > 0) {
+      const firstMeta = (campRows as (MetaCampRow & { campaign_created_at?: string | null })[])
+        .find(r => r.campaign_name)
+      if (firstMeta) {
+        campaignName = firstMeta.campaign_name
+        campaignStartDate = firstMeta.campaign_created_at ?? null
+      }
+    }
     // Campaign-level rows → KPI totals + sparklines
     for (const r of (campRows ?? []) as MetaCampRow[]) {
       const sp = Number(r.spend) || 0

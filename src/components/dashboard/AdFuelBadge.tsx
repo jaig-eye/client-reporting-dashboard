@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Plus } from '@phosphor-icons/react'
+import { fmt$ } from '@/lib/metrics'
 
 const FORM_URL = 'https://link.launchlocal.io/widget/form/diJohLpSz5Vks5Ccex7n'
 
@@ -123,19 +124,14 @@ export default function AdFuelBadge({
           }}>
             {formatted}
           </p>
-          {pendingAmount && pendingAmount > 0 && (
+          {(pendingAmount ?? 0) > 0 && (
             <p style={{ fontSize: '0.575rem', color: 'var(--text-faint)', margin: '2px 0 0', lineHeight: 1 }}
                title="Pending ACH payment — will be credited once cleared">
-              +${pendingAmount.toLocaleString('en-US', { maximumFractionDigits: 0 })} pending
+              +{fmt$(pendingAmount!)} pending
             </p>
           )}
-          {isLow && !pendingAmount && (
+          {isLow && (
             <p style={{ fontSize: '0.575rem', color: '#d97706', margin: '2px 0 0', lineHeight: 1 }}>
-              Low balance
-            </p>
-          )}
-          {isLow && pendingAmount && pendingAmount > 0 && (
-            <p style={{ fontSize: '0.575rem', color: '#d97706', margin: '1px 0 0', lineHeight: 1 }}>
               Low balance
             </p>
           )}

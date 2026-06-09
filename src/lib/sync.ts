@@ -894,10 +894,17 @@ export async function upsertMetaAdsAdMetrics(
   if (!valid.length) return 0
 
   const mapped = valid.map(r => {
-    // Use `|| undefined` for creative/metadata fields so that JSON serialization
-    // omits them when empty — this prevents re-syncs from overwriting stored
-    // ad names / images with empty values from Pass-1 (metrics-only) upserts.
-    // Supabase's REST layer excludes undefined keys from INSERT...ON CONFLICT DO UPDATE SET.
+    // Use `|| undefined` for metadata fields so JSON.stringify omits them when empty.
+    // Supabase's REST client serialises rows to JSON before sending; JSON.stringify
+    // drops undefined values entirely, which means PostgREST's ON CONFLICT DO UPDATE
+    // SET clause will NOT include those columns — preserving whatever the DB already
+    // has rather than overwriting with empty/null.  This is the intended behaviour for
+    // creative fields that arrive empty in the first sync pass (metrics-only) and get
+    // populated in the second pass (creative enrichment).
+    // NOTE: `null || undefined` evaluates to `undefined`, so legitimately-null fields
+    // (e.g. adset_id for a campaign without an ad-set) are also omitted.  For new rows
+    // the column gets its DB DEFAULT (NULL), which is correct; for existing rows the
+    // stored value is kept unchanged — also correct since ad set membership is fixed.
     const row: Record<string, unknown> = {
       connection_id:    connectionId,
       client_id:        clientId,

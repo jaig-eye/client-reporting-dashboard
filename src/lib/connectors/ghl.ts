@@ -19,8 +19,6 @@ const BASE_URL = 'https://services.leadconnectorhq.com'
 const VOICE_CALL_MSG_TYPES = new Set([
   'TYPE_CALL', 'TYPE_MISSED_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL',
 ])
-// Keep for backward-compat reference but not used for counting
-const CALL_TYPES = VOICE_CALL_MSG_TYPES
 const EMAIL_TYPES = new Set([
   'TYPE_EMAIL', 'TYPE_CUSTOM_EMAIL', 'TYPE_CAMPAIGN_EMAIL', 'TYPE_CUSTOM_PROVIDER_EMAIL',
 ])
@@ -363,7 +361,9 @@ async function fetchConversations(
     // Use lastMessageType to detect actual voice calls — TYPE_PHONE conversation channel
     // also covers SMS threads, so checking conv.type alone over-counts.
     const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
-    const isVoiceCall = VOICE_CALL_MSG_TYPES.has(lastMsgType) || VOICE_CALL_MSG_TYPES.has(typ)
+    // Only count as a voice call when lastMessageType explicitly indicates a call.
+    // TYPE_PHONE is a channel type (covers SMS threads too) — do not use it here.
+    const isVoiceCall = VOICE_CALL_MSG_TYPES.has(lastMsgType)
     if (isVoiceCall) {
       const direction = String(conv.direction || '').toLowerCase()
       const isInbound = direction === 'inbound'
