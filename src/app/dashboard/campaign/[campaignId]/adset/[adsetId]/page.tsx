@@ -303,7 +303,7 @@ export default async function AdSetDetailPage({
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
           .gte('date', dateFrom).lte('date', dateTo)
-          .eq('adset_name', resolvedAdsetName)
+          .eq('adset_name', resolvedAdsetName).neq('ad_id', adsetId)
       : adsetIdIsNumeric
       ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
@@ -323,7 +323,7 @@ export default async function AdSetDetailPage({
             .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
             .eq('client_id', client.id).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
-            .eq('adset_name', resolvedAdsetName)
+            .eq('adset_name', resolvedAdsetName).neq('ad_id', adsetId)
         : adsetIdIsNumeric
         ? db.from('meta_ads_ad_metrics')
             .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')

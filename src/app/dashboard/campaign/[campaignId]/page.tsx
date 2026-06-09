@@ -289,7 +289,7 @@ export default async function CampaignDetailPage({
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .order('date', { ascending: false })
-        .limit(500),
+        .limit(1000),
     ])
     if ((campRows ?? []).length > 0) {
       // Sort desc by date so we always use the current name, not an old one from the range
