@@ -355,10 +355,11 @@ export default async function AdSetDetailPage({
     const currentMeta = new Map<string, MetaAdRow>()
     for (const r of (metaRows ?? []) as MetaAdRow[]) {
       if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
-      // Skip the adset-level summary row (ad_id = adset_id) — Meta's sync stores one
-      // aggregate row per adset per day alongside the per-ad rows. We use it only to
-      // capture the adset_name (groupName); we don't want it displayed as an individual ad.
-      if (adsetIdIsNumeric && r.ad_id === adsetId) {
+      // Skip adset-level summary rows. These appear in two forms:
+      //   1. ad_id = adset_id (numeric path) — the aggregate row Meta writes per adset/day
+      //   2. ad_name starts with "[Ad Set]" — an alternative naming convention for the same
+      // Capture adset_name for groupName but don't add either as an individual ad.
+      if ((adsetIdIsNumeric && r.ad_id === adsetId) || r.ad_name?.startsWith('[Ad Set]')) {
         if (r.adset_name) groupName = r.adset_name
         continue
       }
@@ -390,7 +391,8 @@ export default async function AdSetDetailPage({
 
     // Accumulate period metrics — metadata fields ignored (currentMeta is authoritative)
     for (const r of (rows ?? []) as (MetaAdRow & { date: string })[]) {
-      if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
+      // Skip adset-level summary rows in both numeric and non-numeric paths
+      if (r.ad_name?.startsWith('[Ad Set]')) continue
       const sp = Number(r.spend) || 0
       const cl = Number(r.clicks) || 0
       const im = Number(r.impressions) || 0

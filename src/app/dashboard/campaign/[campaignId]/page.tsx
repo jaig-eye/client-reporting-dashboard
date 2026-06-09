@@ -318,6 +318,9 @@ export default async function CampaignDetailPage({
     }
     // Ad-level rows → adset breakdown table only
     for (const r of (rows ?? []) as MetaAdRow[]) {
+      // Skip adset-level summary rows (ad_id = adset_id) — Meta's sync stores one aggregate
+      // row per adset per day alongside the per-ad rows. Including it would double the spend.
+      if (r.adset_id && r.ad_id === r.adset_id) continue
       const setId = r.adset_id ?? r.adset_name ?? 'unknown'
       const sp = Number(r.spend) || 0
       const im = Number(r.impressions) || 0
@@ -362,7 +365,10 @@ export default async function CampaignDetailPage({
     type AdsetMetaRow = { adset_id: string | null; adset_name: string | null; ad_status: string | null }
     const currentAdsetMeta = new Map<string, { name: string; status: string | null }>()
     for (const r of (adsetMetaRows ?? []) as AdsetMetaRow[]) {
-      const sid = r.adset_id ?? r.adset_name ?? ''
+      // Use adset_name as canonical key — matches the setMap keys from per-ad rows (which
+      // have adset_id=NULL). This prevents the numeric-id vs name key mismatch that caused
+      // the status override to target the wrong setMap entry.
+      const sid = r.adset_name ?? r.adset_id ?? ''
       if (!sid) continue
       const ex = currentAdsetMeta.get(sid)
       if (!ex) {
