@@ -191,6 +191,10 @@ export async function GET(request: NextRequest) {
           ? new Date(paidAtUnix * 1000).toISOString().slice(0, 10)
           : new Date().toISOString().slice(0, 10)
 
+        const note = (inv.amount_remaining ?? 0) > 0
+          ? `ACH partial — ${inv.number ?? entry.invoice_id} ($${Math.round(amountPaid / 100)} of $${Math.round(amountDue / 100)})`
+          : `ACH cleared — ${inv.number ?? entry.invoice_id}`
+
         const { error: insertErr } = await db.from('ad_fuel_ledger').insert({
           client_id:       entry.client_id,
           date_of_payment: creditDate,
@@ -199,9 +203,7 @@ export async function GET(request: NextRequest) {
           invoice_id:      entry.invoice_id,
           type:            'ACH',
           created_by:      'auto-ach',
-          note:            (inv.amount_remaining ?? 0) > 0
-            ? `ACH partial — ${inv.number ?? entry.invoice_id} ($${Math.round(amountPaid / 100)} of $${Math.round(amountDue / 100)})`
-            : `ACH cleared — ${inv.number ?? entry.invoice_id}`,
+          note,
         })
         if (insertErr) {
           console.error(`[ad-fuel-ach-clear] ledger insert failed for ${entry.id}:`, insertErr.message)
@@ -209,6 +211,20 @@ export async function GET(request: NextRequest) {
         }
         console.log(`[ad-fuel-ach-clear] credited $${delta} for entry ${entry.id} (${amountPaid >= amountDue ? 'full' : 'partial'})`)
         cleared++
+
+        // Fire payment notification so the admin browser hears a sound for ACH
+        // clearances (same as card payments via the Stripe webhook).
+        // Best-effort — don't block ledger logic if this fails.
+        db.from('payment_notifications').upsert(
+          {
+            stripe_event_id: `ach-${entry.invoice_id}-${creditDate}`,
+            amount:          delta,
+            currency:        'usd',
+            description:     note,
+            client_name:     null,  // client name lookup would add latency; omit
+          },
+          { onConflict: 'stripe_event_id', ignoreDuplicates: true }
+        ).then(null, (e) => console.warn('[ad-fuel-ach-clear] payment_notifications insert failed (non-fatal):', e))
       }
 
       // Remove pending entry when fully paid or nothing remaining

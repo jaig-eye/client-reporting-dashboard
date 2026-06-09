@@ -11,11 +11,15 @@
 //   background or minimised, provided the user has granted permission and the
 //   AudioContext was primed by clicking the "🔊 Arm sounds" button at least once.
 //
-// Usage: rendered in src/app/admin/(app)/layout.tsx
-//   <PaymentNotifier soundUrl={settings.payment_sound_url} />
+// Design note — stable Realtime subscription:
+//   `fireNotification` must NOT depend on frequently-changing state (soundState,
+//   notifPerm), or every state change would trigger a subscription teardown/
+//   re-subscribe cycle that could drop an in-flight Realtime event.
+//   Solution: shadow mutable state in refs; the subscription effect depends only
+//   on `soundUrl` (changes rarely), keeping the channel alive across state changes.
 
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { createClient }                              from '@/lib/supabase/client'
+import { useEffect, useRef, useState } from 'react'
+import { createClient }                from '@/lib/supabase/client'
 
 interface PaymentRow {
   amount:         number
@@ -33,15 +37,29 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
   const [soundState, setSoundState] = useState<SoundState>('unarmed')
   const [notifPerm,  setNotifPerm]  = useState<NotifPermission>('default')
 
-  const audioCtxRef  = useRef<AudioContext | null>(null)
-  const bannerTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // ── Refs that shadow state — used inside stable callbacks ─────────────
+  // Reading state inside a useCallback/useEffect with stable deps would give
+  // stale values; refs are always current without triggering re-subscriptions.
+  const soundStateRef = useRef<SoundState>('unarmed')
+  const notifPermRef  = useRef<NotifPermission>('default')
+  const soundUrlRef   = useRef<string | null | undefined>(soundUrl)
+
+  useEffect(() => { soundStateRef.current = soundState }, [soundState])
+  useEffect(() => { notifPermRef.current  = notifPerm  }, [notifPerm])
+  useEffect(() => { soundUrlRef.current   = soundUrl   }, [soundUrl])
+
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Check Notification permission on mount ────────────────────────────
   useEffect(() => {
     if (!('Notification' in window)) {
       setNotifPerm('unsupported')
+      notifPermRef.current = 'unsupported'
     } else {
-      setNotifPerm(Notification.permission as NotifPermission)
+      const perm = Notification.permission as NotifPermission
+      setNotifPerm(perm)
+      notifPermRef.current = perm
     }
   }, [])
 
@@ -50,11 +68,10 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
     if (!('Notification' in window)) return
     const result = await Notification.requestPermission()
     setNotifPerm(result as NotifPermission)
+    notifPermRef.current = result as NotifPermission
   }
 
   // ── Arm AudioContext (requires user gesture) ──────────────────────────
-  // Chrome requires a user interaction before AudioContext can play sound.
-  // Call this on the first explicit user click of the arm button.
   function armAudio() {
     try {
       if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
@@ -64,11 +81,11 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
         audioCtxRef.current.resume()
       }
       setSoundState('armed')
+      soundStateRef.current = 'armed'
     } catch {
-      // AudioContext not available (e.g. headless env)
+      // AudioContext not available
     }
-    // Also request notification permission at the same time
-    if (notifPerm === 'default') requestNotifPermission()
+    if (notifPermRef.current === 'default') requestNotifPermission()
   }
 
   // ── Synthesised fallback chime ────────────────────────────────────────
@@ -76,7 +93,7 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
     const ctx = audioCtxRef.current
     if (!ctx || ctx.state === 'suspended') return
 
-    const notes = [880, 1108, 1318] // A5 · C#6 · E6 (major arpeggio)
+    const notes = [880, 1108, 1318]
     notes.forEach((freq, i) => {
       const osc  = ctx.createOscillator()
       const gain = ctx.createGain()
@@ -91,10 +108,9 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
     })
   }
 
-  // ── Play uploaded MP3/WAV ─────────────────────────────────────────────
-  const playUploadedSound = useCallback(async (url: string) => {
+  // ── Play uploaded sound ───────────────────────────────────────────────
+  async function playUploadedSound(url: string) {
     try {
-      // Resume AudioContext if suspended (Chrome background tab policy)
       if (audioCtxRef.current?.state === 'suspended') {
         await audioCtxRef.current.resume()
       }
@@ -102,14 +118,23 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
       audio.volume = 0.75
       await audio.play()
     } catch {
-      // Autoplay blocked — fall back to synth if AudioContext is armed
       playSynthChime()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }
 
-  // ── Fire notification ─────────────────────────────────────────────────
-  const fireNotification = useCallback((row: PaymentRow) => {
+  // ── Stable fire-notification handler — reads from refs, not state ─────
+  // This function is intentionally NOT wrapped in useCallback with state deps.
+  // It reads soundStateRef / notifPermRef / soundUrlRef instead of their
+  // corresponding state values, which means:
+  //   (a) it is always current without triggering re-renders, and
+  //   (b) the Realtime subscription useEffect never needs to re-subscribe
+  //       just because the user armed sounds or a notification fired.
+  // See: https://react.dev/learn/separating-events-from-effects#extracting-non-reactive-logic-out-of-effects
+  const fireNotification = useRef((row: PaymentRow) => {
+    const currentSound  = soundStateRef.current
+    const currentPerm   = notifPermRef.current
+    const currentUrl    = soundUrlRef.current
+
     const fmtAmt = new Intl.NumberFormat('en-US', {
       style: 'currency', currency: (row.currency ?? 'usd').toUpperCase(),
     }).format(Number(row.amount ?? 0))
@@ -117,16 +142,16 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
     const title = `Payment received — ${fmtAmt}`
     const body  = [row.client_name, row.description].filter(Boolean).join(' · ') || row.customer_email || ''
 
-    // 1. Native browser Notification — works in background / minimised window
-    if (notifPerm === 'granted' && 'Notification' in window) {
+    // 1. Native Notification — works in background / minimised window
+    if (currentPerm === 'granted' && 'Notification' in window) {
       try {
         new Notification(title, {
           body,
-          icon: '/favicon.ico',
-          tag:  'stripe-payment',  // replaces previous unread notification
-          silent: soundState === 'armed', // let our Audio handle the sound
+          icon:   '/favicon.ico',
+          tag:    'stripe-payment',
+          silent: currentSound === 'armed',
         })
-      } catch { /* blocked or tab isolated */ }
+      } catch { /* blocked or isolated tab */ }
     }
 
     // 2. In-app banner
@@ -135,28 +160,70 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
     bannerTimer.current = setTimeout(() => setBanner(null), 7000)
 
     // 3. Audio
-    if (soundState === 'armed') {
+    if (currentSound === 'armed') {
       setSoundState('playing')
-      if (soundUrl) {
-        playUploadedSound(soundUrl).finally(() => setSoundState('armed'))
+      soundStateRef.current = 'playing'
+      const done = () => { setSoundState('armed'); soundStateRef.current = 'armed' }
+      if (currentUrl) {
+        playUploadedSound(currentUrl).finally(done)
       } else {
         playSynthChime()
-        setTimeout(() => setSoundState('armed'), 600)
+        setTimeout(done, 600)
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notifPerm, soundState, soundUrl, playUploadedSound])
+  })
+
+  // Keep the ref's inner function up-to-date each render so it captures
+  // the latest `playUploadedSound` and `playSynthChime` closures.
+  useEffect(() => {
+    fireNotification.current = (row: PaymentRow) => {
+      const currentSound = soundStateRef.current
+      const currentPerm  = notifPermRef.current
+      const currentUrl   = soundUrlRef.current
+
+      const fmtAmt = new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: (row.currency ?? 'usd').toUpperCase(),
+      }).format(Number(row.amount ?? 0))
+
+      const title = `Payment received — ${fmtAmt}`
+      const body  = [row.client_name, row.description].filter(Boolean).join(' · ') || row.customer_email || ''
+
+      if (currentPerm === 'granted' && 'Notification' in window) {
+        try {
+          new Notification(title, { body, icon: '/favicon.ico', tag: 'stripe-payment', silent: currentSound === 'armed' })
+        } catch { /* blocked */ }
+      }
+
+      setBanner(row)
+      if (bannerTimer.current) clearTimeout(bannerTimer.current)
+      bannerTimer.current = setTimeout(() => setBanner(null), 7000)
+
+      if (currentSound === 'armed') {
+        setSoundState('playing')
+        soundStateRef.current = 'playing'
+        const done = () => { setSoundState('armed'); soundStateRef.current = 'armed' }
+        if (currentUrl) {
+          playUploadedSound(currentUrl).finally(done)
+        } else {
+          playSynthChime()
+          setTimeout(done, 600)
+        }
+      }
+    }
+  })  // runs every render — deliberately no dep array so the closure is always fresh
 
   // ── Supabase Realtime subscription ────────────────────────────────────
+  // Depends ONLY on the channel identity, not on soundState/notifPerm.
+  // This means the subscription is never torn down when the user arms audio
+  // or when a notification fires — avoiding the dropped-payment race.
   useEffect(() => {
     const supabase = createClient()
-
-    const channel = supabase
+    const channel  = supabase
       .channel('payment-notifier')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'payment_notifications' },
-        (payload) => fireNotification(payload.new as PaymentRow)
+        (payload) => fireNotification.current(payload.new as PaymentRow)
       )
       .subscribe()
 
@@ -164,75 +231,52 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
       supabase.removeChannel(channel)
       if (bannerTimer.current) clearTimeout(bannerTimer.current)
     }
-  }, [fireNotification])
+  }, [])  // stable — never re-subscribes
 
-  // ── Arm-button label ──────────────────────────────────────────────────
+  // ── Arm-button UI ──────────────────────────────────────────────────────
   const armLabel =
     soundState === 'playing' ? '🔊 Playing…'
     : soundState === 'armed' ? '🔊 Sounds on'
     : '🔔 Arm sounds'
 
-  const armColor =
-    soundState === 'armed' || soundState === 'playing' ? '#16a34a' : '#d97706'
+  const armColor = soundState === 'armed' || soundState === 'playing' ? '#16a34a' : '#d97706'
 
   return (
     <>
-      {/* ── Persistent arm button ─────────────────────────────────────── */}
+      {/* Persistent arm button */}
       <button
         onClick={armAudio}
         title={
           soundState === 'armed'
-            ? 'Sounds armed — click to re-arm'
+            ? 'Sounds armed — payments will play audio'
             : 'Click to enable payment sounds (required for background audio)'
         }
         style={{
-          position:     'fixed',
-          bottom:       24,
-          left:         24,
-          zIndex:       9000,
-          display:      'flex',
-          alignItems:   'center',
-          gap:           6,
-          background:   'var(--bg-surface, #fff)',
-          border:       `1px solid ${armColor}`,
-          borderRadius:  20,
-          padding:      '5px 12px',
-          fontSize:     '0.72rem',
-          fontWeight:    600,
-          color:         armColor,
-          cursor:        soundState === 'armed' ? 'default' : 'pointer',
-          boxShadow:    '0 2px 8px rgba(0,0,0,0.10)',
-          transition:   'opacity 0.2s',
-          opacity:       soundState === 'armed' ? 0.7 : 1,
-          userSelect:   'none',
-          whiteSpace:   'nowrap',
+          position: 'fixed', bottom: 24, left: 24, zIndex: 9000,
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'var(--bg-surface, #fff)', border: `1px solid ${armColor}`,
+          borderRadius: 20, padding: '5px 12px',
+          fontSize: '0.72rem', fontWeight: 600, color: armColor,
+          cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
+          transition: 'opacity 0.2s', opacity: soundState === 'armed' ? 0.7 : 1,
+          userSelect: 'none', whiteSpace: 'nowrap',
         }}
       >
         {armLabel}
       </button>
 
-      {/* ── In-app payment banner ─────────────────────────────────────── */}
+      {/* In-app banner */}
       {banner && (
         <div
           role="alert"
           aria-live="polite"
           style={{
-            position:     'fixed',
-            bottom:       24,
-            right:        24,
-            zIndex:       9999,
-            display:      'flex',
-            alignItems:   'center',
-            gap:           12,
-            background:   'var(--bg-surface, #fff)',
-            border:       '1px solid var(--border)',
-            borderLeft:   '4px solid #16a34a',
-            borderRadius:  10,
-            padding:      '12px 16px',
-            boxShadow:    '0 8px 32px rgba(0,0,0,0.14)',
-            minWidth:      260,
-            maxWidth:      380,
-            animation:    'slideInRight 0.25s ease-out',
+            position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+            display: 'flex', alignItems: 'center', gap: 12,
+            background: 'var(--bg-surface, #fff)', border: '1px solid var(--border)',
+            borderLeft: '4px solid #16a34a', borderRadius: 10,
+            padding: '12px 16px', boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+            minWidth: 260, maxWidth: 380, animation: 'slideInRight 0.25s ease-out',
           }}
         >
           <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>💰</span>
@@ -240,8 +284,7 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
             <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#16a34a' }}>
               Payment received —{' '}
               {new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency: (banner.currency ?? 'usd').toUpperCase(),
+                style: 'currency', currency: (banner.currency ?? 'usd').toUpperCase(),
               }).format(Number(banner.amount ?? 0))}
             </p>
             {(banner.client_name || banner.description || banner.customer_email) && (
@@ -257,9 +300,7 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
             onClick={() => setBanner(null)}
             aria-label="Dismiss"
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem', flexShrink: 0, padding: 0, lineHeight: 1 }}
-          >
-            ✕
-          </button>
+          >✕</button>
         </div>
       )}
 
