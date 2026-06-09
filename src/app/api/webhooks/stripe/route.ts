@@ -1,5 +1,13 @@
-// Stripe webhook — receives invoice.payment_succeeded events and auto-logs
-// ad fuel payments to the ledger for matching clients.
+// Stripe webhook — handles invoice.payment_succeeded events.
+//
+// For EVERY successful payment:
+//   → Inserts a row into payment_notifications so the admin browser plays
+//     a sound notification via Supabase Realtime (regardless of whether it's
+//     an Ad Fuel invoice or a regular invoice).
+//
+// For Ad Fuel invoices only (lines that match isAdFuelLine):
+//   → Also inserts into ad_fuel_ledger for balance tracking.
+//
 // Register this URL in the Stripe dashboard: POST /api/webhooks/stripe
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -31,20 +39,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true })
   }
 
-  const invoice = event.data.object as Stripe.Invoice
+  const invoice    = event.data.object as Stripe.Invoice
   const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id
   if (!customerId) return NextResponse.json({ received: true })
 
   const db = createAdminClient()
+
+  // ── Look up the client (optional — notification fires even for unknown customers) ──
   const { data: client } = await db
     .from('clients')
-    .select('id, ad_fuel_cut')
+    .select('id, name, ad_fuel_cut')
     .eq('stripe_customer_id', customerId)
     .maybeSingle()
 
+  // ── Always fire a payment notification ────────────────────────────────────
+  // This runs for every successful invoice — Ad Fuel or not — so the admin
+  // browser gets the sound regardless of invoice type.
+  const amountPaid = (invoice.amount_paid ?? 0) / 100  // cents → dollars
+  if (amountPaid > 0) {
+    const customerEmail = typeof invoice.customer_email === 'string' ? invoice.customer_email : null
+    const description   = invoice.number ?? invoice.description ?? null
+
+    await db.from('payment_notifications').upsert(
+      {
+        stripe_event_id: event.id,
+        amount:          amountPaid,
+        currency:        invoice.currency ?? 'usd',
+        description,
+        customer_email:  customerEmail,
+        client_name:     client?.name ?? null,
+      },
+      { onConflict: 'stripe_event_id', ignoreDuplicates: true }
+    )
+  }
+
+  // ── Ad Fuel ledger (existing logic — only for Ad Fuel line items) ──────────
   if (!client) return NextResponse.json({ received: true })
 
-  // Expand line item product details by re-fetching the invoice
   const stripe = new Stripe(settings.stripe_api_key, { apiVersion: '2026-04-22.dahlia' })
   const fullInvoice = await stripe.invoices.retrieve(invoice.id, {
     expand: ['lines.data.pricing.price_details.price.product'],
@@ -63,11 +94,8 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     if (existing) continue
 
-    // Single ad fuel line on invoice → One-Time; bundled with other products → MRR
     const isRecurring = fullInvoice.lines.data.length > 1
 
-    // Use the actual payment cleared timestamp (paid_at) as the ledger date so ACH
-    // payments sort by when the bank confirmed the transfer, not when the invoice was created.
     const paidAt = (fullInvoice as unknown as { status_transitions?: { paid_at?: number | null } }).status_transitions?.paid_at
     const dateOfPayment = paidAt
       ? new Date(paidAt * 1000).toISOString().split('T')[0]

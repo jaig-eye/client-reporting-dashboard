@@ -1,70 +1,151 @@
 'use client'
 
-// PaymentNotifier — subscribes to Supabase Realtime INSERT events on ad_fuel_ledger.
-// When a Stripe payment is processed (row inserted), plays the agency's uploaded
-// payment sound and shows a brief banner notification in the admin browser.
+// PaymentNotifier — plays a sound and shows a native browser notification
+// whenever a Stripe payment lands, regardless of invoice type.
 //
-// Browser autoplay policy: audio requires prior user interaction to play.
-// On first blocked attempt the banner appears anyway; audio will play on subsequent
-// payments after the user has interacted with the page.
+// Data path: Stripe webhook → payment_notifications (INSERT) → Supabase Realtime
+//   → this component → audio + native Notification + in-app banner.
+//
+// Background tabs (Chrome):
+//   The native Notification API fires even when the browser window is in the
+//   background or minimised, provided the user has granted permission and the
+//   AudioContext was primed by clicking the "🔊 Arm sounds" button at least once.
+//
+// Usage: rendered in src/app/admin/(app)/layout.tsx
+//   <PaymentNotifier soundUrl={settings.payment_sound_url} />
 
-import { useEffect, useRef, useState } from 'react'
-import { createClient }                from '@/lib/supabase/client'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { createClient }                              from '@/lib/supabase/client'
 
-interface NewPayment {
-  client_id:       string
-  amount_af:       number
-  note:            string | null
-  type:            string | null
-  date_of_payment: string | null
+interface PaymentRow {
+  amount:         number
+  currency:       string
+  description:    string | null
+  customer_email: string | null
+  client_name:    string | null
 }
 
-export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null }) {
-  const [notification, setNotification] = useState<{ amount: number; note: string | null } | null>(null)
-  const audioCtxRef    = useRef<AudioContext | null>(null)
-  const timeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
+type NotifPermission = 'default' | 'granted' | 'denied' | 'unsupported'
+type SoundState      = 'unarmed' | 'armed' | 'playing'
 
-  // ── Synthesised fallback chime ─────────────────────────────────────────
-  function playSynthChime() {
+export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null }) {
+  const [banner,     setBanner]     = useState<PaymentRow | null>(null)
+  const [soundState, setSoundState] = useState<SoundState>('unarmed')
+  const [notifPerm,  setNotifPerm]  = useState<NotifPermission>('default')
+
+  const audioCtxRef  = useRef<AudioContext | null>(null)
+  const bannerTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Check Notification permission on mount ────────────────────────────
+  useEffect(() => {
+    if (!('Notification' in window)) {
+      setNotifPerm('unsupported')
+    } else {
+      setNotifPerm(Notification.permission as NotifPermission)
+    }
+  }, [])
+
+  // ── Request Notification permission ──────────────────────────────────
+  async function requestNotifPermission() {
+    if (!('Notification' in window)) return
+    const result = await Notification.requestPermission()
+    setNotifPerm(result as NotifPermission)
+  }
+
+  // ── Arm AudioContext (requires user gesture) ──────────────────────────
+  // Chrome requires a user interaction before AudioContext can play sound.
+  // Call this on the first explicit user click of the arm button.
+  function armAudio() {
     try {
       if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
         audioCtxRef.current = new AudioContext()
       }
-      const ctx = audioCtxRef.current
-      if (ctx.state === 'suspended') ctx.resume()
-
-      const notes = [880, 1108, 1318] // A5 · C#6 · E6
-      notes.forEach((freq, i) => {
-        const osc  = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.connect(gain); gain.connect(ctx.destination)
-        osc.type = 'sine'
-        osc.frequency.value = freq
-        const t = ctx.currentTime + i * 0.12
-        gain.gain.setValueAtTime(0, t)
-        gain.gain.linearRampToValueAtTime(0.22, t + 0.02)
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
-        osc.start(t); osc.stop(t + 0.45)
-      })
-    } catch { /* blocked — banner still shows */ }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume()
+      }
+      setSoundState('armed')
+    } catch {
+      // AudioContext not available (e.g. headless env)
+    }
+    // Also request notification permission at the same time
+    if (notifPerm === 'default') requestNotifPermission()
   }
 
-  // ── Uploaded MP3 playback ──────────────────────────────────────────────
-  async function playUploadedSound(url: string) {
+  // ── Synthesised fallback chime ────────────────────────────────────────
+  function playSynthChime() {
+    const ctx = audioCtxRef.current
+    if (!ctx || ctx.state === 'suspended') return
+
+    const notes = [880, 1108, 1318] // A5 · C#6 · E6 (major arpeggio)
+    notes.forEach((freq, i) => {
+      const osc  = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain); gain.connect(ctx.destination)
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      const t = ctx.currentTime + i * 0.13
+      gain.gain.setValueAtTime(0, t)
+      gain.gain.linearRampToValueAtTime(0.22, t + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.48)
+      osc.start(t); osc.stop(t + 0.48)
+    })
+  }
+
+  // ── Play uploaded MP3/WAV ─────────────────────────────────────────────
+  const playUploadedSound = useCallback(async (url: string) => {
     try {
+      // Resume AudioContext if suspended (Chrome background tab policy)
+      if (audioCtxRef.current?.state === 'suspended') {
+        await audioCtxRef.current.resume()
+      }
       const audio = new Audio(url)
-      audio.volume = 0.8
+      audio.volume = 0.75
       await audio.play()
     } catch {
-      playSynthChime() // fall back to synth if autoplay blocked
+      // Autoplay blocked — fall back to synth if AudioContext is armed
+      playSynthChime()
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  function showBanner(amount: number, note: string | null) {
-    setNotification({ amount, note })
-    if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(() => setNotification(null), 6000)
-  }
+  // ── Fire notification ─────────────────────────────────────────────────
+  const fireNotification = useCallback((row: PaymentRow) => {
+    const fmtAmt = new Intl.NumberFormat('en-US', {
+      style: 'currency', currency: (row.currency ?? 'usd').toUpperCase(),
+    }).format(Number(row.amount ?? 0))
+
+    const title = `Payment received — ${fmtAmt}`
+    const body  = [row.client_name, row.description].filter(Boolean).join(' · ') || row.customer_email || ''
+
+    // 1. Native browser Notification — works in background / minimised window
+    if (notifPerm === 'granted' && 'Notification' in window) {
+      try {
+        new Notification(title, {
+          body,
+          icon: '/favicon.ico',
+          tag:  'stripe-payment',  // replaces previous unread notification
+          silent: soundState === 'armed', // let our Audio handle the sound
+        })
+      } catch { /* blocked or tab isolated */ }
+    }
+
+    // 2. In-app banner
+    setBanner(row)
+    if (bannerTimer.current) clearTimeout(bannerTimer.current)
+    bannerTimer.current = setTimeout(() => setBanner(null), 7000)
+
+    // 3. Audio
+    if (soundState === 'armed') {
+      setSoundState('playing')
+      if (soundUrl) {
+        playUploadedSound(soundUrl).finally(() => setSoundState('armed'))
+      } else {
+        playSynthChime()
+        setTimeout(() => setSoundState('armed'), 600)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifPerm, soundState, soundUrl, playUploadedSound])
 
   // ── Supabase Realtime subscription ────────────────────────────────────
   useEffect(() => {
@@ -74,83 +155,120 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
       .channel('payment-notifier')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'ad_fuel_ledger' },
-        (payload) => {
-          const row = payload.new as NewPayment
-          const amount = Number(row.amount_af ?? 0)
-          if (amount <= 0) return
-
-          if (soundUrl) {
-            playUploadedSound(soundUrl)
-          } else {
-            playSynthChime()
-          }
-          showBanner(amount, row.note ?? null)
-        }
+        { event: 'INSERT', schema: 'public', table: 'payment_notifications' },
+        (payload) => fireNotification(payload.new as PaymentRow)
       )
       .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      if (bannerTimer.current) clearTimeout(bannerTimer.current)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundUrl])
+  }, [fireNotification])
 
-  if (!notification) return null
+  // ── Arm-button label ──────────────────────────────────────────────────
+  const armLabel =
+    soundState === 'playing' ? '🔊 Playing…'
+    : soundState === 'armed' ? '🔊 Sounds on'
+    : '🔔 Arm sounds'
 
-  const fmtAmt = `$${notification.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const label  = notification.note
-    ? notification.note.replace(/^(Stripe|stripe)\s*[-–—]?\s*/i, '').slice(0, 60)
-    : null
+  const armColor =
+    soundState === 'armed' || soundState === 'playing' ? '#16a34a' : '#d97706'
 
   return (
-    <div
-      role="alert"
-      aria-live="polite"
-      style={{
-        position:     'fixed',
-        bottom:       24,
-        right:        24,
-        zIndex:       9999,
-        display:      'flex',
-        alignItems:   'center',
-        gap:          12,
-        background:   'var(--bg-surface, #fff)',
-        border:       '1px solid var(--border)',
-        borderLeft:   '4px solid #16a34a',
-        borderRadius: 10,
-        padding:      '12px 16px',
-        boxShadow:    '0 8px 32px rgba(0,0,0,0.14)',
-        minWidth:     260,
-        maxWidth:     360,
-        animation:    'slideInRight 0.25s ease-out',
-      }}
-    >
-      <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>💰</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#16a34a' }}>
-          Payment received — {fmtAmt}
-        </p>
-        {label && (
-          <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {label}
-          </p>
-        )}
-      </div>
+    <>
+      {/* ── Persistent arm button ─────────────────────────────────────── */}
       <button
-        onClick={() => setNotification(null)}
-        aria-label="Dismiss"
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem', flexShrink: 0, padding: 0, lineHeight: 1 }}
+        onClick={armAudio}
+        title={
+          soundState === 'armed'
+            ? 'Sounds armed — click to re-arm'
+            : 'Click to enable payment sounds (required for background audio)'
+        }
+        style={{
+          position:     'fixed',
+          bottom:       24,
+          left:         24,
+          zIndex:       9000,
+          display:      'flex',
+          alignItems:   'center',
+          gap:           6,
+          background:   'var(--bg-surface, #fff)',
+          border:       `1px solid ${armColor}`,
+          borderRadius:  20,
+          padding:      '5px 12px',
+          fontSize:     '0.72rem',
+          fontWeight:    600,
+          color:         armColor,
+          cursor:        soundState === 'armed' ? 'default' : 'pointer',
+          boxShadow:    '0 2px 8px rgba(0,0,0,0.10)',
+          transition:   'opacity 0.2s',
+          opacity:       soundState === 'armed' ? 0.7 : 1,
+          userSelect:   'none',
+          whiteSpace:   'nowrap',
+        }}
       >
-        ✕
+        {armLabel}
       </button>
+
+      {/* ── In-app payment banner ─────────────────────────────────────── */}
+      {banner && (
+        <div
+          role="alert"
+          aria-live="polite"
+          style={{
+            position:     'fixed',
+            bottom:       24,
+            right:        24,
+            zIndex:       9999,
+            display:      'flex',
+            alignItems:   'center',
+            gap:           12,
+            background:   'var(--bg-surface, #fff)',
+            border:       '1px solid var(--border)',
+            borderLeft:   '4px solid #16a34a',
+            borderRadius:  10,
+            padding:      '12px 16px',
+            boxShadow:    '0 8px 32px rgba(0,0,0,0.14)',
+            minWidth:      260,
+            maxWidth:      380,
+            animation:    'slideInRight 0.25s ease-out',
+          }}
+        >
+          <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>💰</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#16a34a' }}>
+              Payment received —{' '}
+              {new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: (banner.currency ?? 'usd').toUpperCase(),
+              }).format(Number(banner.amount ?? 0))}
+            </p>
+            {(banner.client_name || banner.description || banner.customer_email) && (
+              <p style={{
+                margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {[banner.client_name, banner.description ?? banner.customer_email].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => setBanner(null)}
+            aria-label="Dismiss"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem', flexShrink: 0, padding: 0, lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <style>{`
         @keyframes slideInRight {
           from { transform: translateX(120%); opacity: 0; }
           to   { transform: translateX(0);    opacity: 1; }
         }
       `}</style>
-    </div>
+    </>
   )
 }
