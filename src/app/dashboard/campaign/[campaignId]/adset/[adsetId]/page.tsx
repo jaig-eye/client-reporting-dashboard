@@ -273,9 +273,14 @@ export default async function AdSetDetailPage({
     //      with their current names, images, and statuses regardless of date range.
     //   2. Metrics query (date filtered) — gives us spend/impressions/clicks for the period.
     // Merging them means ads always appear even if they have zero metrics in the range.
+    //
+    // WHY SEQUENTIAL: When adsetIdIsNumeric, metaQ filters by adset_id. Older rows in the DB
+    // may have adset_id=NULL (the sync used adset_id: value || undefined, omitting the field).
+    // Running metaQ first lets us extract the adset_name, then metricsQ can filter by
+    // adset_name instead — which is always populated and catches ALL rows for the adset.
 
-    // Build the current metadata query (no date filter)
-    const metaQ = adsetIdIsNumeric
+    // Step 1 — current metadata (no date filter)
+    const { data: metaRows } = await (adsetIdIsNumeric
       ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
@@ -285,10 +290,21 @@ export default async function AdSetDetailPage({
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
           .eq('adset_name', adsetId)
-          .order('date', { ascending: false }).limit(1000)
+          .order('date', { ascending: false }).limit(1000))
 
-    // Build the date-filtered metrics query
-    const metricsQ = adsetIdIsNumeric
+    // Extract adset_name from metadata — this is always present even in rows where adset_id was null
+    const resolvedAdsetName = (metaRows as MetaAdRow[] | null)?.find(r => r.adset_name)?.adset_name ?? null
+
+    // Step 2 — date-filtered metrics query.
+    // When adsetIdIsNumeric: prefer filtering by adset_name (covers old rows where adset_id=NULL)
+    // over filtering by adset_id (misses any row where adset_id was omitted during upsert).
+    const metricsQ = adsetIdIsNumeric && resolvedAdsetName
+      ? db.from('meta_ads_ad_metrics')
+          .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+          .eq('client_id', client.id).eq('campaign_id', campaignId)
+          .gte('date', dateFrom).lte('date', dateTo)
+          .eq('adset_name', resolvedAdsetName)
+      : adsetIdIsNumeric
       ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
@@ -300,9 +316,15 @@ export default async function AdSetDetailPage({
           .gte('date', dateFrom).lte('date', dateTo)
           .eq('adset_name', adsetId)
 
-    // Build prior period query
+    // Prior period query — same adset_name strategy
     const priorQ = showCompare
-      ? adsetIdIsNumeric
+      ? adsetIdIsNumeric && resolvedAdsetName
+        ? db.from('meta_ads_ad_metrics')
+            .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+            .eq('adset_name', resolvedAdsetName)
+        : adsetIdIsNumeric
         ? db.from('meta_ads_ad_metrics')
             .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
             .eq('client_id', client.id).eq('campaign_id', campaignId)
@@ -315,8 +337,8 @@ export default async function AdSetDetailPage({
             .eq('adset_name', adsetId)
       : Promise.resolve({ data: [] as MetaAdRow[] })
 
-    const [{ data: metaRows }, { data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
-      metaQ, metricsQ,
+    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
+      metricsQ,
       db.from('meta_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       priorQ,

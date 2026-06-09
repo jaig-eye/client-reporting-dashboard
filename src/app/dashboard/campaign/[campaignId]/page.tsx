@@ -364,12 +364,19 @@ export default async function CampaignDetailPage({
     for (const r of (adsetMetaRows ?? []) as AdsetMetaRow[]) {
       const sid = r.adset_id ?? r.adset_name ?? ''
       if (!sid) continue
-      if (!currentAdsetMeta.has(sid)) {
-        // First row per adset_id is most recent (ordered by date desc)
+      const ex = currentAdsetMeta.get(sid)
+      if (!ex) {
+        // First row per adset_id is most recent (ordered by date desc) — capture name and
+        // initial status (may be null if the upsert omitted ad_status for this row).
         currentAdsetMeta.set(sid, {
           name:   r.adset_name ?? '',
-          status: normalizeMetaAdStatus(r.ad_status),
+          status: r.ad_status != null ? normalizeMetaAdStatus(r.ad_status) : null,
         })
+      } else if (ex.status === null && r.ad_status != null) {
+        // First row had null status — keep scanning for the first real non-null status.
+        // Recent rows often have ad_status omitted (upsert uses || undefined), so we look
+        // back through the date-desc ordered rows until we find an actual status value.
+        ex.status = normalizeMetaAdStatus(r.ad_status)
       }
     }
     // Apply current metadata to existing setMap entries AND surface any adsets
@@ -378,8 +385,8 @@ export default async function CampaignDetailPage({
       if (setMap.has(sid)) {
         // Update name/status from current data
         const ex = setMap.get(sid)!
-        if (meta.name)   ex.setName = meta.name
-        if (meta.status) ex.status  = meta.status
+        if (meta.name)          ex.setName = meta.name
+        if (meta.status != null) ex.status  = meta.status  // != null: only override with a real status
       } else if (meta.name && !isMetaDefaultName(meta.name)) {
         // Adset exists in current data but had no activity in the date range →
         // show it with zero metrics so it's never invisible due to date selection.

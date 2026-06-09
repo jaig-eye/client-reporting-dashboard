@@ -93,6 +93,9 @@ export interface MetricLayout {
   // Optional: which metrics to show in the platform summary cards on the dashboard
   platform_google_metrics?: PlatformCardKey[]
   platform_meta_metrics?:   PlatformCardKey[]
+  // Optional: column lists for campaign/adset detail pages
+  adgroup_table_columns?:   string[]
+  ads_table_columns?:       string[]
 }
 
 // Platform-specific campaign pages use string[] to allow platform-native metric names
@@ -224,6 +227,8 @@ export const DEFAULT_PAID_ADS_LEAD_GEN: MetricLayout = {
   table_columns:          ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa'],
   platform_google_metrics: ['spend', 'conversions', 'ctr'],
   platform_meta_metrics:   ['spend', 'impressions', 'ctr'],
+  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa', 'ad_count'],
+  ads_table_columns:      ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 export const DEFAULT_PAID_ADS_ECOM: MetricLayout = {
@@ -232,6 +237,8 @@ export const DEFAULT_PAID_ADS_ECOM: MetricLayout = {
   table_columns:          ['campaign_name', 'status', 'spend', 'revenue', 'roas', 'conversions', 'cpa'],
   platform_google_metrics: ['spend', 'revenue', 'roas'],
   platform_meta_metrics:   ['spend', 'revenue', 'roas'],
+  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'roas', 'revenue', 'ad_count'],
+  ads_table_columns:      ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 export const DEFAULT_GOOGLE_SEARCH_LAYOUT: PlatformMetricLayout = {
@@ -271,7 +278,7 @@ export const DEFAULT_META_MEDIA_ECOM: PlatformMetricLayout = {
   top_metrics:           ['impressions', 'clicks', 'ctr', 'video_views'],
   table_columns:         ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'revenue', 'roas'],
   adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'roas', 'revenue'],
-  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'roas'],
 }
 
 // ── All available metrics (for the layout editor UI) ─────────────────────────
@@ -387,12 +394,16 @@ export function resolvePaidAdsLayout(
     return (
       clientOverride?.paid_ads_ecom ??
       agencyLayouts?.paid_ads_ecom  ??
+      clientOverride?.ecom          ??
+      agencyLayouts?.ecom           ??
       DEFAULT_PAID_ADS_ECOM
     )
   }
   return (
     clientOverride?.paid_ads_lead_gen ??
     agencyLayouts?.paid_ads_lead_gen  ??
+    clientOverride?.lead_gen          ??
+    agencyLayouts?.lead_gen           ??
     DEFAULT_PAID_ADS_LEAD_GEN
   )
 }
