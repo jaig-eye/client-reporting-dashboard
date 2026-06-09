@@ -29,8 +29,11 @@ export async function POST(request: NextRequest) {
   if (!file) {
     return NextResponse.json({ error: 'No file provided' }, { status: 400 })
   }
-  if (file.size > MAX_SIZE) {
-    return NextResponse.json({ error: 'File too large (max 4 MB)' }, { status: 413 })
+  // Sound files can be larger than 4 MB; only enforce the limit for images
+  const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|aac|m4a)$/i.test(file.name)
+  const sizeLimit = isAudio ? 10 * 1024 * 1024 : MAX_SIZE
+  if (file.size > sizeLimit) {
+    return NextResponse.json({ error: `File too large (max ${isAudio ? '10' : '4'} MB)` }, { status: 413 })
   }
 
   try {
@@ -39,14 +42,24 @@ export async function POST(request: NextRequest) {
     const buffer   = Buffer.from(await file.arrayBuffer())
 
     const db = createAdminClient()
-    const { error } = await db.storage
-      .from(BUCKET)
-      .upload(filename, buffer, {
-        contentType: file.type || 'application/octet-stream',
-        upsert: false,
-      })
 
-    if (error) throw new Error(error.message)
+    // Try with the real MIME type first. If the bucket's MIME allowlist rejects it
+    // (common when the bucket is image-only), retry with application/octet-stream —
+    // audio files play correctly regardless of stored content type because browsers
+    // detect format from file content and the URL extension.
+    let uploadError = await db.storage
+      .from(BUCKET)
+      .upload(filename, buffer, { contentType: file.type || 'application/octet-stream', upsert: false })
+      .then(r => r.error)
+
+    if (uploadError && /mime type|not supported|invalid.*type/i.test(uploadError.message)) {
+      const retry = await db.storage
+        .from(BUCKET)
+        .upload(filename, buffer, { contentType: 'application/octet-stream', upsert: false })
+      uploadError = retry.error
+    }
+
+    if (uploadError) throw new Error(uploadError.message)
 
     const { data: { publicUrl } } = db.storage.from(BUCKET).getPublicUrl(filename)
     return NextResponse.json({ url: publicUrl })

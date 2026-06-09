@@ -12,6 +12,21 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { isAdminAuthed } from '@/lib/auth'
+import type { Metadata } from 'next'
+
+export async function generateMetadata(): Promise<Metadata> {
+  try {
+    const settings    = await getAgencySettings() as unknown as Record<string, unknown>
+    const faviconUrl  = settings?.favicon_url  as string | null | undefined
+    const agencyName  = settings?.agency_name  as string | null | undefined
+    return {
+      title: agencyName ?? 'Dashboard',
+      ...(faviconUrl ? { icons: { icon: faviconUrl } } : {}),
+    }
+  } catch {
+    return { title: 'Dashboard' }
+  }
+}
 import type { Client, Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import DashboardSidebar from '@/components/DashboardSidebar'
