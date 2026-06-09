@@ -26,6 +26,14 @@ export const dynamic = 'force-dynamic'
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 
+// Remove rows that share the same logical key (e.g. same campaign+date from two connections
+// pointing to the same ad account). Keeps the first occurrence. Prevents double/triple
+// counting when a client has multiple active connections to the same platform account.
+function dedupeBy<T extends Record<string, unknown>>(rows: T[], key: (r: T) => string): T[] {
+  const seen = new Set<string>()
+  return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true })
+}
+
 // Matches the admin API helper — first occurrence of billDay on or after cutoffDate
 function getEffectiveCutoff(cutoffDate: string, billDay: number): string {
   const c = new Date(cutoffDate + 'T00:00:00Z')
@@ -129,14 +137,14 @@ export default async function DashboardPage({
 
     showCompare && hasGoogle
       ? db.from('google_ads_ad_metrics')
-          .select('campaign_id,spend,impressions,clicks,conversions,conversions_value,date')
+          .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversions_value,date')
           .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
 
     showCompare && hasMeta
       ? db.from('meta_ads_ad_metrics')
-          .select('campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+          .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
           .eq('client_id', client.id)
           .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -153,7 +161,7 @@ export default async function DashboardPage({
 
     // Ad-level metrics for Meta — source of truth; campaign-level table can lag or diverge
     hasMeta
-      ? db.from('meta_ads_ad_metrics').select('campaign_id, date, spend, impressions, clicks')
+      ? db.from('meta_ads_ad_metrics').select('ad_id, campaign_id, date, spend, impressions, clicks')
           .eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -307,14 +315,18 @@ export default async function DashboardPage({
   // Build ad-level spend maps for Meta — used to override campaign-level spend which can
   // lag or report differently. CBO campaigns (budget at campaign level) are correctly
   // handled because Meta's API always reports actual spend broken down to the ad level.
-  type AdMetricRow = { campaign_id: string; date: string; spend: number; impressions: number; clicks: number }
+  // Deduplicate by (ad_id, date) first — multiple connections to the same Meta account
+  // produce duplicate rows in the DB (one per connection_id). Without deduplication,
+  // spend/impressions/clicks would be multiplied by the number of duplicate connections.
+  type AdMetricRow = { ad_id: string; campaign_id: string; date: string; spend: number; impressions: number; clicks: number }
   const metaAdSpendByCampaignDate:       Record<string, number> = {}
   const metaAdImprByCampaignDate:        Record<string, number> = {}
   const metaAdClicksByCampaignDate:      Record<string, number> = {}
   const metaAdSpendByCampaign:           Record<string, number> = {}
   const metaAdImprByCampaign:            Record<string, number> = {}
   const metaAdClicksByCampaign:          Record<string, number> = {}
-  for (const r of ((mAdSpendRes.data ?? []) as AdMetricRow[])) {
+  const dedupedAdRows = dedupeBy((mAdSpendRes.data ?? []) as AdMetricRow[], r => `${r.ad_id}_${r.date}`)
+  for (const r of dedupedAdRows) {
     const key = `${r.campaign_id}_${r.date}`
     metaAdSpendByCampaignDate[key]  = (metaAdSpendByCampaignDate[key]  ?? 0) + Number(r.spend       ?? 0)
     metaAdImprByCampaignDate[key]   = (metaAdImprByCampaignDate[key]   ?? 0) + Number(r.impressions ?? 0)
@@ -325,8 +337,8 @@ export default async function DashboardPage({
   }
 
   const currentMetrics = [
-    ...normalise((gRes.data  ?? []) as Record<string, unknown>[], 'google_ads'),
-    ...normalise((mRes.data  ?? []) as Record<string, unknown>[], 'meta_ads'),
+    ...normalise(dedupeBy((gRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id}_${r.date}`), 'google_ads'),
+    ...normalise(dedupeBy((mRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id}_${r.date}`), 'meta_ads'),
   ]
 
   // Override Meta spend, impressions, clicks in currentMetrics before summarizeMetrics
@@ -341,8 +353,8 @@ export default async function DashboardPage({
   }
 
   const priorMetrics = [
-    ...normalise((gPriorRes.data ?? []) as Record<string, unknown>[], 'google_ads'),
-    ...normalise((mPriorRes.data ?? []) as Record<string, unknown>[], 'meta_ads'),
+    ...normalise(dedupeBy((gPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id}_${r.date}`), 'google_ads'),
+    ...normalise(dedupeBy((mPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id}_${r.date}`), 'meta_ads'),
   ]
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
