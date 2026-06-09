@@ -15,6 +15,7 @@ import {
   RocketLaunch,
   Bell,
 } from '@phosphor-icons/react'
+import SoundToggle from './SoundToggle'
 
 interface NavItem {
   href: string
@@ -152,6 +153,7 @@ export default function Sidebar({
 
       {/* User card + logout */}
       <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
+        <SoundToggle />
         {isSuperAdmin ? (
           <div className="flex items-center gap-2.5 p-2 rounded-lg">
             <div

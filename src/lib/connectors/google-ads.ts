@@ -913,7 +913,6 @@ export const googleAdsConnector: ConnectorAdapter = {
         campaign.name,
         campaign.status,
         campaign.advertising_channel_type,
-        campaign.start_date,
         campaign_budget.amount_micros,
         segments.date,
         metrics.cost_micros,
@@ -952,7 +951,7 @@ export const googleAdsConnector: ConnectorAdapter = {
         campaign_name:            String(campaign?.name  || ''),
         campaign_status:          String(campaign?.status || ''),
         campaign_type:            String(campaign?.advertisingChannelType || ''),
-        campaign_start_date:      campaign?.startDate ? String(campaign.startDate) : null,
+        campaign_start_date:      null, // field removed — campaign.start_date is not recognised in GAQL v23
         date:                     String(segments?.date  || ''),
         cost_micros:              Number(metrics?.costMicros              || 0),
         daily_budget_micros:      Number(campaignBudget?.amountMicros    || 0),
