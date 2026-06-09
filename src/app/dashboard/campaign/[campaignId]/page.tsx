@@ -254,7 +254,7 @@ export default async function CampaignDetailPage({
       actions: { action_type: string; value: string }[] | null
       action_values: { action_type: string; value: string }[] | null
     }
-    const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }] = await Promise.all([
+    const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
       db.from('meta_ads_metrics')
         .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', client.id)
@@ -283,6 +283,13 @@ export default async function CampaignDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as MetaAdRow[] }),
+      // Current adset metadata — no date filter, ordered by date desc so first row per adset is current
+      db.from('meta_ads_ad_metrics')
+        .select('adset_id,adset_name,ad_status')
+        .eq('client_id', client.id)
+        .eq('campaign_id', campaignId)
+        .order('date', { ascending: false })
+        .limit(500),
     ])
     if ((campRows ?? []).length > 0) {
       // Sort desc by date so we always use the current name, not an old one from the range
@@ -348,6 +355,41 @@ export default async function CampaignDetailPage({
     }
     // Suppress unused warning — priorRows kept for potential future ad-level compare
     void priorRows
+
+    // Override setMap name and status with current metadata (no date filter).
+    // This ensures ad sets that had no activity in the selected range still appear,
+    // and that names/statuses always reflect the current state regardless of date range.
+    type AdsetMetaRow = { adset_id: string | null; adset_name: string | null; ad_status: string | null }
+    const currentAdsetMeta = new Map<string, { name: string; status: string | null }>()
+    for (const r of (adsetMetaRows ?? []) as AdsetMetaRow[]) {
+      const sid = r.adset_id ?? r.adset_name ?? ''
+      if (!sid) continue
+      if (!currentAdsetMeta.has(sid)) {
+        // First row per adset_id is most recent (ordered by date desc)
+        currentAdsetMeta.set(sid, {
+          name:   r.adset_name ?? '',
+          status: normalizeMetaAdStatus(r.ad_status),
+        })
+      }
+    }
+    // Apply current metadata to existing setMap entries AND surface any adsets
+    // that have current rows but zero metrics in the selected date range.
+    for (const [sid, meta] of Array.from(currentAdsetMeta)) {
+      if (setMap.has(sid)) {
+        // Update name/status from current data
+        const ex = setMap.get(sid)!
+        if (meta.name)   ex.setName = meta.name
+        if (meta.status) ex.status  = meta.status
+      } else if (meta.name && !isMetaDefaultName(meta.name)) {
+        // Adset exists in current data but had no activity in the date range →
+        // show it with zero metrics so it's never invisible due to date selection.
+        setMap.set(sid, {
+          setName: meta.name, status: meta.status,
+          latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
+          adIds: new Set(),
+        })
+      }
+    }
   }
 
   // ── Fetch campaign-level keywords (Google Search only) ────────────────────

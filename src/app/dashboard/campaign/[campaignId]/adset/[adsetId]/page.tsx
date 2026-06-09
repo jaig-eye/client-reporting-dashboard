@@ -268,46 +268,94 @@ export default async function AdSetDetailPage({
     priorAvgImprShare = priorIsFiltered.length > 0
       ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length : null
   } else {
-    const [{ data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
-      (() => {
-        let q = db.from('meta_ads_ad_metrics')
+    // Two-query approach for Meta:
+    //   1. Current metadata query (no date filter) — gives us ALL ads in this adset
+    //      with their current names, images, and statuses regardless of date range.
+    //   2. Metrics query (date filtered) — gives us spend/impressions/clicks for the period.
+    // Merging them means ads always appear even if they have zero metrics in the range.
+
+    // Build the current metadata query (no date filter)
+    const metaQ = adsetIdIsNumeric
+      ? db.from('meta_ads_ad_metrics')
+          .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
+          .eq('client_id', client.id).eq('campaign_id', campaignId)
+          .eq('adset_id', adsetId).neq('ad_id', adsetId)
+          .order('date', { ascending: false }).limit(1000)
+      : db.from('meta_ads_ad_metrics')
+          .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
+          .eq('client_id', client.id).eq('campaign_id', campaignId)
+          .eq('adset_name', adsetId)
+          .order('date', { ascending: false }).limit(1000)
+
+    // Build the date-filtered metrics query
+    const metricsQ = adsetIdIsNumeric
+      ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
-          .eq('client_id', client.id)
-          .eq('campaign_id', campaignId)
-          .gte('date', dateFrom)
-          .lte('date', dateTo)
-        if (adsetIdIsNumeric) {
-          q = q.eq('adset_id', adsetId).neq('ad_id', adsetId)
-        } else {
-          q = q.eq('adset_name', adsetId)
-        }
-        return q
-      })(),
+          .eq('client_id', client.id).eq('campaign_id', campaignId)
+          .gte('date', dateFrom).lte('date', dateTo)
+          .eq('adset_id', adsetId).neq('ad_id', adsetId)
+      : db.from('meta_ads_ad_metrics')
+          .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+          .eq('client_id', client.id).eq('campaign_id', campaignId)
+          .gte('date', dateFrom).lte('date', dateTo)
+          .eq('adset_name', adsetId)
+
+    // Build prior period query
+    const priorQ = showCompare
+      ? adsetIdIsNumeric
+        ? db.from('meta_ads_ad_metrics')
+            .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+            .eq('adset_id', adsetId).neq('ad_id', adsetId)
+        : db.from('meta_ads_ad_metrics')
+            .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', client.id).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+            .eq('adset_name', adsetId)
+      : Promise.resolve({ data: [] as MetaAdRow[] })
+
+    const [{ data: metaRows }, { data: rows }, { data: campRow }, { data: priorRows }] = await Promise.all([
+      metaQ, metricsQ,
       db.from('meta_ads_metrics')
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
-      showCompare
-        ? (() => {
-            let q = db.from('meta_ads_ad_metrics')
-              .select('date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
-              .eq('client_id', client.id)
-              .eq('campaign_id', campaignId)
-              .gte('date', priorFrom)
-              .lte('date', priorTo)
-            if (adsetIdIsNumeric) {
-              q = q.eq('adset_id', adsetId).neq('ad_id', adsetId)
-            } else {
-              q = q.eq('adset_name', adsetId)
-            }
-            return q
-          })()
-        : Promise.resolve({ data: [] as MetaAdRow[] }),
+      priorQ,
     ])
     if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
 
-    for (const r of (rows ?? []) as MetaAdRow[]) {
-      // When querying by name, filter out old stub rows (ad_name starts with '[Ad Set]')
+    // Build current metadata map — first row per ad_id is the most recent (ordered by date desc)
+    const currentMeta = new Map<string, MetaAdRow>()
+    for (const r of (metaRows ?? []) as MetaAdRow[]) {
       if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
-      if (r.adset_name) groupName = r.adset_name
+      if (!currentMeta.has(r.ad_id)) {
+        currentMeta.set(r.ad_id, r)  // first row = most recent date
+        if (r.adset_name) groupName = r.adset_name
+      }
+    }
+
+    // Pre-populate adMap from currentMeta so all known ads appear even with zero metrics
+    for (const [adId, meta] of Array.from(currentMeta)) {
+      adMap.set(adId, {
+        ad_id:           adId,
+        ad_name:         meta.ad_name,
+        ad_type:         null,
+        ad_status:       meta.ad_status,
+        ad_strength:     null,
+        thumbnail_url:   meta.thumbnail_url,
+        image_url:       meta.image_url,
+        video_id:        meta.video_id,
+        video_thumb_url: meta.video_thumb_url,
+        creative_body:   meta.creative_body,
+        creative_title:  meta.creative_title,
+        headlines: null, descriptions: null, final_url: null,
+        spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
+        roas: 0, cpl: 0, ctr: 0, adFuelSpend: 0,
+      })
+    }
+
+    // Accumulate period metrics — metadata fields ignored (currentMeta is authoritative)
+    for (const r of (rows ?? []) as (MetaAdRow & { date: string })[]) {
+      if (!adsetIdIsNumeric && r.ad_name?.startsWith('[Ad Set]')) continue
       const sp = Number(r.spend) || 0
       const cl = Number(r.clicks) || 0
       const im = Number(r.impressions) || 0
@@ -319,26 +367,26 @@ export default async function AdSetDetailPage({
         cv = resolved.conversionValue
       }
       const afs = applyAdFuel(sp, effectiveAdFuelCut)
+      const meta = currentMeta.get(r.ad_id)
       upsertAd({
         ad_id:           r.ad_id,
-        ad_name:         r.ad_name,
+        // Always use currentMeta for display fields; fall back to row value if not in map
+        ad_name:         meta?.ad_name         ?? r.ad_name,
         ad_type:         null,
-        ad_status:       r.ad_status,
+        ad_status:       meta?.ad_status        ?? r.ad_status,
         ad_strength:     null,
-        thumbnail_url:   r.thumbnail_url,
-        image_url:       r.image_url,
-        video_id:        r.video_id,
-        video_thumb_url: r.video_thumb_url,
-        creative_body:   r.creative_body,
-        creative_title:  r.creative_title,
-        headlines:       null,
-        descriptions:    null,
-        final_url:       null,
-        spend:           sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
-        roas:            afs > 0 && cv > 0 ? cv / afs : 0,
-        cpl:             co > 0 ? afs / co : 0,
-        ctr:             im > 0 ? cl / im : 0,
-        adFuelSpend:     afs,
+        thumbnail_url:   meta?.thumbnail_url    ?? r.thumbnail_url,
+        image_url:       meta?.image_url        ?? r.image_url,
+        video_id:        meta?.video_id         ?? r.video_id,
+        video_thumb_url: meta?.video_thumb_url  ?? r.video_thumb_url,
+        creative_body:   meta?.creative_body    ?? r.creative_body,
+        creative_title:  meta?.creative_title   ?? r.creative_title,
+        headlines: null, descriptions: null, final_url: null,
+        spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv,
+        roas:        afs > 0 && cv > 0 ? cv / afs : 0,
+        cpl:         co > 0 ? afs / co : 0,
+        ctr:         im > 0 ? cl / im : 0,
+        adFuelSpend: afs,
       })
     }
     for (const r of (priorRows ?? []) as MetaAdRow[]) {
