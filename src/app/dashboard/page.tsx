@@ -189,12 +189,17 @@ export default async function DashboardPage({
     db.from('ad_fuel_ach_pending').select('amount_af').eq('client_id', client.id),
   ])
 
+  // If either spend RPC errored (network issue, timeout, etc.), the spend would silently
+  // fall back to 0, making the balance appear as the full purchased amount. Track whether
+  // the RPCs succeeded so we can suppress the badge rather than show a wrong number.
+  const spendRpcFailed = !!(gLifeRpc.error || mLifeRpc.error)
+
   let gRawLife = Number(((gLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
   let mRawLife = Number(((mLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
 
   // Gap adjustment: clients with historic_bill_day subtract gap spend (cutoff → effectiveCutoff-1)
   const historicBillDay = (client as unknown as Record<string, unknown>).historic_bill_day as number | null | undefined
-  if (historicBillDay != null) {
+  if (!spendRpcFailed && historicBillDay != null) {
     const effCutoff = getEffectiveCutoff(cutoffDate, historicBillDay)
     if (effCutoff > cutoffDate) {
       const gapEnd = subtractOneDay(effCutoff)
@@ -674,7 +679,7 @@ export default async function DashboardPage({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            {afPurchased > 0 && (
+            {afPurchased > 0 && !spendRpcFailed && (
               <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
             )}
             <Suspense fallback={null}>
