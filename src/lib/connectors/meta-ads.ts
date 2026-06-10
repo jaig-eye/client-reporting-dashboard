@@ -99,6 +99,7 @@ export interface MetaAdRawRow {
   creative_title: string     // headline
   creative_link_url: string  // destination URL
   ad_status: string          // ACTIVE | PAUSED | DELETED
+  adset_daily_budget: number | null  // ABO adset budget; null for CBO campaigns
   date: string
   spend: number
   impressions: number
@@ -265,9 +266,10 @@ export async function fetchMetaAdMetrics(
       clicks:           parseInt(  String(day.clicks      || '0'), 10),
       reach:            parseInt(  String(day.reach       || '0'), 10),
       actions,
-      action_values:    actionValues,
-      conversions:      actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
-      conversion_value: actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
+      action_values:      actionValues,
+      conversions:        actions.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
+      conversion_value:   actionValues.reduce((s, a) => s + parseFloat(a.value || '0'), 0),
+      adset_daily_budget: null,  // populated later after adset API fetch
     })
   }
 
@@ -276,14 +278,15 @@ export async function fetchMetaAdMetrics(
   if (onRawRowsReady && rawRows.length > 0) {
     const rawWithEmptyCreatives: MetaAdRawRow[] = rawRows.map(r => ({
       ...r,
-      thumbnail_url:     '',
-      image_url:         '',
-      video_id:          '',
-      video_thumb_url:   '',
-      creative_body:     '',
-      creative_title:    '',
-      creative_link_url: '',
-      ad_status:         '',
+      thumbnail_url:      '',
+      image_url:          '',
+      video_id:           '',
+      video_thumb_url:    '',
+      creative_body:      '',
+      creative_title:     '',
+      creative_link_url:  '',
+      ad_status:          '',
+      adset_daily_budget: null,
     }))
     await onRawRowsReady(rawWithEmptyCreatives).catch(e =>
       console.error('[meta] onRawRowsReady failed (non-fatal):', e)
@@ -293,19 +296,35 @@ export async function fetchMetaAdMetrics(
   // Batch-fetch creative assets for all unique ad_ids (once across all chunks)
   const creativeMap = await fetchAdCreatives(Array.from(adIdSet), accessToken)
 
-  // Merge creative data into rows
+  // Fetch per-adset budgets so ABO ad rows carry their adset's daily budget.
+  // CBO adsets return daily_budget=0 from the API; we leave those as null.
+  const adsetBudgetById = new Map<string, number>()
+  try {
+    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, {
+      fields: 'daily_budget',
+      limit:  '500',
+    })
+    for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+      const aid    = String(adset.id || '')
+      const budget = Number(adset.daily_budget || 0) / 100
+      if (aid && budget > 0) adsetBudgetById.set(aid, budget)
+    }
+  } catch { /* best-effort — budget stays null */ }
+
+  // Merge creative data and adset budgets into final rows
   for (const row of rawRows) {
     const creative = creativeMap[row.ad_id] ?? {}
     rows.push({
       ...row,
-      thumbnail_url:     creative.thumbnail_url    ?? '',
-      image_url:         creative.image_url        ?? '',
-      video_id:          creative.video_id         ?? '',
-      video_thumb_url:   creative.video_thumb_url  ?? '',
-      creative_body:     creative.creative_body    ?? '',
-      creative_title:    creative.creative_title   ?? '',
-      creative_link_url: creative.creative_link_url ?? '',
-      ad_status:         creative.ad_status        ?? '',
+      thumbnail_url:      creative.thumbnail_url     ?? '',
+      image_url:          creative.image_url         ?? '',
+      video_id:           creative.video_id          ?? '',
+      video_thumb_url:    creative.video_thumb_url   ?? '',
+      creative_body:      creative.creative_body     ?? '',
+      creative_title:     creative.creative_title    ?? '',
+      creative_link_url:  creative.creative_link_url ?? '',
+      ad_status:          creative.ad_status         ?? '',
+      adset_daily_budget: adsetBudgetById.get(row.adset_id) ?? null,
     })
   }
 

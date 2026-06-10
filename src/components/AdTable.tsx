@@ -30,9 +30,10 @@ export interface AdGroupRow {
   cpm?:             number
   roas?:            number
   revenue?:         number
+  adsetBudget?:     number | null  // Meta ABO: per-adset daily budget; null for CBO or Google
 }
 
-type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate' | 'adCount' | 'cpc' | 'cpm' | 'roas' | 'revenue'
+type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate' | 'adCount' | 'cpc' | 'cpm' | 'roas' | 'revenue' | 'adsetBudget'
 
 export function AdGroupTable({
   rows,
@@ -111,6 +112,7 @@ export function AdGroupTable({
             {showCol('cpa') && <SortTh sk="cpl">CPA</SortTh>}
             {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
             {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
+            {showCol('adset_budget') && <SortTh sk="adsetBudget">Ad Set Budget</SortTh>}
             {showCol('ad_count') && <SortTh sk="adCount">Ads</SortTh>}
           </tr>
         </thead>
@@ -143,6 +145,7 @@ export function AdGroupTable({
               {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}</td>}
               {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.roas && row.roas > 0 ? `${row.roas.toFixed(2)}x` : '—'}</td>}
               {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
+              {showCol('adset_budget') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.adsetBudget != null && row.adsetBudget > 0 ? fmtCurrency(row.adsetBudget) : '—'}</td>}
               {showCol('ad_count') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>}
             </tr>
           )})}
@@ -164,6 +167,7 @@ export function AdGroupTable({
             {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>}
             {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 && totSpend > 0 ? `${(totCv / totSpend).toFixed(2)}x` : '—' })()}</td>}
             {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 ? fmt$(totCv) : '—' })()}</td>}
+            {showCol('adset_budget') && <td></td>}
             {showCol('ad_count') && <td></td>}
           </tr>
         </tfoot>

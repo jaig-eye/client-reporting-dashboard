@@ -16,6 +16,7 @@ import SpendChart from '@/components/SpendChart'
 import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
+import { Skeleton } from '@/components/Skeleton'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
@@ -124,7 +125,7 @@ export default async function DashboardPage({
   }
 
   // ─── Data fetching ────────────────────────────────────────────────────────
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes] = await Promise.all([
+  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes, gBudgetRes, mBudgetRes] = await Promise.all([
     hasGoogle
       ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
@@ -164,6 +165,27 @@ export default async function DashboardPage({
       ? db.from('meta_ads_ad_metrics').select('ad_id, campaign_id, date, spend, impressions, clicks')
           .eq('client_id', client.id)
           .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+
+    // Current budget state — no date filter, ORDER BY date DESC so the first row per
+    // campaign is its most recent budget. Used to show the real current budget regardless
+    // of which historical period the user is viewing.
+    hasGoogle
+      ? db.from('google_ads_metrics')
+          .select('campaign_id,campaign_status,daily_budget')
+          .eq('client_id', client.id)
+          .not('daily_budget', 'is', null)
+          .order('date', { ascending: false })
+          .limit(500)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+
+    hasMeta
+      ? db.from('meta_ads_metrics')
+          .select('campaign_id,campaign_status,daily_budget')
+          .eq('client_id', client.id)
+          .not('daily_budget', 'is', null)
+          .order('date', { ascending: false })
+          .limit(500)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ])
 
@@ -477,6 +499,36 @@ export default async function DashboardPage({
     }
   }
 
+  // Build current-budget maps — first row per campaign_id is the most recent (date DESC).
+  // These are used to show the real current budget regardless of the selected date range,
+  // matching how names/statuses are handled.
+  type BudgetRow = { campaign_id: string; campaign_status: string | null; daily_budget: number | null }
+  const googleCurrentBudget = new Map<string, { budget: number; status: string | null }>()
+  for (const r of (gBudgetRes.data ?? []) as BudgetRow[]) {
+    if (!googleCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
+      googleCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
+    }
+  }
+  const metaCurrentBudget = new Map<string, { budget: number; status: string | null }>()
+  for (const r of (mBudgetRes.data ?? []) as BudgetRow[]) {
+    if (!metaCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
+      metaCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
+    }
+  }
+
+  // Override campMap daily_budget AND status with current (most-recent) values.
+  // The all-time budget queries already include campaign_status, so this costs no
+  // extra round trip and fixes both the budget and status being date-range dependent.
+  for (const [id, entry] of Array.from(campMap.entries())) {
+    const cur = entry._source === 'google_ads'
+      ? googleCurrentBudget.get(id)
+      : metaCurrentBudget.get(id)
+    if (cur) {
+      entry.daily_budget = cur.budget
+      if (cur.status) entry.status = cur.status
+    }
+  }
+
   const activeCampaigns = Array.from(campMap.entries())
     .map(([id, c]) => {
       const cost = effectiveAdFuelCut > 0 ? applyAdFuel(c.spend, effectiveAdFuelCut) : c.spend
@@ -552,20 +604,19 @@ export default async function DashboardPage({
   }
   if (metaFreqImprTotal > 0) metaTotal.frequency = metaTotal.frequency / metaFreqImprTotal
 
-  // ─── Daily budget per platform (active campaigns only; max per campaign, summed) ─
-  // Paused campaigns still have a stored daily_budget — exclude them so the displayed
-  // budget only reflects what's actually running. Google uses 'ENABLED'; Meta uses 'ACTIVE'.
+  // ─── Daily budget per platform (currently-active campaigns only) ─────────
+  // Uses current-state budget maps (most-recent row, no date filter) so the
+  // platform card always shows the real live budget, not a historical value.
   function sumBudgetBySource(src: string): number {
-    const maxPerCampaign = new Map<string, number>()
-    for (const r of currentMetrics) {
-      if (r._source !== src || r.daily_budget == null) continue
-      const st = (r.campaign_status ?? '').toUpperCase()
+    const budgetMap = src === 'google_ads' ? googleCurrentBudget : metaCurrentBudget
+    let total = 0
+    for (const [, cur] of Array.from(budgetMap)) {
+      const st = (cur.status ?? '').toUpperCase()
       if (src === 'google_ads' && st !== 'ENABLED') continue
       if (src === 'meta_ads'   && st !== 'ACTIVE')  continue
-      const prev = maxPerCampaign.get(r.campaign_id)
-      if (prev == null || r.daily_budget > prev) maxPerCampaign.set(r.campaign_id, r.daily_budget)
+      total += cur.budget
     }
-    return Array.from(maxPerCampaign.values()).reduce((s, v) => s + v, 0)
+    return total
   }
   const googleDailyBudgetRaw = sumBudgetBySource('google_ads')
   const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
@@ -679,7 +730,7 @@ export default async function DashboardPage({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            {afPurchased > 0 && !spendRpcFailed && (
+            {afPurchased > 0 && (
               <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
             )}
             <Suspense fallback={null}>
@@ -947,6 +998,9 @@ export default async function DashboardPage({
         </>
 
         {/* ── Connection summary cards (summary / overview only) ── */}
+        {/* Each card is an independent async server component — wrapping in Suspense
+            lets the paid ads section above render first, then analytics cards stream
+            in as their individual DB queries complete. */}
         {!isFiltered && (
           <>
             {/* Analytics — GA4 */}
@@ -956,14 +1010,16 @@ export default async function DashboardPage({
                   <h2 className="section-title">Analytics</h2>
                   <p className="section-desc">Sessions, users, and engagement from Google Analytics</p>
                 </div>
-                <GA4SummaryCard
-                  clientId={client.id}
-                  connectionId={connectionsBySource['google_analytics']}
-                  dateFrom={fmtDate(fromDate)}
-                  dateTo={fmtDate(toDate)}
-                  compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
-                  compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
-                />
+                <Suspense fallback={<ConnectionCardSkeleton accentColor="#e37400" />}>
+                  <GA4SummaryCard
+                    clientId={client.id}
+                    connectionId={connectionsBySource['google_analytics']}
+                    dateFrom={fmtDate(fromDate)}
+                    dateTo={fmtDate(toDate)}
+                    compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                    compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
+                  />
+                </Suspense>
               </>
             )}
 
@@ -979,31 +1035,37 @@ export default async function DashboardPage({
               </div>
             )}
             {availableSources.includes('google_search_console') && connectionsBySource['google_search_console'] && !hiddenTypes.has('google_search_console') && (
-              <GSCSummaryCard
-                clientId={client.id}
-                connectionId={connectionsBySource['google_search_console']}
-                dateFrom={fmtDate(fromDate)}
-                dateTo={fmtDate(toDate)}
-                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
-                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
-              />
+              <Suspense fallback={<ConnectionCardSkeleton accentColor="#1a73e8" />}>
+                <GSCSummaryCard
+                  clientId={client.id}
+                  connectionId={connectionsBySource['google_search_console']}
+                  dateFrom={fmtDate(fromDate)}
+                  dateTo={fmtDate(toDate)}
+                  compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                  compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
+                />
+              </Suspense>
             )}
             {availableSources.includes('google_business_profile') && connectionsBySource['google_business_profile'] && (
-              <GBPSummaryCard
-                clientId={client.id}
-                connectionId={connectionsBySource['google_business_profile']}
-                dateFrom={fmtDate(fromDate)}
-                dateTo={fmtDate(toDate)}
-              />
+              <Suspense fallback={<ConnectionCardSkeleton accentColor="#34a853" />}>
+                <GBPSummaryCard
+                  clientId={client.id}
+                  connectionId={connectionsBySource['google_business_profile']}
+                  dateFrom={fmtDate(fromDate)}
+                  dateTo={fmtDate(toDate)}
+                />
+              </Suspense>
             )}
             {(availableSources as string[]).includes('ahrefs') && !hiddenTypes.has('ahrefs') && (
-              <AhrefsSummaryCard
-                clientId={client.id}
-                dateFrom={fmtDate(fromDate)}
-                dateTo={fmtDate(toDate)}
-                compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
-                compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
-              />
+              <Suspense fallback={<ConnectionCardSkeleton accentColor="#f96228" />}>
+                <AhrefsSummaryCard
+                  clientId={client.id}
+                  dateFrom={fmtDate(fromDate)}
+                  dateTo={fmtDate(toDate)}
+                  compareDateFrom={showCompare ? fmtDate(priorFrom) : undefined}
+                  compareDateTo={showCompare ? fmtDate(priorTo) : undefined}
+                />
+              </Suspense>
             )}
           </>
         )}
@@ -1025,6 +1087,34 @@ export default async function DashboardPage({
         )}
 
       </main>
+    </div>
+  )
+}
+
+// ── Skeleton fallback for connection summary cards ─────────────────────────
+// Matches ConnectionSummaryCard's shell (left border accent + header + metric tiles)
+// so the layout doesn't shift when the async card streams in.
+function ConnectionCardSkeleton({ accentColor = 'var(--border)' }: { accentColor?: string }) {
+  return (
+    <div
+      className="card"
+      style={{ borderLeft: `3px solid ${accentColor}`, padding: '1.25rem', opacity: 0.7 }}
+      aria-hidden="true"
+    >
+      {/* Header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <Skeleton style={{ width: 120, height: 12, borderRadius: 4 }} />
+        <Skeleton style={{ width: 90, height: 10, borderRadius: 4 }} />
+      </div>
+      {/* Metric tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '1rem' }}>
+        {[...Array(4)].map((_, i) => (
+          <div key={i}>
+            <Skeleton style={{ width: '55%', height: 9, borderRadius: 3, marginBottom: 8 }} />
+            <Skeleton style={{ width: '75%', height: 20, borderRadius: 4 }} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

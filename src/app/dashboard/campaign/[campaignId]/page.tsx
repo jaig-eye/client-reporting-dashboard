@@ -124,6 +124,7 @@ export default async function CampaignDetailPage({
   }
   type MetaAdRow = {
     ad_id: string; adset_id: string | null; adset_name: string | null; ad_status: string | null; date: string
+    adset_daily_budget?: number | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversion_value: number
     actions:      { action_type: string; value: string }[] | null
@@ -132,11 +133,11 @@ export default async function CampaignDetailPage({
 
   let campaignName = decodeURIComponent(campaignId)
 
-  // Map<setId, { setName, status, latestDate, spend, impressions, clicks, conversions, conversionValue, adIds }>
-  type SetAgg = { setName: string; status: string | null; latestDate: string; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
+  // Map<setId, { setName, status, latestDate, adsetBudget, spend, impressions, clicks, conversions, conversionValue, adIds }>
+  type SetAgg = { setName: string; status: string | null; latestDate: string; adsetBudget: number | null; spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; adIds: Set<string> }
   const setMap = new Map<string, SetAgg>()
 
-  function upsertSet(setId: string, setName: string, adId: string, adStatus: string | null, date: string, sp: number, im: number, cl: number, co: number, cv: number) {
+  function upsertSet(setId: string, setName: string, adId: string, adStatus: string | null, date: string, sp: number, im: number, cl: number, co: number, cv: number, adsetBudget: number | null = null) {
     const normalized = normalizeMetaAdStatus(adStatus)
     const ex = setMap.get(setId)
     if (ex) {
@@ -146,6 +147,8 @@ export default async function CampaignDetailPage({
       ex.conversions     += co
       ex.conversionValue += cv
       ex.adIds.add(adId)
+      // Keep the first non-null adset budget seen (all ads in same adset share same value)
+      if (ex.adsetBudget == null && adsetBudget != null) ex.adsetBudget = adsetBudget
       if (date > ex.latestDate) {
         ex.latestDate = date
         // Update name from the most recent row — ad set names can change over time
@@ -160,7 +163,7 @@ export default async function CampaignDetailPage({
         if (setName?.trim()) ex.setName = setName.trim()
       }
     } else {
-      setMap.set(setId, { setName, status: normalized, latestDate: date, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
+      setMap.set(setId, { setName, status: normalized, latestDate: date, adsetBudget, spend: sp, impressions: im, clicks: cl, conversions: co, conversionValue: cv, adIds: new Set([adId]) })
     }
   }
 
@@ -262,7 +265,7 @@ export default async function CampaignDetailPage({
         .gte('date', dateFrom)
         .lte('date', dateTo),
       db.from('meta_ads_ad_metrics')
-        .select('ad_id,adset_id,adset_name,ad_status,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+        .select('ad_id,adset_id,adset_name,ad_status,adset_daily_budget,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .gte('date', dateFrom)
@@ -338,7 +341,7 @@ export default async function CampaignDetailPage({
       const adsetDisplayName = (r.adset_name && r.adset_name.trim())
         ? r.adset_name.trim()
         : (r.adset_id ? `Ad Set ${String(r.adset_id).slice(-6)}` : 'Unknown Ad Set')
-      upsertSet(setId, adsetDisplayName, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
+      upsertSet(setId, adsetDisplayName, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv, r.adset_daily_budget ?? null)
     }
     // Prior period: campaign-level for compare deltas
     for (const r of (priorCampRows ?? []) as MetaCampRow[]) {
@@ -412,7 +415,7 @@ export default async function CampaignDetailPage({
         } else {
           // Truly new adset — had no activity in the date range → add with zero metrics
           setMap.set(sid, {
-            setName: meta.name, status: meta.status,
+            setName: meta.name, status: meta.status, adsetBudget: null,
             latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
             adIds: new Set(),
           })
@@ -477,6 +480,7 @@ export default async function CampaignDetailPage({
         conversions:     s.conversions,
         conversionValue: s.conversionValue,
         adCount:         s.adIds.size,
+        adsetBudget:     s.adsetBudget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(s.adsetBudget, effectiveAdFuelCut) : s.adsetBudget) : null,
         cpl:             s.conversions > 0 ? cost / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
         convRate:        s.clicks > 0 ? s.conversions / s.clicks : 0,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { CalendarBlank, CaretDown } from '@phosphor-icons/react'
 
 function fmtD(d: Date) { return d.toISOString().split('T')[0] }
@@ -102,6 +102,7 @@ export default function DateRangePicker({
 }) {
   const router       = useRouter()
   const searchParams = useSearchParams()
+  const [isPending, startTransition] = useTransition()
   const [open,      setOpen]      = useState(false)
   const [localFrom, setLocalFrom] = useState(from)
   const [localTo,   setLocalTo]   = useState(to)
@@ -128,13 +129,13 @@ export default function DateRangePicker({
     const [f, t] = presetRange(id)
     setLocalFrom(f)
     setLocalTo(t)
-    router.push(buildUrl(f, t))
     setOpen(false)
+    startTransition(() => router.push(buildUrl(f, t)))
   }
 
   function applyCustom() {
-    router.push(buildUrl(localFrom, localTo))
     setOpen(false)
+    startTransition(() => router.push(buildUrl(localFrom, localTo)))
   }
 
   function applyCompare(value: string) {
@@ -152,9 +153,20 @@ export default function DateRangePicker({
         aria-haspopup="true"
         aria-label="Select date range"
         className="btn btn-secondary btn-sm focus-ring"
-        style={{ gap: 6 }}
+        style={{ gap: 6, opacity: isPending ? 0.65 : 1, transition: 'opacity 0.15s' }}
       >
-        <CalendarBlank size={14} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        {isPending ? (
+          <span style={{
+            width: 14, height: 14, flexShrink: 0,
+            border: '2px solid var(--border)',
+            borderTopColor: 'var(--blue)',
+            borderRadius: '50%',
+            display: 'inline-block',
+            animation: 'spin 0.6s linear infinite',
+          }} aria-hidden />
+        ) : (
+          <CalendarBlank size={14} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        )}
         <span style={{ fontSize: '0.8125rem' }}>{presetLabel ?? `${from} – ${to}`}</span>
         {cmp && cmp !== 'none' && (
           <span style={{

@@ -922,7 +922,8 @@ export async function upsertMetaAdsAdMetrics(
       creative_body:    r.creative_body     || undefined,
       creative_title:   r.creative_title    || undefined,
       creative_link_url:r.creative_link_url || undefined,
-      ad_status:        r.ad_status         || undefined,
+      ad_status:           r.ad_status            || undefined,
+      adset_daily_budget:  r.adset_daily_budget   ?? undefined,
       // Metrics always overwrite (explicit values, never undefined)
       date:             String(r.date).split('T')[0],
       spend:            Number(r.spend)       || 0,

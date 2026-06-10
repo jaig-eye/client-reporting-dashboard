@@ -75,6 +75,7 @@ export type AdGroupColumnKey =
   | 'cpa'
   | 'roas'
   | 'revenue'
+  | 'adset_budget'   // Meta ABO: per-adset daily budget; blank for CBO / Google
   | 'ad_count'
 
 export type AdColumnKey =
@@ -178,18 +179,19 @@ export const COLUMN_LABELS: Record<ColumnKey, string> = {
 }
 
 export const ADGROUP_COLUMN_LABELS: Record<AdGroupColumnKey, string> = {
-  spend:       'Cost',
-  impressions: 'Impressions',
-  clicks:      'Clicks',
-  ctr:         'CTR',
-  cpc:         'Avg. CPC',
-  cpm:         'CPM',
-  conversions: 'Conversions',
-  conv_rate:   'Conv. Rate',
-  cpa:         'CPA',
-  roas:        'ROAS',
-  revenue:     'Revenue',
-  ad_count:    'Ads',
+  spend:        'Cost',
+  impressions:  'Impressions',
+  clicks:       'Clicks',
+  ctr:          'CTR',
+  cpc:          'Avg. CPC',
+  cpm:          'CPM',
+  conversions:  'Conversions',
+  conv_rate:    'Conv. Rate',
+  cpa:          'CPA',
+  roas:         'ROAS',
+  revenue:      'Revenue',
+  adset_budget: 'Ad Set Budget',
+  ad_count:     'Ads',
 }
 
 export const AD_COLUMN_LABELS: Record<AdColumnKey, string> = {
@@ -227,7 +229,7 @@ export const DEFAULT_PAID_ADS_LEAD_GEN: MetricLayout = {
   table_columns:          ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa'],
   platform_google_metrics: ['spend', 'conversions', 'ctr'],
   platform_meta_metrics:   ['spend', 'impressions', 'ctr'],
-  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa', 'ad_count'],
+  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa', 'adset_budget', 'ad_count'],
   ads_table_columns:      ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
@@ -237,7 +239,7 @@ export const DEFAULT_PAID_ADS_ECOM: MetricLayout = {
   table_columns:          ['campaign_name', 'status', 'spend', 'revenue', 'roas', 'conversions', 'cpa'],
   platform_google_metrics: ['spend', 'revenue', 'roas'],
   platform_meta_metrics:   ['spend', 'revenue', 'roas'],
-  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'roas', 'revenue', 'ad_count'],
+  adgroup_table_columns:  ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'roas', 'revenue', 'adset_budget', 'ad_count'],
   ads_table_columns:      ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
@@ -309,7 +311,7 @@ export const ALL_COLUMN_KEYS: ColumnKey[] = [
 
 export const ALL_ADGROUP_COLUMN_KEYS: AdGroupColumnKey[] = [
   'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm',
-  'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'ad_count',
+  'conversions', 'conv_rate', 'cpa', 'roas', 'revenue', 'adset_budget', 'ad_count',
 ]
 
 export const ALL_AD_COLUMN_KEYS: AdColumnKey[] = [

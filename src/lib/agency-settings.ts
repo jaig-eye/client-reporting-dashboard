@@ -1,3 +1,4 @@
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from './supabase/server'
 import type { AgencySettings } from './types'
 
@@ -28,14 +29,24 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   crm_name:                      'CRM',
 }
 
+// Cache agency settings for 5 minutes — they change rarely (only when an admin saves
+// settings) and are fetched on every dashboard page load and tab switch.
+const _fetchAgencySettings = unstable_cache(
+  async (): Promise<AgencySettings> => {
+    try {
+      const db = createAdminClient()
+      const { data } = await db.from('agency_settings').select('*').single()
+      return (data as AgencySettings) ?? DEFAULT_SETTINGS
+    } catch {
+      return DEFAULT_SETTINGS
+    }
+  },
+  ['agency-settings-global'],
+  { revalidate: 3600 }
+)
+
 export async function getAgencySettings(): Promise<AgencySettings> {
-  try {
-    const db = createAdminClient()
-    const { data } = await db.from('agency_settings').select('*').single()
-    return (data as AgencySettings) ?? DEFAULT_SETTINGS
-  } catch {
-    return DEFAULT_SETTINGS
-  }
+  return _fetchAgencySettings()
 }
 
 /**
