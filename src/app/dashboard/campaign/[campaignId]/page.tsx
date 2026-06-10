@@ -288,7 +288,7 @@ export default async function CampaignDetailPage({
         : Promise.resolve({ data: [] as MetaAdRow[] }),
       // Current adset metadata — no date filter, ordered by date desc so first row per adset is current
       db.from('meta_ads_ad_metrics')
-        .select('adset_id,adset_name,ad_status')
+        .select('adset_id,adset_name,ad_status,adset_daily_budget')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .order('date', { ascending: false })
@@ -365,8 +365,8 @@ export default async function CampaignDetailPage({
     // Override setMap name and status with current metadata (no date filter).
     // This ensures ad sets that had no activity in the selected range still appear,
     // and that names/statuses always reflect the current state regardless of date range.
-    type AdsetMetaRow = { adset_id: string | null; adset_name: string | null; ad_status: string | null }
-    const currentAdsetMeta = new Map<string, { name: string; status: string | null }>()
+    type AdsetMetaRow = { adset_id: string | null; adset_name: string | null; ad_status: string | null; adset_daily_budget?: number | null }
+    const currentAdsetMeta = new Map<string, { name: string; status: string | null; budget: number | null }>()
     for (const r of (adsetMetaRows ?? []) as AdsetMetaRow[]) {
       // Use adset_name as canonical key — matches the setMap keys from per-ad rows (which
       // have adset_id=NULL). This prevents the numeric-id vs name key mismatch that caused
@@ -375,17 +375,21 @@ export default async function CampaignDetailPage({
       if (!sid) continue
       const ex = currentAdsetMeta.get(sid)
       if (!ex) {
-        // First row per adset_id is most recent (ordered by date desc) — capture name and
-        // initial status (may be null if the upsert omitted ad_status for this row).
+        // First row per adset (ordered by date desc) is the most recent — capture name,
+        // status, and budget. Status/budget may be null if the upsert omitted them.
         currentAdsetMeta.set(sid, {
           name:   r.adset_name ?? '',
           status: r.ad_status != null ? normalizeMetaAdStatus(r.ad_status) : null,
+          budget: r.adset_daily_budget ?? null,
         })
-      } else if (ex.status === null && r.ad_status != null) {
-        // First row had null status — keep scanning for the first real non-null status.
-        // Recent rows often have ad_status omitted (upsert uses || undefined), so we look
-        // back through the date-desc ordered rows until we find an actual status value.
-        ex.status = normalizeMetaAdStatus(r.ad_status)
+      } else {
+        // Keep scanning to fill in any null values from more-recent rows
+        if (ex.status === null && r.ad_status != null) {
+          ex.status = normalizeMetaAdStatus(r.ad_status)
+        }
+        if (ex.budget === null && r.adset_daily_budget != null) {
+          ex.budget = r.adset_daily_budget
+        }
       }
     }
     // Apply current metadata to existing setMap entries AND surface any adsets
@@ -398,10 +402,11 @@ export default async function CampaignDetailPage({
     // correct current status is always applied to the right setMap entry.
     for (const [sid, meta] of Array.from(currentAdsetMeta)) {
       if (setMap.has(sid)) {
-        // Direct key match — update name/status from current data
+        // Direct key match — update name/status/budget from current data
         const ex = setMap.get(sid)!
-        if (meta.name)          ex.setName = meta.name
-        if (meta.status != null) ex.status  = meta.status
+        if (meta.name)           ex.setName    = meta.name
+        if (meta.status != null) ex.status     = meta.status
+        if (meta.budget != null) ex.adsetBudget = effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget
       } else if (meta.name && !isMetaDefaultName(meta.name)) {
         // No direct key match. Try to find an existing setMap entry by name
         // (handles the case where setMap key = adset_name but currentAdsetMeta key = adset_id).
@@ -410,12 +415,14 @@ export default async function CampaignDetailPage({
           if (v.setName.toLowerCase() === meta.name.toLowerCase()) { matchByName = v; break }
         }
         if (matchByName) {
-          // Found the same adset under a different key — update its status
+          // Found the same adset under a different key — update status and budget
           if (meta.status != null) matchByName.status = meta.status
+          if (meta.budget != null) matchByName.adsetBudget = effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget
         } else {
           // Truly new adset — had no activity in the date range → add with zero metrics
+          const curBudget = meta.budget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget) : null
           setMap.set(sid, {
-            setName: meta.name, status: meta.status, adsetBudget: null,
+            setName: meta.name, status: meta.status, adsetBudget: curBudget,
             latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
             adIds: new Set(),
           })

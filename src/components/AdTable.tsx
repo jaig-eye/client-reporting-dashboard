@@ -35,6 +35,11 @@ export interface AdGroupRow {
 
 type AdGroupSortKey = 'setName' | 'spend' | 'conversions' | 'cpl' | 'impressions' | 'clicks' | 'ctr' | 'convRate' | 'adCount' | 'cpc' | 'cpm' | 'roas' | 'revenue' | 'adsetBudget'
 
+// Default columns when no layout is configured
+const ADGROUP_DEFAULT_COLUMNS = [
+  'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa', 'ad_count',
+]
+
 export function AdGroupTable({
   rows,
   conversionLabel,
@@ -46,7 +51,7 @@ export function AdGroupTable({
   isPMax?:          boolean
   tableColumns?:    string[]
 }) {
-  const showCol = (key: string) => !tableColumns || tableColumns.includes(key)
+  const activeCols = tableColumns ?? ADGROUP_DEFAULT_COLUMNS
   const [sortKey, setSortKey] = useState<AdGroupSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -56,12 +61,12 @@ export function AdGroupTable({
     else setSortKey(null)
   }
 
-  function SortTh({ sk, align = 'right', children }: { sk: AdGroupSortKey; align?: 'left' | 'right'; children: React.ReactNode }) {
+  function SortTh({ sk, children }: { sk: AdGroupSortKey; children: React.ReactNode }) {
     const isActive = sortKey === sk
     return (
       <th
         onClick={() => toggleSort(sk)}
-        style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+        style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
       >
         {children}
         {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
@@ -86,34 +91,41 @@ export function AdGroupTable({
     return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av)
   })
 
-  const totSpend  = rows.reduce((s, r) => s + r.spend, 0)
-  const totImpr   = rows.reduce((s, r) => s + r.impressions, 0)
-  const totClicks = rows.reduce((s, r) => s + r.clicks, 0)
-  const totConv   = rows.reduce((s, r) => s + r.conversions, 0)
-  const totCtr    = totImpr > 0 ? totClicks / totImpr : 0
-  const totCR     = totClicks > 0 ? totConv / totClicks : 0
-  const totCpl    = totConv > 0 ? totSpend / totConv : 0
+  const totSpend   = rows.reduce((s, r) => s + r.spend, 0)
+  const totImpr    = rows.reduce((s, r) => s + r.impressions, 0)
+  const totClicks  = rows.reduce((s, r) => s + r.clicks, 0)
+  const totConv    = rows.reduce((s, r) => s + r.conversions, 0)
+  const totRevenue = rows.reduce((s, r) => s + (r.revenue ?? 0), 0)
+  const totCtr     = totImpr   > 0 ? totClicks / totImpr   : 0
+  const totCR      = totClicks > 0 ? totConv   / totClicks : 0
+  const totCpl     = totConv   > 0 ? totSpend  / totConv   : 0
+
+  // Column definitions — iterated in layout order so user-configured position is respected
+  type ColDef = { header: () => React.ReactNode; cell: (r: AdGroupRow) => React.ReactNode; foot: () => React.ReactNode }
+  const COL: Record<string, ColDef> = {
+    spend:        { header: () => <SortTh sk="spend">Cost</SortTh>,                 cell: r => <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(r.spend)}</td>,                                                      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td> },
+    impressions:  { header: () => <SortTh sk="impressions">Impr.</SortTh>,          cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.impressions)}</td>,                                                                   foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td> },
+    clicks:       { header: () => <SortTh sk="clicks">Clicks</SortTh>,              cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.clicks)}</td>,                                                                        foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td> },
+    ctr:          { header: () => <SortTh sk="ctr">CTR</SortTh>,                    cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(r.ctr)}</td>,                                                                           foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td> },
+    cpc:          { header: () => <SortTh sk="cpc">Avg. CPC</SortTh>,               cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.cpc ? fmtCurrency(r.cpc) : '—'}</td>,                                                       foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totClicks > 0 ? fmtCurrency(totSpend / totClicks) : '—'}</td> },
+    cpm:          { header: () => <SortTh sk="cpm">CPM</SortTh>,                    cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.cpm ? fmtCurrency(r.cpm) : '—'}</td>,                                                       foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr > 0 ? fmtCurrency((totSpend / totImpr) * 1000) : '—'}</td> },
+    conversions:  { header: () => <SortTh sk="conversions">{conversionLabel}</SortTh>, cell: r => <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{r.conversions > 0 ? fmtNum(r.conversions) : '—'}</td>,                  foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td> },
+    conv_rate:    { header: () => <SortTh sk="convRate">Conv Rate</SortTh>,          cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.convRate > 0 ? fmtPct(r.convRate) : '—'}</td>,                                              foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td> },
+    cpa:          { header: () => <SortTh sk="cpl">CPA</SortTh>,                    cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.cpl > 0 ? fmtCurrency(r.cpl) : '—'}</td>,                                                   foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td> },
+    roas:         { header: () => <SortTh sk="roas">ROAS</SortTh>,                  cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.roas && r.roas > 0 ? `${r.roas.toFixed(2)}x` : '—'}</td>,                                   foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totRevenue > 0 && totSpend > 0 ? `${(totRevenue / totSpend).toFixed(2)}x` : '—'}</td> },
+    revenue:      { header: () => <SortTh sk="revenue">Revenue</SortTh>,            cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.revenue && r.revenue > 0 ? fmt$(r.revenue) : '—'}</td>,                                      foot: () => <td className="text-xs" style={{ textAlign: 'right' }}>{totRevenue > 0 ? fmt$(totRevenue) : '—'}</td> },
+    adset_budget: { header: () => <SortTh sk="adsetBudget">Ad Set Budget</SortTh>,  cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.adsetBudget != null && r.adsetBudget > 0 ? fmtCurrency(r.adsetBudget) : '—'}</td>,          foot: () => <td /> },
+    ad_count:     { header: () => <SortTh sk="adCount">Ads</SortTh>,                cell: r => <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{r.adCount}</td>,                                                                               foot: () => <td /> },
+  }
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <table className="data-table" style={{ minWidth: 740 }}>
         <thead>
           <tr>
-            <SortTh sk="setName" align="left">Ad Set / Group</SortTh>
-            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-            {showCol('spend') && <SortTh sk="spend">Cost</SortTh>}
-            {showCol('impressions') && <SortTh sk="impressions">Impr.</SortTh>}
-            {showCol('clicks') && <SortTh sk="clicks">Clicks</SortTh>}
-            {showCol('ctr') && <SortTh sk="ctr">CTR</SortTh>}
-            {showCol('cpc') && <SortTh sk="cpc">Avg. CPC</SortTh>}
-            {showCol('cpm') && <SortTh sk="cpm">CPM</SortTh>}
-            {showCol('conversions') && <SortTh sk="conversions">{conversionLabel}</SortTh>}
-            {showCol('conv_rate') && <SortTh sk="convRate">Conv Rate</SortTh>}
-            {showCol('cpa') && <SortTh sk="cpl">CPA</SortTh>}
-            {showCol('roas') && <SortTh sk="roas">ROAS</SortTh>}
-            {showCol('revenue') && <SortTh sk="revenue">Revenue</SortTh>}
-            {showCol('adset_budget') && <SortTh sk="adsetBudget">Ad Set Budget</SortTh>}
-            {showCol('ad_count') && <SortTh sk="adCount">Ads</SortTh>}
+            <SortTh sk="setName">Ad Set / Group</SortTh>
+            <th style={{ whiteSpace: 'nowrap', textAlign: 'left' }}>Status</th>
+            {activeCols.map(key => <React.Fragment key={key}>{COL[key]?.header()}</React.Fragment>)}
           </tr>
         </thead>
         <tbody>
@@ -122,33 +134,22 @@ export function AdGroupTable({
             const setIsActive = !row.status || setStatusUpper === 'ACTIVE' || setStatusUpper === 'ENABLED'
             const setIsPaused = setStatusUpper === 'PAUSED'
             return (
-            <tr key={row.setId}>
-              <td>
-                <a href={row.href} style={{ color: 'var(--blue)', fontWeight: 500, textDecoration: 'none', fontSize: '0.85rem' }}>
-                  {row.setName || row.setId}
-                </a>
-              </td>
-              <td>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : 'var(--text-faint)' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : '#9ca3af' }} />
-                  {setIsActive ? 'Active' : setIsPaused ? 'Paused' : (setStatusUpper || '—')}
-                </span>
-              </td>
-              {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(row.spend)}</td>}
-              {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>}
-              {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>}
-              {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(row.ctr)}</td>}
-              {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpc ? fmtCurrency(row.cpc) : '—'}</td>}
-              {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpm ? fmtCurrency(row.cpm) : '—'}</td>}
-              {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{row.conversions > 0 ? fmtNum(row.conversions) : '—'}</td>}
-              {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.convRate > 0 ? fmtPct(row.convRate) : '—'}</td>}
-              {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.cpl > 0 ? fmtCurrency(row.cpl) : '—'}</td>}
-              {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.roas && row.roas > 0 ? `${row.roas.toFixed(2)}x` : '—'}</td>}
-              {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.revenue && row.revenue > 0 ? fmt$(row.revenue) : '—'}</td>}
-              {showCol('adset_budget') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{row.adsetBudget != null && row.adsetBudget > 0 ? fmtCurrency(row.adsetBudget) : '—'}</td>}
-              {showCol('ad_count') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>{row.adCount}</td>}
-            </tr>
-          )})}
+              <tr key={row.setId}>
+                <td style={{ textAlign: 'left' }}>
+                  <a href={row.href} style={{ color: 'var(--blue)', fontWeight: 500, textDecoration: 'none', fontSize: '0.85rem' }}>
+                    {row.setName || row.setId}
+                  </a>
+                </td>
+                <td>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : 'var(--text-faint)' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : '#9ca3af' }} />
+                    {setIsActive ? 'Active' : setIsPaused ? 'Paused' : (setStatusUpper || '—')}
+                  </span>
+                </td>
+                {activeCols.map(key => <React.Fragment key={key}>{COL[key]?.cell(row)}</React.Fragment>)}
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot>
           <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
@@ -156,19 +157,7 @@ export function AdGroupTable({
               {rows.length} ad set{rows.length !== 1 ? 's' : ''}
             </td>
             <td />
-            {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmt$(totSpend)}</td>}
-            {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totImpr)}</td>}
-            {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right' }}>{fmtNum(totClicks)}</td>}
-            {showCol('ctr') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCtr > 0 ? fmtPct(totCtr) : '—'}</td>}
-            {showCol('cpc') && <td className="text-xs" style={{ textAlign: 'right' }}>{totClicks > 0 ? fmtCurrency(totSpend / totClicks) : '—'}</td>}
-            {showCol('cpm') && <td className="text-xs" style={{ textAlign: 'right' }}>{totImpr > 0 ? fmtCurrency((totSpend / totImpr) * 1000) : '—'}</td>}
-            {showCol('conversions') && <td className="text-xs" style={{ textAlign: 'right' }}>{totConv > 0 ? fmtNum(totConv) : '—'}</td>}
-            {showCol('conv_rate') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCR > 0 ? fmtPct(totCR) : '—'}</td>}
-            {showCol('cpa') && <td className="text-xs" style={{ textAlign: 'right' }}>{totCpl > 0 ? fmtCurrency(totCpl) : '—'}</td>}
-            {showCol('roas') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 && totSpend > 0 ? `${(totCv / totSpend).toFixed(2)}x` : '—' })()}</td>}
-            {showCol('revenue') && <td className="text-xs" style={{ textAlign: 'right' }}>{(() => { const totCv = rows.reduce((s, r) => s + (r.revenue ?? 0), 0); return totCv > 0 ? fmt$(totCv) : '—' })()}</td>}
-            {showCol('adset_budget') && <td></td>}
-            {showCol('ad_count') && <td></td>}
+            {activeCols.map(key => <React.Fragment key={key}>{COL[key]?.foot()}</React.Fragment>)}
           </tr>
         </tfoot>
       </table>

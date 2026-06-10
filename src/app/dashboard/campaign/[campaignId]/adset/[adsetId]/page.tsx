@@ -138,7 +138,9 @@ export default async function AdSetDetailPage({
   function upsertAd(ad: AdCardData) {
     const ex = adMap.get(ad.ad_id)
     if (ex) {
-      // Accumulate metrics
+      // Accumulate metrics ONLY — metadata (name, images, status) must not be updated
+      // here because adMap is pre-populated from currentMeta (most-recent all-time row).
+      // Updating from metric rows would risk overwriting newest values with older ones.
       ex.spend           += ad.spend
       ex.impressions     += ad.impressions
       ex.clicks          += ad.clicks
@@ -148,14 +150,6 @@ export default async function AdSetDetailPage({
       ex.roas             = ex.adFuelSpend > 0 && ex.conversionValue > 0 ? ex.conversionValue / ex.adFuelSpend : 0
       ex.cpl              = ex.conversions > 0 ? ex.adFuelSpend / ex.conversions : 0
       ex.ctr              = ex.impressions > 0 ? ex.clicks / ex.impressions : 0
-      // Prefer non-empty metadata — later rows (more recent dates) override stale/empty values
-      if (ad.ad_name)        ex.ad_name        = ad.ad_name
-      if (ad.image_url)      ex.image_url      = ad.image_url
-      if (ad.thumbnail_url)  ex.thumbnail_url  = ad.thumbnail_url
-      if (ad.video_id)       ex.video_id       = ad.video_id
-      if (ad.ad_status)      ex.ad_status      = ad.ad_status
-      if (ad.creative_body)  ex.creative_body  = ad.creative_body
-      if (ad.creative_title) ex.creative_title = ad.creative_title
     } else {
       adMap.set(ad.ad_id, { ...ad })
     }
@@ -279,23 +273,26 @@ export default async function AdSetDetailPage({
     // Running metaQ first lets us extract the adset_name, then metricsQ can filter by
     // adset_name instead — which is always populated and catches ALL rows for the adset.
 
-    // Step 1 — current metadata (no date filter)
-    // NOTE: neq('ad_id', adsetId) is intentionally ABSENT from metaQ.
-    // Meta's sync stores an adset-level summary row with ad_id = adset_id alongside the
-    // per-ad rows. That summary row is the only row that has adset_id set (non-null) — the
-    // real per-ad rows have adset_id=NULL. Including the summary row here lets us extract
-    // the adset_name so that metricsQ can filter by name and find the actual per-ad rows.
-    // The summary row is skipped when building currentMeta below to avoid showing it as an ad.
+    // Step 1 — current metadata.
+    // Bounded to the last 90 days so only ads currently in the account appear.
+    // An active or paused ad always has rows within this window (syncs run regularly).
+    // Deleted/archived ads stop appearing in Meta's API and therefore stop getting new
+    // rows — without this bound they'd remain visible indefinitely with 0 metrics.
+    // The summary row (ad_id = adset_id) is still included so we can extract adset_name;
+    // it's filtered out when building currentMeta below.
+    const metaQFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0] })()
     const { data: metaRows } = await (adsetIdIsNumeric
       ? db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
           .eq('adset_id', adsetId)
+          .gte('date', metaQFrom)
           .order('date', { ascending: false }).limit(1000)
       : db.from('meta_ads_ad_metrics')
           .select('ad_id,ad_name,thumbnail_url,image_url,video_id,video_thumb_url,creative_body,creative_title,adset_name,ad_status')
           .eq('client_id', client.id).eq('campaign_id', campaignId)
           .eq('adset_name', adsetId)
+          .gte('date', metaQFrom)
           .order('date', { ascending: false }).limit(1000))
 
     // Extract adset_name from metadata — this is always present even in rows where adset_id was null
