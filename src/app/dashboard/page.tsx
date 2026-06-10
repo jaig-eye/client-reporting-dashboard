@@ -621,10 +621,11 @@ export default async function DashboardPage({
     }
     return total
   }
-  const googleDailyBudgetRaw = sumBudgetBySource('google_ads')
-  const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
-  const googleDailyBudget = effectiveAdFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, effectiveAdFuelCut) : googleDailyBudgetRaw
-  const metaDailyBudget   = effectiveAdFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   effectiveAdFuelCut) : metaDailyBudgetRaw
+  // Budget values are raw Meta platform values — no Ad Fuel markup applied.
+  // Budget is a platform spending cap (what Meta will spend), not a billed amount.
+  // Marking it up would conflict with what clients see in their own Meta/Google accounts.
+  const googleDailyBudget = sumBudgetBySource('google_ads')
+  const metaDailyBudget   = sumBudgetBySource('meta_ads')
   const monthlyBudget     = (googleDailyBudget + metaDailyBudget) * 30.4
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────

@@ -489,7 +489,7 @@ export default async function CampaignDetailPage({
         conversions:     s.conversions,
         conversionValue: s.conversionValue,
         adCount:         s.adIds.size,
-        adsetBudget:     s.adsetBudget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(s.adsetBudget, effectiveAdFuelCut) : s.adsetBudget) : null,
+        adsetBudget:     s.adsetBudget ?? null,  // raw Meta budget — no Ad Fuel markup (budget is a platform cap, not a billed amount)
         cpl:             s.conversions > 0 ? cost / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
         convRate:        s.clicks > 0 ? s.conversions / s.clicks : 0,
