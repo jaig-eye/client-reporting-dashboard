@@ -174,7 +174,8 @@ export async function fetchMetaAdMetrics(
   auth: Record<string, unknown>,
   dateFrom: string,
   dateTo: string,
-  onRawRowsReady?: (rows: MetaAdRawRow[]) => Promise<void>
+  onRawRowsReady?: (rows: MetaAdRawRow[]) => Promise<void>,
+  preloadedAdsetData?: { names: Map<string, string>; budgets: Map<string, number> }
 ): Promise<MetaAdRawRow[]> {
   const accessToken = resolveToken(auth)
   if (!accessToken) return []
@@ -225,37 +226,38 @@ export async function fetchMetaAdMetrics(
     console.log(`[meta] fetchMetaAdMetrics chunk ${ci+1} done: ${rawApiRows.length} total rows so far`)
   }
 
-  // Fetch adset names AND daily budgets in a single paginated call.
-  // Using metaFetchWithRetry (not metaGet) so rate-limit back-off is handled automatically.
-  // Combining both into one call avoids a second adsets API request that would hit the
-  // rate limit on large accounts that already have many insight API calls in flight.
-  const adsetNameMap   = new Map<string, string>()
-  const adsetBudgetById = new Map<string, number>()  // id → daily_budget (ABO adsets only)
-  try {
-    let adsetNextUrl: string | null = new URL(`${BASE_URL}/${externalId}/adsets`, 'https://graph.facebook.com').toString()
-    // Include effective_status so we can skip DELETED/ARCHIVED adsets — their stored
-    // budget would otherwise persist in the DB as stale data after deletion.
-    adsetNextUrl += `?fields=id%2Cname%2Cdaily_budget%2Ceffective_status&limit=500&access_token=${encodeURIComponent(accessToken)}`
-    while (adsetNextUrl) {
-      const adsetData = await metaFetchWithRetry(adsetNextUrl)
-      for (const s of (adsetData.data || []) as Record<string, unknown>[]) {
-        const sid    = String(s.id              || '')
-        const sname  = String(s.name            || '')
-        const budget = Number(s.daily_budget    || 0) / 100  // cents → account currency
-        const est    = String(s.effective_status || '').toUpperCase()
-        // Skip deleted/archived adsets — they're gone from the platform and shouldn't
-        // appear with a budget. Active/paused/learning all get their budget stored.
-        if (sid && est !== 'DELETED' && est !== 'ARCHIVED') {
-          if (sname)      adsetNameMap.set(sid, sname)
-          if (budget > 0) adsetBudgetById.set(sid, budget)
+  // Use pre-loaded adset data from fetchMetrics if available — this avoids a second
+  // adsets API call that causes rate-limit errors on large accounts (code 17).
+  // If not provided, fall back to fetching from the API directly.
+  let adsetNameMap    = new Map<string, string>()
+  let adsetBudgetById = new Map<string, number>()
+  if (preloadedAdsetData) {
+    adsetNameMap    = preloadedAdsetData.names
+    adsetBudgetById = preloadedAdsetData.budgets
+    console.log(`[meta] fetchMetaAdMetrics: using pre-loaded adset data — ${adsetNameMap.size} names, ${adsetBudgetById.size} budgets`)
+  } else {
+    try {
+      let adsetNextUrl: string | null = new URL(`${BASE_URL}/${externalId}/adsets`, 'https://graph.facebook.com').toString()
+      adsetNextUrl += `?fields=id%2Cname%2Cdaily_budget%2Ceffective_status&limit=500&access_token=${encodeURIComponent(accessToken)}`
+      while (adsetNextUrl) {
+        const adsetData = await metaFetchWithRetry(adsetNextUrl)
+        for (const s of (adsetData.data || []) as Record<string, unknown>[]) {
+          const sid    = String(s.id               || '')
+          const sname  = String(s.name             || '')
+          const budget = Number(s.daily_budget     || 0) / 100
+          const est    = String(s.effective_status || '').toUpperCase()
+          if (sid && est !== 'DELETED' && est !== 'ARCHIVED') {
+            if (sname)      adsetNameMap.set(sid, sname)
+            if (budget > 0) adsetBudgetById.set(sid, budget)
+          }
         }
+        const pg = adsetData.paging as Record<string, unknown> | undefined
+        adsetNextUrl = typeof pg?.next === 'string' ? pg.next : null
       }
-      const pg = adsetData.paging as Record<string, unknown> | undefined
-      adsetNextUrl = typeof pg?.next === 'string' ? pg.next : null
+      console.log(`[meta] fetchMetaAdMetrics: fetched ${adsetNameMap.size} adset names, ${adsetBudgetById.size} ABO adset budgets`)
+    } catch (e) {
+      console.warn('[meta] adset name/budget backfill failed (non-fatal):', e)
     }
-    console.log(`[meta] fetchMetaAdMetrics: fetched ${adsetNameMap.size} adset names, ${adsetBudgetById.size} ABO adset budgets`)
-  } catch (e) {
-    console.warn('[meta] adset name/budget backfill failed (non-fatal):', e)
   }
 
   for (const day of rawApiRows) {
@@ -639,10 +641,12 @@ export const metaAdsConnector: ConnectorAdapter = {
 
     // Fetch campaign daily budgets and effective_status from the Campaigns API
     // (neither field is available in the Insights API)
-    const budgetMap = new Map<string, number>() // CBO: campaign-level budget
-    const statusMap = new Map<string, string>()
-    const nameMap   = new Map<string, string>()
-    const adsetBudgetMap = new Map<string, number>() // ABO: sum of active adset budgets per campaign
+    const budgetMap        = new Map<string, number>() // CBO: campaign-level budget (keyed by campaign_id)
+    const statusMap        = new Map<string, string>()
+    const nameMap          = new Map<string, string>()
+    const adsetBudgetMap   = new Map<string, number>() // ABO: sum of active adset budgets per campaign_id
+    const adsetIdBudgetMap = new Map<string, number>() // per-adset budget (keyed by adset_id) → passed to ad-level sync
+    const adsetIdNameMap   = new Map<string, string>()  // per-adset name  (keyed by adset_id) → passed to ad-level sync
     let allCampaignList: Record<string, unknown>[] = []
     try {
       const [campData, adsetData] = await Promise.all([
@@ -651,11 +655,10 @@ export const metaAdsConnector: ConnectorAdapter = {
           limit: '500',
         }),
         metaGet(`/${externalId}/adsets`, accessToken, {
-          // Use `status` (adset's own configured state) not `effective_status`.
-          // effective_status inherits from parent: when a campaign is paused, all adsets
-          // show CAMPAIGN_PAUSED even if their own budgets are configured and ready to run.
-          // Using status=ACTIVE gives the correct "allocated budget" regardless of parent state.
-          fields: 'campaign_id,daily_budget,status',
+          // id is always returned by Meta's API regardless of fields listed.
+          // effective_status needed to skip DELETED/ARCHIVED adsets.
+          // name needed for the adset names backfill passed to fetchMetaAdMetrics.
+          fields: 'campaign_id,name,daily_budget,status,effective_status',
           limit: '500',
         }),
       ])
@@ -674,12 +677,25 @@ export const metaAdsConnector: ConnectorAdapter = {
       // For ABO campaigns (no campaign-level budget), sum adset budgets.
       // Filter by adset's own `status` (not effective_status) so the sum reflects
       // configured allocation even when the parent campaign is paused.
+      // Also build per-adset-id budget/name maps to pass to fetchMetaAdMetrics —
+      // this eliminates the duplicate adsets API call that causes rate-limit errors.
       for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
-        const cid    = String(adset.campaign_id || '')
-        const budget = Number(adset.daily_budget || 0) / 100
-        const status = String(adset.status || '')
+        const aid    = String(adset.id              || '')
+        const cid    = String(adset.campaign_id     || '')
+        const sname  = String(adset.name            || '')
+        const budget = Number(adset.daily_budget    || 0) / 100
+        const status = String(adset.status          || '')
+        const est    = String(adset.effective_status || '').toUpperCase()
+        if (est === 'DELETED' || est === 'ARCHIVED') continue
+        // ABO campaign budget (per campaign)
         if (cid && budget > 0 && status === 'ACTIVE') {
           adsetBudgetMap.set(cid, (adsetBudgetMap.get(cid) ?? 0) + budget)
+        }
+        // Per-adset budget + name — passed via extraRows to the ad-level sync
+        // so fetchMetaAdMetrics doesn't need a second adsets API call.
+        if (aid) {
+          if (sname)      adsetIdNameMap.set(aid, sname)
+          if (budget > 0) adsetIdBudgetMap.set(aid, budget)
         }
       }
     } catch {
@@ -721,9 +737,19 @@ export const metaAdsConnector: ConnectorAdapter = {
     const totalSpend = rows.reduce((s, r) => s + (r.spend ?? 0), 0)
     console.log(`[meta] fetchMetrics returning ${rows.length} rows, total spend=$${totalSpend.toFixed(2)}`)
 
+    // Serialize adset-level data into extraRows so sync.ts can pass it directly
+    // to fetchMetaAdMetrics, eliminating the duplicate adsets API call that
+    // causes rate-limit errors on large accounts.
+    const adsetDataForAdSync = Array.from(adsetIdBudgetMap.entries()).map(([id, budget]) => ({
+      id,
+      name:   adsetIdNameMap.get(id) ?? '',
+      budget,
+    }))
+
     return {
       rows,
       discoveredActions: Array.from(discoveredActions),
+      extraRows: adsetDataForAdSync.length > 0 ? { adset_data: adsetDataForAdSync } : undefined,
     }
   },
 

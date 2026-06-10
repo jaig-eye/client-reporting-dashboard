@@ -222,6 +222,14 @@ export async function syncClient(
           result.rows as MetaAdsRawRow[],
           result.discoveredActions ?? []
         )
+        // Extract pre-loaded adset data from the campaign sync result so the
+        // ad-level sync doesn't need a second adsets API call (avoids rate limits).
+        const adsetRows = (result.extraRows?.adset_data ?? []) as { id: string; name: string; budget: number }[]
+        const preloadedAdsetData = adsetRows.length > 0 ? {
+          names:   new Map(adsetRows.map(a => [a.id, a.name])),
+          budgets: new Map(adsetRows.map(a => [a.id, a.budget])),
+        } : undefined
+
         // Ad-level sync (best-effort) — rows counted separately so the UI shows
         // the true total (campaign rows + ad rows) instead of just campaign rows.
         // onRawRowsReady upserts raw insight rows immediately after all chunks are
@@ -238,7 +246,8 @@ export async function syncClient(
               console.log(`[sync] Meta ad-level (raw): ${rawRows.length} rows for connection ${connection.id}`)
               onProgress(93, 'Saving ad-level insight data…')
               rawAdCount = await upsertMetaAdsAdMetrics(db, connection.id, clientId, rawRows)
-            }
+            },
+            preloadedAdsetData
           )
           console.log(`[sync] Meta ad-level (enriched): ${adRows.length} rows for connection ${connection.id}`)
           if (adRows.length > 0) {
