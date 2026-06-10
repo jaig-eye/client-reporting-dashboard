@@ -303,18 +303,20 @@ export async function fetchMetaAdMetrics(
     console.error('[meta] fetchAdCreatives failed (non-fatal, continuing without creatives):', e)
   }
 
-  // Fetch per-adset budgets so ABO ad rows carry their adset's daily budget.
-  // CBO adsets return daily_budget=0 from the API; we leave those as null.
-  // Only fetch the first page (500 adsets) — sufficient for most accounts and
-  // avoids adding significant latency to the sync with full pagination.
+  // Fetch per-adset budgets so ABO ad rows carry their adset's own daily budget.
+  // CBO adsets have no adset-level budget (daily_budget=0); those stay null.
+  // Must include 'id' in fields — without it adset.id is undefined and the map
+  // is built with empty-string keys, making every lookup return null.
   const adsetBudgetById = new Map<string, number>()
   try {
-    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, { fields: 'daily_budget', limit: '500' })
-    for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, { fields: 'id,daily_budget', limit: '500' })
+    const adsetRows = (adsetData.data || []) as Record<string, unknown>[]
+    for (const adset of adsetRows) {
       const aid    = String(adset.id || '')
       const budget = Number(adset.daily_budget || 0) / 100
       if (aid && budget > 0) adsetBudgetById.set(aid, budget)
     }
+    console.log(`[meta] adset budget fetch: ${adsetBudgetById.size} adsets with budget out of ${adsetRows.length} total`)
   } catch (e) {
     console.error('[meta] adset budget fetch failed (non-fatal, adset_daily_budget will be null):', e)
   }
@@ -652,7 +654,11 @@ export const metaAdsConnector: ConnectorAdapter = {
           limit: '500',
         }),
         metaGet(`/${externalId}/adsets`, accessToken, {
-          fields: 'campaign_id,daily_budget,effective_status',
+          // Use `status` (adset's own configured state) not `effective_status`.
+          // effective_status inherits from parent: when a campaign is paused, all adsets
+          // show CAMPAIGN_PAUSED even if their own budgets are configured and ready to run.
+          // Using status=ACTIVE gives the correct "allocated budget" regardless of parent state.
+          fields: 'campaign_id,daily_budget,status',
           limit: '500',
         }),
       ])
@@ -668,11 +674,13 @@ export const metaAdsConnector: ConnectorAdapter = {
           if (name)       nameMap.set(cid, name)
         }
       }
-      // For ABO campaigns (no campaign-level budget), sum active adset budgets
+      // For ABO campaigns (no campaign-level budget), sum adset budgets.
+      // Filter by adset's own `status` (not effective_status) so the sum reflects
+      // configured allocation even when the parent campaign is paused.
       for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
         const cid    = String(adset.campaign_id || '')
         const budget = Number(adset.daily_budget || 0) / 100
-        const status = String(adset.effective_status || '')
+        const status = String(adset.status || '')
         if (cid && budget > 0 && status === 'ACTIVE') {
           adsetBudgetMap.set(cid, (adsetBudgetMap.get(cid) ?? 0) + budget)
         }
