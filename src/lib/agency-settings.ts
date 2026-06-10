@@ -42,7 +42,7 @@ const _fetchAgencySettings = unstable_cache(
     }
   },
   ['agency-settings-global'],
-  { revalidate: 3600 }
+  { revalidate: 3600, tags: ['agency-settings'] }
 )
 
 export async function getAgencySettings(): Promise<AgencySettings> {

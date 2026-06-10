@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 import { getAdminSession, timingSafeCompare } from '@/lib/auth'
@@ -85,6 +85,7 @@ export async function PUT(request: NextRequest) {
 
   revalidatePath('/admin/settings')
   revalidatePath('/admin')
+  revalidateTag('agency-settings')  // bust the cached getAgencySettings() on client dashboards
 
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(patch) } })

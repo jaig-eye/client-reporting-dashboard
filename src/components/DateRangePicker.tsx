@@ -140,7 +140,7 @@ export default function DateRangePicker({
 
   function applyCompare(value: string) {
     setCmp(value)
-    router.push(buildUrl(from, to, value))
+    startTransition(() => router.push(buildUrl(from, to, value)))
   }
 
   const presetLabel = activePreset ? PRESETS.find(p => p.id === activePreset)?.label : null
