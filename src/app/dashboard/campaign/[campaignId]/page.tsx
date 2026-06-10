@@ -386,13 +386,15 @@ export default async function CampaignDetailPage({
           budget: r.adset_daily_budget ?? null,
         })
       } else {
-        // Keep scanning to fill in any null values from more-recent rows
+        // Status: scan back through older rows for the first non-null value.
+        // Recent rows often omit ad_status (sync uses || undefined), so scanning
+        // back is correct here.
         if (ex.status === null && r.ad_status != null) {
           ex.status = normalizeMetaAdStatus(r.ad_status)
         }
-        if (ex.budget === null && r.adset_daily_budget != null) {
-          ex.budget = r.adset_daily_budget
-        }
+        // Budget: do NOT scan back — only use the value from the most recent row.
+        // Scanning back would pick up stale historical budgets (budgets change over time
+        // and old rows reflect what was set months ago, not the current allocation).
       }
     }
     // Apply current metadata to existing setMap entries AND surface any adsets
@@ -489,7 +491,7 @@ export default async function CampaignDetailPage({
         conversions:     s.conversions,
         conversionValue: s.conversionValue,
         adCount:         s.adIds.size,
-        adsetBudget:     s.adsetBudget ?? null,  // raw Meta budget — no Ad Fuel markup (budget is a platform cap, not a billed amount)
+        adsetBudget:     s.adsetBudget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(s.adsetBudget, effectiveAdFuelCut) : s.adsetBudget) : null,
         cpl:             s.conversions > 0 ? cost / s.conversions : 0,
         ctr:             s.impressions > 0 ? s.clicks / s.impressions : 0,
         convRate:        s.clicks > 0 ? s.conversions / s.clicks : 0,
