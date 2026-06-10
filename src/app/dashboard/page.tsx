@@ -367,8 +367,8 @@ export default async function DashboardPage({
   }
 
   const currentMetrics = [
-    ...normalise(dedupeBy((gRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id}_${r.date}`), 'google_ads'),
-    ...normalise(dedupeBy((mRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id}_${r.date}`), 'meta_ads'),
+    ...normalise(dedupeBy((gRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
+    ...normalise(dedupeBy((mRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
   ]
 
   // Override Meta spend, impressions, clicks in currentMetrics before summarizeMetrics
@@ -383,8 +383,8 @@ export default async function DashboardPage({
   }
 
   const priorMetrics = [
-    ...normalise(dedupeBy((gPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id}_${r.date}`), 'google_ads'),
-    ...normalise(dedupeBy((mPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id}_${r.date}`), 'meta_ads'),
+    ...normalise(dedupeBy((gPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
+    ...normalise(dedupeBy((mPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
   ]
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

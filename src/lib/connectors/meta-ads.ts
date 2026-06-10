@@ -298,16 +298,21 @@ export async function fetchMetaAdMetrics(
 
   // Fetch per-adset budgets so ABO ad rows carry their adset's daily budget.
   // CBO adsets return daily_budget=0 from the API; we leave those as null.
+  // Paginate through all adsets so large accounts (>500 adsets) are fully covered.
   const adsetBudgetById = new Map<string, number>()
   try {
-    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, {
-      fields: 'daily_budget',
-      limit:  '500',
-    })
-    for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
-      const aid    = String(adset.id || '')
-      const budget = Number(adset.daily_budget || 0) / 100
-      if (aid && budget > 0) adsetBudgetById.set(aid, budget)
+    let adsetUrl: string | null = `/${externalId}/adsets`
+    let adsetParams: Record<string, string> | undefined = { fields: 'daily_budget', limit: '500' }
+    while (adsetUrl) {
+      const adsetData = await metaGet(adsetUrl, accessToken, adsetParams)
+      for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+        const aid    = String(adset.id || '')
+        const budget = Number(adset.daily_budget || 0) / 100
+        if (aid && budget > 0) adsetBudgetById.set(aid, budget)
+      }
+      const next = (adsetData.paging as Record<string, unknown> | undefined)?.next
+      adsetUrl   = typeof next === 'string' ? next : null
+      adsetParams = undefined  // next URL already includes params
     }
   } catch { /* best-effort — budget stays null */ }
 

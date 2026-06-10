@@ -510,6 +510,8 @@ export default async function CampaignDetailPage({
         existing.roas     = existing.spend > 0 && existing.conversionValue > 0 ? existing.conversionValue / existing.spend : 0
         existing.revenue  = existing.conversionValue
         if (!existing.status && g.status) existing.status = g.status
+        // Keep the first non-null adset budget — both entries represent the same adset
+        if (existing.adsetBudget == null && g.adsetBudget != null) existing.adsetBudget = g.adsetBudget
       } else {
         acc.push(g)
       }
