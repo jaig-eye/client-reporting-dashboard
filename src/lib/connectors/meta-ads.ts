@@ -225,23 +225,32 @@ export async function fetchMetaAdMetrics(
     console.log(`[meta] fetchMetaAdMetrics chunk ${ci+1} done: ${rawApiRows.length} total rows so far`)
   }
 
-  // Backfill adset names from the Adsets API — the Insights API occasionally omits
-  // adset_name even when requested, particularly for some ad types/configurations.
-  const adsetNameMap = new Map<string, string>()
+  // Fetch adset names AND daily budgets in a single paginated call.
+  // Using metaFetchWithRetry (not metaGet) so rate-limit back-off is handled automatically.
+  // Combining both into one call avoids a second adsets API request that would hit the
+  // rate limit on large accounts that already have many insight API calls in flight.
+  const adsetNameMap   = new Map<string, string>()
+  const adsetBudgetById = new Map<string, number>()  // id → daily_budget (ABO adsets only)
   try {
     let adsetNextUrl: string | null = new URL(`${BASE_URL}/${externalId}/adsets`, 'https://graph.facebook.com').toString()
-    adsetNextUrl += `?fields=id%2Cname&limit=500&access_token=${encodeURIComponent(accessToken)}`
+    adsetNextUrl += `?fields=id%2Cname%2Cdaily_budget&limit=500&access_token=${encodeURIComponent(accessToken)}`
     while (adsetNextUrl) {
       const adsetData = await metaFetchWithRetry(adsetNextUrl)
       for (const s of (adsetData.data || []) as Record<string, unknown>[]) {
-        if (s.id && s.name) adsetNameMap.set(String(s.id), String(s.name))
+        const sid    = String(s.id   || '')
+        const sname  = String(s.name || '')
+        const budget = Number(s.daily_budget || 0) / 100  // cents → account currency
+        if (sid) {
+          if (sname)    adsetNameMap.set(sid, sname)
+          if (budget > 0) adsetBudgetById.set(sid, budget)
+        }
       }
       const pg = adsetData.paging as Record<string, unknown> | undefined
       adsetNextUrl = typeof pg?.next === 'string' ? pg.next : null
     }
-    console.log(`[meta] fetchMetaAdMetrics: fetched ${adsetNameMap.size} adset names for backfill`)
+    console.log(`[meta] fetchMetaAdMetrics: fetched ${adsetNameMap.size} adset names, ${adsetBudgetById.size} ABO adset budgets`)
   } catch (e) {
-    console.warn('[meta] adset name backfill failed (non-fatal):', e)
+    console.warn('[meta] adset name/budget backfill failed (non-fatal):', e)
   }
 
   for (const day of rawApiRows) {
@@ -303,25 +312,8 @@ export async function fetchMetaAdMetrics(
     console.error('[meta] fetchAdCreatives failed (non-fatal, continuing without creatives):', e)
   }
 
-  // Fetch per-adset budgets so ABO ad rows carry their adset's own daily budget.
-  // CBO adsets have no adset-level budget (daily_budget=0); those stay null.
-  // Must include 'id' in fields — without it adset.id is undefined and the map
-  // is built with empty-string keys, making every lookup return null.
-  const adsetBudgetById = new Map<string, number>()
-  try {
-    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, { fields: 'id,daily_budget', limit: '500' })
-    const adsetRows = (adsetData.data || []) as Record<string, unknown>[]
-    for (const adset of adsetRows) {
-      const aid    = String(adset.id || '')
-      const budget = Number(adset.daily_budget || 0) / 100
-      if (aid && budget > 0) adsetBudgetById.set(aid, budget)
-    }
-    console.log(`[meta] adset budget fetch: ${adsetBudgetById.size} adsets with budget out of ${adsetRows.length} total`)
-  } catch (e) {
-    console.error('[meta] adset budget fetch failed (non-fatal, adset_daily_budget will be null):', e)
-  }
-
   // Merge creative data and adset budgets into final rows
+  // adsetBudgetById is built above in the combined adset names+budgets fetch
   for (const row of rawRows) {
     const creative = creativeMap[row.ad_id] ?? {}
     rows.push({
