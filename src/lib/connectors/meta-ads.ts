@@ -233,15 +233,20 @@ export async function fetchMetaAdMetrics(
   const adsetBudgetById = new Map<string, number>()  // id → daily_budget (ABO adsets only)
   try {
     let adsetNextUrl: string | null = new URL(`${BASE_URL}/${externalId}/adsets`, 'https://graph.facebook.com').toString()
-    adsetNextUrl += `?fields=id%2Cname%2Cdaily_budget&limit=500&access_token=${encodeURIComponent(accessToken)}`
+    // Include effective_status so we can skip DELETED/ARCHIVED adsets — their stored
+    // budget would otherwise persist in the DB as stale data after deletion.
+    adsetNextUrl += `?fields=id%2Cname%2Cdaily_budget%2Ceffective_status&limit=500&access_token=${encodeURIComponent(accessToken)}`
     while (adsetNextUrl) {
       const adsetData = await metaFetchWithRetry(adsetNextUrl)
       for (const s of (adsetData.data || []) as Record<string, unknown>[]) {
-        const sid    = String(s.id   || '')
-        const sname  = String(s.name || '')
-        const budget = Number(s.daily_budget || 0) / 100  // cents → account currency
-        if (sid) {
-          if (sname)    adsetNameMap.set(sid, sname)
+        const sid    = String(s.id              || '')
+        const sname  = String(s.name            || '')
+        const budget = Number(s.daily_budget    || 0) / 100  // cents → account currency
+        const est    = String(s.effective_status || '').toUpperCase()
+        // Skip deleted/archived adsets — they're gone from the platform and shouldn't
+        // appear with a budget. Active/paused/learning all get their budget stored.
+        if (sid && est !== 'DELETED' && est !== 'ARCHIVED') {
+          if (sname)      adsetNameMap.set(sid, sname)
           if (budget > 0) adsetBudgetById.set(sid, budget)
         }
       }
