@@ -386,15 +386,15 @@ export default async function CampaignDetailPage({
           budget: r.adset_daily_budget ?? null,
         })
       } else {
-        // Status: scan back through older rows for the first non-null value.
-        // Recent rows often omit ad_status (sync uses || undefined), so scanning
-        // back is correct here.
+        // Scan back for the first non-null value of each field.
+        // Recent rows often omit ad_status/adset_daily_budget (sync uses || undefined),
+        // so this finds the most recent row that actually had a value set.
         if (ex.status === null && r.ad_status != null) {
           ex.status = normalizeMetaAdStatus(r.ad_status)
         }
-        // Budget: do NOT scan back — only use the value from the most recent row.
-        // Scanning back would pick up stale historical budgets (budgets change over time
-        // and old rows reflect what was set months ago, not the current allocation).
+        if (ex.budget === null && r.adset_daily_budget != null) {
+          ex.budget = r.adset_daily_budget
+        }
       }
     }
     // Apply current metadata to existing setMap entries AND surface any adsets
@@ -411,7 +411,11 @@ export default async function CampaignDetailPage({
         const ex = setMap.get(sid)!
         if (meta.name)           ex.setName    = meta.name
         if (meta.status != null) ex.status     = meta.status
-        if (meta.budget != null) ex.adsetBudget = meta.budget  // raw; applyAdFuel applied once in adGroups
+        // Always overwrite adsetBudget from currentAdsetMeta, even when null.
+        // This clears any stale value accumulated from the date-range rows loop,
+        // so the column always shows the most-recent-non-null from the 90-day window
+        // (or — if no synced value exists yet).
+        ex.adsetBudget = meta.budget
       } else if (meta.name && !isMetaDefaultName(meta.name)) {
         // No direct key match. Try to find an existing setMap entry by name
         // (handles the case where setMap key = adset_name but currentAdsetMeta key = adset_id).
@@ -422,7 +426,7 @@ export default async function CampaignDetailPage({
         if (matchByName) {
           // Found the same adset under a different key — update status and budget
           if (meta.status != null) matchByName.status = meta.status
-          if (meta.budget != null) matchByName.adsetBudget = meta.budget  // raw; markup in adGroups
+          matchByName.adsetBudget = meta.budget  // always overwrite to clear stale rows-loop value
         } else {
           // Truly new adset — had no activity in the date range → add with zero metrics
           setMap.set(sid, {
