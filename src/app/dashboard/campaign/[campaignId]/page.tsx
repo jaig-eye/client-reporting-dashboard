@@ -409,7 +409,7 @@ export default async function CampaignDetailPage({
         const ex = setMap.get(sid)!
         if (meta.name)           ex.setName    = meta.name
         if (meta.status != null) ex.status     = meta.status
-        if (meta.budget != null) ex.adsetBudget = effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget
+        if (meta.budget != null) ex.adsetBudget = meta.budget  // raw; applyAdFuel applied once in adGroups
       } else if (meta.name && !isMetaDefaultName(meta.name)) {
         // No direct key match. Try to find an existing setMap entry by name
         // (handles the case where setMap key = adset_name but currentAdsetMeta key = adset_id).
@@ -420,12 +420,11 @@ export default async function CampaignDetailPage({
         if (matchByName) {
           // Found the same adset under a different key — update status and budget
           if (meta.status != null) matchByName.status = meta.status
-          if (meta.budget != null) matchByName.adsetBudget = effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget
+          if (meta.budget != null) matchByName.adsetBudget = meta.budget  // raw; markup in adGroups
         } else {
           // Truly new adset — had no activity in the date range → add with zero metrics
-          const curBudget = meta.budget != null ? (effectiveAdFuelCut > 0 ? applyAdFuel(meta.budget, effectiveAdFuelCut) : meta.budget) : null
           setMap.set(sid, {
-            setName: meta.name, status: meta.status, adsetBudget: curBudget,
+            setName: meta.name, status: meta.status, adsetBudget: meta.budget ?? null,  // raw
             latestDate: '', spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
             adIds: new Set(),
           })

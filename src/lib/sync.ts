@@ -249,7 +249,8 @@ export async function syncClient(
             recordCount += rawAdCount
           }
         } catch (adErr) {
-          adLevelError = `Ad-level sync failed: ${String(adErr)}`
+          const adErrMsg = adErr instanceof Error ? adErr.message : JSON.stringify(adErr)
+          adLevelError = `Ad-level sync failed: ${adErrMsg}`
           console.error(`[sync] Meta ad-level sync failed for connection ${connection.id}:`, adErr)
           recordCount += rawAdCount  // count any rows saved by the early upsert
         }

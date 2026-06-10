@@ -223,7 +223,7 @@ export async function GET(
       connector_type: connectorType,
       external_id:    conn.external_id,
       date_range:     { from: dateFrom, to: dateTo },
-      error:          String(err),
+      error:          err instanceof Error ? err.message : JSON.stringify(err),
     }, { status: 500 })
   }
 }

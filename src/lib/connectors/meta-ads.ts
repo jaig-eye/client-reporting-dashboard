@@ -293,28 +293,31 @@ export async function fetchMetaAdMetrics(
     )
   }
 
-  // Batch-fetch creative assets for all unique ad_ids (once across all chunks)
-  const creativeMap = await fetchAdCreatives(Array.from(adIdSet), accessToken)
+  // Batch-fetch creative assets for all unique ad_ids (once across all chunks).
+  // Wrapped defensively — fetchAdCreatives has internal try/catches per batch but
+  // we guard the call site too in case of unexpected failures (network timeout, etc.).
+  let creativeMap: Record<string, Partial<AdCreativeData>> = {}
+  try {
+    creativeMap = await fetchAdCreatives(Array.from(adIdSet), accessToken)
+  } catch (e) {
+    console.error('[meta] fetchAdCreatives failed (non-fatal, continuing without creatives):', e)
+  }
 
   // Fetch per-adset budgets so ABO ad rows carry their adset's daily budget.
   // CBO adsets return daily_budget=0 from the API; we leave those as null.
-  // Paginate through all adsets so large accounts (>500 adsets) are fully covered.
+  // Only fetch the first page (500 adsets) — sufficient for most accounts and
+  // avoids adding significant latency to the sync with full pagination.
   const adsetBudgetById = new Map<string, number>()
   try {
-    let adsetUrl: string | null = `/${externalId}/adsets`
-    let adsetParams: Record<string, string> | undefined = { fields: 'daily_budget', limit: '500' }
-    while (adsetUrl) {
-      const adsetData = await metaGet(adsetUrl, accessToken, adsetParams)
-      for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
-        const aid    = String(adset.id || '')
-        const budget = Number(adset.daily_budget || 0) / 100
-        if (aid && budget > 0) adsetBudgetById.set(aid, budget)
-      }
-      const next = (adsetData.paging as Record<string, unknown> | undefined)?.next
-      adsetUrl   = typeof next === 'string' ? next : null
-      adsetParams = undefined  // next URL already includes params
+    const adsetData = await metaGet(`/${externalId}/adsets`, accessToken, { fields: 'daily_budget', limit: '500' })
+    for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+      const aid    = String(adset.id || '')
+      const budget = Number(adset.daily_budget || 0) / 100
+      if (aid && budget > 0) adsetBudgetById.set(aid, budget)
     }
-  } catch { /* best-effort — budget stays null */ }
+  } catch (e) {
+    console.error('[meta] adset budget fetch failed (non-fatal, adset_daily_budget will be null):', e)
+  }
 
   // Merge creative data and adset budgets into final rows
   for (const row of rawRows) {

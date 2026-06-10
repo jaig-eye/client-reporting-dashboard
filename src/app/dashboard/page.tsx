@@ -211,10 +211,10 @@ export default async function DashboardPage({
     db.from('ad_fuel_ach_pending').select('amount_af').eq('client_id', client.id),
   ])
 
-  // If either spend RPC errored (network issue, timeout, etc.), the spend would silently
-  // fall back to 0, making the balance appear as the full purchased amount. Track whether
-  // the RPCs succeeded so we can suppress the badge rather than show a wrong number.
+  // If either spend RPC errored, log it — balance will show as full purchased amount
+  // (spend treated as 0) but the badge remains visible.
   const spendRpcFailed = !!(gLifeRpc.error || mLifeRpc.error)
+  if (spendRpcFailed) console.error('[dashboard] Ad Fuel spend RPCs failed:', gLifeRpc.error, mLifeRpc.error)
 
   let gRawLife = Number(((gLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
   let mRawLife = Number(((mLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)

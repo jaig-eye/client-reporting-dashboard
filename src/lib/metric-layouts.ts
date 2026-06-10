@@ -280,7 +280,7 @@ export const DEFAULT_META_MEDIA_ECOM: PlatformMetricLayout = {
   top_metrics:           ['impressions', 'clicks', 'ctr', 'video_views'],
   table_columns:         ['campaign_name', 'status', 'spend', 'reach', 'frequency', 'revenue', 'roas'],
   adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'roas', 'revenue'],
-  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'roas'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
 // ── All available metrics (for the layout editor UI) ─────────────────────────
