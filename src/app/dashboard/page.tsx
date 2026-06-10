@@ -172,7 +172,7 @@ export default async function DashboardPage({
     // of which historical period the user is viewing.
     hasGoogle
       ? db.from('google_ads_metrics')
-          .select('campaign_id,campaign_status,daily_budget')
+          .select('campaign_id,campaign_status,daily_budget,date')
           .eq('client_id', client.id)
           .not('daily_budget', 'is', null)
           .order('date', { ascending: false })
@@ -181,7 +181,7 @@ export default async function DashboardPage({
 
     hasMeta
       ? db.from('meta_ads_metrics')
-          .select('campaign_id,campaign_status,daily_budget')
+          .select('campaign_id,campaign_status,daily_budget,date')
           .eq('client_id', client.id)
           .not('daily_budget', 'is', null)
           .order('date', { ascending: false })
@@ -502,15 +502,18 @@ export default async function DashboardPage({
   // Build current-budget maps — first row per campaign_id is the most recent (date DESC).
   // These are used to show the real current budget regardless of the selected date range,
   // matching how names/statuses are handled.
-  type BudgetRow = { campaign_id: string; campaign_status: string | null; daily_budget: number | null }
+  // Build current-budget maps with explicit deduplication by (campaign_id, date) to match
+  // the same pattern used for currentMetrics. This prevents multiple connections to the
+  // same ad account from producing non-deterministic results in the Map.
+  type BudgetRow = { campaign_id: string; campaign_status: string | null; daily_budget: number | null; date: string }
   const googleCurrentBudget = new Map<string, { budget: number; status: string | null }>()
-  for (const r of (gBudgetRes.data ?? []) as BudgetRow[]) {
+  for (const r of dedupeBy((gBudgetRes.data ?? []) as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
     if (!googleCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
       googleCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
     }
   }
   const metaCurrentBudget = new Map<string, { budget: number; status: string | null }>()
-  for (const r of (mBudgetRes.data ?? []) as BudgetRow[]) {
+  for (const r of dedupeBy((mBudgetRes.data ?? []) as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
     if (!metaCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
       metaCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
     }

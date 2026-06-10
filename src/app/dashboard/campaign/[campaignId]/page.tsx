@@ -286,11 +286,14 @@ export default async function CampaignDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as MetaAdRow[] }),
-      // Current adset metadata — no date filter, ordered by date desc so first row per adset is current
+      // Current adset metadata — bounded to 90 days (same window as adset detail metaQ).
+      // Adsets deleted/renamed >90 days ago stop receiving sync rows and won't appear,
+      // preventing ghost zero-metric entries from stale historical data.
       db.from('meta_ads_ad_metrics')
         .select('adset_id,adset_name,ad_status,adset_daily_budget')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
+        .gte('date', (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0] })())
         .order('date', { ascending: false })
         .limit(1000),
     ])
