@@ -65,8 +65,8 @@ export default async function AdminOverviewPage({
   noStore()
   const today    = new Date()
   const params   = await searchParams
-  const dateFrom = params.from  ?? getMtdFrom()
-  const dateTo   = params.to    ?? fmtDate(today)
+  const dateFrom = params.from  || getMtdFrom()
+  const dateTo   = params.to    || fmtDate(today)
   const sortCol  = params.sort  ?? ''
   const sortDir  = params.dir   === 'asc' ? 'asc' : 'desc'
   const compare  = params.compare ?? 'none'

@@ -14,14 +14,14 @@
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_meta_ad_metrics_client_ad_date
+CREATE INDEX IF NOT EXISTS idx_meta_ad_metrics_client_ad_date
   ON meta_ads_ad_metrics (client_id, ad_id, date);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_google_metrics_client_campaign_date
+CREATE INDEX IF NOT EXISTS idx_google_metrics_client_campaign_date
   ON google_ads_metrics (client_id, campaign_id, date);
 
 -- Index for admin dashboard Meta query (client_id, date filter)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_meta_metrics_client_date
+CREATE INDEX IF NOT EXISTS idx_meta_metrics_client_date
   ON meta_ads_metrics (client_id, date);
 
 -- ── sum_meta_spend_by_client (with 60s timeout) ──────────────────────────────

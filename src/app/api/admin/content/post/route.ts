@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await db
     .from('content_posts')
-    .select('id, client_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url')
+    .select('id, client_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date')
     .eq('id', id)
     .single()
 
@@ -72,7 +72,8 @@ export async function GET(request: NextRequest) {
     wpSiteUrl:         p.wp_site_url        ? String(p.wp_site_url)        : null,
     bcPostId:          p.bc_post_id         ? Number(p.bc_post_id)         : null,
     bcStoreHash:       p.bc_store_hash      ? String(p.bc_store_hash)      : null,
-    featuredImageUrl:  p.featured_image_url ? String(p.featured_image_url) : null,
+    featuredImageUrl:    p.featured_image_url  ? String(p.featured_image_url)  : null,
+    targetPublishDate:   p.target_publish_date ? String(p.target_publish_date) : null,
     scheduleDefaultAuthorId,
     schedulePublishMode,
   })
