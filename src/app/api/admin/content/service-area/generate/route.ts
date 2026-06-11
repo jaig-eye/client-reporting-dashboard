@@ -12,6 +12,19 @@ import type { SlugStructure }        from '@/lib/content/buildServiceAreaSlug'
 
 export const maxDuration = 300
 
+// Appended to custom master prompts so Claude always returns structured JSON.
+// DEFAULT_SA_PROMPT already ends with an equivalent instruction.
+const JSON_OUTPUT_INSTRUCTION = `
+
+Return ONLY valid JSON — no markdown fences, no preamble, no commentary after the closing brace:
+{
+  "title": "Page H1 / WordPress page title",
+  "seoTitle": "SEO title including brand name, primary service, and city",
+  "content": "Full HTML body starting with an H2 tag, never H1. Pure HTML only, no markdown.",
+  "metaDescription": "150-160 character meta description including city and service",
+  "focusKeyword": "primary keyword"
+}`
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function sanitizeEmDashes(html: string): string {
@@ -38,8 +51,10 @@ function repairJsonStrings(json: string): string {
 }
 
 function parseResponse(rawText: string) {
-  const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-  const jsonMatch = stripped.match(/\{[\s\S]*\}/)
+  const stripped   = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+  const start      = stripped.indexOf('{')
+  const end        = stripped.lastIndexOf('}')
+  const jsonMatch  = start !== -1 && end > start ? [stripped.slice(start, end + 1)] : null
   if (jsonMatch) {
     for (const attempt of [jsonMatch[0], repairJsonStrings(jsonMatch[0])]) {
       try {
@@ -179,7 +194,9 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   "focusKeyword": "primary service city state"
 }`
 
-  const promptTemplate = masterPrompt || DEFAULT_SA_PROMPT
+  const promptTemplate = masterPrompt
+    ? masterPrompt + JSON_OUTPUT_INSTRUCTION
+    : DEFAULT_SA_PROMPT
 
   // Additional values for blog-style master prompts (shared with content_settings fields)
   const primaryKeyword = `${serviceName} in ${city}, ${stateAbbr}`
