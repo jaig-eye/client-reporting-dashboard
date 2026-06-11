@@ -53,8 +53,10 @@ interface PostDetail {
   wpSiteUrl:        string | null
   bcPostId:         number | null
   bcStoreHash:      string | null
-  featuredImageUrl: string | null
-  targetPublishDate: string | null
+  featuredImageUrl:          string | null
+  targetPublishDate:         string | null
+  scheduleDefaultAuthorId:   number | null
+  schedulePublishMode:       string | null
 }
 
 interface Author {
@@ -206,14 +208,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setMetaDescription(data.metaDescription ?? '')
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
-        setAuthorId(data.wpAuthorId ?? null)
+        setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         if (!connectionId && defaultConnectionId) setConnectionId(defaultConnectionId)
 
-        // Default publish status based on target publish date
+        // Default publish status: use target date if set, otherwise fall back to schedule config
         if (data.targetPublishDate) {
           const publishDate = new Date(data.targetPublishDate + 'T00:00:00')
           setWpStatus(publishDate > new Date() ? 'future' : 'publish')
+        } else if (data.schedulePublishMode) {
+          setWpStatus(data.schedulePublishMode === 'draft_only' ? 'draft' : 'future')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load')

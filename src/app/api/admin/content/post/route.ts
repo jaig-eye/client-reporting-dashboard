@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await db
     .from('content_posts')
-    .select('id, client_id, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url')
+    .select('id, client_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -32,9 +32,29 @@ export async function GET(request: NextRequest) {
   }
 
   const p = data as Record<string, unknown>
+  const clientId      = String(p.client_id)
+  const isServiceArea = p.content_type === 'service_area'
+
+  // Fetch schedule config defaults so the editor can pre-populate WP Author and Publish As
+  const [csRes, saRes] = await Promise.all([
+    db.from('content_settings').select('default_author_id, wp_publish_mode').eq('client_id', clientId).maybeSingle(),
+    isServiceArea
+      ? db.from('service_area_settings').select('wp_publish_mode, default_author_id').eq('client_id', clientId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ])
+  const cs = (csRes.data ?? {}) as Record<string, unknown>
+  const sa = (saRes.data  ?? {}) as Record<string, unknown>
+  const scheduleDefaultAuthorId: number | null = isServiceArea
+    ? ((sa.default_author_id != null ? Number(sa.default_author_id) : null) ?? (cs.default_author_id != null ? Number(cs.default_author_id) : null))
+    : (cs.default_author_id != null ? Number(cs.default_author_id) : null)
+  const schedulePublishMode: string = isServiceArea
+    ? ((sa.wp_publish_mode as string | null) ?? (cs.wp_publish_mode as string | null) ?? 'draft_only')
+    : ((cs.wp_publish_mode as string | null) ?? 'scheduled_draft')
+
   return NextResponse.json({
     id:              String(p.id),
-    clientId:        String(p.client_id),
+    clientId,
+    contentType:     p.content_type ? String(p.content_type) : 'blog',
     status:          String(p.status),
     targetKeyword:   p.target_keyword   ? String(p.target_keyword)   : null,
     title:           p.title            ? String(p.title)            : null,
@@ -53,6 +73,8 @@ export async function GET(request: NextRequest) {
     bcPostId:          p.bc_post_id         ? Number(p.bc_post_id)         : null,
     bcStoreHash:       p.bc_store_hash      ? String(p.bc_store_hash)      : null,
     featuredImageUrl:  p.featured_image_url ? String(p.featured_image_url) : null,
+    scheduleDefaultAuthorId,
+    schedulePublishMode,
   })
 }
 
