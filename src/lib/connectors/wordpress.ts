@@ -141,6 +141,7 @@ export interface WpPagePayload {
   slug?:    string
   parent?:  number
   excerpt?: string
+  meta?:    Record<string, string>
 }
 
 /**
@@ -160,6 +161,7 @@ export async function publishPage(
     ...(page.slug    ? { slug:    page.slug    } : {}),
     ...(page.parent  ? { parent:  page.parent  } : {}),
     ...(page.excerpt ? { excerpt: page.excerpt } : {}),
+    ...(page.meta    ? { meta:    page.meta    } : {}),
   })) as Record<string, unknown>
 
   return {

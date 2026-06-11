@@ -153,9 +153,11 @@ NON-NEGOTIABLE RULES:
 - Sentences under 25 words. 7th-grade reading level.
 - Use only h2, h3, p, ul, li, strong, a HTML tags. No inline styles, no divs.
 - Target word count: [WORD_COUNT]
+- NEVER add an H1 tag to the content. The WordPress title field automatically renders as H1.
+- NEVER link to external websites. Only use internal links to other pages on this website.
 
 Page Structure:
-H1: "[PRIMARY_SERVICE] in [CITY], [STATE]"
+(WordPress title field sets the H1 — start content with an H2)
 Opening: vivid local scenario + brand positioning
 H2: Services we offer in [CITY]
 H2: Signs you need [PRIMARY_SERVICE] in [CITY] (5-7 bullets)
@@ -170,9 +172,9 @@ Nearby areas to mention: [NEARBY_AREAS]
 
 Return ONLY valid JSON — no markdown fences, no explanation:
 {
-  "title": "H1 text",
-  "seoTitle": "SEO title ≤60 chars, city + service",
-  "content": "Full HTML body",
+  "title": "H1 text (used as WordPress page title)",
+  "seoTitle": "SEO title including full company name [BRAND_NAME], primary service, and city",
+  "content": "Full HTML body — begins with H2, never H1",
   "metaDescription": "150-160 chars, includes city and primary service",
   "focusKeyword": "primary service city state"
 }`

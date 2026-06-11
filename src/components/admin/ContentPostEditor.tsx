@@ -247,14 +247,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         const defId = s?.default_author_id ?? null
         setDefaultAuthorId(defId)
         // Auto-select default author if none chosen yet
-        if (defId && authorId === null) setAuthorId(defId)
+        if (defId) setAuthorId(cur => cur ?? defId)
       }
     } catch {
       // silently ignore — optional data
     } finally {
       setAuthorsLoading(false)
     }
-  }, [post, authorId])
+  }, [post])
 
   useEffect(() => {
     if (connectionId) loadSiteData(connectionId)

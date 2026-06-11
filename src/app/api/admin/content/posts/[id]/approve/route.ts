@@ -289,10 +289,11 @@ export async function POST(
 
     if (isServiceArea) {
       // Service area pages go to WP Pages, not Posts
-      const saSettingsRes = await db.from('service_area_settings').select('wp_publish_mode, publish_time').eq('client_id', String(p.client_id)).maybeSingle()
+      const saSettingsRes = await db.from('service_area_settings').select('wp_publish_mode, publish_time, slug_structure').eq('client_id', String(p.client_id)).maybeSingle()
       const saSettings    = (saSettingsRes.data ?? {}) as Record<string, unknown>
       const saPublishMode = (saSettings.wp_publish_mode as string | null) ?? 'draft_only'
       const saPublishTime = (saSettings.publish_time    as string | null) ?? '09:00'
+      const saSlugStruct  = (saSettings.slug_structure  as string | null) ?? ''
 
       let saStatus: 'draft' | 'future' | 'publish' = 'draft'
       let saDate: string | undefined
@@ -301,12 +302,46 @@ export async function POST(
         saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
       }
 
+      // For hierarchical slug structures (service/city), look up the parent WP page
+      // and use only the child slug so WordPress stores it under the correct parent.
+      const rawSlug = p.slug ? String(p.slug) : ''
+      let wpSlug: string | undefined = rawSlug || undefined
+      let wpParent: number | undefined
+
+      const isHierarchical = (saSlugStruct === 'service_slash_city_state' || saSlugStruct === 'service_slash_city') && rawSlug.includes('/')
+      if (isHierarchical) {
+        const parts      = rawSlug.split('/').filter(Boolean)
+        const parentSlug = parts[0]
+        const childSlug  = parts[1]
+        if (childSlug) {
+          wpSlug = childSlug
+          try {
+            const creds = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
+            const res   = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(parentSlug)}&per_page=1`, {
+              headers: { Authorization: `Basic ${creds}` },
+            })
+            if (res.ok) {
+              const pages = (await res.json()) as { id: number }[]
+              if (pages.length > 0) wpParent = pages[0].id
+            }
+          } catch {
+            // non-fatal — publish without parent if lookup fails
+          }
+        }
+      }
+
       result = await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
         content: String(p.content ?? ''),
         status:  saStatus,
         date:    saDate,
-        slug:    p.slug ? String(p.slug) : undefined,
+        slug:    wpSlug,
+        parent:  wpParent,
+        meta: {
+          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+        },
       })
     } else {
       result = await publishPost(siteUrl, auth, {

@@ -51,7 +51,10 @@ export function AdGroupTable({
   isPMax?:          boolean
   tableColumns?:    string[]
 }) {
-  const activeCols = tableColumns ?? ADGROUP_DEFAULT_COLUMNS
+  const hasBudget = rows.some(r => r.adsetBudget != null)
+  const activeCols = (tableColumns ?? ADGROUP_DEFAULT_COLUMNS).filter(
+    k => k !== 'adset_budget' || hasBudget
+  )
   const [sortKey, setSortKey] = useState<AdGroupSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 

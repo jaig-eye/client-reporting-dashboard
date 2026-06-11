@@ -427,7 +427,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setDataLoading(true)
     Promise.all([
       fetch(`/api/admin/content/topics?client_id=${clientId}`).then(r => r.json()),
-      fetch(`/api/admin/content/posts?client_id=${clientId}`).then(r => r.json()),
+      fetch(`/api/admin/content/posts?client_id=${clientId}&content_type=blog`).then(r => r.json()),
     ]).then(([topicsData, postsData]) => {
       setTopics(Array.isArray(topicsData) ? topicsData as Topic[] : [])
       setPosts(Array.isArray(postsData)   ? postsData   as Post[] : [])
@@ -1483,7 +1483,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
             {(() => {
-              const saIsConfigured = !!(saSettings.connection_id && saSettings.schedule_frequency && saSettings.slug_structure)
+              const saIsConfigured = !!(saSettings.connection_id && saSettings.slug_structure)
               return saIsConfigured
                 ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
                 : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>

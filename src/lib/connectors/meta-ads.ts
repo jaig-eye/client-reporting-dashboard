@@ -649,19 +649,22 @@ export const metaAdsConnector: ConnectorAdapter = {
     const adsetIdNameMap   = new Map<string, string>()  // per-adset name  (keyed by adset_id) → passed to ad-level sync
     let allCampaignList: Record<string, unknown>[] = []
     try {
-      const [campData, adsetData] = await Promise.all([
-        metaGet(`/${externalId}/campaigns`, accessToken, {
-          fields: 'id,name,daily_budget,effective_status,objective',
-          limit: '500',
-        }),
-        metaGet(`/${externalId}/adsets`, accessToken, {
-          // id is always returned by Meta's API regardless of fields listed.
-          // effective_status needed to skip DELETED/ARCHIVED adsets.
-          // name needed for the adset names backfill passed to fetchMetaAdMetrics.
-          fields: 'campaign_id,name,daily_budget,status,effective_status',
-          limit: '500',
-        }),
-      ])
+      // Campaigns: single page (accounts rarely have >500 campaigns)
+      const campData = await metaGet(`/${externalId}/campaigns`, accessToken, {
+        fields: 'id,name,daily_budget,effective_status,objective',
+        limit: '500',
+      })
+      // Adsets: paginate through all pages — accounts can have >500 adsets.
+      // metaGet is single-page only; use metaFetchWithRetry + paging.next loop.
+      const allAdsets: Record<string, unknown>[] = []
+      let adsetNextUrl: string | null =
+        `${BASE_URL}/${externalId}/adsets?fields=campaign_id,name,daily_budget,status,effective_status&limit=500&access_token=${encodeURIComponent(accessToken)}`
+      while (adsetNextUrl) {
+        const adsetPage = await metaFetchWithRetry(adsetNextUrl)
+        allAdsets.push(...((adsetPage.data || []) as Record<string, unknown>[]))
+        const adsetPg = adsetPage.paging as Record<string, unknown> | undefined
+        adsetNextUrl = typeof adsetPg?.next === 'string' ? adsetPg.next : null
+      }
       allCampaignList = (campData.data || []) as Record<string, unknown>[]
       for (const camp of allCampaignList) {
         const cid    = String(camp.id || '')
@@ -679,7 +682,7 @@ export const metaAdsConnector: ConnectorAdapter = {
       // configured allocation even when the parent campaign is paused.
       // Also build per-adset-id budget/name maps to pass to fetchMetaAdMetrics —
       // this eliminates the duplicate adsets API call that causes rate-limit errors.
-      for (const adset of (adsetData.data || []) as Record<string, unknown>[]) {
+      for (const adset of allAdsets) {
         const aid    = String(adset.id              || '')
         const cid    = String(adset.campaign_id     || '')
         const sname  = String(adset.name            || '')

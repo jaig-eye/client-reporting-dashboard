@@ -115,10 +115,8 @@ export default async function AdminOverviewPage({
       .gte('started_at', subtractDays(today, 7).toISOString())
       .order('completed_at', { ascending: false }),
 
-    db.from('google_ads_metrics')
-      .select('client_id, spend, clicks, impressions, conversions, conversions_value')
-      .gte('date', dateFrom)
-      .lte('date', dateTo),
+    // Pre-aggregated per-client Google totals — avoids transferring all raw rows to JS
+    db.rpc('get_google_metrics_by_client', { from_date: dateFrom, to_date: dateTo }),
 
     // meta_ads_metrics (campaign-level) for impressions/clicks/conversions — manageable row
     // count vs ad-level which can exceed PostgREST's row cap across all clients.
@@ -142,9 +140,7 @@ export default async function AdminOverviewPage({
   // Prior period queries — only fetched when comparison is active
   const [priorGoogleRes, priorMetaRes, priorMetaSpendRpcRes] = compare !== 'none' && priorFromStr
     ? await Promise.all([
-        db.from('google_ads_metrics')
-          .select('client_id, spend, clicks, impressions, conversions, conversions_value')
-          .gte('date', priorFromStr).lte('date', priorToStr),
+        db.rpc('get_google_metrics_by_client', { from_date: priorFromStr, to_date: priorToStr }),
         db.from('meta_ads_metrics')
           .select('client_id, campaign_id, spend, clicks, impressions, actions, action_values')
           .gte('date', priorFromStr).lte('date', priorToStr),

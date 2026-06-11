@@ -19,7 +19,7 @@ interface NearbyLinkPost {
   service_page_url: string | null
 }
 
-const MAX_LINKS = 6
+const MAX_LINKS = 50
 
 function buildNearbySection(links: { city: string; state: string; url: string }[]): string {
   const items = links
