@@ -181,6 +181,12 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   const promptTemplate = masterPrompt || DEFAULT_SA_PROMPT
 
+  // Additional values for blog-style master prompts (shared with content_settings fields)
+  const primaryKeyword = `${serviceName} in ${city}, ${stateAbbr}`
+  const targetAudience = String(cs.target_audience ?? '')
+  const brandVoice     = String(cs.brand_voice     ?? '')
+  const ctaText        = String(cs.cta_list         ?? 'Contact us for a free estimate')
+
   const finalPrompt = promptTemplate
     .replace(/\[BRAND_NAME\]/g, brandName)
     .replace(/\[PRIMARY_SERVICE\]/g, serviceName)
@@ -198,6 +204,21 @@ Return ONLY valid JSON — no markdown fences, no explanation:
     .replace(/\[CLIENT_CONTEXT\]/g, bgContext || brandName)
     .replace(/\[LOCATION_NOTES\]/g, locationNotes ? `Additional guidance: ${locationNotes}` : '')
     .replace(/\[WORD_COUNT\]/g, String(targetLength))
+    // Blog-style variables — substituted so master prompts shared with blog generation work
+    .replace(/\[BRAND_DESCRIPTION\]/g,               bgContext || brandName)
+    .replace(/\[TARGET_AUDIENCE\]/g,                 targetAudience)
+    .replace(/\[AUDIENCE_DETAIL\]/g,                 targetAudience)
+    .replace(/\[PRIMARY_KEYWORD\]/g,                 primaryKeyword)
+    .replace(/\[SECONDARY_KEYWORDS\]/g,              services)
+    .replace(/\[SEARCH_INTENT\]/g,                   'transactional')
+    .replace(/\[WORKING_TITLE\]/g,                   `${serviceName} in ${city}, ${stateAbbr}`)
+    .replace(/\[TARGET_WORD_COUNT\]/g,               String(targetLength))
+    .replace(/\[THIS_LOCATION\]/g,                   `${city}, ${stateAbbr}`)
+    .replace(/\[VOICE_NOTES\]/g,                     brandVoice)
+    .replace(/\[CTA\]/g,                             ctaText)
+    .replace(/\[HUB_PAGE_URL_AND_ANCHOR\]/g,         '')
+    .replace(/\[LIST_OF_SIBLING_URLS_AND_ANCHORS\]/g, '')
+    .replace(/\[[A-Z_]+\]/g,                         '')   // strip any remaining unhandled [VARIABLE] patterns
 
   // Call AI — check res.ok so API errors surface the real message, not just "Empty AI response"
   let rawText = ''

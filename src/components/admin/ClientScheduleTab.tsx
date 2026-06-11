@@ -17,6 +17,7 @@ interface SaSettings {
   pages_per_run?:      number
   schedule_frequency?: string | null
   schedule_day_of_week?: number | null
+  default_author_id?:  number | null
   auto_generate?:      boolean
   auto_approve_pages?: boolean
   auto_push_pages?:    boolean
@@ -1518,6 +1519,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <select className="input" value={saSettings.wp_publish_mode ?? 'draft_only'} onChange={e => setSa('wp_publish_mode', e.target.value)}>
                     <option value="draft_only">Draft Only</option>
                     <option value="scheduled_draft">Scheduled Draft</option>
+                  </select>
+                </div>
+                <div>
+                  <Label>Default Author</Label>
+                  <select className="input" value={saSettings.default_author_id ?? ''} onChange={e => setSa('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">— Default —</option>
+                    {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </select>
                 </div>
                 <div>

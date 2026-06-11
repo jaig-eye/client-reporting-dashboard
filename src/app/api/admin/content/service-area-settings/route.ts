@@ -14,6 +14,7 @@ const ALLOWED = [
   'pages_per_run', 'publish_time',
   'target_length', 'page_structure', 'location_notes', 'tone_notes',
   'use_gsc_discovery', 'min_gsc_impressions', 'check_sitemap_overlap',
+  'default_author_id',
 ]
 
 export async function GET(request: NextRequest) {

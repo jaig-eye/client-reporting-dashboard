@@ -257,6 +257,7 @@ export default async function CampaignDetailPage({
       actions: { action_type: string; value: string }[] | null
       action_values: { action_type: string; value: string }[] | null
     }
+    const adsetMetaFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0] })()
     const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
       db.from('meta_ads_metrics')
         .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
@@ -286,16 +287,14 @@ export default async function CampaignDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as MetaAdRow[] }),
-      // Current adset metadata — bounded to 90 days (same window as adset detail metaQ).
-      // Adsets deleted/renamed >90 days ago stop receiving sync rows and won't appear,
-      // preventing ghost zero-metric entries from stale historical data.
-      db.from('meta_ads_ad_metrics')
-        .select('adset_id,adset_name,ad_status,adset_daily_budget')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .gte('date', (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0] })())
-        .order('date', { ascending: false })
-        .limit(1000),
+      // Use DISTINCT ON RPC so each adset returns exactly one row (the most recent
+      // non-null adset_daily_budget). The old LIMIT 1000 flat-scan could miss budget
+      // rows for lower-volume adsets when high-volume adsets dominated the window.
+      db.rpc('get_adset_budgets_for_campaign', {
+        p_campaign_id: campaignId,
+        p_client_id:   client.id,
+        p_from_date:   adsetMetaFrom,
+      }),
     ])
     if ((campRows ?? []).length > 0) {
       // Sort desc by date so we always use the current name, not an old one from the range
