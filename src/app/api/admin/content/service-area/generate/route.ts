@@ -121,16 +121,18 @@ async function generatePage(topicId: string) {
   // Mark as generating
   await db.from('content_topics').update({ status: 'generating' }).eq('id', topicId)
 
-  // Parallel: SA settings, agency settings, content_settings (for brand context)
-  const [saRes, agencyRes, csRes] = await Promise.all([
+  // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
+  const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token').single(),
     db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data').eq('client_id', clientId).maybeSingle(),
+    db.from('content_sitemap_pages').select('url').eq('client_id', clientId).eq('is_service_page', true).ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`).maybeSingle(),
   ])
 
-  const saSettings    = (saRes.data    ?? {}) as Record<string, unknown>
-  const agency        = agencyRes.data
-  const cs            = (csRes.data    ?? {}) as Record<string, unknown>
+  const saSettings     = (saRes.data    ?? {}) as Record<string, unknown>
+  const agency         = agencyRes.data
+  const cs             = (csRes.data    ?? {}) as Record<string, unknown>
+  const servicePageUrl = (servicePageRes.data as { url: string } | null)?.url ?? null
 
   const provider  = (agency?.ai_provider  as string | null) || 'anthropic'
   const model     = (agency?.ai_model     as string | null) || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
@@ -140,6 +142,43 @@ async function generatePage(topicId: string) {
   if (!apiKey) {
     await db.from('content_topics').update({ status: 'approved', generation_error: 'AI API key not configured' }).eq('id', topicId)
     return { error: 'AI not configured' }
+  }
+
+  // Upsert SA silo + fetch published sibling city pages for silo context
+  let sasiloId: string | null = null
+  let sasiloSection = ''
+  const { data: saSilo } = await db
+    .from('content_silos')
+    .upsert({
+      client_id:      clientId,
+      name:           serviceName,
+      hub_page_url:   servicePageUrl,
+      hub_page_title: `${serviceName} Services`,
+      central_entity: serviceName,
+      section:        'core',
+      status:         'active',
+    }, { onConflict: 'client_id,name' })
+    .select('id')
+    .single()
+
+  if (saSilo) {
+    sasiloId = saSilo.id as string
+    const { data: siblings } = await db
+      .from('content_posts')
+      .select('city, state_abbr, published_url')
+      .eq('silo_id', sasiloId)
+      .in('status', ['draft_saved', 'published'])
+      .not('published_url', 'is', null)
+      .limit(20)
+
+    if (siblings && siblings.length > 0) {
+      const siblingLines = (siblings as { city: string | null; state_abbr: string | null; published_url: string }[])
+        .map(s => `  - "${s.city ?? ''}, ${s.state_abbr ?? ''}" at ${s.published_url}`)
+        .join('\n')
+      sasiloSection = `\n\nSILO CONTEXT — SERVICE AREA CLUSTER:\nHub/service page (link to it once): ${servicePageUrl ?? '[service page not yet indexed]'}\nSibling city pages for ${serviceName} already published:\n${siblingLines}\nCross-link to 2–3 geographically nearby or conceptually related ones.\nUse anchor text: "${serviceName} in [City]" — never generic text.`
+    } else if (servicePageUrl) {
+      sasiloSection = `\n\nSILO CONTEXT — SERVICE AREA CLUSTER:\nHub/service page (link to it once): ${servicePageUrl}\nThis is the first city page for this service — no siblings to cross-link yet.`
+    }
   }
 
   // Build template variable substitutions
@@ -237,6 +276,8 @@ Return ONLY valid JSON — no markdown fences, no explanation:
     .replace(/\[LIST_OF_SIBLING_URLS_AND_ANCHORS\]/g, '')
     .replace(/\[[A-Z_]+\]/g,                         '')   // strip any remaining unhandled [VARIABLE] patterns
 
+  const promptWithSilo = finalPrompt + sasiloSection
+
   // Call AI — check res.ok so API errors surface the real message, not just "Empty AI response"
   let rawText = ''
   try {
@@ -244,7 +285,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: 'user', content: finalPrompt }] }),
+        body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: 'user', content: promptWithSilo }] }),
       })
       if (!res.ok) {
         const errBody = await res.text()
@@ -256,7 +297,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: finalPrompt }], max_tokens: 4096 }),
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: promptWithSilo }], max_tokens: 4096 }),
       })
       if (!res.ok) {
         const errBody = await res.text()
@@ -280,17 +321,6 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   const parsed = parseResponse(rawText)
   const slug   = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
-
-  // Find the service_page_url from sitemap pages flagged as service pages
-  const { data: servicePage } = await db
-    .from('content_sitemap_pages')
-    .select('url')
-    .eq('client_id', clientId)
-    .eq('is_service_page', true)
-    .ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`)
-    .maybeSingle()
-
-  const servicePageUrl = (servicePage as { url: string } | null)?.url ?? null
 
   // Find connection_id from SA settings
   const connectionId = (saSettings.connection_id as string | null) ?? null
@@ -320,6 +350,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
       heading_count:     headingCount,
       target_publish_date: null,
       generated_at:      new Date().toISOString(),
+      silo_id:           sasiloId,
     })
     .select('id')
     .single()

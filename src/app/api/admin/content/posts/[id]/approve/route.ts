@@ -27,7 +27,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id')
     .eq('id', id)
     .single()
 
@@ -376,6 +376,51 @@ export async function POST(
     if (isServiceArea) {
       injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
         .catch(() => {})
+    }
+
+    // Auto-update WP hub page if this post belongs to a silo (fire-and-forget)
+    if (p.silo_id) {
+      ;(async () => {
+        try {
+          const { data: siloRaw } = await db
+            .from('content_silos')
+            .select('name, hub_page_url, central_entity, pending_links')
+            .eq('id', String(p.silo_id))
+            .single()
+          if (!siloRaw?.hub_page_url) return
+          const silo = siloRaw as { name: string; hub_page_url: string; central_entity: string | null; pending_links: { url: string; title: string; added_at: string }[] }
+          const hubSlug = silo.hub_page_url.replace(/\/$/, '').split('/').pop() ?? ''
+          if (!hubSlug) return
+          const creds    = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
+          const pagesRes = await fetch(
+            `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(hubSlug)}&per_page=1`,
+            { headers: { Authorization: `Basic ${creds}` } }
+          )
+          if (!pagesRes.ok) return
+          const pages = (await pagesRes.json()) as { id: number; content: { rendered: string } }[]
+          if (!pages.length) return
+          const hubId        = pages[0].id
+          const current      = pages[0].content?.rendered ?? ''
+          const clusterUrl   = result.link || wpEditUrl
+          const clusterTitle = String(p.title ?? '')
+          const entity       = silo.central_entity || silo.name
+          const linkHtml     = `<li><a href="${clusterUrl}">${clusterTitle}</a></li>`
+          const updatedContent = current.includes('<!-- silo-cluster-links -->')
+            ? current.replace(/<\/ul>\s*<!-- \/silo-cluster-links -->/, `${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`)
+            : `${current}\n<!-- silo-cluster-links -->\n<h3>Related ${entity} Resources</h3>\n<ul>\n${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`
+          await fetch(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
+            method:  'POST',
+            headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ content: updatedContent, status: 'draft' }),
+          })
+          const prev = Array.isArray(silo.pending_links) ? silo.pending_links : []
+          await db.from('content_silos').update({
+            pending_links: [...prev, { url: clusterUrl, title: clusterTitle, added_at: new Date().toISOString() }],
+          }).eq('id', String(p.silo_id))
+        } catch (e) {
+          console.error('[approve] silo hub update failed:', e)
+        }
+      })()
     }
 
     const adminSession = await getAdminSession()

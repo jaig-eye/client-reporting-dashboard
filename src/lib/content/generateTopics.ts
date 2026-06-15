@@ -71,7 +71,7 @@ export async function generateTopicsForClient(
   clientId: string,
   count:    number,
   targetPublishDate?: string,
-  opts?: { suppressEmail?: boolean },
+  opts?: { suppressEmail?: boolean; siloId?: string },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
@@ -308,9 +308,50 @@ export async function generateTopicsForClient(
     ? `\nContent Guidelines & Restrictions (strictly follow — never generate topics that violate these):\n${clientSettings!.topic_guidelines}`
     : ''
 
+  // ── Silo context (topical authority hub + cluster strategy) ───────────────
+  let siloPromptBlock = ''
+  let siloName: string | null = null
+  if (opts?.siloId) {
+    const { data: silo } = await db
+      .from('content_silos')
+      .select('id, name, hub_page_url, hub_page_title, central_entity, description')
+      .eq('id', opts.siloId)
+      .single()
+
+    if (silo) {
+      siloName = silo.name as string
+
+      // Fetch existing cluster posts in this silo to prevent duplicate intents
+      const { data: existingClusters } = await db
+        .from('content_posts')
+        .select('title, target_keyword')
+        .eq('silo_id', opts.siloId)
+        .in('status', ['for_review', 'draft_saved', 'published', 'approved'])
+        .limit(30)
+
+      const existingClusterText = (existingClusters ?? [])
+        .filter((c: { title: string | null; target_keyword: string | null }) => c.title)
+        .map((c: { title: string | null; target_keyword: string | null }) => `  - "${c.title}" — keyword: ${c.target_keyword ?? 'n/a'}`)
+        .join('\n')
+
+      siloPromptBlock = `
+TOPICAL SILO — HUB + CLUSTER STRATEGY:
+Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
+Central entity: ${silo.central_entity ?? silo.name}${silo.description ? `\nContext: ${silo.description}` : ''}
+${existingClusterText ? `\nAlready-published cluster articles in this silo (DO NOT duplicate these intents):\n${existingClusterText}` : ''}
+
+SILO RULES (override any conflicting instructions above):
+1. Every topic must be a distinct subtopic or attribute of the central entity.
+2. Every article generated from these topics MUST link back to the hub page as a mandatory internal link.
+3. No two topics may target the same search intent — zero cannibalization within the silo.
+4. Prioritize subtopics closest to revenue (transactional/commercial intent first within the silo).
+5. Think: what questions does a searcher ask BEFORE contacting the business? Those cluster topics funnel authority to the hub.`
+    }
+  }
+
   const systemPrompt = `You are an SEO content strategist for ${settings.agency_name ?? 'a digital agency'}.
 Suggest blog post topic ideas for a client based on their business context and Google Search Console data.
-
+${siloPromptBlock}
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
@@ -336,6 +377,7 @@ No text outside the JSON array.`
 
   const userPrompt = `Client: ${clientName}
 ${contextLines.join('\n')}${eeatText}
+${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this topical cluster.` : ''}
 ${gscGrowthText}
 ${gscQuickWinsText}
 ${gscCtrText}
@@ -345,7 +387,7 @@ ${sitemapText}
 ${avoidText ? `\nAlready covered — DO NOT suggest these again:\n${avoidText}` : ''}
 ${guidelinesText}
 
-Suggest ${count} high-impact blog post topics that will improve this client's organic search performance.`
+Suggest ${count} high-impact blog post topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
 
   const provider = settings.ai_provider || 'anthropic'
   const model    = settings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
@@ -407,8 +449,9 @@ Suggest ${count} high-impact blog post topics that will improve this client's or
     audience_intent:      t.audience_intent     ?? null,
     why_now:              t.why_now             ?? null,
     competition_level:    t.competition_level   ?? null,
-    cluster_group:        t.cluster_group       ?? null,
+    cluster_group:        t.cluster_group       ?? (siloName ? siloName.toLowerCase().replace(/\s+/g, '-') : null),
     competitors_researched: t.target_keyword ? (competitorMap.get(t.target_keyword) ?? null) : null,
+    silo_id:              opts?.siloId ?? null,
     status:               'pending',
     target_publish_date:  targetPublishDate ?? null,
   }))

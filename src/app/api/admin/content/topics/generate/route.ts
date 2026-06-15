@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { client_id: string; count?: number; target_publish_date?: string }
-  const { client_id, count = 5, target_publish_date } = body
+  const body = await request.json() as { client_id: string; count?: number; target_publish_date?: string; silo_id?: string }
+  const { client_id, count = 5, target_publish_date, silo_id } = body
 
   if (!client_id) {
     return NextResponse.json({ error: 'client_id required' }, { status: 400 })
@@ -32,10 +32,10 @@ export async function POST(request: NextRequest) {
 
   // Return immediately — generation runs in background
   waitUntil(
-    generateTopicsForClient(db, client_id, count, target_publish_date, { suppressEmail: true })
+    generateTopicsForClient(db, client_id, count, target_publish_date, { suppressEmail: true, siloId: silo_id })
       .then(result => {
         if (!result.error) {
-          logActivity(adminSession, 'generated', 'topics', { clientId: client_id, meta: { count: result.count } })
+          logActivity(adminSession, 'generated', 'topics', { clientId: client_id, meta: { count: result.count, silo_id: silo_id ?? null } })
         }
       })
   )

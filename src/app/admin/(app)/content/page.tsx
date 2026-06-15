@@ -29,6 +29,8 @@ export default async function ContentPage({
     allClientsRes,
     postsRes,
     scheduledTopicsRes,
+    silosRes,
+    siloPostsRes,
   ] = await Promise.all([
     db.from('clients').select('id, name').order('name'),
     db.from('content_posts')
@@ -39,6 +41,8 @@ export default async function ContentPage({
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(500),
+    db.from('content_silos').select('id, client_id, name, hub_page_url, central_entity, section, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
+    db.from('content_posts').select('silo_id, status').not('silo_id', 'is', null).limit(2000),
   ])
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
@@ -111,8 +115,22 @@ export default async function ContentPage({
     ...postItems,
   ]
 
+  // Silo coverage data
+  type SiloRow = { id: string; client_id: string; name: string; hub_page_url: string | null; central_entity: string | null; section: string; pending_links: unknown[] }
+  const silos = (silosRes.data ?? []) as SiloRow[]
+  const siloPostCounts: Record<string, { published: number; total: number }> = {}
+  for (const p of (siloPostsRes.data ?? []) as { silo_id: string; status: string }[]) {
+    if (!siloPostCounts[p.silo_id]) siloPostCounts[p.silo_id] = { published: 0, total: 0 }
+    siloPostCounts[p.silo_id].total++
+    if (p.status === 'draft_saved' || p.status === 'published') siloPostCounts[p.silo_id].published++
+  }
+  const silosGrouped = Array.from(
+    silos.reduce((m, s) => { if (!m.has(s.client_id)) m.set(s.client_id, []); m.get(s.client_id)!.push(s); return m }, new Map<string, SiloRow[]>())
+  )
+
   const tabs = [
     { id: 'calendar', label: 'Calendar' },
+    { id: 'silos',    label: 'Silos' },
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -146,6 +164,62 @@ export default async function ContentPage({
 
       {activeTab === 'calendar' && (
         <ContentCalendar items={calendarItems} clients={allClients} />
+      )}
+
+      {activeTab === 'silos' && (
+        <div>
+          {silos.length === 0 ? (
+            <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
+              No silos yet — create silos from a client&apos;s schedule tab to enable pillar-cluster topic strategy.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {silosGrouped.map(([clientId, clientSilos]) => (
+                <div key={clientId}>
+                  <h3 style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {allClientsMap.get(clientId) ?? 'Unknown Client'}
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+                    {clientSilos.map(s => {
+                      const counts      = siloPostCounts[s.id] ?? { published: 0, total: 0 }
+                      const pct         = counts.total > 0 ? Math.round((counts.published / counts.total) * 100) : 0
+                      const pendingCount = Array.isArray(s.pending_links) ? s.pending_links.length : 0
+                      return (
+                        <div key={s.id} className="card" style={{ padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.8125rem' }}>{s.name}</span>
+                            <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: 3, background: s.section === 'core' ? 'var(--blue-subtle)' : 'var(--amber-subtle)', color: s.section === 'core' ? 'var(--blue)' : 'var(--amber)', flexShrink: 0 }}>
+                              {s.section}
+                            </span>
+                          </div>
+                          {s.hub_page_url && (
+                            <a href={s.hub_page_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--blue)', display: 'block', marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.hub_page_url}
+                            </a>
+                          )}
+                          <div style={{ marginBottom: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-faint)', marginBottom: 3 }}>
+                              <span>Coverage</span>
+                              <span>{counts.published} / {counts.total} published</span>
+                            </div>
+                            <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: 'var(--blue)', borderRadius: 2 }} />
+                            </div>
+                          </div>
+                          {pendingCount > 0 && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--amber)', marginTop: 4 }}>
+                              ⚠ {pendingCount} pending hub link{pendingCount !== 1 ? 's' : ''}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {activeTab === 'settings' && (

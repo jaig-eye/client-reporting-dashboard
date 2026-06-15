@@ -29,7 +29,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url')
+    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url, silo_id')
     .eq('id', id)
     .single()
 
@@ -167,6 +167,19 @@ export async function POST(
       injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
         .catch(() => {})
 
+      // Log cluster link to silo pending_links (fire-and-forget)
+      if (p.silo_id) {
+        ;(async () => {
+          try {
+            const { data } = await db.from('content_silos').select('pending_links').eq('id', String(p.silo_id)).single()
+            const prev = Array.isArray(data?.pending_links) ? data.pending_links as unknown[] : []
+            await db.from('content_silos').update({
+              pending_links: [...prev, { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() }],
+            }).eq('id', String(p.silo_id))
+          } catch { /* non-fatal */ }
+        })()
+      }
+
       return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
     }
 
@@ -210,6 +223,19 @@ export async function POST(
       clientId: String(p.client_id),
       meta: { title: p.title, bc_post_id: Number(bcPost.id) },
     })
+
+    // Log cluster link to silo pending_links (fire-and-forget)
+    if (p.silo_id) {
+      ;(async () => {
+        try {
+          const { data } = await db.from('content_silos').select('pending_links').eq('id', String(p.silo_id)).single()
+          const prev = Array.isArray(data?.pending_links) ? data.pending_links as unknown[] : []
+          await db.from('content_silos').update({
+            pending_links: [...prev, { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() }],
+          }).eq('id', String(p.silo_id))
+        } catch { /* non-fatal */ }
+      })()
+    }
 
     return NextResponse.json({
       bc_post_id:    Number(bcPost.id),

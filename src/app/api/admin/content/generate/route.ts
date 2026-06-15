@@ -36,6 +36,7 @@ type TopicData = {
   seo_brief:              SeoBrief | null
   competitors_researched: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
   edit_notes:             string | null
+  silo_id:                string | null
 }
 
 type AgencySettings = {
@@ -549,6 +550,48 @@ async function runTopicGeneration({
       if (brief.schema_type)       briefLines.push(`\nContent schema type: ${brief.schema_type}`)
     }
 
+    // ── Silo context (topical authority entity linking) ───────────────────────
+    let siloSection = ''
+    if (topicData.silo_id) {
+      const { data: silo } = await db
+        .from('content_silos')
+        .select('name, hub_page_url, hub_page_title, central_entity')
+        .eq('id', topicData.silo_id)
+        .single()
+
+      if (silo && (silo.hub_page_url || silo.hub_page_title)) {
+        // Sibling cluster posts already published in this silo
+        const { data: siblings } = await db
+          .from('content_posts')
+          .select('title, published_url, target_keyword')
+          .eq('silo_id', topicData.silo_id)
+          .in('status', ['draft_saved', 'published'])
+          .not('published_url', 'is', null)
+          .limit(20)
+
+        const siblingLines = (siblings ?? [])
+          .filter((s: { title: string | null; published_url: string | null; target_keyword: string | null }) => s.published_url && s.title)
+          .map((s: { title: string | null; published_url: string | null; target_keyword: string | null }) =>
+            `  - "${s.title}" at ${s.published_url} — covers: ${s.target_keyword ?? 'n/a'}`)
+          .join('\n')
+
+        siloSection = `
+TOPICAL SILO — INTERNAL LINKING STRATEGY:
+
+Hub page (MUST include as an internal link in the first or second body section):
+  Title: "${silo.hub_page_title ?? silo.name}"
+  URL: ${silo.hub_page_url ?? '(URL not yet set — omit the link if no URL available)'}
+  Anchor text: use the central entity name or a specific descriptive phrase — NOT "click here" or "learn more"
+  Central entity: ${silo.central_entity ?? silo.name}
+${siblingLines ? `\nPublished cluster articles in this silo (link to 1–3 where this article shares a named entity, concept, or step — reason about semantic relevance, not just proximity):\n${siblingLines}` : ''}
+LINKING RULES:
+- Link to the hub page once (mandatory, if the URL is known).
+- Cross-link to sibling articles ONLY when the reader of THIS article would genuinely benefit from reading THAT one — shared entity, shared step, natural "next question."
+- Anchor text must name the specific entity or topic: "[service] in [city]", "[problem] cost guide", "[topic] explained", etc. Never generic: "click here", "read more", "this article."
+- GSC suggestions below are supplementary; silo hub + entity-reasoned sibling links take priority.`
+      }
+    }
+
     // ── Competitor gap analysis (from topic research) ─────────────────────────
     const competitorGapSection = (() => {
       const cr = topicData.competitors_researched
@@ -595,6 +638,7 @@ Title: ${topicData.topic}
 Target keyword: ${topicData.target_keyword || 'derive from topic'}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
+${siloSection}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
 ${briefLines.length > 0 ? briefLines.join('\n') : ''}
 ${competitorGapSection}
@@ -665,6 +709,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       seo_score:           seoScore,
       schema_type:         brief?.schema_type ?? null,
       excerpt:             parsed.metaDescription || null,
+      silo_id:             topicData.silo_id ?? null,
     }).select('id').single()
 
     if (insertError || !savedPost) {
@@ -770,7 +815,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, silo_id')
       .eq('id', topic_id)
       .single()
     if (topicErr || !topic) {

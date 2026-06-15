@@ -103,6 +103,16 @@ interface Post {
   generated_at:        string
 }
 
+interface Silo {
+  id:             string
+  name:           string
+  hub_page_url:   string | null
+  central_entity: string | null
+  section:        string
+  clusterCount:   number
+  publishedCount: number
+}
+
 interface Props {
   clientId:     string
   clientName:   string
@@ -324,6 +334,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [saModalWeeks,        setSaModalWeeks]        = useState(8)
   const [saGenerating,        setSaGenerating]        = useState(false)
 
+  // Silos
+  const [silos,              setSilos]              = useState<Silo[]>([])
+  const [silosLoading,       setSilosLoading]       = useState(false)
+  const [showAddSilo,        setShowAddSilo]        = useState(false)
+  const [siloSaving,         setSiloSaving]         = useState(false)
+  const [newSiloName,        setNewSiloName]        = useState('')
+  const [newSiloHubUrl,      setNewSiloHubUrl]      = useState('')
+  const [newSiloEntity,      setNewSiloEntity]      = useState('')
+  const [newSiloSection,     setNewSiloSection]     = useState<'core' | 'outer'>('core')
+  const [siloGenerateTarget, setSiloGenerateTarget] = useState<string | null>(null)
+
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
     setSchedLoading(true)
@@ -401,6 +422,45 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   }, [clientId])
 
   useEffect(() => { loadSaTopics(); loadSaPosts() }, [loadSaTopics, loadSaPosts])
+
+  // ── Silos ─────────────────────────────────────────────────────────────────
+  const loadSilos = useCallback(() => {
+    setSilosLoading(true)
+    fetch(`/api/admin/content/silos?client_id=${clientId}`)
+      .then(r => r.json())
+      .then((d: { silos?: Silo[] }) => { setSilos(d.silos ?? []); setSilosLoading(false) })
+      .catch(() => setSilosLoading(false))
+  }, [clientId])
+
+  useEffect(() => { loadSilos() }, [loadSilos])
+
+  async function handleAddSilo(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newSiloName.trim()) return
+    setSiloSaving(true)
+    const res = await fetch('/api/admin/content/silos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id:      clientId,
+        name:           newSiloName.trim(),
+        hub_page_url:   newSiloHubUrl.trim() || null,
+        central_entity: newSiloEntity.trim() || null,
+        section:        newSiloSection,
+      }),
+    })
+    setSiloSaving(false)
+    if (res.ok) {
+      setNewSiloName(''); setNewSiloHubUrl(''); setNewSiloEntity('')
+      setNewSiloSection('core'); setShowAddSilo(false)
+      loadSilos()
+    }
+  }
+
+  async function handleDeleteSilo(siloId: string) {
+    await fetch(`/api/admin/content/silos?id=${siloId}`, { method: 'DELETE' })
+    setSilos(p => p.filter(s => s.id !== siloId))
+  }
 
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -649,7 +709,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks }),
+      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks, ...(siloGenerateTarget ? { silo_id: siloGenerateTarget } : {}) }),
     })
     const data = await res.json()
     setGenerating(false)
@@ -997,6 +1057,75 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           AI not configured — add a provider in Settings to generate content plans
         </div>
       )}
+
+      {/* ── Content Silos card ───────────────────────────────────────────── */}
+      <div className="card" style={{ padding: '14px 18px', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <h4 className="section-title" style={{ margin: 0, fontSize: '0.875rem' }}>Content Silos</h4>
+          <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem' }} onClick={() => setShowAddSilo(v => !v)}>
+            {showAddSilo ? 'Cancel' : '+ Add Silo'}
+          </button>
+        </div>
+
+        {showAddSilo && (
+          <form onSubmit={handleAddSilo} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px', background: 'var(--bg-subtle)', borderRadius: 6, marginBottom: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Silo Name *</label>
+                <input className="input" value={newSiloName} onChange={e => setNewSiloName(e.target.value)} placeholder="e.g. HVAC Repair" required />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Hub Page URL</label>
+                <input className="input" value={newSiloHubUrl} onChange={e => setNewSiloHubUrl(e.target.value)} placeholder="https://…" />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Central Entity</label>
+                <input className="input" value={newSiloEntity} onChange={e => setNewSiloEntity(e.target.value)} placeholder="e.g. residential HVAC repair" />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Section</label>
+                <select className="input" value={newSiloSection} onChange={e => setNewSiloSection(e.target.value as 'core' | 'outer')}>
+                  <option value="core">Core</option>
+                  <option value="outer">Outer</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={siloSaving}>{siloSaving ? 'Creating…' : 'Create Silo'}</button>
+            </div>
+          </form>
+        )}
+
+        {silosLoading ? (
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>Loading silos…</p>
+        ) : silos.length === 0 ? (
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>No silos yet — create one to enable pillar-cluster topic strategy.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {silos.map(s => (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--bg-subtle)', borderRadius: 5 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.8125rem' }}>{s.name}</span>
+                  {s.hub_page_url && (
+                    <a href={s.hub_page_url} target="_blank" rel="noreferrer" style={{ marginLeft: 6, fontSize: '0.75rem', color: 'var(--blue)' }}>Hub ↗</a>
+                  )}
+                  <span style={{ marginLeft: 6, fontSize: '0.7rem', padding: '1px 5px', borderRadius: 3, background: s.section === 'core' ? 'var(--blue-subtle)' : 'var(--amber-subtle)', color: s.section === 'core' ? 'var(--blue)' : 'var(--amber)' }}>
+                    {s.section}
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                  {s.publishedCount}/{s.clusterCount} posts
+                </span>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '2px 6px', fontSize: '0.7rem', color: 'var(--red)', flexShrink: 0 }}
+                  onClick={() => handleDeleteSilo(s.id)}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ── Publish to sites row ─────────────────────────────────────────── */}
       {clientSites.length > 0 && (
@@ -2004,6 +2133,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <Label>Weeks Ahead</Label>
                   <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
                 </div>
+                {silos.length > 0 && (
+                  <div>
+                    <Label>Target Silo (optional)</Label>
+                    <select className="input" style={{ width: '100%' }} value={siloGenerateTarget ?? ''} onChange={e => setSiloGenerateTarget(e.target.value || null)}>
+                      <option value="">— Standalone (no silo) —</option>
+                      {silos.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
                   <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
                     <strong>Using:</strong> {freqSummary}
