@@ -166,9 +166,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [wpStatus,     setWpStatus]     = useState<WpPublishStatus>('draft')
   const [authorId,     setAuthorId]     = useState<number | null>(null)
   const [connectionId, setConnectionId] = useState<string>(defaultConnectionId ?? '')
-  useEffect(() => {
-    if (!connectionId && sites.length === 1) setConnectionId(sites[0].connectionId)
-  }, [sites])
 
   // Featured image
   const [featuredImageUrl, setFeaturedImageUrl] = useState('')
@@ -212,8 +209,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
-        // Seed connection: post's own stored connection takes priority, then schedule default
-        setConnectionId(data.postConnectionId ?? defaultConnectionId ?? '')
+        // Seed connection: post's stored connection > schedule default > first BC site > first any site
+        const autoSite = sites.find(s => s.connectorType === 'bigcommerce') ?? sites[0]
+        setConnectionId(data.postConnectionId ?? defaultConnectionId ?? autoSite?.connectionId ?? '')
 
         // Default publish status: use target date if set, otherwise fall back to schedule config
         if (data.targetPublishDate) {

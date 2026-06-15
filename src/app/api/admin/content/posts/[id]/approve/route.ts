@@ -44,16 +44,18 @@ export async function POST(
     return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
   }
 
-  // Resolve WP connection: prefer stored connection_id, fall back to any active WP connection
+  // Resolve WP connection: prefer stored connection_id (WP only), fall back to any active WP connection
   type ConnRow = { id: string; external_id: string; connector: { auth: Record<string, unknown>; config: Record<string, unknown> } }
   let connData: ConnRow | null = null
 
   if (p.connection_id) {
+    // Only match WP connections — if connection_id is a BC connection, let it fall through to the BC block below
     const { data } = await db
       .from('client_connections')
-      .select('id, external_id, connector:connectors!inner(auth, config)')
+      .select('id, external_id, connector:connectors!inner(type, auth, config)')
       .eq('id', String(p.connection_id))
-      .single()
+      .eq('connector.type', 'wordpress')
+      .maybeSingle()
     connData = data as ConnRow | null
   }
 
