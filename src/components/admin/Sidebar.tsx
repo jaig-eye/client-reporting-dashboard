@@ -14,6 +14,7 @@ import {
   CaretRight,
   RocketLaunch,
   Bell,
+  GlobeSimple,
 } from '@phosphor-icons/react'
 import SoundToggle from './SoundToggle'
 
@@ -30,6 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/admin/connections', label: 'Integrations',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
   { href: '/admin/content',     label: 'Content',          icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true  },
   { href: '/admin/ad-fuel',     label: 'Ad Fuel',          icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true  },
+  { href: '/admin/sites',       label: 'Sites',            icon: <GlobeSimple size={16} aria-hidden />,   matchPrefix: true  },
   { href: '/admin/alerts',      label: 'Alerts',           icon: <Bell size={16} aria-hidden />,          matchPrefix: true, alertsKey: true },
   { href: '/admin/users',       label: 'Users',            icon: <UsersThree size={16} aria-hidden />,    matchPrefix: true  },
   { href: '/admin/settings',    label: 'Agency Settings',  icon: <GearSix size={16} aria-hidden />,       matchPrefix: true  },

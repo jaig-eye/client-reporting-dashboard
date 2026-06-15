@@ -182,6 +182,14 @@ export interface Client {
   ad_fuel_alert_threshold?: number | null
   /** Timestamp of last ad fuel low-balance Discord alert — used to prevent spam. */
   last_fuel_alert_at?: string | null
+  /** Business address (freeform). */
+  address?: string | null
+  /** Business phone number. */
+  phone?: string | null
+  /** Business website URL. */
+  website?: string | null
+  /** FK to users.id — the account manager assigned to this client. */
+  account_manager_id?: string | null
   created_at: string
   updated_at: string
 }

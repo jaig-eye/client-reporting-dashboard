@@ -1,5 +1,5 @@
 // Client Detail — /admin/clients/[id]
-// Tabbed management page: General / Data Sources / Performance / Content / Advanced
+// Tabbed management page: Overview / Integrations / Metrics / Content / Billing / Advanced
 
 import { unstable_noStore as noStore } from 'next/cache'
 import { Suspense } from 'react'
@@ -14,14 +14,11 @@ import {
   isConnectorImplemented,
 } from '@/lib/connectors/registry'
 import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
-import CopyButton from '@/components/CopyButton'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import ClientSyncButton from './ClientSyncButton'
 import ClientManualSync from './ClientManualSync'
-import EditClientInfo from './EditClientInfo'
 import DataPurgeButton from './DataPurgeButton'
 import ClientLogoUpload from './ClientLogoUpload'
-import ClientAdFuelCut from './ClientAdFuelCut'
 import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
@@ -34,16 +31,18 @@ import ClientBcDailyReport from './ClientBcDailyReport'
 import ClientIntegrationCards from '@/components/admin/ClientIntegrationCards'
 import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
+import OverviewTab from './OverviewTab'
+import BillingTab from './BillingTab'
 
 export const dynamic = 'force-dynamic'
 
 const TABS = [
-  { id: 'general',      label: 'General'      },
-  { id: 'sources',      label: 'Integrations' },
-  { id: 'performance',  label: 'Metrics'      },
-  { id: 'content',      label: 'Content'      },
-  { id: 'adfuel',       label: 'Ad Fuel'      },
-  { id: 'advanced',     label: 'Advanced'     },
+  { id: 'overview',    label: 'Overview'     },
+  { id: 'sources',     label: 'Integrations' },
+  { id: 'performance', label: 'Metrics'      },
+  { id: 'content',     label: 'Content'      },
+  { id: 'billing',     label: 'Billing'      },
+  { id: 'advanced',    label: 'Advanced'     },
 ]
 
 export default async function ClientDetailPage({
@@ -56,11 +55,12 @@ export default async function ClientDetailPage({
   noStore()
   const { id } = await params
   const sp = await searchParams
-  const activeTab    = TABS.find(t => t.id === sp.tab)?.id ?? 'general'
+  const activeTab     = TABS.find(t => t.id === sp.tab)?.id ?? 'overview'
   const initialSubTab = sp.subtab ?? 'overview'
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
+  // Always-needed data
   const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes, coverageRes, pauseLogRes] = await Promise.all([
     db.from('clients').select('*').eq('id', id).single(),
     db.from('client_connections')
@@ -88,11 +88,74 @@ export default async function ClientDetailPage({
   const client = clientRes.data as Client | null
   if (!client) notFound()
 
+  // Overview-tab data (contacts, admin users, stats)
+  const [contactsRes, adminUsersRes, overviewStatsRes] = activeTab === 'overview'
+    ? await Promise.all([
+        db.from('client_contacts').select('*').eq('client_id', id).order('created_at'),
+        db.from('users').select('id, name, email, avatar_url').eq('is_active', true).order('name'),
+        (async () => {
+          const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+          const w28Start   = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+          const settingsForBalance = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single()
+          const agencyForBalance = settingsForBalance.data as { ad_fuel_cut?: number | null; ad_fuel_cutoff_date?: string | null } | null
+          const cutoffDate = agencyForBalance?.ad_fuel_cutoff_date ?? '2025-01-01'
+          const cut = client.ad_fuel_cut ?? agencyForBalance?.ad_fuel_cut ?? 0.20
+          const split = 1 - cut
+
+          type SumRow = { client_id: string; spend: number }
+          const [gRes, mRes, ledgerRes, gscRes, pipelineRes] = await Promise.all([
+            db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }),
+            db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
+            db.from('ad_fuel_ledger').select('amount_af, date_of_payment').eq('client_id', id),
+            db.from('gsc_metrics').select('impressions').eq('client_id', id).gte('date', w28Start),
+            db.from('content_posts').select('id', { count: 'exact', head: true }).eq('client_id', id).eq('status', 'for_review'),
+          ])
+
+          const googleSpend = ((gRes.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
+          const metaSpend   = ((mRes.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
+
+          // MTD spend from RPCs with MTD date range
+          const [gMtd, mMtd] = await Promise.all([
+            db.rpc('sum_google_spend_by_client', { from_date: monthStart }),
+            db.rpc('sum_meta_spend_by_client',   { from_date: monthStart }),
+          ])
+          const googleMtd = ((gMtd.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
+          const metaMtd   = ((mMtd.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
+
+          const rawSpend   = googleSpend + metaSpend
+          const afSpend    = split > 0 ? rawSpend / split : 0
+
+          const cutoffMs  = new Date(cutoffDate + 'T00:00:00Z').getTime()
+          let afPurchased = 0
+          for (const e of (ledgerRes.data ?? []) as { amount_af: number; date_of_payment: string }[]) {
+            if (new Date(e.date_of_payment + 'T00:00:00Z').getTime() >= cutoffMs) {
+              afPurchased += Number(e.amount_af)
+            }
+          }
+
+          const gscImpressions = ((gscRes.data ?? []) as { impressions: number }[])
+            .reduce((sum, r) => sum + (r.impressions ?? 0), 0)
+
+          return {
+            adFuelBalance:       Number((afPurchased - afSpend).toFixed(2)),
+            mtdSpend:            googleMtd + metaMtd,
+            gscImpressions28d:   gscImpressions,
+            contentPipelineCount: pipelineRes.count ?? 0,
+          }
+        })(),
+      ])
+    : [{ data: [] }, { data: [] }, Promise.resolve({ adFuelBalance: null, mtdSpend: null, gscImpressions28d: null, contentPipelineCount: 0 })]
+
+  type ContactRow = { id: string; name: string; email: string | null; phone: string | null; role: string }
+  type AdminUserRow = { id: string; name: string; email: string; avatar_url: string | null }
+
+  const contacts   = (contactsRes.data ?? []) as ContactRow[]
+  const adminUsers = (adminUsersRes.data ?? []) as AdminUserRow[]
+  const overviewStats = overviewStatsRes as { adFuelBalance: number | null; mtdSpend: number | null; gscImpressions28d: number | null; contentPipelineCount: number }
+
   type CoverageRow = { source: string; min_date: string | null; max_date: string | null; days_with_data: number }
   const SOURCE_LABELS: Record<string, string> = {
-    // Coverage RPC source names (match metric table names in the RPC)
     google_ads: 'Google Ads', meta_ads: 'Meta Ads', ga4: 'GA4', gsc: 'Search Console', ahrefs: 'Ahrefs',
-    // Connector type names (used in Recent Syncs lookup)
     google_analytics: 'GA4', google_search_console: 'Search Console',
     google_business_profile: 'Google Business', ghl: 'GoHighLevel', wordpress: 'WordPress',
   }
@@ -134,7 +197,6 @@ export default async function ClientDetailPage({
   )).sort()
 
   const clientWithActions = client as Client & { lead_action?: string | null; purchase_action?: string | null }
-  // For BC, separate content vs analytics connections; connByType uses the content one
   const allBcConns      = connections.filter(c => c.connector.type === 'bigcommerce')
   const contentBcConn   = allBcConns.find(c => (c.connector.config as Record<string, unknown>)?.role !== 'analytics') ?? allBcConns[0]
   const analyticsBcConn = allBcConns.find(c => (c.connector.config as Record<string, unknown>)?.role === 'analytics')
@@ -145,7 +207,7 @@ export default async function ClientDetailPage({
       .map(c => [c.connector.type, c] as [string, typeof c])
   )
   if (contentBcConn) connByType.set('bigcommerce', contentBcConn)
-  const dashUrl    = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
+  const dashUrl = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
 
   function tabUrl(tab: string) {
     return `/admin/clients/${id}?tab=${tab}`
@@ -205,57 +267,24 @@ export default async function ClientDetailPage({
         ))}
       </div>
 
-      {/* ── GENERAL ──────────────────────────────────────────────── */}
-      {activeTab === 'general' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl">
-          <div className="space-y-4">
-            <div className="card p-5">
-              <h2 className="section-title mb-3">Client Info</h2>
-              <EditClientInfo
-                clientId={id}
-                name={client.name}
-                slug={client.slug ?? ''}
-              />
-            </div>
-
-            <div className="card p-5">
-              <h2 className="section-title mb-3">Client Logo</h2>
-              <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
-              <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
-            </div>
-
-            <div className="card p-5">
-              <h2 className="section-title mb-1">Ad Fuel Cut</h2>
-              <p className="section-desc mb-3">Per-client margin override. Ad Fuel Spend = raw spend ÷ (1 − cut).</p>
-              <ClientAdFuelCut clientId={id} currentCut={client.ad_fuel_cut} globalCut={globalCut} />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="card p-5">
-              <h2 className="section-title mb-1">Dashboard Link</h2>
-              <p className="section-desc mb-3">Share with the client to access their reporting dashboard.</p>
-              <div
-                className="flex items-center gap-2 rounded-lg px-3 py-2.5"
-                style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
-              >
-                <span className="text-xs font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>
-                  {dashUrl}
-                </span>
-                <CopyButton text={dashUrl} />
-              </div>
-            </div>
-
-            <div className="card p-5">
-              <h2 className="section-title mb-1">Manual Sync</h2>
-              <p className="section-desc mb-3">Pull the last 30 days for all connected accounts.</p>
-              <ClientManualSync clientId={id} />
-            </div>
-          </div>
-        </div>
+      {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
+        <OverviewTab
+          clientId={id}
+          name={client.name}
+          address={client.address ?? null}
+          phone={client.phone ?? null}
+          website={client.website ?? null}
+          logoUrl={client.logo_url ?? null}
+          accountManagerId={client.account_manager_id ?? null}
+          adminUsers={adminUsers}
+          contacts={contacts}
+          stats={overviewStats}
+          dashUrl={dashUrl}
+        />
       )}
 
-      {/* ── DATA SOURCES ─────────────────────────────────────────── */}
+      {/* ── DATA SOURCES ─────────────────────────────────────────────── */}
       {activeTab === 'sources' && (
         <div className="space-y-4 max-w-2xl">
 
@@ -428,17 +457,13 @@ export default async function ClientDetailPage({
                     <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress' | 'bigcommerce'} />
                   </div>
                 )}
-                {/* Daily report toggle + optional analytics connection — shown when any BC is connected */}
                 {type === 'bigcommerce' && state === 'connected' && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                    {/* Daily report toggle — available on the main connection or a dedicated analytics one */}
                     <ClientBcDailyReport
                       clientId={id}
                       enabled={!!(client as unknown as { bc_daily_report?: boolean }).bc_daily_report}
                       hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
                     />
-
-                    {/* Optional second analytics-role connection for redundancy */}
                     <div style={{ marginTop: 12 }}>
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-2.5 flex-1 min-w-0">
@@ -499,7 +524,7 @@ export default async function ClientDetailPage({
         </div>
       )}
 
-      {/* ── PERFORMANCE ──────────────────────────────────────────── */}
+      {/* ── PERFORMANCE ──────────────────────────────────────────────── */}
       {activeTab === 'performance' && (
         <div className="space-y-6 max-w-3xl">
           <div className="card p-5">
@@ -554,34 +579,55 @@ export default async function ClientDetailPage({
         </div>
       )}
 
-      {/* ── CONTENT ──────────────────────────────────────────────── */}
+      {/* ── CONTENT ──────────────────────────────────────────────────── */}
       {activeTab === 'content' && (
         <ContentTabSection clientId={id} clientName={client.name} isEcom={client.layout_type === 'ecom'} initialSubTab={initialSubTab} />
       )}
 
-      {/* ── AD FUEL ──────────────────────────────────────────────── */}
-      {activeTab === 'adfuel' && (
-        <div className="max-w-2xl">
-          <div className="mb-4">
-            <h2 className="section-title">Ad Fuel</h2>
-            <p className="section-desc">
-              Auto-pause settings for this client. Balance details are in{' '}
-              <a href="/admin/ad-fuel" style={{ color: 'var(--blue)' }}>Ad Fuel → Dashboard</a>.
-            </p>
-          </div>
-          <ClientAutoPauseSettings
-            clientId={id}
-            autoPauseAds={(client as unknown as Record<string, unknown>).auto_pause_ads as boolean ?? false}
-            autoResumeAds={(client as unknown as Record<string, unknown>).auto_resume_ads as boolean ?? false}
-            campaignsPausedAt={(client as unknown as Record<string, unknown>).campaigns_paused_at as string | null ?? null}
-            pauseLog={pauseLog}
-          />
-        </div>
+      {/* ── BILLING ──────────────────────────────────────────────────── */}
+      {activeTab === 'billing' && (
+        <BillingTab
+          clientId={id}
+          adFuelCut={client.ad_fuel_cut ?? null}
+          globalCut={globalCut}
+        />
       )}
 
-      {/* ── ADVANCED ─────────────────────────────────────────────── */}
+      {/* ── ADVANCED ─────────────────────────────────────────────────── */}
       {activeTab === 'advanced' && (
         <div className="space-y-6 max-w-3xl">
+
+          {/* Client info (name/slug) + logo — moved from old General tab */}
+          <div className="card p-5">
+            <h2 className="section-title mb-3">Client Info</h2>
+            <div className="space-y-4">
+              <div>
+                <p className="section-desc mb-3">Edit the client name and slug. The slug appears in internal URLs.</p>
+                <ClientManualSync clientId={id} />
+              </div>
+            </div>
+          </div>
+
+          {/* Ad Fuel auto-pause (moved from removed Ad Fuel tab) */}
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Ad Fuel Auto-Pause</h2>
+            <p className="section-desc mb-3">Automatically pause and resume campaigns when the Ad Fuel balance runs low.</p>
+            <ClientAutoPauseSettings
+              clientId={id}
+              autoPauseAds={(client as unknown as Record<string, unknown>).auto_pause_ads as boolean ?? false}
+              autoResumeAds={(client as unknown as Record<string, unknown>).auto_resume_ads as boolean ?? false}
+              campaignsPausedAt={(client as unknown as Record<string, unknown>).campaigns_paused_at as string | null ?? null}
+              pauseLog={pauseLog}
+            />
+          </div>
+
+          {/* Client logo */}
+          <div className="card p-5">
+            <h2 className="section-title mb-3">Client Logo</h2>
+            <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
+            <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
+          </div>
+
           {/* Data Coverage */}
           <div className="card p-5">
             <h2 className="section-title mb-1">Data Coverage</h2>
@@ -733,7 +779,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
     { count: pendingCount }, { count: approvedCount }, { count: forReviewCount }, { count: publishedCount },
     { count: saPendingCount }, { count: saApprovedCount }, { count: saForReviewCount }, { count: saPublishedCount },
   ] = await Promise.all([
-    // Include NULL content_type rows — topics created before the column was added are blog posts.
     db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).in('status', ['pending', 'scheduled']).or('content_type.eq.blog,content_type.is.null'),
     db.from('content_topics').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'approved').or('content_type.eq.blog,content_type.is.null'),
     db.from('content_posts').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('status', 'for_review').or('content_type.eq.blog,content_type.is.null'),
@@ -766,7 +811,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   const nextPublishDate   = upcomingTopics.find(t => ['pending','scheduled','approved','generating'].includes(t.status))?.target_publish_date ?? null
   const recentPostsCount  = (recentPostsData.data ?? []).length
 
-  // GSC aggregation
   type AggRow = { page: string; query: string; impressions: number; clicks: number; weightedPos: number; weightedCtr: number }
   const agg = new Map<string, AggRow>()
   for (const r of (gscRaw.data ?? []) as { page: string; query: string; impressions: number; clicks: number; ctr: number; position: number }[]) {
@@ -808,7 +852,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
     highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 20), 50),
   }
 
-  // Topics + posts for queue tab
   const topicQueueItems = upcomingTopics.map(t => ({
     type:               'topic' as const,
     id:                 t.id,
@@ -868,8 +911,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
       }
     }),
   ]
-
-  const postsPerRun = Number((settingsData.data as Record<string, unknown> | null)?.posts_per_run ?? 2)
 
   return (
     <Suspense fallback={null}>

@@ -21,11 +21,13 @@ export default function AdFuelBadge({
   clientName,
   monthlyBudget,
   pendingAmount,
+  onActivityClick,
 }: {
-  balance:         number
-  clientName:      string
-  monthlyBudget?:  number
-  pendingAmount?:  number  // ACH payment in transit — shown as projected addition
+  balance:            number
+  clientName:         string
+  monthlyBudget?:     number
+  pendingAmount?:     number  // ACH payment in transit — shown as projected addition
+  onActivityClick?:   () => void
 }) {
   const [mounted, setMounted] = useState(false)
 
@@ -109,7 +111,11 @@ export default function AdFuelBadge({
         display: 'flex', alignItems: 'center',
         padding: '0 12px', zIndex: 2, gap: 10,
       }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{ flex: 1, minWidth: 0, cursor: onActivityClick ? 'pointer' : undefined }}
+          onClick={onActivityClick}
+          title={onActivityClick ? 'View Ad Fuel activity' : undefined}
+        >
           <p style={{
             fontSize: '0.575rem', textTransform: 'uppercase',
             letterSpacing: '0.08em', color: 'var(--text-faint)',

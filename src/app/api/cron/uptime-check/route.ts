@@ -1,0 +1,279 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/server'
+import { sendDiscordMessage } from '@/lib/discord'
+import { sendEmail } from '@/lib/email'
+
+export const maxDuration = 300
+
+const TIMEOUT_MS = 15_000
+const FLAP_THRESHOLD = 2
+
+interface SiteRow {
+  id:                   string
+  name:                 string
+  url:                  string
+  status:               string
+  is_up:                boolean | null
+  consecutive_failures: number
+  client_id:            string | null
+  clients:              { name: string; discord_channel_id: string | null } | null
+}
+
+interface CheckResult {
+  siteId:       string
+  isUp:         boolean
+  statusCode:   number | null
+  responseMs:   number | null
+  finalUrl:     string | null
+  error:        string | null
+}
+
+async function pingUrl(url: string): Promise<Omit<CheckResult, 'siteId'>> {
+  const start = Date.now()
+  try {
+    const res = await fetch(url, {
+      signal:   AbortSignal.timeout(TIMEOUT_MS),
+      redirect: 'follow',
+      headers:  { 'User-Agent': 'LaunchLocal-Monitor/1.0' },
+    })
+    const responseMs  = Date.now() - start
+    const isUp        = res.status < 400
+    return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
+  } catch (err) {
+    const responseMs = Date.now() - start
+    const msg = err instanceof Error ? err.message : String(err)
+    const cause = msg.includes('timeout') ? 'timeout'
+      : msg.includes('ENOTFOUND') ? 'dns'
+      : msg.includes('ECONNREFUSED') ? 'connection_refused'
+      : 'other'
+    return { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get('authorization')
+  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const db = createAdminClient()
+  const checkedAt = new Date().toISOString()
+
+  const [agencyRes, sitesRes] = await Promise.all([
+    db.from('agency_settings')
+      .select('discord_bot_token, notification_email, agency_name')
+      .single(),
+    db.from('sites')
+      .select('id, name, url, status, is_up, consecutive_failures, client_id, clients(name, discord_channel_id)')
+      .eq('status', 'active'),
+  ])
+
+  const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
+  const alertEmail = agencyRes.data?.notification_email as string | null ?? null
+  const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const sites      = (sitesRes.data ?? []) as unknown as SiteRow[]
+
+  if (sites.length === 0) {
+    await db.from('cron_heartbeats').upsert({ cron_name: 'uptime-check', last_run_at: checkedAt, last_result: 'no sites' })
+    return NextResponse.json({ checked: 0 })
+  }
+
+  // Ping all sites concurrently
+  const results = await Promise.allSettled(
+    sites.map(site => pingUrl(site.url).then(r => ({ ...r, siteId: site.id } as CheckResult)))
+  )
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  let downtimeAlerts = 0
+  let recoveryAlerts = 0
+
+  for (let i = 0; i < sites.length; i++) {
+    const site   = sites[i]
+    const result = results[i]
+    if (result.status === 'rejected') continue
+
+    const { isUp, statusCode, responseMs, finalUrl, error } = result.value
+
+    // Write raw check
+    await db.from('site_checks').insert({
+      site_id:     site.id,
+      checked_at:  checkedAt,
+      is_up:       isUp,
+      status_code: statusCode,
+      response_ms: responseMs,
+      final_url:   finalUrl,
+      error,
+    })
+
+    const wasDown = site.is_up === false
+    const wasUp   = site.is_up === true || site.is_up === null
+
+    if (!isUp) {
+      const newFailCount = (site.consecutive_failures ?? 0) + 1
+
+      await db.from('sites').update({
+        is_up:                false,
+        last_checked_at:      checkedAt,
+        last_status_code:     statusCode,
+        last_response_ms:     responseMs,
+        consecutive_failures: newFailCount,
+        updated_at:           checkedAt,
+      }).eq('id', site.id)
+
+      // Flap threshold crossed — declare DOWN
+      if (newFailCount === FLAP_THRESHOLD && wasUp) {
+        const cause = error === 'timeout' ? 'timeout'
+          : error === 'dns' ? 'dns'
+          : error === 'connection_refused' ? 'connection_refused'
+          : statusCode && statusCode >= 500 ? '5xx'
+          : statusCode && statusCode >= 400 ? '4xx'
+          : 'other'
+
+        // Open incident
+        await db.from('site_incidents').insert({
+          site_id:    site.id,
+          started_at: checkedAt,
+          cause,
+        })
+
+        // admin_alerts row
+        await db.from('admin_alerts').insert({
+          type:        'integration',
+          severity:    'critical',
+          client_id:   site.client_id,
+          client_name: site.clients?.name ?? null,
+          title:       `${site.name} is DOWN`,
+          body:        `${site.url} returned ${statusCode ?? error ?? 'error'}`,
+          meta:        { site_id: site.id, url: site.url, status_code: statusCode, error, cause },
+          link_url:    `/admin/sites`,
+        })
+
+        const msg = `🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date().toUTCString()}`
+        const channelId = site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+        await sendDiscordMessage(botToken, channelId, msg)
+
+        if (alertEmail) {
+          await sendEmail({
+            to:      alertEmail,
+            subject: `[${agencyName}] Site DOWN: ${site.name}`,
+            html:    `<p><strong>${site.name}</strong> is down.</p><p>URL: ${site.url}<br>Status: ${statusCode ?? error ?? 'no response'}<br>Time: ${new Date().toUTCString()}</p>`,
+            text:    msg,
+          }).catch(() => {})
+        }
+
+        downtimeAlerts++
+      }
+    } else {
+      // Site is up
+      await db.from('sites').update({
+        is_up:                true,
+        last_checked_at:      checkedAt,
+        last_status_code:     statusCode,
+        last_response_ms:     responseMs,
+        consecutive_failures: 0,
+        updated_at:           checkedAt,
+      }).eq('id', site.id)
+
+      // Recovery — was down, now up
+      if (wasDown) {
+        // Close open incident
+        const { data: openIncident } = await db
+          .from('site_incidents')
+          .select('id, started_at')
+          .eq('site_id', site.id)
+          .is('ended_at', null)
+          .order('started_at', { ascending: false })
+          .maybeSingle()
+
+        if (openIncident) {
+          const durationS = Math.floor((new Date(checkedAt).getTime() - new Date(openIncident.started_at).getTime()) / 1000)
+          await db.from('site_incidents').update({
+            ended_at:   checkedAt,
+            duration_s: durationS,
+          }).eq('id', openIncident.id)
+
+          const downMins = Math.round(durationS / 60)
+          const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
+          const channelId = site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+          await sendDiscordMessage(botToken, channelId, msg)
+
+          if (alertEmail) {
+            await sendEmail({
+              to:      alertEmail,
+              subject: `[${agencyName}] Site recovered: ${site.name}`,
+              html:    `<p><strong>${site.name}</strong> has recovered after ${downMins} minute(s).</p><p>URL: ${site.url}</p>`,
+              text:    msg,
+            }).catch(() => {})
+          }
+
+          recoveryAlerts++
+        }
+      }
+    }
+  }
+
+  // Daily rollup — upsert today's stats per site
+  const rollupRes = await db
+    .from('site_checks')
+    .select('site_id, is_up, response_ms')
+    .gte('checked_at', today + 'T00:00:00Z')
+    .lte('checked_at', today + 'T23:59:59Z')
+
+  const bySite = new Map<string, { total: number; up: number; totalMs: number }>()
+  for (const row of rollupRes.data ?? []) {
+    const s = bySite.get(row.site_id) ?? { total: 0, up: 0, totalMs: 0 }
+    s.total++
+    if (row.is_up) s.up++
+    s.totalMs += row.response_ms ?? 0
+    bySite.set(row.site_id, s)
+  }
+
+  for (const [siteId, stats] of Array.from(bySite.entries())) {
+    await db.from('site_check_daily').upsert({
+      site_id:        siteId,
+      date:           today,
+      uptime_pct:     stats.total > 0 ? (stats.up / stats.total) * 100 : null,
+      avg_response_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null,
+      check_count:    stats.total,
+    }, { onConflict: 'site_id,date' })
+  }
+
+  // Compute 7-day uptime per site and update sites table
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+  const weeklyRes = await db
+    .from('site_check_daily')
+    .select('site_id, uptime_pct, check_count')
+    .gte('date', sevenDaysAgo)
+
+  const weekly = new Map<string, { weightedSum: number; totalChecks: number }>()
+  for (const row of weeklyRes.data ?? []) {
+    const w = weekly.get(row.site_id) ?? { weightedSum: 0, totalChecks: 0 }
+    w.weightedSum  += (row.uptime_pct ?? 0) * (row.check_count ?? 1)
+    w.totalChecks  += row.check_count ?? 1
+    weekly.set(row.site_id, w)
+  }
+
+  await Promise.all(
+    Array.from(weekly.entries()).map(([siteId, w]) =>
+      db.from('sites').update({
+        uptime_7d:  w.totalChecks > 0 ? w.weightedSum / w.totalChecks : null,
+        updated_at: checkedAt,
+      }).eq('id', siteId)
+    )
+  )
+
+  // Prune raw checks older than 7 days
+  const pruneBefore = new Date(Date.now() - 7 * 86_400_000).toISOString()
+  await db.from('site_checks').delete().lt('checked_at', pruneBefore)
+
+  // Heartbeat
+  await db.from('cron_heartbeats').upsert({
+    cron_name:   'uptime-check',
+    last_run_at: checkedAt,
+    last_result: `checked ${sites.length} sites, ${downtimeAlerts} down alerts, ${recoveryAlerts} recoveries`,
+  })
+
+  return NextResponse.json({ checked: sites.length, downtimeAlerts, recoveryAlerts })
+}
