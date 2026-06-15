@@ -22,6 +22,7 @@ type PatchBody = {
   featuredImageUrl?: string | null
   wpStatus?:        string | null
   authorId?:        number | null
+  connectionId?:    string | null
 }
 
 export async function PATCH(
@@ -51,6 +52,7 @@ export async function PATCH(
   if (body.featuredImageUrl !== undefined) update.featured_image_url = body.featuredImageUrl
   if (body.wpStatus        !== undefined) update.wp_status        = body.wpStatus
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
+  if (body.connectionId    !== undefined) update.connection_id    = body.connectionId
 
   if (Object.keys(update).length === 0)
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })

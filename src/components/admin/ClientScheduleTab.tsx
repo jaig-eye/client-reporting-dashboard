@@ -847,6 +847,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         {scheduleOpen && (
           <div className="card p-5 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
             <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <Label>Site Connection</Label>
+                <select className="input" value={schedule.connection_id ?? ''} onChange={e => setSched('connection_id', e.target.value || null)}>
+                  <option value="">— Select site —</option>
+                  {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName || s.siteUrl}</option>)}
+                </select>
+              </div>
               <div>
                 <Label>Start Date</Label>
                 <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />

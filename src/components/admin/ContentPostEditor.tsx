@@ -55,6 +55,7 @@ interface PostDetail {
   bcStoreHash:      string | null
   featuredImageUrl:          string | null
   targetPublishDate:         string | null
+  postConnectionId:          string | null
   scheduleDefaultAuthorId:   number | null
   schedulePublishMode:       string | null
 }
@@ -141,6 +142,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [savedFlash,      setSavedFlash]      = useState(false)
   const [regenerating,    setRegenerating]    = useState(false)
   const [approving,       setApproving]       = useState(false)
+  const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
   const [isDirty,         setIsDirty]         = useState(false)
   const [activeEditorTab, setActiveEditorTab] = useState<EditorTab>('content')
@@ -210,7 +212,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
-        if (!connectionId && defaultConnectionId) setConnectionId(defaultConnectionId)
+        // Seed connection: post's own stored connection takes priority, then schedule default
+        setConnectionId(data.postConnectionId ?? defaultConnectionId ?? '')
 
         // Default publish status: use target date if set, otherwise fall back to schedule config
         if (data.targetPublishDate) {
@@ -313,7 +316,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId,
+          wpStatus, authorId, connectionId: connectionId || null,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
@@ -332,6 +335,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     setApproving(true)
     setError('')
     try {
+      const activeSite    = connectionId ? sites.find(s => s.connectionId === connectionId) : null
+      const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
+
+      if (!activeSite) {
+        setError('Select a site connection in the Settings tab before approving.')
+        setApproving(false)
+        return
+      }
+      if (!window.confirm(`Push "${title || 'this post'}" to ${activeSite.siteName}?`)) { setApproving(false); return }
+
       const saveRes = await fetch(`/api/admin/content/posts/${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -339,37 +352,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId,
+          wpStatus, authorId, connectionId,
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
 
-      const activeSite   = connectionId ? sites.find(s => s.connectionId === connectionId) : null
-      const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
-
-      const confirmMsg = activeSite
-        ? `This will push "${title || 'this post'}" to ${activeSite.siteName}. Continue?`
-        : `No site connected — the post will be marked approved but not pushed anywhere. Continue?`
-      if (!window.confirm(confirmMsg)) { setApproving(false); return }
-
-      let pushData: Record<string, unknown> = {}
-      if (activeSite) {
-        const route = isBigCommerce
-          ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
-          : `/api/admin/content/posts/${postId}/approve`
-        const pushRes = await fetch(route, { method: 'POST' })
-        if (!pushRes.ok) {
-          const body = await pushRes.json().catch(() => ({ error: 'Push failed' }))
-          throw new Error(body.error || `Push failed (${pushRes.status})`)
-        }
-        pushData = await pushRes.json().catch(() => ({}))
-      } else {
-        fetch(`/api/admin/content/posts/${postId}`, {
-          method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ status: 'draft_saved' }),
-        }).catch(e => console.error('[handleApprove status]', e))
+      const route = isBigCommerce
+        ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
+        : `/api/admin/content/posts/${postId}/approve`
+      const pushRes = await fetch(route, { method: 'POST' })
+      if (!pushRes.ok) {
+        const body = await pushRes.json().catch(() => ({ error: 'Push failed' }))
+        throw new Error(body.error || `Push failed (${pushRes.status})`)
       }
+      const pushData = await pushRes.json().catch(() => ({}))
 
       onUpdate({
         id: postId, status: 'draft_saved',
@@ -399,6 +395,42 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reject')
+    }
+  }
+
+  async function handleRetry() {
+    if (!connectionId) { setError('Select a site connection in the Settings tab first'); return }
+    setRetrying(true); setError('')
+    try {
+      await fetch(`/api/admin/content/posts/${postId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ connectionId }),
+      })
+      const activeSite    = sites.find(s => s.connectionId === connectionId)
+      const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
+      const route = isBigCommerce
+        ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
+        : `/api/admin/content/posts/${postId}/approve`
+      const pushRes = await fetch(route, { method: 'POST' })
+      if (!pushRes.ok) {
+        const body = await pushRes.json().catch(() => ({ error: 'Push failed' }))
+        throw new Error(body.error || `Push failed (${pushRes.status})`)
+      }
+      const pushData = await pushRes.json().catch(() => ({}))
+      onUpdate({
+        id: postId, status: 'draft_saved',
+        title: title || null, targetKeyword: targetKeyword || null,
+        wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
+        publishedUrl: (pushData.published_url as string | null) ?? post?.publishedUrl ?? null,
+        wpPostId:  (pushData.wp_post_id  as number | null) ?? null,
+        wpSiteUrl: (pushData.wp_site_url as string | null) ?? null,
+      })
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Retry failed')
+    } finally {
+      setRetrying(false)
     }
   }
 
@@ -548,6 +580,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           <button type="button" onClick={() => setShowPreview(true)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
             Preview
           </button>
+          {isOnSite && !post?.wpPostId && !post?.bcPostId && (
+            <button type="button" onClick={handleRetry} disabled={retrying} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+              {retrying ? 'Pushing…' : 'Retry Push'}
+            </button>
+          )}
           <button type="button" onClick={onClose} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }} aria-label="Close">
             ✕
           </button>
