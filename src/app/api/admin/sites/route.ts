@@ -36,7 +36,11 @@ export async function GET(request: NextRequest) {
   if (isUp === 'false') query = query.eq('is_up', false)
 
   const q = searchParams.get('q')
-  if (q) query = query.or(`name.ilike.%${q}%,url.ilike.%${q}%`)
+  if (q) {
+    // Strip PostgREST filter metacharacters before interpolation into or()
+    const safeQ = q.replace(/[,()]/g, '')
+    query = query.or(`name.ilike.%${safeQ}%,url.ilike.%${safeQ}%`)
+  }
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

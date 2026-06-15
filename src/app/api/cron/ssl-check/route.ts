@@ -17,9 +17,12 @@ interface SslInfo {
 function checkSsl(hostname: string): Promise<SslInfo> {
   return new Promise(resolve => {
     let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
     const done = (result: SslInfo) => {
       if (settled) return
       settled = true
+      if (timer) clearTimeout(timer)
       socket.destroy()
       resolve(result)
     }
@@ -45,7 +48,7 @@ function checkSsl(hostname: string): Promise<SslInfo> {
       done({ issuer: null, expiresAt: null, daysLeft: null, error: err.message })
     })
 
-    setTimeout(() => done({ issuer: null, expiresAt: null, daysLeft: null, error: 'timeout' }), 15_000)
+    timer = setTimeout(() => done({ issuer: null, expiresAt: null, daysLeft: null, error: 'timeout' }), 15_000)
   })
 }
 
@@ -78,10 +81,22 @@ export async function GET(request: NextRequest) {
 
   let warned = 0; let critical = 0
 
-  for (const site of sites) {
-    const hostname = extractHostname(site.url)
+  // Fan out all TLS checks in parallel — wall-clock = slowest single check, not sum
+  const sslResults = await Promise.allSettled(
+    sites.map(site => {
+      const hostname = extractHostname(site.url)
+      if (!hostname || site.url.startsWith('http://')) {
+        return Promise.resolve({ site, hostname: '', info: null as SslInfo | null })
+      }
+      return checkSsl(hostname).then(info => ({ site, hostname, info }))
+    })
+  )
+
+  for (const result of sslResults) {
+    if (result.status === 'rejected') continue
+    const { site, hostname, info } = result.value
+
     if (!hostname || site.url.startsWith('http://')) {
-      // HTTP-only — flag as no cert
       await db.from('sites').update({
         ssl_issuer:        null,
         ssl_expires_at:    null,
@@ -92,7 +107,7 @@ export async function GET(request: NextRequest) {
       continue
     }
 
-    const info = await checkSsl(hostname)
+    if (!info) continue
 
     await db.from('sites').update({
       ssl_issuer:         info.issuer,

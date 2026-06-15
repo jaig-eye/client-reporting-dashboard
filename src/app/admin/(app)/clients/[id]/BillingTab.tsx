@@ -78,10 +78,12 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
 
   useEffect(() => { load() }, [load])
 
-  async function saveCut() {
+  async function saveCut(overrideValue?: number | null) {
     setCutSaving(true)
     setCutMsg('')
-    const parsed = cutValue === '' ? null : parseFloat(cutValue) / 100
+    const parsed = overrideValue !== undefined
+      ? overrideValue
+      : (cutValue === '' ? null : parseFloat(cutValue) / 100)
     try {
       const res = await fetch(`/api/admin/clients/${clientId}`, {
         method:  'PATCH',
@@ -125,12 +127,12 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
             />
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>%</span>
           </div>
-          <button onClick={saveCut} disabled={cutSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
+          <button onClick={() => saveCut()} disabled={cutSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
             {cutSaving ? 'Saving…' : 'Save'}
           </button>
           {cutValue !== '' && (
             <button
-              onClick={() => { setCutValue(''); saveCut() }}
+              onClick={() => { setCutValue(''); saveCut(null) }}
               className="btn btn-secondary"
               style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
             >
