@@ -8,6 +8,8 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { publishBCPage } from '@/lib/connectors/bigcommerce'
+import { injectNearbyLinks } from '@/lib/content/injectNearbyLinks'
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -27,7 +29,7 @@ export async function POST(
 
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url')
+    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url')
     .eq('id', id)
     .single()
 
@@ -138,6 +140,36 @@ export async function POST(
   }
 
   try {
+    // Service area pages use the BC pages API, not the blog API
+    if (p.content_type === 'service_area') {
+      const bcPage = await publishBCPage(storeHash, accessToken, {
+        name:       String(p.title ?? ''),
+        body:       String(p.content ?? ''),
+        url:        postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
+        is_visible: false,
+      })
+      const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
+
+      await db.from('content_posts').update({
+        bc_post_id:    bcPage.id,
+        bc_store_hash: storeHash,
+        status:        'draft_saved',
+        published_url: bcEditUrl,
+      }).eq('id', id)
+
+      const adminSession = await getAdminSession()
+      logActivity(adminSession, 'published', 'post', {
+        resourceId: id,
+        clientId: String(p.client_id),
+        meta: { title: p.title, bc_page_id: bcPage.id },
+      })
+
+      injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
+        .catch(() => {})
+
+      return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+    }
+
     const res = await fetch(
       `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
       {

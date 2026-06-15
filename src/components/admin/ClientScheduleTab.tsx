@@ -414,14 +414,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   // ── Load authors ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!firstConnectionId) { setAuthors([]); return }
-    fetch(`/api/admin/wordpress/authors?connection_id=${firstConnectionId}`)
+    const connId = schedule.connection_id || firstConnectionId
+    if (!connId) { setAuthors([]); return }
+    fetch(`/api/admin/wordpress/authors?connection_id=${connId}`)
       .then(r => r.json())
       .then((d: { authors?: Author[] } | { error: string }) => {
         if ('authors' in d && Array.isArray(d.authors)) setAuthors(d.authors)
       })
       .catch(() => setAuthors([]))
-  }, [firstConnectionId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedule.connection_id, firstConnectionId])
 
   // ── Load topics and posts ──────────────────────────────────────────────────
   const loadPipeline = useCallback(() => {

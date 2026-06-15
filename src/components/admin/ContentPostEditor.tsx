@@ -375,6 +375,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         wpPostId:  (pushData.wp_post_id  as number | null) ?? null,
         wpSiteUrl: (pushData.wp_site_url as string | null) ?? null,
       })
+      setApproving(false)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve')
@@ -402,13 +403,23 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     if (!connectionId) { setError('Select a site connection in the Settings tab first'); return }
     setRetrying(true); setError('')
     try {
-      await fetch(`/api/admin/content/posts/${postId}`, {
+      // Save all editor state (including connectionId) before pushing — same as handleApprove
+      const saveRes = await fetch(`/api/admin/content/posts/${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ connectionId }),
+        body:    JSON.stringify({
+          title, seoTitle, content, metaDescription, slug,
+          targetKeyword, suggestedTags: tags,
+          featuredImageUrl: featuredImageUrl || null,
+          wpStatus, authorId, connectionId,
+        }),
       })
-      const activeSite    = sites.find(s => s.connectionId === connectionId)
-      const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
+      if (!saveRes.ok) throw new Error((await saveRes.json().catch(() => ({}))).error || 'Failed to save')
+
+      const activeSite = sites.find(s => s.connectionId === connectionId)
+      if (!activeSite) throw new Error('Selected connection not found — refresh and try again')
+
+      const isBigCommerce = activeSite.connectorType === 'bigcommerce'
       const route = isBigCommerce
         ? `/api/admin/content/posts/${postId}/publish-bigcommerce`
         : `/api/admin/content/posts/${postId}/approve`
