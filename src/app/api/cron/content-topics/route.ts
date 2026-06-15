@@ -170,6 +170,31 @@ export async function GET(request: NextRequest) {
       return d > 0 && d <= leadWindow
     })
 
+    // ── Silo auto-selection: pick least-covered active silo once per client ──
+    let autoSiloId: string | undefined
+    {
+      const { data: activeSilos } = await db
+        .from('content_silos')
+        .select('id')
+        .eq('client_id', client_id)
+        .eq('status', 'active')
+
+      if (activeSilos && activeSilos.length > 0) {
+        const siloIds = (activeSilos as { id: string }[]).map(s => s.id)
+        const { data: clusterPosts } = await db
+          .from('content_posts')
+          .select('silo_id')
+          .in('silo_id', siloIds)
+          .in('status', ['for_review', 'approved', 'draft_saved', 'published', 'pending'])
+        const counts = new Map<string, number>(siloIds.map(id => [id, 0]))
+        for (const p of (clusterPosts ?? []) as { silo_id: string }[]) {
+          counts.set(p.silo_id, (counts.get(p.silo_id) ?? 0) + 1)
+        }
+        autoSiloId = Array.from(counts.entries()).sort((a, b) => a[1] - b[1])[0]?.[0]
+        if (autoSiloId) console.log(`[content-topics cron] auto-selected silo ${autoSiloId} for ${client_id} (${counts.get(autoSiloId) ?? 0} posts)`)
+      }
+    }
+
     // ── Topic generation: cover every slot in the lead window ─────────────
     for (const slot of slots) {
       const { data: existing } = await db
@@ -183,7 +208,7 @@ export async function GET(request: NextRequest) {
       if (existing && existing.length > 0) continue
 
       try {
-        const result = await generateTopicsForClient(db, client_id, topics_per_run, slot, { suppressEmail: true })
+        const result = await generateTopicsForClient(db, client_id, topics_per_run, slot, { suppressEmail: true, siloId: autoSiloId })
         if (result.topics.length > 0) {
           const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
           entry.items.push(...result.topics)
@@ -278,7 +303,7 @@ export async function GET(request: NextRequest) {
     // ── Post generation: fire for all approved/scheduled topics ───────────
     const { data: approvedTopics } = await db
       .from('content_topics')
-      .select('id, topic, target_keyword, target_publish_date')
+      .select('id, topic, target_keyword, target_publish_date, content_type')
       .eq('client_id', client_id)
       .in('status', ['scheduled', 'approved'])
 
@@ -290,17 +315,26 @@ export async function GET(request: NextRequest) {
     }
 
     await Promise.allSettled((approvedTopics ?? []).map(async (topic) => {
-      const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null }
+      const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
       try {
         await db.from('content_topics').update({ status: 'generating' }).eq('id', t.id)
-        const res = await fetch(`${appUrl}/api/admin/content/generate`, {
-          method:  'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+        // Route service-area topics to the SA generate endpoint; blog topics to the blog endpoint
+        const isSA = t.content_type === 'service_area'
+        const res = await fetch(
+          isSA
+            ? `${appUrl}/api/admin/content/service-area/generate`
+            : `${appUrl}/api/admin/content/generate`,
+          {
+            method:  'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+            },
+            body: isSA
+              ? JSON.stringify({ topic_id: t.id })
+              : JSON.stringify({ topic_id: t.id, suppress_email: true }),
           },
-          body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
-        })
+        )
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json() as { title?: string; focusKeyword?: string }
         postsTriggered.push(t.id)
