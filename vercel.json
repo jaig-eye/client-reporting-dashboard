@@ -47,6 +47,14 @@
     {
       "path": "/api/cron/ad-fuel-budget-alerts",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/uptime-check",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/ssl-check",
+      "schedule": "0 8 * * 1"
     }
   ]
 }

@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/Skeleton'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
-import AdFuelBadge from '@/components/dashboard/AdFuelBadge'
+import AdFuelBadgeWithModal from '@/components/dashboard/AdFuelBadgeWithModal'
 import CampaignTable from '@/components/CampaignTable'
 
 export const dynamic = 'force-dynamic'
@@ -734,7 +734,7 @@ export default async function DashboardPage({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {afPurchased > 0 && (
-              <AdFuelBadge balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
+              <AdFuelBadgeWithModal balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
             )}
             <Suspense fallback={null}>
               <DateRangePicker
