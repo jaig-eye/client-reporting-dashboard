@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
     })
 
     const wasDown = site.is_up === false
-    const wasUp   = site.is_up === true || site.is_up === null
+    const wasUp   = site.is_up === true
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
@@ -215,11 +215,16 @@ export async function GET(request: NextRequest) {
   }
 
   // Daily rollup — upsert today's stats per site
-  const rollupRes = await db
-    .from('site_checks')
-    .select('site_id, is_up, response_ms')
-    .gte('checked_at', today + 'T00:00:00Z')
-    .lte('checked_at', today + 'T23:59:59Z')
+  const [rollupRes, incidentRes] = await Promise.all([
+    db.from('site_checks')
+      .select('site_id, is_up, response_ms')
+      .gte('checked_at', today + 'T00:00:00Z')
+      .lt('checked_at',  today + 'T24:00:00Z'),
+    db.from('site_incidents')
+      .select('site_id')
+      .gte('started_at', today + 'T00:00:00Z')
+      .lt('started_at',  today + 'T24:00:00Z'),
+  ])
 
   const bySite = new Map<string, { total: number; up: number; totalMs: number }>()
   for (const row of rollupRes.data ?? []) {
@@ -230,13 +235,19 @@ export async function GET(request: NextRequest) {
     bySite.set(row.site_id, s)
   }
 
+  const incidentsBySite = new Map<string, number>()
+  for (const row of incidentRes.data ?? []) {
+    incidentsBySite.set(row.site_id, (incidentsBySite.get(row.site_id) ?? 0) + 1)
+  }
+
   for (const [siteId, stats] of Array.from(bySite.entries())) {
     await db.from('site_check_daily').upsert({
-      site_id:        siteId,
-      date:           today,
-      uptime_pct:     stats.total > 0 ? (stats.up / stats.total) * 100 : null,
+      site_id:         siteId,
+      date:            today,
+      uptime_pct:      stats.total > 0 ? (stats.up / stats.total) * 100 : null,
       avg_response_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null,
-      check_count:    stats.total,
+      check_count:     stats.total,
+      incident_count:  incidentsBySite.get(siteId) ?? 0,
     }, { onConflict: 'site_id,date' })
   }
 

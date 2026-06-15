@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     .from('clients')
     .select('id')
     .eq('dashboard_token', token)
-    .single()
+    .maybeSingle()
 
   if (!clientData) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const clientId = clientData.id
@@ -67,6 +67,6 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     ledger:      ledgerRes.data ?? [],
     dailyDebits,
-    nextPage:    dailyDebits.length > 0 ? page + 1 : null,
+    nextPage:    dailyDebits.length >= PAGE_DAYS ? page + 1 : null,
   })
 }

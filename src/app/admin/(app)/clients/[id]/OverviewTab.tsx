@@ -97,15 +97,19 @@ export default function OverviewTab({
   const [mgrSaving,  setMgrSaving]  = useState(false)
 
   async function saveManager(newId: string | null) {
+    const prev = mgr
     setMgr(newId)
     setMgrSaving(true)
     try {
-      await fetch(`/api/admin/clients/${clientId}`, {
+      const res = await fetch(`/api/admin/clients/${clientId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ account_manager_id: newId }),
       })
+      if (!res.ok) throw new Error('Save failed')
       router.refresh()
+    } catch {
+      setMgr(prev)
     } finally {
       setMgrSaving(false)
     }
@@ -149,8 +153,12 @@ export default function OverviewTab({
   }
 
   async function deleteContact(contactId: string) {
-    setContacts(prev => prev.filter(c => c.id !== contactId))
-    await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' })
+    try {
+      const res = await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' })
+      if (res.ok) setContacts(prev => prev.filter(c => c.id !== contactId))
+    } catch {
+      // leave contact in list on network failure
+    }
   }
 
   const roleLabel = (r: string) =>
