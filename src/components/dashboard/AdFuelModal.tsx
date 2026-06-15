@@ -27,6 +27,7 @@ function fmtShort(dateStr: string | null): string {
 }
 
 export default function AdFuelModal({ onClose }: { onClose: () => void }) {
+  const [tab,          setTab]          = useState<'payments' | 'spend'>('payments')
   const [ledger,       setLedger]       = useState<LedgerEntry[]>([])
   const [dailyDebits,  setDailyDebits]  = useState<DailyDebit[]>([])
   const [loading,      setLoading]      = useState(true)
@@ -84,18 +85,37 @@ export default function AdFuelModal({ onClose }: { onClose: () => void }) {
         overflow: 'hidden',
       }}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-subtle, #f3f4f6)' }}>
-          <div>
+        <div style={{ padding: '1.25rem 1.5rem 0', borderBottom: '1px solid var(--border-subtle, #f3f4f6)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.875rem' }}>
             <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Ad Fuel Activity</h2>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>Payments received and daily ad spend</p>
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1.25rem', padding: '0.25rem', lineHeight: 1 }}
+              aria-label="Close"
+            >
+              ✕
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1.25rem', padding: '0.25rem', lineHeight: 1 }}
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: '0.125rem' }}>
+            {(['payments', 'spend'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  padding: '0.375rem 0.875rem',
+                  fontSize: '0.8125rem', fontWeight: tab === t ? 600 : 400,
+                  color: tab === t ? 'var(--text-primary)' : 'var(--text-faint)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  borderBottom: tab === t ? '2px solid var(--blue, #3b82f6)' : '2px solid transparent',
+                  marginBottom: -1,
+                  transition: 'color 0.1s',
+                }}
+              >
+                {t === 'payments' ? 'Payments' : 'Daily Spend'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Body */}
@@ -104,13 +124,10 @@ export default function AdFuelModal({ onClose }: { onClose: () => void }) {
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem', textAlign: 'center', paddingTop: '2rem' }}>Loading…</p>
           ) : error ? (
             <p style={{ color: 'var(--red)', fontSize: '0.875rem' }}>{error}</p>
-          ) : (
+          ) : tab === 'payments' ? (
             <>
               {/* Payments received (ledger) */}
-              <section style={{ marginBottom: '2rem' }}>
-                <h3 style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: '0.75rem' }}>
-                  Payments Received
-                </h3>
+              <section>
                 {ledger.length === 0 ? (
                   <p style={{ fontSize: '0.875rem', color: 'var(--text-faint)' }}>No payment records yet.</p>
                 ) : (
@@ -157,12 +174,11 @@ export default function AdFuelModal({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
               </section>
-
+            </>
+          ) : (
+            <>
               {/* Daily spend (debit log) */}
               <section>
-                <h3 style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: '0.75rem' }}>
-                  Daily Ad Spend
-                </h3>
                 {dailyDebits.length === 0 ? (
                   <p style={{ fontSize: '0.875rem', color: 'var(--text-faint)' }}>No spend data available.</p>
                 ) : (
