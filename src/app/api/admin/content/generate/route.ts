@@ -553,19 +553,21 @@ async function runTopicGeneration({
     // ── Silo context (topical authority entity linking) ───────────────────────
     let siloSection = ''
     if (topicData.silo_id) {
-      const { data: silo } = await db
+      const { data: silo, error: siloErr } = await db
         .from('content_silos')
         .select('name, hub_page_url, hub_page_title, central_entity')
         .eq('id', topicData.silo_id)
-        .single()
+        .maybeSingle()
+      if (siloErr) console.error('[generate] silo fetch error for topic', topicData.silo_id, ':', siloErr.message)
 
-      if (silo && (silo.hub_page_url || silo.hub_page_title)) {
-        // Sibling cluster posts already published in this silo
+      // Only inject silo block when we have a real URL to link to
+      if (silo?.hub_page_url) {
+        // Sibling cluster posts already pushed to WP in this silo
         const { data: siblings } = await db
           .from('content_posts')
           .select('title, published_url, target_keyword')
           .eq('silo_id', topicData.silo_id)
-          .in('status', ['draft_saved', 'published'])
+          .in('status', ['for_review', 'approved', 'draft_saved', 'published'])
           .not('published_url', 'is', null)
           .limit(20)
 
@@ -580,12 +582,12 @@ TOPICAL SILO — INTERNAL LINKING STRATEGY:
 
 Hub page (MUST include as an internal link in the first or second body section):
   Title: "${silo.hub_page_title ?? silo.name}"
-  URL: ${silo.hub_page_url ?? '(URL not yet set — omit the link if no URL available)'}
+  URL: ${silo.hub_page_url}
   Anchor text: use the central entity name or a specific descriptive phrase — NOT "click here" or "learn more"
   Central entity: ${silo.central_entity ?? silo.name}
 ${siblingLines ? `\nPublished cluster articles in this silo (link to 1–3 where this article shares a named entity, concept, or step — reason about semantic relevance, not just proximity):\n${siblingLines}` : ''}
 LINKING RULES:
-- Link to the hub page once (mandatory, if the URL is known).
+- Link to the hub page once (mandatory).
 - Cross-link to sibling articles ONLY when the reader of THIS article would genuinely benefit from reading THAT one — shared entity, shared step, natural "next question."
 - Anchor text must name the specific entity or topic: "[service] in [city]", "[problem] cost guide", "[topic] explained", etc. Never generic: "click here", "read more", "this article."
 - GSC suggestions below are supplementary; silo hub + entity-reasoned sibling links take priority.`

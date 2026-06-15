@@ -397,9 +397,10 @@ export async function POST(
             { headers: { Authorization: `Basic ${creds}` } }
           )
           if (!pagesRes.ok) return
-          const pages = (await pagesRes.json()) as { id: number; content: { rendered: string } }[]
+          const pages = (await pagesRes.json()) as { id: number; status: string; content: { rendered: string } }[]
           if (!pages.length) return
           const hubId        = pages[0].id
+          const hubStatus    = pages[0].status ?? 'draft'
           const current      = pages[0].content?.rendered ?? ''
           const clusterUrl   = result.link || wpEditUrl
           const clusterTitle = String(p.title ?? '')
@@ -411,7 +412,7 @@ export async function POST(
           await fetch(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
             method:  'POST',
             headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ content: updatedContent, status: 'draft' }),
+            body:    JSON.stringify({ content: updatedContent, status: hubStatus }),
           })
           const prev = Array.isArray(silo.pending_links) ? silo.pending_links : []
           await db.from('content_silos').update({

@@ -312,11 +312,12 @@ export async function generateTopicsForClient(
   let siloPromptBlock = ''
   let siloName: string | null = null
   if (opts?.siloId) {
-    const { data: silo } = await db
+    const { data: silo, error: siloErr } = await db
       .from('content_silos')
       .select('id, name, hub_page_url, hub_page_title, central_entity, description')
       .eq('id', opts.siloId)
-      .single()
+      .maybeSingle()
+    if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
 
     if (silo) {
       siloName = silo.name as string
@@ -351,13 +352,13 @@ SILO RULES (override any conflicting instructions above):
 
   const systemPrompt = `You are an SEO content strategist for ${settings.agency_name ?? 'a digital agency'}.
 Suggest blog post topic ideas for a client based on their business context and Google Search Console data.
-${siloPromptBlock}
+
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
 
 IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.
-
+${siloPromptBlock ? `\n${siloPromptBlock.trim()}\n` : ''}
 Return ONLY a JSON array of exactly ${count} objects:
 [
   {
