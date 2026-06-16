@@ -45,13 +45,24 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const [{ data: groups }, { data: wpSites }] = await Promise.all([
+  const [{ data: groups }, { data: wpSites }, { data: gscConns }] = await Promise.all([
     db.from('site_groups').select('id, name').order('name'),
     // wp_sites gives us WordPress URLs per client for the "suggest URL" feature
     db.from('wp_sites').select('client_id, site_url'),
+    // GSC connections: external_id is the verified property URL (e.g. "https://example.com/")
+    db.from('client_connections')
+      .select('client_id, external_id, connectors!inner(type)')
+      .eq('connectors.type', 'google_search_console')
+      .eq('status', 'active'),
   ])
 
-  return NextResponse.json({ sites: data ?? [], groups: groups ?? [], wpSites: wpSites ?? [] })
+  // Normalise GSC rows to { client_id, url } dropping the joined connectors object
+  const gscUrls = (gscConns ?? []).map((c: { client_id: string; external_id: string }) => ({
+    client_id: c.client_id,
+    url:       c.external_id,
+  }))
+
+  return NextResponse.json({ sites: data ?? [], groups: groups ?? [], wpSites: wpSites ?? [], gscUrls })
 }
 
 export async function POST(request: NextRequest) {

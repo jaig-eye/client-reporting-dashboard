@@ -86,7 +86,8 @@ export default function SitesPage() {
   const [sites,   setSites]   = useState<Site[]>([])
   const [groups,  setGroups]  = useState<Group[]>([])
   const [clients, setClients] = useState<Client[]>([])
-  const [wpUrlsByClient, setWpUrlsByClient] = useState<Record<string, string>>({})
+  const [wpUrlsByClient,  setWpUrlsByClient]  = useState<Record<string, string>>({})
+  const [gscUrlsByClient, setGscUrlsByClient] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
   const [importDismissed, setImportDismissed] = useState(false)
@@ -123,12 +124,17 @@ export default function SitesPage() {
     const data = await res.json()
     setSites(data.sites ?? [])
     setGroups(data.groups ?? [])
-    // Build client_id → first wp_sites URL map
-    const wpMap: Record<string, string> = {}
+    // Build client_id → first known URL maps from wp_sites and GSC connections
+    const wpMap:  Record<string, string> = {}
+    const gscMap: Record<string, string> = {}
     for (const row of (data.wpSites ?? []) as { client_id: string; site_url: string }[]) {
       if (!wpMap[row.client_id]) wpMap[row.client_id] = row.site_url
     }
+    for (const row of (data.gscUrls ?? []) as { client_id: string; url: string }[]) {
+      if (!gscMap[row.client_id]) gscMap[row.client_id] = row.url
+    }
     setWpUrlsByClient(wpMap)
+    setGscUrlsByClient(gscMap)
     setLoading(false)
   }, [search, filterStatus, filterPlatform, filterUp, filterGroup])
 
@@ -142,22 +148,37 @@ export default function SitesPage() {
   useEffect(() => { fetchSites() }, [fetchSites])
   useEffect(() => { fetchClients() }, [fetchClients])
 
-  // Clients that have a known URL (client.website or wp_sites) but no site record yet
+  // DOWN-first sort: down → active/unchecked → active/up → paused/archived, then alpha
+  const sortedSites = useMemo(() => {
+    const rank = (s: Site) => {
+      if (s.status !== 'active') return 4
+      if (s.is_up === false)     return 1
+      if (s.is_up === null)      return 2
+      return 3
+    }
+    return [...sites].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  }, [sites])
+
+  // Clients that have a known URL (profile, WordPress, or GSC) but no site record yet
   const unmonitoredClients = useMemo(() => {
     if (loading) return []
     const monitoredClientIds = new Set(sites.map(s => s.client_id).filter(Boolean))
     return clients.filter(c => {
-      const hasUrl = !!(c.website || wpUrlsByClient[c.id])
+      const hasUrl = !!(c.website || wpUrlsByClient[c.id] || gscUrlsByClient[c.id])
       return hasUrl && !monitoredClientIds.has(c.id)
     })
-  }, [clients, sites, wpUrlsByClient, loading])
+  }, [clients, sites, wpUrlsByClient, gscUrlsByClient, loading])
 
-  // URL suggestion for the selected client in the modal
-  const suggestedUrl = useMemo(() => {
+  // URL suggestion + source label for the selected client in the modal
+  // Priority: profile website > WordPress connection > GSC property
+  const suggestedUrl = useMemo((): { url: string; source: string } | null => {
     if (!form.client_id) return null
     const client = clients.find(c => c.id === form.client_id)
-    return client?.website || wpUrlsByClient[form.client_id] || null
-  }, [form.client_id, clients, wpUrlsByClient])
+    if (client?.website)             return { url: client.website,              source: 'Profile' }
+    if (wpUrlsByClient[form.client_id])  return { url: wpUrlsByClient[form.client_id],  source: 'WordPress' }
+    if (gscUrlsByClient[form.client_id]) return { url: gscUrlsByClient[form.client_id], source: 'GSC' }
+    return null
+  }, [form.client_id, clients, wpUrlsByClient, gscUrlsByClient])
 
   function openAdd(prefill?: { name: string; url: string; client_id: string; platform: string }) {
     setEditSite(null)
@@ -259,7 +280,8 @@ export default function SitesPage() {
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
               {unmonitoredClients.map(c => {
-                const url = c.website || wpUrlsByClient[c.id] || ''
+                const url    = c.website || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
+                const source = c.website ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
                 return (
                   <button
                     key={c.id}
@@ -279,6 +301,9 @@ export default function SitesPage() {
                     <Plus size={11} /> {c.name}
                     <span style={{ color: '#60a5fa', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {url.replace(/^https?:\/\//, '')}
+                    </span>
+                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: '#bfdbfe', color: '#1d4ed8' }}>
+                      {source}
                     </span>
                   </button>
                 )
@@ -346,7 +371,7 @@ export default function SitesPage() {
               </tr>
             </thead>
             <tbody>
-              {sites.map(site => (
+              {sortedSites.map(site => (
                 <tr
                   key={site.id}
                   style={{ cursor: 'default' }}
@@ -444,14 +469,14 @@ export default function SitesPage() {
               <div>
                 <label style={labelStyle}>URL *</label>
                 <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://example.com" style={inputStyle} />
-                {/* Suggest URL from client's website or WordPress connection */}
-                {suggestedUrl && suggestedUrl !== form.url && (
+                {/* Suggest URL from client's profile, WordPress connection, or GSC property */}
+                {suggestedUrl && suggestedUrl.url !== form.url && (
                   <button
                     type="button"
                     onClick={() => setForm(f => ({
                       ...f,
-                      url:      suggestedUrl,
-                      platform: f.platform === 'custom' ? detectPlatform(suggestedUrl) : f.platform,
+                      url:      suggestedUrl.url,
+                      platform: f.platform === 'custom' ? detectPlatform(suggestedUrl.url) : f.platform,
                     }))}
                     style={{
                       marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -460,7 +485,8 @@ export default function SitesPage() {
                       cursor: 'pointer', fontSize: '0.7rem', color: '#2563eb', fontWeight: 500,
                     }}
                   >
-                    Use: {suggestedUrl.replace(/^https?:\/\//, '')}
+                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: '#dbeafe', color: '#1d4ed8' }}>{suggestedUrl.source}</span>
+                    Use: {suggestedUrl.url.replace(/^https?:\/\//, '')}
                   </button>
                 )}
               </div>

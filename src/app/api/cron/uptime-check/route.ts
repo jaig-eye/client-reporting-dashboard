@@ -9,6 +9,11 @@ export const maxDuration = 300
 const TIMEOUT_MS = 15_000
 const FLAP_THRESHOLD = 2
 
+// Browser-impersonating UA reduces WAF/Cloudflare false blocks.
+// Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
+// their Cloudflare "Skip" rule (WAF + Bot Fight Mode + rate limiting).
+const MONITOR_UA = 'LaunchLocal-Monitor/1.0 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+
 interface SiteRow {
   id:                   string
   name:                 string
@@ -35,10 +40,17 @@ async function pingUrl(url: string): Promise<Omit<CheckResult, 'siteId'>> {
     const res = await fetch(url, {
       signal:   AbortSignal.timeout(TIMEOUT_MS),
       redirect: 'follow',
-      headers:  { 'User-Agent': 'LaunchLocal-Monitor/1.0' },
+      headers:  {
+        'User-Agent':      MONITOR_UA,
+        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
     })
-    const responseMs  = Date.now() - start
-    const isUp        = res.status < 400
+    const responseMs = Date.now() - start
+    // 401/403 = server responding; resource is auth-gated or behind WAF challenge — count as UP.
+    // Only 404 and 5xx codes mean the site is genuinely broken.
+    const isUp = res.status < 400 || res.status === 401 || res.status === 403
     return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
   } catch (err) {
     const responseMs = Date.now() - start
