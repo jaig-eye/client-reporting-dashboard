@@ -95,7 +95,6 @@ export default async function ClientDetailPage({
         db.from('users').select('id, name, email, avatar_url').eq('is_active', true).order('name'),
         (async () => {
           const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
-          const w28Start   = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
           const settingsForBalance = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single()
           const agencyForBalance = settingsForBalance.data as { ad_fuel_cut?: number | null; ad_fuel_cutoff_date?: string | null } | null
           const cutoffDate = agencyForBalance?.ad_fuel_cutoff_date ?? '2025-01-01'
@@ -103,11 +102,11 @@ export default async function ClientDetailPage({
           const split = 1 - cut
 
           type SumRow = { client_id: string; spend: number }
-          const [gRes, mRes, ledgerRes, gscRes, pipelineRes] = await Promise.all([
+          const [gRes, mRes, ledgerRes, siteUptimeRes, pipelineRes] = await Promise.all([
             db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }),
             db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
             db.from('ad_fuel_ledger').select('amount_af, date_of_payment').eq('client_id', id),
-            db.from('gsc_metrics').select('impressions').eq('client_id', id).gte('date', w28Start),
+            db.from('sites').select('uptime_7d').eq('client_id', id).eq('status', 'active'),
             db.from('content_posts').select('id', { count: 'exact', head: true }).eq('client_id', id).eq('status', 'for_review'),
           ])
 
@@ -133,25 +132,27 @@ export default async function ClientDetailPage({
             }
           }
 
-          const gscImpressions = ((gscRes.data ?? []) as { impressions: number }[])
-            .reduce((sum, r) => sum + (r.impressions ?? 0), 0)
+          const siteRows = ((siteUptimeRes.data ?? []) as { uptime_7d: number | null }[])
+          const siteUptime7d = siteRows.length > 0
+            ? siteRows.reduce((sum, r) => sum + (r.uptime_7d ?? 100), 0) / siteRows.length
+            : null
 
           return {
             adFuelBalance:       Number((afPurchased - afSpend).toFixed(2)),
             mtdSpend:            googleMtd + metaMtd,
-            gscImpressions28d:   gscImpressions,
+            siteUptime7d,
             contentPipelineCount: pipelineRes.count ?? 0,
           }
         })(),
       ])
-    : [{ data: [] }, { data: [] }, Promise.resolve({ adFuelBalance: null, mtdSpend: null, gscImpressions28d: null, contentPipelineCount: 0 })]
+    : [{ data: [] }, { data: [] }, Promise.resolve({ adFuelBalance: null, mtdSpend: null, siteUptime7d: null, contentPipelineCount: 0 })]
 
   type ContactRow = { id: string; name: string; email: string | null; phone: string | null; role: string }
   type AdminUserRow = { id: string; name: string; email: string; avatar_url: string | null }
 
   const contacts   = (contactsRes.data ?? []) as ContactRow[]
   const adminUsers = (adminUsersRes.data ?? []) as AdminUserRow[]
-  const overviewStats = overviewStatsRes as { adFuelBalance: number | null; mtdSpend: number | null; gscImpressions28d: number | null; contentPipelineCount: number }
+  const overviewStats = overviewStatsRes as { adFuelBalance: number | null; mtdSpend: number | null; siteUptime7d: number | null; contentPipelineCount: number }
 
   type CoverageRow = { source: string; min_date: string | null; max_date: string | null; days_with_data: number }
   const SOURCE_LABELS: Record<string, string> = {

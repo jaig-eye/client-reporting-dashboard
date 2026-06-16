@@ -35,13 +35,24 @@ export async function POST(request: NextRequest) {
     updateFields.published_at = new Date().toISOString()
   }
 
-  const { error } = await db
+  const { data: postRow, error } = await db
     .from('content_posts')
     .update(updateFields)
     .eq('id', post_id)
+    .select('content_type')
+    .maybeSingle()
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // When a SA post is rejected, reset the parent topic so it can be regenerated.
+  if (status === 'rejected' && (postRow as { content_type?: string } | null)?.content_type === 'service_area') {
+    await db
+      .from('content_topics')
+      .update({ status: 'approved', post_id: null, generation_error: null })
+      .eq('post_id', post_id)
+      .eq('content_type', 'service_area')
   }
 
   return NextResponse.json({ ok: true })

@@ -33,15 +33,17 @@ export async function GET(
           customer: stripeCustomerId,
           limit:    24,
         })
-        invoices = result.data.map(inv => ({
-          id:          inv.id,
-          number:      inv.number,
-          date:        inv.created,
-          amount:      (inv.amount_paid ?? 0) / 100,
-          status:      inv.status,
-          description: inv.description ?? inv.lines?.data?.[0]?.description ?? null,
-          hosted_url:  inv.hosted_invoice_url,
-        }))
+        invoices = result.data
+          .filter(inv => inv.status !== 'draft')
+          .map(inv => ({
+            id:          inv.id,
+            number:      inv.number,
+            date:        inv.created,
+            amount:      (inv.amount_paid ?? 0) / 100,
+            status:      inv.status,
+            description: inv.description ?? inv.lines?.data?.[0]?.description ?? null,
+            hosted_url:  inv.hosted_invoice_url,
+          }))
       }
     } catch {
       // Stripe unavailable — return ledger only

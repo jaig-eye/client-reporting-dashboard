@@ -102,7 +102,7 @@ async function generatePage(topicId: string) {
   // Fetch topic
   const { data: topic } = await db
     .from('content_topics')
-    .select('id, city, state_abbr, service_name, client_id, content_type, status')
+    .select('id, city, state_abbr, service_name, client_id, content_type, status, target_publish_date')
     .eq('id', topicId)
     .single()
 
@@ -124,8 +124,8 @@ async function generatePage(topicId: string) {
   // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
   const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token').single(),
-    db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data').eq('client_id', clientId).maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').single(),
+    db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls').eq('client_id', clientId).maybeSingle(),
     db.from('content_sitemap_pages').select('url').eq('client_id', clientId).eq('is_service_page', true).ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`).maybeSingle(),
   ])
 
@@ -195,6 +195,73 @@ async function generatePage(topicId: string) {
   const bgContext    = [cs.business_background, cs.brand_voice, cs.target_audience]
     .filter(Boolean).join('. ')
 
+  // Fetch internal link data in parallel:
+  // - Priority pages from sitemap (conversion/contact pages)
+  // - Published/draft sibling SA pages for the same service (for silo linking)
+  const [priorityPagesRes, siblingPostsRes] = await Promise.all([
+    db.from('content_sitemap_pages')
+      .select('url, title')
+      .eq('client_id', clientId)
+      .eq('is_priority', true)
+      .eq('is_excluded', false)
+      .limit(5),
+    db.from('content_posts')
+      .select('city, state_abbr, published_url, slug')
+      .eq('client_id', clientId)
+      .eq('service_name', serviceName)
+      .in('status', ['published', 'draft_saved'])
+      .neq('city', city)
+      .limit(20),
+  ])
+
+  // Parse manual_link_urls from content_settings (JSON array of {url, label})
+  type ManualLink = { url: string; label: string }
+  const rawManualLinks = cs.manual_link_urls
+  let manualLinks: ManualLink[] = []
+  if (Array.isArray(rawManualLinks)) {
+    manualLinks = (rawManualLinks as unknown[]).map((l: unknown) =>
+      typeof l === 'string' ? (() => { try { return JSON.parse(l) as ManualLink } catch { return null } })()
+        : (l as ManualLink | null)
+    ).filter((l): l is ManualLink => !!l?.url)
+  } else if (typeof rawManualLinks === 'string') {
+    try { manualLinks = JSON.parse(rawManualLinks) as ManualLink[] } catch { /* ignore */ }
+  }
+
+  // Build hub link (service index page — first priority page or manual link that matches service name)
+  const priorityPages = (priorityPagesRes.data ?? []) as { url: string; title: string | null }[]
+  const hubPage = priorityPages.find(p =>
+    p.url.toLowerCase().includes(serviceName.toLowerCase().replace(/\s+/g, '-')) ||
+    (p.title ?? '').toLowerCase().includes(serviceName.toLowerCase())
+  ) ?? priorityPages[0] ?? null
+
+  const hubLink = hubPage
+    ? `<a href="${hubPage.url}">${hubPage.title ?? serviceName} Services</a>`
+    : ''
+
+  // Build sibling service area links
+  type SiblingPost = { city: string | null; state_abbr: string | null; published_url: string | null; slug: string | null }
+  const siblingPosts = (siblingPostsRes.data ?? []) as SiblingPost[]
+  const siblingLinkList = siblingPosts
+    .map(p => {
+      const url = p.published_url || (p.slug ? `/${p.slug}` : null)
+      if (!url || !p.city) return null
+      return `<li><a href="${url}">${serviceName} in ${p.city}${p.state_abbr ? `, ${p.state_abbr}` : ''}</a></li>`
+    })
+    .filter(Boolean)
+    .join('\n')
+
+  const siblingLinksHtml = siblingLinkList
+    ? `<ul>\n${siblingLinkList}\n</ul>`
+    : `<!-- No sibling service area pages published yet for ${serviceName} -->`
+
+  // Build conversion/priority page links (manual links take priority, then sitemap priority pages)
+  const conversionLinks = [
+    ...manualLinks.map(l => `<a href="${l.url}">${l.label}</a>`),
+    ...priorityPages
+      .filter(p => !manualLinks.some(m => m.url === p.url))
+      .map(p => `<a href="${p.url}">${p.title ?? 'Contact Us'}</a>`),
+  ].slice(0, 3).join(', ')
+
   const DEFAULT_SA_PROMPT = `You are an expert local SEO copywriter specializing in service area landing pages for home service businesses.
 
 Write a complete service area page for [BRAND_NAME] offering [PRIMARY_SERVICE] in [CITY], [STATE].
@@ -203,7 +270,7 @@ NON-NEGOTIABLE RULES:
 - NEVER use em dashes (—) or en dashes (–). Use a comma or period instead.
 - Write in second person ("you", "your")
 - Include [CITY] naturally in every H2 heading
-- Phone [PHONE] must appear at least twice as: <a href="tel:[PHONE_RAW]">[PHONE]</a>
+- Phone [PHONE] must appear exactly twice as: <a href="tel:[PHONE_RAW]">[PHONE]</a>
 - Sentences under 25 words. 7th-grade reading level.
 - Use only h2, h3, p, ul, li, strong, a HTML tags. No inline styles, no divs.
 - Target word count: [WORD_COUNT]
@@ -272,9 +339,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
     .replace(/\[THIS_LOCATION\]/g,                   `${city}, ${stateAbbr}`)
     .replace(/\[VOICE_NOTES\]/g,                     brandVoice)
     .replace(/\[CTA\]/g,                             ctaText)
-    .replace(/\[HUB_PAGE_URL_AND_ANCHOR\]/g,         '')
-    .replace(/\[LIST_OF_SIBLING_URLS_AND_ANCHORS\]/g, '')
-    .replace(/\[[A-Z_]+\]/g,                         '')   // strip any remaining unhandled [VARIABLE] patterns
+    .replace(/\[HUB_PAGE_URL_AND_ANCHOR\]/g,             hubLink)
+    .replace(/\[LIST_OF_SIBLING_URLS_AND_ANCHORS\]/g,   siblingLinksHtml)
+    .replace(/\[LIST_OF_SIBLING_URLS_AND_LOCATIONS\]/g, siblingLinksHtml)
+    .replace(/\[URLS_AND_ANCHORS\]/g,                   conversionLinks)
+    .replace(/\[[A-Z_]+\]/g,                            '')   // strip any remaining unhandled [VARIABLE] patterns
 
   const promptWithSilo = finalPrompt + sasiloSection
 
@@ -348,7 +417,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
       status:            'for_review',
       word_count:        wordCount,
       heading_count:     headingCount,
-      target_publish_date: null,
+      target_publish_date: (topic.target_publish_date as string | null) ?? null,
       generated_at:      new Date().toISOString(),
       silo_id:           sasiloId,
     })
@@ -377,7 +446,8 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   // Discord notification
   const discordToken = agency?.discord_bot_token as string | null
-  if (discordToken) {
+  const notifySa = (agency as Record<string, unknown> | null)?.notify_sa_generated !== false
+  if (discordToken && notifySa) {
     // Fire-and-forget
     ;(async () => {
       try {
