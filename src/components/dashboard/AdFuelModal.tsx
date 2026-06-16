@@ -87,7 +87,7 @@ export default function AdFuelModal({ balance, onClose }: { balance: number; onC
     // Union of all active dates, newest first
     const allDates = new Set<string>()
     for (const d of dailyDebits) allDates.add(d.date)
-    for (const d of payByDate.keys()) allDates.add(d)
+    Array.from(payByDate.keys()).forEach(d => allDates.add(d))
     const dates = Array.from(allDates).sort().reverse()
     if (!dates.length) return []
 
