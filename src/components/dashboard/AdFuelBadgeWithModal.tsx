@@ -26,7 +26,7 @@ export default function AdFuelBadgeWithModal({
         pendingAmount={pendingAmount}
         onActivityClick={() => setOpen(true)}
       />
-      {open && <AdFuelModal onClose={() => setOpen(false)} />}
+      {open && <AdFuelModal balance={balance} onClose={() => setOpen(false)} />}
     </>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
 
@@ -20,10 +20,31 @@ interface Contact {
 }
 
 interface Stats {
-  adFuelBalance:      number | null
-  mtdSpend:           number | null
-  gscImpressions28d:  number | null
+  adFuelBalance:        number | null
+  mtdSpend:             number | null
+  gscImpressions28d:    number | null
   contentPipelineCount: number
+}
+
+interface Invoice {
+  id:          string
+  number:      string | null
+  date:        number
+  amount:      number
+  status:      string | null
+  description: string | null
+  hosted_url:  string | null
+}
+
+interface LedgerEntry {
+  id:              string
+  date_of_payment: string | null
+  invoice_date:    string | null
+  amount_af:       number
+  type:            string | null
+  note:            string | null
+  ach_status:      string | null
+  created_at:      string
 }
 
 interface Props {
@@ -52,6 +73,19 @@ function fmt$(n: number | null): string {
 function fmtNum(n: number | null): string {
   if (n == null) return '—'
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
+}
+
+function fmtInvoiceDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function fmtLedgerDate(s: string | null): string {
+  if (!s) return '—'
+  return new Date(s + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function normalizeUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`
 }
 
 export default function OverviewTab({
@@ -93,8 +127,8 @@ export default function OverviewTab({
   }
 
   // ── Account manager ───────────────────────────────────────────────────────
-  const [mgr,        setMgr]        = useState(accountManagerId)
-  const [mgrSaving,  setMgrSaving]  = useState(false)
+  const [mgr,       setMgr]       = useState(accountManagerId)
+  const [mgrSaving, setMgrSaving] = useState(false)
 
   async function saveManager(newId: string | null) {
     const prev = mgr
@@ -168,6 +202,25 @@ export default function OverviewTab({
     r === 'primary' ? { bg: '#dbeafe', color: '#1d4ed8' }
     : r === 'billing' ? { bg: '#fef3c7', color: '#92400e' }
     : { bg: 'var(--bg-subtle)', color: 'var(--text-muted)' }
+
+  // ── Billing data (invoices + ledger) ─────────────────────────────────────
+  const [invoices,       setInvoices]       = useState<Invoice[]>([])
+  const [billingLedger,  setBillingLedger]  = useState<LedgerEntry[]>([])
+  const [billingLoading, setBillingLoading] = useState(true)
+
+  const loadBilling = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/clients/${clientId}/billing`)
+      if (!res.ok) return
+      const data = await res.json()
+      setInvoices(data.invoices ?? [])
+      setBillingLedger(data.ledger ?? [])
+    } finally {
+      setBillingLoading(false)
+    }
+  }, [clientId])
+
+  useEffect(() => { loadBilling() }, [loadBilling])
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.5rem', alignItems: 'start' }}>
@@ -324,6 +377,126 @@ export default function OverviewTab({
             </form>
           )}
         </div>
+
+        {/* Stripe invoice history */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="section-title">Invoice History</h2>
+            <a
+              href={`/admin/clients/${clientId}?tab=billing`}
+              className="text-xs"
+              style={{ color: 'var(--blue)' }}
+            >
+              View all →
+            </a>
+          </div>
+
+          {billingLoading ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+          ) : invoices.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
+              No Stripe invoices. Set a Stripe Customer ID in Integrations to link billing.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+              {invoices.slice(0, 5).map(inv => (
+                <div
+                  key={inv.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+                    padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--bg-subtle)',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {fmtInvoiceDate(inv.date)}
+                      </span>
+                      <InvoiceStatusBadge status={inv.status} />
+                    </div>
+                    {inv.description && (
+                      <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {inv.description}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      ${inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    {inv.hosted_url && (
+                      <a href={inv.hosted_url} target="_blank" rel="noopener noreferrer"
+                         className="text-xs" style={{ color: 'var(--blue)' }}>↗</a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Ad Fuel ledger (recent entries) */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="section-title">Ad Fuel Ledger</h2>
+            <a
+              href={`/admin/clients/${clientId}?tab=billing`}
+              className="text-xs"
+              style={{ color: 'var(--blue)' }}
+            >
+              View all →
+            </a>
+          </div>
+
+          {billingLoading ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+          ) : billingLedger.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No ledger entries yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+              {billingLedger.slice(0, 5).map(entry => {
+                const isPending = entry.ach_status === 'pending'
+                const dateStr = entry.date_of_payment ?? entry.invoice_date ?? entry.created_at.slice(0, 10)
+                return (
+                  <div
+                    key={entry.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+                      padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--bg-subtle)',
+                      opacity: isPending ? 0.6 : 1,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {fmtLedgerDate(dateStr)}
+                        </span>
+                        {entry.type && (
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+                            {entry.type}
+                          </span>
+                        )}
+                        {isPending && (
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
+                            Pending
+                          </span>
+                        )}
+                      </div>
+                      {entry.note && (
+                        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {entry.note}
+                        </p>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: entry.amount_af >= 0 ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
+                      {entry.amount_af >= 0 ? '+' : ''}${Math.abs(entry.amount_af).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
@@ -339,7 +512,7 @@ export default function OverviewTab({
               valueColor={stats.adFuelBalance != null && stats.adFuelBalance < 0 ? 'var(--red)' : stats.adFuelBalance != null && stats.adFuelBalance < 200 ? '#d97706' : 'var(--green)'}
             />
             <StatTile
-              label="MTD Spend"
+              label="MTD Spend (raw)"
               value={fmt$(stats.mtdSpend)}
             />
             <StatTile
@@ -420,7 +593,7 @@ function InfoRow({ label, value, bold, link }: { label: string; value: string | 
     <div>
       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</p>
       {link ? (
-        <a href={value} target="_blank" rel="noopener noreferrer" className="text-sm" style={{ color: 'var(--blue)' }}>
+        <a href={normalizeUrl(value)} target="_blank" rel="noopener noreferrer" className="text-sm" style={{ color: 'var(--blue)' }}>
           {value}
         </a>
       ) : (
@@ -440,5 +613,18 @@ function StatTile({ label, value, valueColor }: { label: string; value: string; 
         {value}
       </p>
     </div>
+  )
+}
+
+function InvoiceStatusBadge({ status }: { status: string | null }) {
+  const s = status ?? ''
+  const style = s === 'paid' ? { bg: '#dcfce7', color: '#166534' }
+    : s === 'open'   ? { bg: '#dbeafe', color: '#1e40af' }
+    : s === 'void'   ? { bg: '#f3f4f6', color: '#6b7280' }
+    : { bg: '#fef3c7', color: '#92400e' }
+  return (
+    <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: style.bg, color: style.color }}>
+      {s || 'unknown'}
+    </span>
   )
 }
