@@ -7,7 +7,9 @@ import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
+import { formatBriefForPrompt } from '@/lib/content/siloEngine'
 import type { SeoBrief } from '@/lib/content/types'
+import type { OptimizationBrief } from '@/lib/types'
 
 export const maxDuration = 300
 
@@ -591,6 +593,27 @@ LINKING RULES:
 - Cross-link to sibling articles ONLY when the reader of THIS article would genuinely benefit from reading THAT one — shared entity, shared step, natural "next question."
 - Anchor text must name the specific entity or topic: "[service] in [city]", "[problem] cost guide", "[topic] explained", etc. Never generic: "click here", "read more", "this article."
 - GSC suggestions below are supplementary; silo hub + entity-reasoned sibling links take priority.`
+      }
+    }
+
+    // ── Optimization brief injection ─────────────────────────────────────────
+    // If an optimization brief exists for this topic, inject its guidelines.
+    // Falls back to seo_brief behaviour if no optimization brief found.
+    if (topicData.silo_id) {
+      const { data: optBrief } = await db
+        .from('content_optimization_briefs')
+        .select('*')
+        .eq('content_topic_id', topicId)
+        .maybeSingle()
+        .then(r => r.data
+          ? r
+          : db.from('content_optimization_briefs')
+              .select('*')
+              .eq('silo_id', topicData.silo_id!)
+              .maybeSingle()
+        )
+      if (optBrief) {
+        briefLines.push('\n' + formatBriefForPrompt(optBrief as OptimizationBrief))
       }
     }
 

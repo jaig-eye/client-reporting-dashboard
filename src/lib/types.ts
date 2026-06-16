@@ -610,3 +610,206 @@ export interface SyncLog {
   started_at: string
   completed_at?: string
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SILO OPTIMIZATION ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type KeywordType = 'top_level' | 'secondary_top_level' | 'supporting'
+export type KeywordIntent = 'transactional' | 'informational' | 'commercial' | 'navigational' | 'local' | 'other'
+export type SiloPageType = 'hub' | 'supporting_article' | 'service_area' | 'comparison' | 'guide' | 'faq' | 'commercial' | 'other'
+export type SiloPageStatus = 'planned' | 'generated' | 'for_review' | 'published' | 'archived'
+export type InternalLinkType = 'hub_to_supporting' | 'supporting_to_hub' | 'supporting_to_supporting' | 'supporting_to_related' | 'manual'
+export type InternalLinkStatus = 'recommended' | 'inserted' | 'failed' | 'ignored'
+
+export interface SiloKeyword {
+  id: string
+  client_id: string
+  silo_id: string
+  keyword: string
+  keyword_type: KeywordType
+  intent: KeywordIntent | null
+  monthly_searches_low: number | null
+  monthly_searches_high: number | null
+  keyword_score: number | null
+  trust_authority_score: number | null
+  current_ranking_url: string | null
+  current_ranking_position: number | null
+  selected: boolean
+  page_category: string | null
+  target_post_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SiloPage {
+  id: string
+  client_id: string
+  silo_id: string
+  primary_keyword_id: string | null
+  title: string
+  slug: string | null
+  page_type: SiloPageType
+  status: SiloPageStatus
+  target_url: string | null
+  content_topic_id: string | null
+  content_post_id: string | null
+  priority: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface OptimizationBrief {
+  id: string
+  client_id: string
+  silo_id: string | null
+  silo_page_id: string | null
+  content_topic_id: string | null
+  content_post_id: string | null
+  target_url: string | null
+  primary_keyword: string
+  secondary_keywords: string[]
+  target_location: string | null
+  language: string
+  competitor_urls: string[]
+  recommended_word_count_min: number | null
+  recommended_word_count_target: number | null
+  recommended_word_count_max: number | null
+  recommended_headings: RecommendedHeading[]
+  required_terms: TermRequirement[]
+  keyword_variations: string[]
+  lsi_terms: LsiTerm[]
+  google_entities: GoogleEntity[]
+  related_questions: string[]
+  schema_recommendations: SchemaRecommendation[]
+  eeat_recommendations: EeatSignal[]
+  page_structure_recommendations: PageStructureItem[]
+  internal_link_recommendations: InternalLinkRecommendation[]
+  raw_analysis: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RecommendedHeading {
+  level: 'h1' | 'h2' | 'h3' | 'h4'
+  text: string
+  required: boolean
+}
+
+export interface TermRequirement {
+  term: string
+  importance: 'critical' | 'high' | 'medium' | 'low'
+  target_min: number
+  target_max: number
+  current_count?: number
+}
+
+export interface LsiTerm {
+  term: string
+  importance_pct: number
+  target_min: number
+  target_max: number
+  current_count?: number
+}
+
+export interface GoogleEntity {
+  name: string
+  type: string
+  salience?: number
+  competitors_count?: number
+}
+
+export interface SchemaRecommendation {
+  schema_type: string
+  priority: 'high' | 'medium' | 'low'
+  reason: string
+}
+
+export interface EeatSignal {
+  signal: string
+  status: 'present' | 'absent' | 'unknown'
+  priority: 'critical' | 'high' | 'medium' | 'low'
+}
+
+export interface PageStructureItem {
+  element: string
+  current: number | string
+  target: number | string
+  status: 'ok' | 'low' | 'high' | 'missing'
+}
+
+export interface InternalLinkRecommendation {
+  source_url?: string
+  target_url: string
+  anchor_text: string
+  link_type: InternalLinkType
+  reason: string
+}
+
+export interface OptimizationAudit {
+  id: string
+  client_id: string
+  silo_id: string | null
+  silo_page_id: string | null
+  content_post_id: string | null
+  brief_id: string | null
+  target_url: string | null
+  score_total: number
+  exact_keyword_score: number | null
+  variation_score: number | null
+  lsi_score: number | null
+  entity_score: number | null
+  word_count_score: number | null
+  page_structure_score: number | null
+  schema_score: number | null
+  eeat_score: number | null
+  internal_link_score: number | null
+  findings: AuditFinding[]
+  term_usage: TermUsage[]
+  schema_findings: SchemaFinding[]
+  eeat_findings: EeatSignal[]
+  page_structure_findings: PageStructureItem[]
+  created_at: string
+}
+
+export interface AuditFinding {
+  category: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
+  message: string
+  recommendation?: string
+}
+
+export interface TermUsage {
+  term: string
+  current_count: number
+  target_min: number
+  target_max: number
+  status: 'missing' | 'low' | 'good' | 'high' | 'overused'
+  importance: 'critical' | 'high' | 'medium' | 'low'
+}
+
+export interface SchemaFinding {
+  schema_type: string
+  present: boolean
+  recommended: boolean
+  reason?: string
+}
+
+export interface SiloInternalLink {
+  id: string
+  client_id: string
+  silo_id: string
+  source_silo_page_id: string | null
+  target_silo_page_id: string | null
+  source_post_id: string | null
+  target_post_id: string | null
+  source_url: string | null
+  target_url: string | null
+  anchor_text: string
+  link_type: InternalLinkType
+  status: InternalLinkStatus
+  reason: string | null
+  created_at: string
+  updated_at: string
+}
