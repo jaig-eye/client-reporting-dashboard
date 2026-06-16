@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple } from '@phosphor-icons/react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple, DownloadSimple, X } from '@phosphor-icons/react'
 
 const PLATFORMS = ['wordpress', 'ghl', 'bigcommerce', 'shopify', 'custom', 'other'] as const
 const HOSTING_TYPES = ['ours', 'client'] as const
@@ -31,8 +31,8 @@ interface Site {
   site_groups:      { id: string; name: string } | null
 }
 
-interface Group { id: string; name: string }
-interface Client { id: string; name: string }
+interface Group  { id: string; name: string }
+interface Client { id: string; name: string; website: string | null }
 
 const EMPTY_FORM = {
   name: '', url: '', client_id: '', platform: 'custom', hosting_type: 'client',
@@ -41,8 +41,8 @@ const EMPTY_FORM = {
 
 function StatusDot({ isUp, status }: { isUp: boolean | null; status: string }) {
   if (status !== 'active') return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d1d5db', display: 'inline-block' }} title="Paused / archived" />
-  if (isUp === null) return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#9ca3af', display: 'inline-block' }} title="Not yet checked" />
-  if (isUp) return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} title="Up" />
+  if (isUp === null)  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#9ca3af', display: 'inline-block' }} title="Not yet checked" />
+  if (isUp)           return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} title="Up" />
   return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 0 3px rgba(239,68,68,0.20)', display: 'inline-block' }} title="Down" />
 }
 
@@ -68,32 +68,42 @@ function PlatformBadge({ p }: { p: string }) {
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return '—'
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 60)    return `${diff}s ago`
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return `${Math.floor(diff / 86400)}d ago`
+}
+
+function detectPlatform(url: string): string {
+  const lower = url.toLowerCase()
+  if (lower.includes('gohighlevel') || lower.includes('.ghl.'))  return 'ghl'
+  if (lower.includes('bigcommerce'))                              return 'bigcommerce'
+  if (lower.includes('myshopify'))                               return 'shopify'
+  return 'wordpress' // most common; user can change
 }
 
 export default function SitesPage() {
   const [sites,   setSites]   = useState<Site[]>([])
   const [groups,  setGroups]  = useState<Group[]>([])
   const [clients, setClients] = useState<Client[]>([])
+  const [wpUrlsByClient, setWpUrlsByClient] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
+  const [importDismissed, setImportDismissed] = useState(false)
 
   // Filters
-  const [search,      setSearch]      = useState('')
-  const [filterStatus,setFilterStatus]= useState('')
-  const [filterPlatform,setFilterPlatform] = useState('')
-  const [filterUp,    setFilterUp]    = useState('')
-  const [filterGroup, setFilterGroup] = useState('')
+  const [search,          setSearch]          = useState('')
+  const [filterStatus,    setFilterStatus]    = useState('')
+  const [filterPlatform,  setFilterPlatform]  = useState('')
+  const [filterUp,        setFilterUp]        = useState('')
+  const [filterGroup,     setFilterGroup]     = useState('')
 
   // Modal
-  const [modalOpen,    setModalOpen]    = useState(false)
-  const [editSite,     setEditSite]     = useState<Site | null>(null)
-  const [form,         setForm]         = useState(EMPTY_FORM)
-  const [saving,       setSaving]       = useState(false)
-  const [saveError,    setSaveError]    = useState('')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editSite,  setEditSite]  = useState<Site | null>(null)
+  const [form,      setForm]      = useState(EMPTY_FORM)
+  const [saving,    setSaving]    = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   // Delete confirm
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -113,6 +123,12 @@ export default function SitesPage() {
     const data = await res.json()
     setSites(data.sites ?? [])
     setGroups(data.groups ?? [])
+    // Build client_id → first wp_sites URL map
+    const wpMap: Record<string, string> = {}
+    for (const row of (data.wpSites ?? []) as { client_id: string; site_url: string }[]) {
+      if (!wpMap[row.client_id]) wpMap[row.client_id] = row.site_url
+    }
+    setWpUrlsByClient(wpMap)
     setLoading(false)
   }, [search, filterStatus, filterPlatform, filterUp, filterGroup])
 
@@ -126,9 +142,29 @@ export default function SitesPage() {
   useEffect(() => { fetchSites() }, [fetchSites])
   useEffect(() => { fetchClients() }, [fetchClients])
 
-  function openAdd() {
+  // Clients that have a known URL (client.website or wp_sites) but no site record yet
+  const unmonitoredClients = useMemo(() => {
+    if (loading) return []
+    const monitoredClientIds = new Set(sites.map(s => s.client_id).filter(Boolean))
+    return clients.filter(c => {
+      const hasUrl = !!(c.website || wpUrlsByClient[c.id])
+      return hasUrl && !monitoredClientIds.has(c.id)
+    })
+  }, [clients, sites, wpUrlsByClient, loading])
+
+  // URL suggestion for the selected client in the modal
+  const suggestedUrl = useMemo(() => {
+    if (!form.client_id) return null
+    const client = clients.find(c => c.id === form.client_id)
+    return client?.website || wpUrlsByClient[form.client_id] || null
+  }, [form.client_id, clients, wpUrlsByClient])
+
+  function openAdd(prefill?: { name: string; url: string; client_id: string; platform: string }) {
     setEditSite(null)
-    setForm(EMPTY_FORM)
+    setForm(prefill
+      ? { ...EMPTY_FORM, ...prefill }
+      : EMPTY_FORM
+    )
     setSaveError('')
     setModalOpen(true)
   }
@@ -168,7 +204,7 @@ export default function SitesPage() {
     }
     const url    = editSite ? `/api/admin/sites/${editSite.id}` : '/api/admin/sites'
     const method = editSite ? 'PATCH' : 'POST'
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json()
     if (!res.ok) { setSaveError(data.error ?? 'Save failed'); setSaving(false); return }
     setModalOpen(false)
@@ -203,11 +239,57 @@ export default function SitesPage() {
           <button onClick={fetchSites} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
             <ArrowClockwise size={14} /> Refresh
           </button>
-          <button onClick={openAdd} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: 'pointer', fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>
+          <button onClick={() => openAdd()} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: 'pointer', fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>
             <Plus size={14} /> Add Site
           </button>
         </div>
       </div>
+
+      {/* Unmonitored clients banner */}
+      {!importDismissed && !loading && unmonitoredClients.length > 0 && (
+        <div style={{
+          marginBottom: '1rem', padding: '0.875rem 1rem',
+          borderRadius: 10, border: '1px solid #bfdbfe',
+          background: '#eff6ff', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+        }}>
+          <DownloadSimple size={16} style={{ color: '#3b82f6', marginTop: 2, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#1d4ed8', margin: '0 0 0.5rem' }}>
+              {unmonitoredClients.length} client{unmonitoredClients.length !== 1 ? 's have' : ' has'} a website not yet monitored
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+              {unmonitoredClients.map(c => {
+                const url = c.website || wpUrlsByClient[c.id] || ''
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => openAdd({
+                      name:      c.name,
+                      url,
+                      client_id: c.id,
+                      platform:  detectPlatform(url),
+                    })}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.375rem',
+                      padding: '0.25rem 0.625rem', borderRadius: 999,
+                      border: '1px solid #93c5fd', background: '#dbeafe',
+                      cursor: 'pointer', fontSize: '0.75rem', color: '#1d4ed8', fontWeight: 500,
+                    }}
+                  >
+                    <Plus size={11} /> {c.name}
+                    <span style={{ color: '#60a5fa', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {url.replace(/^https?:\/\//, '')}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: '0.125rem', flexShrink: 0 }}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
@@ -313,7 +395,7 @@ export default function SitesPage() {
                   </td>
                   <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap', fontSize: '0.75rem' }}>
                     {timeAgo(site.last_checked_at)}
-                    {site.last_status_code && (
+                    {site.last_status_code != null && (
                       <span style={{ marginLeft: 4, color: site.last_status_code < 400 ? 'var(--text-faint)' : 'var(--red)' }}>
                         ({site.last_status_code})
                       </span>
@@ -353,15 +435,34 @@ export default function SitesPage() {
                 <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="My Client Site" style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>URL *</label>
-                <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://example.com" style={inputStyle} />
-              </div>
-              <div>
                 <label style={labelStyle}>Client</label>
                 <select value={form.client_id} onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))} style={inputStyle}>
                   <option value="">— None —</option>
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
+              </div>
+              <div>
+                <label style={labelStyle}>URL *</label>
+                <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://example.com" style={inputStyle} />
+                {/* Suggest URL from client's website or WordPress connection */}
+                {suggestedUrl && suggestedUrl !== form.url && (
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({
+                      ...f,
+                      url:      suggestedUrl,
+                      platform: f.platform === 'custom' ? detectPlatform(suggestedUrl) : f.platform,
+                    }))}
+                    style={{
+                      marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '0.2rem 0.625rem', borderRadius: 999,
+                      border: '1px solid #bfdbfe', background: '#eff6ff',
+                      cursor: 'pointer', fontSize: '0.7rem', color: '#2563eb', fontWeight: 500,
+                    }}
+                  >
+                    Use: {suggestedUrl.replace(/^https?:\/\//, '')}
+                  </button>
+                )}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div>

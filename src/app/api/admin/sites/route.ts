@@ -45,9 +45,13 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const { data: groups } = await db.from('site_groups').select('id, name').order('name')
+  const [{ data: groups }, { data: wpSites }] = await Promise.all([
+    db.from('site_groups').select('id, name').order('name'),
+    // wp_sites gives us WordPress URLs per client for the "suggest URL" feature
+    db.from('wp_sites').select('client_id, site_url'),
+  ])
 
-  return NextResponse.json({ sites: data ?? [], groups: groups ?? [] })
+  return NextResponse.json({ sites: data ?? [], groups: groups ?? [], wpSites: wpSites ?? [] })
 }
 
 export async function POST(request: NextRequest) {

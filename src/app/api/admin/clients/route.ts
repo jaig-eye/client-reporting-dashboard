@@ -10,7 +10,7 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const db = createAdminClient()
-  const { data } = await db.from('clients').select('id, name').order('name')
+  const { data } = await db.from('clients').select('id, name, website').order('name')
   return NextResponse.json({ clients: data ?? [] })
 }
 
