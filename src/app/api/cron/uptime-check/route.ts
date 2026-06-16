@@ -48,9 +48,10 @@ async function pingUrl(url: string): Promise<Omit<CheckResult, 'siteId'>> {
       },
     })
     const responseMs = Date.now() - start
-    // 401/403 = server responding; resource is auth-gated or behind WAF challenge — count as UP.
-    // Only 404 and 5xx codes mean the site is genuinely broken.
-    const isUp = res.status < 400 || res.status === 401 || res.status === 403
+    // 401/403 = auth-gated or WAF challenge page — server is up.
+    // 429 = monitor is rate-limited, not the site broken — count as UP to avoid false alerts.
+    // 404, 5xx = site genuinely broken.
+    const isUp = res.status < 400 || res.status === 401 || res.status === 403 || res.status === 429
     return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
   } catch (err) {
     const responseMs = Date.now() - start
@@ -124,9 +125,12 @@ export async function GET(request: NextRequest) {
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
+      // Only flip is_up to false when the threshold is first crossed.
+      // Setting it on failure #1 made wasUp always false on failure #2, so alerts never fired.
+      const thresholdCrossed = newFailCount >= FLAP_THRESHOLD && site.is_up !== false
 
       await db.from('sites').update({
-        is_up:                false,
+        ...(thresholdCrossed ? { is_up: false } : {}),
         last_checked_at:      checkedAt,
         last_status_code:     statusCode,
         last_response_ms:     responseMs,
@@ -134,8 +138,8 @@ export async function GET(request: NextRequest) {
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
-      // Flap threshold crossed — declare DOWN
-      if (newFailCount === FLAP_THRESHOLD && wasUp) {
+      // Flap threshold crossed — declare DOWN and alert
+      if (thresholdCrossed) {
         const cause = error === 'timeout' ? 'timeout'
           : error === 'dns' ? 'dns'
           : error === 'connection_refused' ? 'connection_refused'
@@ -227,15 +231,19 @@ export async function GET(request: NextRequest) {
   }
 
   // Daily rollup — upsert today's stats per site
+  // Use tomorrow's midnight as the upper bound; `T24:00:00Z` is rejected by PostgreSQL.
+  const todayStart    = today + 'T00:00:00Z'
+  const tomorrowStart = new Date(new Date(todayStart).getTime() + 86_400_000).toISOString().slice(0, 10) + 'T00:00:00Z'
+
   const [rollupRes, incidentRes] = await Promise.all([
     db.from('site_checks')
       .select('site_id, is_up, response_ms')
-      .gte('checked_at', today + 'T00:00:00Z')
-      .lt('checked_at',  today + 'T24:00:00Z'),
+      .gte('checked_at', todayStart)
+      .lt('checked_at',  tomorrowStart),
     db.from('site_incidents')
       .select('site_id')
-      .gte('started_at', today + 'T00:00:00Z')
-      .lt('started_at',  today + 'T24:00:00Z'),
+      .gte('started_at', todayStart)
+      .lt('started_at',  tomorrowStart),
   ])
 
   const bySite = new Map<string, { total: number; up: number; totalMs: number }>()

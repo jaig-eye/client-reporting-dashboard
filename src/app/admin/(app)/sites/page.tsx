@@ -164,17 +164,19 @@ export default function SitesPage() {
     if (loading) return []
     const monitoredClientIds = new Set(sites.map(s => s.client_id).filter(Boolean))
     return clients.filter(c => {
-      const hasUrl = !!(c.website || wpUrlsByClient[c.id] || gscUrlsByClient[c.id])
+      const hasUrl = !!(c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id])
       return hasUrl && !monitoredClientIds.has(c.id)
     })
   }, [clients, sites, wpUrlsByClient, gscUrlsByClient, loading])
 
   // URL suggestion + source label for the selected client in the modal
   // Priority: profile website > WordPress connection > GSC property
+  // Trim client.website to guard against whitespace-only values saved via the profile form.
   const suggestedUrl = useMemo((): { url: string; source: string } | null => {
     if (!form.client_id) return null
     const client = clients.find(c => c.id === form.client_id)
-    if (client?.website)             return { url: client.website,              source: 'Profile' }
+    const profileUrl = client?.website?.trim() ?? ''
+    if (profileUrl)                      return { url: profileUrl,                      source: 'Profile' }
     if (wpUrlsByClient[form.client_id])  return { url: wpUrlsByClient[form.client_id],  source: 'WordPress' }
     if (gscUrlsByClient[form.client_id]) return { url: gscUrlsByClient[form.client_id], source: 'GSC' }
     return null
@@ -280,8 +282,8 @@ export default function SitesPage() {
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
               {unmonitoredClients.map(c => {
-                const url    = c.website || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
-                const source = c.website ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
+                const url    = (c.website?.trim() || '') || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
+                const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
                 return (
                   <button
                     key={c.id}

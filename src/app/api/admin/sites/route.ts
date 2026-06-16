@@ -45,19 +45,27 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const [{ data: groups }, { data: wpSites }, { data: gscConns }] = await Promise.all([
+  // Two-step GSC URL lookup: first get GSC connector IDs, then get their client connections.
+  // Direct embedded-filter (.eq('connectors.type', ...)) on a PostgREST join is ambiguous
+  // across client versions and can silently return all connections unfiltered.
+  const [{ data: groups }, { data: wpSites }, { data: gscConnectors }] = await Promise.all([
     db.from('site_groups').select('id, name').order('name'),
     // wp_sites gives us WordPress URLs per client for the "suggest URL" feature
     db.from('wp_sites').select('client_id, site_url'),
-    // GSC connections: external_id is the verified property URL (e.g. "https://example.com/")
-    db.from('client_connections')
-      .select('client_id, external_id, connectors!inner(type)')
-      .eq('connectors.type', 'google_search_console')
-      .eq('status', 'active'),
+    // Step 1: IDs of all GSC connectors in this agency account
+    db.from('connectors').select('id').eq('type', 'google_search_console'),
   ])
 
-  // Normalise GSC rows to { client_id, url } dropping the joined connectors object
-  const gscUrls = (gscConns ?? []).map((c: { client_id: string; external_id: string }) => ({
+  // Step 2: active connections for those connector IDs → external_id is the GSC property URL
+  const gscConnectorIds = (gscConnectors ?? []).map((c: { id: string }) => c.id)
+  const gscConnsRes = gscConnectorIds.length > 0
+    ? await db.from('client_connections')
+        .select('client_id, external_id')
+        .in('connector_id', gscConnectorIds)
+        .eq('status', 'active')
+    : { data: [] }
+
+  const gscUrls = (gscConnsRes.data ?? []).map((c: { client_id: string; external_id: string }) => ({
     client_id: c.client_id,
     url:       c.external_id,
   }))
