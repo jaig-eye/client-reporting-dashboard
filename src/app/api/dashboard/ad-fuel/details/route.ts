@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data: clientData } = await db
     .from('clients')
-    .select('id')
+    .select('id, ad_fuel_cut')
     .eq('dashboard_token', token)
     .maybeSingle()
 
@@ -21,9 +21,7 @@ export async function GET(request: NextRequest) {
 
   type SpendRow = { client_id: string; date: string; spend: number }
 
-  const [ledgerRes, gRes, mRes] = await Promise.all([
-    // All ledger entries — frontend filters to 6 months for Payments tab;
-    // full history is needed so the running balance computation is accurate.
+  const [ledgerRes, gRes, mRes, agencyRes] = await Promise.all([
     db.from('ad_fuel_ledger')
       .select('id, date_of_payment, invoice_date, amount_af, type, note, ach_status, created_at')
       .eq('client_id', clientId)
@@ -34,7 +32,15 @@ export async function GET(request: NextRequest) {
     db.rpc('daily_meta_spend_by_client', { floor_date: fromDate })
       .gte('date', fromDate).lte('date', toDate)
       .eq('client_id', clientId),
+    db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single(),
   ])
+
+  // Resolve the AF split so daily spend is in the same units as adFuelBalance
+  // (which is afPurchased − rawLifetime/split, i.e. gross-up dollars).
+  const agencyCut  = (agencyRes.data?.ad_fuel_cut         ?? 0.20)        as number
+  const cutoffDate = (agencyRes.data?.ad_fuel_cutoff_date ?? '2025-01-01') as string
+  const clientCut  = (clientData.ad_fuel_cut as number | null) ?? agencyCut
+  const split      = 1 - clientCut
 
   const byDate = new Map<string, { google: number; meta: number }>()
   for (const row of (gRes.data ?? []) as SpendRow[]) {
@@ -48,9 +54,24 @@ export async function GET(request: NextRequest) {
     byDate.set(row.date, d)
   }
 
+  // Convert raw spend to AF-denominated spend so the balance tab's backward walk
+  // uses the same units as the adFuelBalance prop (rawSpend / split = AF spend).
   const dailyDebits = Array.from(byDate.entries())
-    .map(([date, { google, meta }]) => ({ date, google_spend: google, meta_spend: meta, total: google + meta }))
+    .map(([date, { google, meta }]) => {
+      const raw   = google + meta
+      const total = split > 0 ? raw / split : raw
+      return { date, google_spend: google, meta_spend: meta, total }
+    })
     .sort((a, b) => b.date.localeCompare(a.date))
 
-  return NextResponse.json({ ledger: ledgerRes.data ?? [], dailyDebits })
+  // Exclude pre-cutoff ledger entries — the dashboard balance formula only counts
+  // payments from cutoffDate onward, so pre-cutoff entries must not appear in the
+  // backward walk or the reconstructed balances diverge from reality.
+  type LedgerRow = { date_of_payment: string | null; invoice_date: string | null; created_at: string }
+  const ledger = (ledgerRes.data ?? []).filter((e: LedgerRow) => {
+    const d = e.date_of_payment ?? e.invoice_date ?? e.created_at.slice(0, 10)
+    return d >= cutoffDate
+  })
+
+  return NextResponse.json({ ledger, dailyDebits })
 }

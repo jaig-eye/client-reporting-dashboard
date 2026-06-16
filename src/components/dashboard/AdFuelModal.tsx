@@ -56,9 +56,12 @@ export default function AdFuelModal({ balance, onClose }: { balance: number; onC
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // Payments tab: only last 6 months by effective date
+  // Payments tab: only last 6 months by effective date.
+  // setDate(1) first to avoid month-overflow when today is day 29-31
+  // (e.g. Oct 31 → Apr 31 overflows to May 1 without this guard).
   const sixMonthsAgo = useMemo(() => {
     const d = new Date()
+    d.setDate(1)
     d.setMonth(d.getMonth() - 6)
     return d.toISOString().slice(0, 10)
   }, [])
