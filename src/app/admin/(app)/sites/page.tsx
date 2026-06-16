@@ -79,11 +79,12 @@ function detectPlatform(url: string): string {
   if (lower.includes('gohighlevel') || lower.includes('.ghl.'))  return 'ghl'
   if (lower.includes('bigcommerce'))                              return 'bigcommerce'
   if (lower.includes('myshopify'))                               return 'shopify'
-  return 'wordpress' // most common; user can change
+  return 'custom'
 }
 
 export default function SitesPage() {
   const [sites,   setSites]   = useState<Site[]>([])
+  const [allMonitoredClientIds, setAllMonitoredClientIds] = useState<Set<string>>(new Set())
   const [groups,  setGroups]  = useState<Group[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [wpUrlsByClient,  setWpUrlsByClient]  = useState<Record<string, string>>({})
@@ -148,8 +149,16 @@ export default function SitesPage() {
     setClients(data.clients ?? [])
   }, [])
 
+  const fetchAllMonitoredClientIds = useCallback(async () => {
+    const res = await fetch('/api/admin/sites')
+    if (!res.ok) return
+    const data = await res.json()
+    setAllMonitoredClientIds(new Set((data.sites ?? []).map((s: Site) => s.client_id).filter(Boolean)))
+  }, [])
+
   useEffect(() => { fetchSites() }, [fetchSites])
   useEffect(() => { fetchClients() }, [fetchClients])
+  useEffect(() => { fetchAllMonitoredClientIds() }, [fetchAllMonitoredClientIds])
 
   // DOWN-first sort: down → active/unchecked → active/up → paused/archived, then alpha
   const sortedSites = useMemo(() => {
@@ -165,12 +174,11 @@ export default function SitesPage() {
   // Clients that have a known URL (profile, WordPress, or GSC) but no site record yet
   const unmonitoredClients = useMemo(() => {
     if (loading) return []
-    const monitoredClientIds = new Set(sites.map(s => s.client_id).filter(Boolean))
     return clients.filter(c => {
       const hasUrl = !!(c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id])
-      return hasUrl && !monitoredClientIds.has(c.id)
+      return hasUrl && !allMonitoredClientIds.has(c.id)
     })
-  }, [clients, sites, wpUrlsByClient, gscUrlsByClient, loading])
+  }, [clients, allMonitoredClientIds, wpUrlsByClient, gscUrlsByClient, loading])
 
   // URL suggestion + source label for the selected client in the modal
   // Priority: profile website > WordPress connection > GSC property
@@ -201,7 +209,7 @@ export default function SitesPage() {
     )
     setImporting(false)
     setImportDismissed(true)
-    fetchSites()
+    await Promise.all([fetchSites(), fetchAllMonitoredClientIds()])
   }
 
   function openAdd(prefill?: { name: string; url: string; client_id: string; platform: string }) {
@@ -304,7 +312,7 @@ export default function SitesPage() {
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
               {unmonitoredClients.map(c => {
-                const url    = (c.website?.trim() || '') || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
+                const url    = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
                 const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
                 return (
                   <button

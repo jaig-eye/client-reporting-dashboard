@@ -121,7 +121,6 @@ export async function GET(request: NextRequest) {
     })
 
     const wasDown = site.is_up === false
-    const wasUp   = site.is_up === true
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
@@ -147,12 +146,20 @@ export async function GET(request: NextRequest) {
           : statusCode && statusCode >= 400 ? '4xx'
           : 'other'
 
-        // Open incident
-        await db.from('site_incidents').insert({
-          site_id:    site.id,
-          started_at: checkedAt,
-          cause,
-        })
+        // Open incident — guard against duplicate open incidents on overlapping cron runs
+        const { data: existingIncident } = await db
+          .from('site_incidents')
+          .select('id')
+          .eq('site_id', site.id)
+          .is('ended_at', null)
+          .maybeSingle()
+        if (!existingIncident) {
+          await db.from('site_incidents').insert({
+            site_id:    site.id,
+            started_at: checkedAt,
+            cause,
+          })
+        }
 
         // admin_alerts row
         await db.from('admin_alerts').insert({

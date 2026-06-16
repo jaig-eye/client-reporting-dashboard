@@ -212,7 +212,7 @@ export default function OverviewTab({
   const loadBilling = useCallback(async () => {
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/billing`)
-      if (!res.ok) return
+      if (!res.ok) { console.error('Billing fetch failed:', res.status); return }
       const data = await res.json()
       setInvoices(data.invoices ?? [])
       setBillingLedger(data.ledger ?? [])
@@ -264,7 +264,7 @@ export default function OverviewTab({
                     placeholder={f.label === 'Logo URL' ? 'https://…' : f.label}
                   />
                   {f.key === 'logoUrl' && bizForm.logoUrl && (
-                    <img src={bizForm.logoUrl} alt="preview" style={{ marginTop: 6, height: 32, objectFit: 'contain', objectPosition: 'left', borderRadius: 4 }} />
+                    <img src={bizForm.logoUrl} alt="preview" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} style={{ marginTop: 6, height: 32, objectFit: 'contain', objectPosition: 'left', borderRadius: 4 }} />
                   )}
                 </div>
               ))}

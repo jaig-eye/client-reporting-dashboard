@@ -19,7 +19,6 @@ interface DashRow {
   adFuelCut:             number
   afBalance:             number
   rawBalance:            number
-  lifetimeRawBalance:    number
   afPurchased:           number
   afSpend:               number
   rawPurchased:          number
@@ -69,7 +68,6 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'crmId',        label: 'CRM ID',              visible: false },
   { key: 'afBalance',         label: 'Ad Fuel Balance',     visible: true  },
   { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
-  { key: 'lifetimeRawBalance', label: 'Lifetime Raw Bal',   visible: false },
   { key: 'afPurchased',       label: 'Ad Fuel Purchased',   visible: true  },
   { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
   { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
@@ -116,7 +114,6 @@ function sortValue(row: DashRow, key: string): string | number {
     case 'client':             return row.clientName.toLowerCase()
     case 'afBalance':          return row.afBalance
     case 'rawBalance':         return row.rawBalance
-    case 'lifetimeRawBalance': return row.lifetimeRawBalance
     case 'afPurchased':        return row.afPurchased
     case 'afSpend':            return row.afSpend
     case 'rawPurchased':       return row.rawPurchased
@@ -185,7 +182,6 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
       )
     }
     case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
-    case 'lifetimeRawBalance': return <td key={key} style={{ textAlign: 'right', color: row.lifetimeRawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.lifetimeRawBalance)}</td>
     case 'afPurchased':       return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
     case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
     case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
@@ -535,7 +531,6 @@ export default function AdFuelPage() {
           case 'crmId':        return row.crmId ?? ''
           case 'afBalance':         return row.afBalance.toFixed(2)
           case 'rawBalance':        return row.rawBalance.toFixed(2)
-          case 'lifetimeRawBalance': return row.lifetimeRawBalance.toFixed(2)
           case 'afPurchased':       return row.afPurchased.toFixed(2)
           case 'afSpend':      return row.afSpend.toFixed(2)
           case 'rawPurchased': return row.rawPurchased.toFixed(2)

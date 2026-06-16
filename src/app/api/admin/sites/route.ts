@@ -63,7 +63,11 @@ export async function GET(request: NextRequest) {
         .select('client_id, external_id')
         .in('connector_id', gscConnectorIds)
         .eq('status', 'active')
-    : { data: [] }
+    : { data: [], error: null }
+
+  if (gscConnsRes.error) {
+    console.error('GSC connections query failed:', gscConnsRes.error)
+  }
 
   const gscUrls = (gscConnsRes.data ?? []).map((c: { client_id: string; external_id: string }) => ({
     client_id: c.client_id,

@@ -95,7 +95,8 @@ export async function GET(request: NextRequest) {
     const eff = getEffectiveCutoff(cutoffDate, c.historic_bill_day!)
     if (eff > cutoffDate) {
       const gapEnd = subtractOneDay(eff)
-      gapGroups[gapEnd] = [...(gapGroups[gapEnd] ?? []), c.id]
+      if (!gapGroups[gapEnd]) gapGroups[gapEnd] = []
+      gapGroups[gapEnd].push(c.id)
     }
   }
   const gapEntries = Object.entries(gapGroups)
@@ -259,7 +260,6 @@ export async function GET(request: NextRequest) {
       adFuelCut:            cut,
       afBalance,
       rawBalance,
-      lifetimeRawBalance,
       afPurchased,
       afSpend,
       rawPurchased,

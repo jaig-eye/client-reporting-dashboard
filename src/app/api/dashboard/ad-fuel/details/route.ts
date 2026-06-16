@@ -25,7 +25,8 @@ export async function GET(request: NextRequest) {
     db.from('ad_fuel_ledger')
       .select('id, date_of_payment, invoice_date, amount_af, type, note, ach_status, created_at')
       .eq('client_id', clientId)
-      .order('created_at', { ascending: false }),
+      .order('created_at', { ascending: false })
+      .limit(200),
     db.rpc('daily_google_spend_by_client', { floor_date: fromDate })
       .gte('date', fromDate).lte('date', toDate)
       .eq('client_id', clientId),
@@ -44,11 +45,13 @@ export async function GET(request: NextRequest) {
 
   const byDate = new Map<string, { google: number; meta: number }>()
   for (const row of (gRes.data ?? []) as SpendRow[]) {
+    if (row.date < cutoffDate) continue
     const d = byDate.get(row.date) ?? { google: 0, meta: 0 }
     d.google += Number(row.spend)
     byDate.set(row.date, d)
   }
   for (const row of (mRes.data ?? []) as SpendRow[]) {
+    if (row.date < cutoffDate) continue
     const d = byDate.get(row.date) ?? { google: 0, meta: 0 }
     d.meta += Number(row.spend)
     byDate.set(row.date, d)

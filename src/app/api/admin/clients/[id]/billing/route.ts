@@ -14,7 +14,7 @@ export async function GET(
   const db = createAdminClient()
 
   const [clientRes, ledgerRes] = await Promise.all([
-    db.from('clients').select('stripe_customer_id').eq('id', id).single(),
+    db.from('clients').select('stripe_customer_id').eq('id', id).maybeSingle(),
     db.from('ad_fuel_ledger')
       .select('id, date_of_payment, invoice_date, amount_af, type, note, ach_status, invoice_id, created_at')
       .eq('client_id', id)
@@ -39,7 +39,7 @@ export async function GET(
             id:          inv.id,
             number:      inv.number,
             date:        inv.created,
-            amount:      (inv.amount_paid ?? 0) / 100,
+            amount:      (inv.status === 'paid' ? (inv.amount_paid ?? 0) : (inv.amount_due ?? inv.total ?? 0)) / 100,
             status:      inv.status,
             description: inv.description ?? inv.lines?.data?.[0]?.description ?? null,
             hosted_url:  inv.hosted_invoice_url,
