@@ -231,7 +231,7 @@ NON-NEGOTIABLE RULES:
 - NEVER use em dashes (—) or en dashes (–). Use a comma or period instead.
 - Write in second person ("you", "your")
 - Include [CITY] naturally in every H2 heading
-- Phone [PHONE] must appear at least twice as: <a href="tel:[PHONE_RAW]">[PHONE]</a>
+- Phone [PHONE] must appear exactly twice as: <a href="tel:[PHONE_RAW]">[PHONE]</a>
 - Sentences under 25 words. 7th-grade reading level.
 - Use only h2, h3, p, ul, li, strong, a HTML tags. No inline styles, no divs.
 - Target word count: [WORD_COUNT]
