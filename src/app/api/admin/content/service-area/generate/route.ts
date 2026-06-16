@@ -124,7 +124,7 @@ async function generatePage(topicId: string) {
   // Parallel: SA settings, agency settings, content_settings (for brand context)
   const [saRes, agencyRes, csRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token').single(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').single(),
     db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls').eq('client_id', clientId).maybeSingle(),
   ])
 
@@ -415,7 +415,8 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   // Discord notification
   const discordToken = agency?.discord_bot_token as string | null
-  if (discordToken) {
+  const notifySa = (agency as Record<string, unknown> | null)?.notify_sa_generated !== false
+  if (discordToken && notifySa) {
     // Fire-and-forget
     ;(async () => {
       try {

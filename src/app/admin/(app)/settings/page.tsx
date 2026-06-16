@@ -54,6 +54,7 @@ interface Settings {
   notify_topic_ready:             boolean
   notify_approval_needed:         boolean
   notify_schedule_generated:      boolean
+  notify_sa_generated:            boolean
   notify_metric_alerts:           boolean
   notify_connector_errors:        boolean
   metric_alert_threshold:         number
@@ -107,6 +108,7 @@ const DEFAULT: Settings = {
   notify_topic_ready:             true,
   notify_approval_needed:         true,
   notify_schedule_generated:      true,
+  notify_sa_generated:            true,
   notify_metric_alerts:           false,
   notify_connector_errors:        false,
   metric_alert_threshold:         25,
@@ -910,6 +912,12 @@ export default function AgencySettingsPage() {
                 hint="Sent when topics are automatically generated 30 days before a client's scheduled publish date"
                 checked={form.notify_schedule_generated}
                 onChange={v => field('notify_schedule_generated', v)}
+              />
+              <Toggle
+                label="Service area page generated (Discord)"
+                hint="Discord notification when a service area page is generated and ready for review"
+                checked={form.notify_sa_generated}
+                onChange={v => field('notify_sa_generated', v)}
               />
               <Toggle
                 label="Metric anomaly alerts (email)"

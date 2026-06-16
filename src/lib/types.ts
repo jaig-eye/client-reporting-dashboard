@@ -250,6 +250,8 @@ export interface AgencySettings {
   hidden_connector_types?: string[]
   /** Discord bot token for sending per-client notifications to Discord channels. */
   discord_bot_token?: string | null
+  /** Whether to send a Discord notification when a service area page is generated. */
+  notify_sa_generated?: boolean | null
   /** Stripe Secret API key for auto-logging ad fuel payments to the ledger. */
   stripe_api_key?: string | null
   /** Stripe webhook signing secret — used to verify incoming webhook events. */

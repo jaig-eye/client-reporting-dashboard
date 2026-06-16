@@ -43,7 +43,7 @@ export async function PUT(request: NextRequest) {
     'chart_color_spend', 'chart_color_prior_spend',
     'chart_color_conversions', 'chart_color_prior_conversions',
     'notification_email',
-    'notify_topics_created', 'notify_post_generated', 'notify_approval_needed',
+    'notify_topics_created', 'notify_post_generated', 'notify_sa_generated', 'notify_approval_needed',
     'notify_schedule_generated',
     'notify_post_uploaded', 'notify_topic_ready',
     'notify_metric_alerts', 'notify_connector_errors', 'metric_alert_threshold', 'daily_alert_threshold',
