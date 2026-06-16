@@ -109,6 +109,9 @@ export default function SitesPage() {
   // Delete confirm
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
+  // Import all unmonitored sites at once
+  const [importing, setImporting] = useState(false)
+
   const fetchSites = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -181,6 +184,25 @@ export default function SitesPage() {
     if (gscUrlsByClient[form.client_id]) return { url: gscUrlsByClient[form.client_id], source: 'GSC' }
     return null
   }, [form.client_id, clients, wpUrlsByClient, gscUrlsByClient])
+
+  async function handleImportAll() {
+    if (!unmonitoredClients.length || importing) return
+    setImporting(true)
+    await Promise.allSettled(
+      unmonitoredClients.map(c => {
+        const url = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
+        if (!url) return Promise.resolve()
+        return fetch('/api/admin/sites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: c.name, url, client_id: c.id, platform: detectPlatform(url) }),
+        })
+      })
+    )
+    setImporting(false)
+    setImportDismissed(true)
+    fetchSites()
+  }
 
   function openAdd(prefill?: { name: string; url: string; client_id: string; platform: string }) {
     setEditSite(null)
@@ -312,9 +334,18 @@ export default function SitesPage() {
               })}
             </div>
           </div>
-          <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: '0.125rem', flexShrink: 0 }}>
-            <X size={14} />
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', flexShrink: 0, alignItems: 'flex-end' }}>
+            <button
+              onClick={handleImportAll}
+              disabled={importing}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: '#3b82f6', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
+            >
+              {importing ? 'Importing…' : `Import all ${unmonitoredClients.length}`}
+            </button>
+            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: '0.125rem', fontSize: '0.7rem' }}>
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
