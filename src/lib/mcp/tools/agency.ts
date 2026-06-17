@@ -70,13 +70,16 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
       }
 
       case 'get_system_stats': {
-        const [clientsRes, topicsRes, postsRes, silosRes, sitesRes, incidentsRes] = await Promise.all([
-          db.from('clients').select('status').neq('status', 'deleted'),
-          db.from('content_topics').select('status'),
-          db.from('content_posts').select('status'),
-          db.from('content_silos').select('status').neq('status', 'archived'),
-          db.from('sites').select('is_monitored'),
-          db.from('site_incidents').select('id').is('ended_at', null),
+        // Use count:exact + head:false to get per-status breakdowns without fetching all rows.
+        // sites and incidents only need a count so head:true is sufficient there.
+        const [clientsRes, topicsRes, postsRes, silosRes, sitesRes, monitoredRes, incidentsRes] = await Promise.all([
+          db.from('clients').select('status', { count: 'exact' }).neq('status', 'deleted'),
+          db.from('content_topics').select('status', { count: 'exact' }),
+          db.from('content_posts').select('status', { count: 'exact' }),
+          db.from('content_silos').select('*', { count: 'exact', head: true }).neq('status', 'archived'),
+          db.from('sites').select('*', { count: 'exact', head: true }),
+          db.from('sites').select('*', { count: 'exact', head: true }).eq('is_monitored', true),
+          db.from('site_incidents').select('*', { count: 'exact', head: true }).is('ended_at', null),
         ])
 
         const countBy = (rows: { [k: string]: unknown }[], key: string) => {
@@ -89,12 +92,12 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
         }
 
         return ok(fmt({
-          clients:         { total: clientsRes.data?.length ?? 0, by_status: countBy((clientsRes.data ?? []) as { status: string }[], 'status') },
-          content_topics:  { total: topicsRes.data?.length ?? 0, by_status: countBy((topicsRes.data ?? []) as { status: string }[], 'status') },
-          content_posts:   { total: postsRes.data?.length ?? 0, by_status: countBy((postsRes.data ?? []) as { status: string }[], 'status') },
-          silos:           { active: silosRes.data?.length ?? 0 },
-          sites:           { monitored: (sitesRes.data ?? []).filter((s: { is_monitored: unknown }) => s.is_monitored).length, total: sitesRes.data?.length ?? 0 },
-          open_incidents:  incidentsRes.data?.length ?? 0,
+          clients:        { total: clientsRes.count ?? 0, by_status: countBy((clientsRes.data ?? []) as { status: string }[], 'status') },
+          content_topics: { total: topicsRes.count ?? 0,  by_status: countBy((topicsRes.data ?? []) as { status: string }[], 'status') },
+          content_posts:  { total: postsRes.count ?? 0,   by_status: countBy((postsRes.data ?? []) as { status: string }[], 'status') },
+          silos:          { active: silosRes.count ?? 0 },
+          sites:          { total: sitesRes.count ?? 0, monitored: monitoredRes.count ?? 0 },
+          open_incidents: incidentsRes.count ?? 0,
         }))
       }
 

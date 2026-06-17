@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash }                from 'crypto'
 import { allTools, dispatch }        from '@/lib/mcp/registry'
 import { createAdminClient }         from '@/lib/supabase/server'
+import { timingSafeCompare }         from '@/lib/auth'
 
 type JRpcReq = {
   jsonrpc: '2.0'
@@ -40,7 +41,7 @@ async function isAuthed(req: NextRequest): Promise<boolean> {
 
   // Env var fallback — for super admin / local dev without a DB token
   const envSecret = process.env.DASHBOARD_MCP_SECRET
-  if (envSecret && token === envSecret) return true
+  if (timingSafeCompare(token, envSecret)) return true
 
   // Per-user DB token — team members generate these from /admin/users/me
   if (!token.startsWith('mcp_')) return false
@@ -54,8 +55,7 @@ async function isAuthed(req: NextRequest): Promise<boolean> {
     .maybeSingle()
 
   if (data?.id) {
-    // Fire-and-forget — don't block the request
-    db.from('mcp_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id)
+    void db.from('mcp_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id)
     return true
   }
 

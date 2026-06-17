@@ -204,8 +204,9 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
         if (args.target_publish_date) insert.target_publish_date = args.target_publish_date
         if (args.silo_id)             insert.silo_id = args.silo_id
         if (args.rationale)           insert.rationale = args.rationale
-        const { data, error } = await db.from('content_topics').insert(insert).select('id').single()
+        const { data, error } = await db.from('content_topics').insert(insert).select('id').maybeSingle()
         if (error) throw error
+        if (!data) return fail('Insert returned no row')
         return ok(`Topic created with id: ${(data as { id: string }).id}`)
       }
 
@@ -254,6 +255,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
           .from('content_posts')
           .select('silo_id, status')
           .in('silo_id', siloIds)
+          .limit(2000)
         const counts: Record<string, { total: number; published: number }> = {}
         for (const p of (postCounts ?? []) as { silo_id: string; status: string }[]) {
           if (!counts[p.silo_id]) counts[p.silo_id] = { total: 0, published: 0 }

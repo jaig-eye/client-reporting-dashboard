@@ -14,12 +14,15 @@ export async function DELETE(
 
   const { id } = await params
   const db = createAdminClient()
-  const { error } = await db
+  const { data, error } = await db
     .from('mcp_tokens')
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', id)
     .eq('user_id', userId)
+    .is('revoked_at', null)
+    .select('id')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data?.length) return NextResponse.json({ error: 'Token not found' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

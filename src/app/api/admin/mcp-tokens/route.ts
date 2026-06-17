@@ -29,6 +29,16 @@ export async function POST(req: NextRequest) {
   const userId = req.cookies.get('admin_user_id')?.value
   if (!userId) return NextResponse.json({ error: 'No user account' }, { status: 403 })
 
+  const db = createAdminClient()
+  const { count } = await db
+    .from('mcp_tokens')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .is('revoked_at', null)
+  if ((count ?? 0) >= 10) {
+    return NextResponse.json({ error: 'Token limit reached (10 max). Revoke an existing token first.' }, { status: 422 })
+  }
+
   const body = await req.json().catch(() => ({}))
   const label = String(body.label ?? '').trim() || 'My Token'
 
@@ -36,7 +46,6 @@ export async function POST(req: NextRequest) {
   const tokenHash  = createHash('sha256').update(rawToken).digest('hex')
   const tokenPrefix = rawToken.slice(0, 16)
 
-  const db = createAdminClient()
   const { error } = await db.from('mcp_tokens').insert({
     user_id:      userId,
     token_hash:   tokenHash,

@@ -22,6 +22,7 @@ export default function McpTokens({ appUrl }: Props) {
   const [newToken,  setNewToken]  = useState<string | null>(null)
   const [copied,    setCopied]    = useState(false)
   const [revoking,  setRevoking]  = useState<string | null>(null)
+  const [errorMsg,  setErrorMsg]  = useState<string | null>(null)
 
   const fetchTokens = useCallback(async () => {
     setLoading(true)
@@ -35,23 +36,41 @@ export default function McpTokens({ appUrl }: Props) {
 
   async function handleGenerate() {
     setGenerating(true)
-    const res  = await fetch('/api/admin/mcp-tokens', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ label: label.trim() || 'My Token' }),
-    })
-    const data = await res.json()
-    setNewToken(data.token)
-    setLabel('')
-    setGenerating(false)
-    fetchTokens()
+    setErrorMsg(null)
+    try {
+      const res  = await fetch('/api/admin/mcp-tokens', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ label: label.trim() || 'My Token' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to generate token')
+      setNewToken(data.token)
+      setLabel('')
+      fetchTokens()
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Something went wrong')
+    } finally {
+      setGenerating(false)
+    }
   }
 
   async function handleRevoke(id: string) {
+    if (!confirm('Revoke this token? Any Claude Code session using it will lose dashboard access immediately.')) return
     setRevoking(id)
-    await fetch(`/api/admin/mcp-tokens/${id}`, { method: 'DELETE' })
-    setRevoking(null)
-    fetchTokens()
+    setErrorMsg(null)
+    try {
+      const res = await fetch(`/api/admin/mcp-tokens/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error ?? 'Failed to revoke token')
+      }
+      fetchTokens()
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Something went wrong')
+    } finally {
+      setRevoking(null)
+    }
   }
 
   function copySnippet() {
@@ -69,6 +88,15 @@ export default function McpTokens({ appUrl }: Props) {
         Generate a personal access token to connect Claude Code to this dashboard.
         Each team member should have their own token.
       </p>
+
+      {errorMsg && (
+        <div
+          className="rounded-lg px-4 py-3 text-sm mb-4"
+          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}
+        >
+          {errorMsg}
+        </div>
+      )}
 
       {newToken ? (
         <div className="space-y-3 mb-6">
@@ -108,7 +136,7 @@ export default function McpTokens({ appUrl }: Props) {
           <button
             className="btn btn-secondary"
             style={{ fontSize: '0.8rem' }}
-            onClick={() => setNewToken(null)}
+            onClick={() => { setNewToken(null); setCopied(false) }}
           >
             Done
           </button>
