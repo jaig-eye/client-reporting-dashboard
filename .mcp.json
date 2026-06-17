@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=sphlvcrjmlkluyijvubb"
+    },
+    "vercel": {
+      "type": "http",
+      "url": "https://mcp.vercel.com"
+    },
+    "dashboard": {
+      "type": "http",
+      "url": "${DASHBOARD_MCP_URL:-http://localhost:3000}/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DASHBOARD_MCP_SECRET}"
+      }
+    }
+  }
+}
