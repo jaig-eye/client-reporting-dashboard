@@ -7,7 +7,9 @@ export const runtime  = 'nodejs'
 export const dynamic  = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash }                from 'crypto'
 import { allTools, dispatch }        from '@/lib/mcp/registry'
+import { createAdminClient }         from '@/lib/supabase/server'
 
 type JRpcReq = {
   jsonrpc: '2.0'
@@ -30,10 +32,34 @@ function rpcErr(id: string | number | null, code: number, message: string): JRpc
   return { jsonrpc: '2.0', id, error: { code, message } }
 }
 
-function isAuthed(req: NextRequest): boolean {
-  const secret = process.env.DASHBOARD_MCP_SECRET
-  if (!secret) return false
-  return req.headers.get('authorization') === `Bearer ${secret}`
+async function isAuthed(req: NextRequest): Promise<boolean> {
+  const authHeader = req.headers.get('authorization')
+  if (!authHeader?.startsWith('Bearer ')) return false
+  const token = authHeader.slice(7)
+  if (!token) return false
+
+  // Env var fallback — for super admin / local dev without a DB token
+  const envSecret = process.env.DASHBOARD_MCP_SECRET
+  if (envSecret && token === envSecret) return true
+
+  // Per-user DB token — team members generate these from /admin/users/me
+  if (!token.startsWith('mcp_')) return false
+  const tokenHash = createHash('sha256').update(token).digest('hex')
+  const db = createAdminClient()
+  const { data } = await db
+    .from('mcp_tokens')
+    .select('id')
+    .eq('token_hash', tokenHash)
+    .is('revoked_at', null)
+    .maybeSingle()
+
+  if (data?.id) {
+    // Fire-and-forget — don't block the request
+    db.from('mcp_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id)
+    return true
+  }
+
+  return false
 }
 
 async function handleOne(req: JRpcReq): Promise<JRpcRes | null> {
@@ -70,7 +96,7 @@ async function handleOne(req: JRpcReq): Promise<JRpcRes | null> {
 }
 
 export async function POST(request: NextRequest) {
-  if (!isAuthed(request)) {
+  if (!await isAuthed(request)) {
     return NextResponse.json(rpcErr(null, -32000, 'Unauthorized'), { status: 401 })
   }
 

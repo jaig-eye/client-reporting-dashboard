@@ -5,7 +5,8 @@
 import { getAdminSession } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
-import ProfileForm from './ProfileForm'
+import ProfileForm  from './ProfileForm'
+import McpTokens   from './McpTokens'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,13 +59,14 @@ export default async function MyProfilePage() {
         </div>
       </div>
 
-      <div className="max-w-lg">
+      <div className="max-w-lg space-y-6">
         <ProfileForm
           userId={session.userId!}
           initialName={user?.name ?? ''}
           initialEmail={user?.email ?? ''}
           initialAvatarUrl={user?.avatar_url ?? ''}
         />
+        <McpTokens appUrl={process.env.NEXT_PUBLIC_APP_URL ?? 'https://dash.golaunchlocal.com'} />
       </div>
     </div>
   )
