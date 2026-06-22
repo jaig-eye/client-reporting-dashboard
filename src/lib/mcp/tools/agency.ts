@@ -76,7 +76,8 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
           db.from('clients').select('status', { count: 'exact' }).neq('status', 'deleted'),
           db.from('content_topics').select('status', { count: 'exact' }),
           db.from('content_posts').select('status', { count: 'exact' }),
-          db.from('content_silos').select('*', { count: 'exact', head: true }).neq('status', 'archived'),
+          // content_silos requires migration 149 — silently returns 0 if table absent
+          db.from('content_silos').select('*', { count: 'exact', head: true }).neq('status', 'archived').then(r => r.error ? { count: 0, data: null, error: null } : r),
           db.from('sites').select('*', { count: 'exact', head: true }),
           db.from('sites').select('*', { count: 'exact', head: true }).eq('is_monitored', true),
           db.from('site_incidents').select('*', { count: 'exact', head: true }).is('ended_at', null),

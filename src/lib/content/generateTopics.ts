@@ -452,7 +452,8 @@ Suggest ${count} high-impact blog post topics${siloName ? ` for the "${siloName}
     competition_level:    t.competition_level   ?? null,
     cluster_group:        t.cluster_group       ?? (siloName ? siloName.toLowerCase().replace(/\s+/g, '-') : null),
     competitors_researched: t.target_keyword ? (competitorMap.get(t.target_keyword) ?? null) : null,
-    silo_id:              opts?.siloId ?? null,
+    // Only include silo_id when set — column requires migration 149 (content_silos)
+    ...(opts?.siloId ? { silo_id: opts.siloId } : {}),
     status:               'pending',
     target_publish_date:  targetPublishDate ?? null,
   }))

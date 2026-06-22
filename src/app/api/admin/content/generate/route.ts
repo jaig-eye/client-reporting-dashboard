@@ -711,8 +711,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       seo_score:           seoScore,
       schema_type:         brief?.schema_type ?? null,
       excerpt:             parsed.metaDescription || null,
-      silo_id:             topicData.silo_id ?? null,
-    }).select('id').single()
+      // Only include silo_id when set — column requires migration 149 (content_silos)
+      ...(topicData.silo_id ? { silo_id: topicData.silo_id } : {}),
+    }).select('id').maybeSingle()
 
     if (insertError || !savedPost) {
       console.error('[generate] DB insert failed for topic', topicId, insertError)
@@ -817,9 +818,9 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, silo_id')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes')
       .eq('id', topic_id)
-      .single()
+      .maybeSingle()
     if (topicErr || !topic) {
       return NextResponse.json({ error: 'Topic not found' }, { status: 404 })
     }

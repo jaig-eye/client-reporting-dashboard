@@ -155,13 +155,12 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
         const limit = Math.min(Number(args.limit ?? 50), 200)
         let q = db
           .from('content_topics')
-          .select('id, client_id, topic, target_keyword, status, content_type, target_publish_date, silo_id, post_id, suggested_title, competition_level, created_at')
+          .select('id, client_id, topic, target_keyword, status, content_type, target_publish_date, post_id, suggested_title, competition_level')
           .order('target_publish_date', { ascending: true, nullsFirst: false })
           .limit(limit)
         if (args.client_id)    q = q.eq('client_id', String(args.client_id))
         if (args.status)       q = q.eq('status', String(args.status))
         if (args.content_type) q = q.eq('content_type', String(args.content_type))
-        if (args.silo_id)      q = q.eq('silo_id', String(args.silo_id))
         const { data, error } = await q
         if (error) throw error
         return ok(fmt(data))
@@ -214,12 +213,11 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
         const limit = Math.min(Number(args.limit ?? 50), 200)
         let q = db
           .from('content_posts')
-          .select('id, client_id, title, target_keyword, status, content_type, target_publish_date, wp_post_id, bc_post_id, published_url, generated_at, silo_id, word_count')
+          .select('id, client_id, title, target_keyword, status, content_type, target_publish_date, wp_post_id, bc_post_id, published_url, generated_at, word_count')
           .order('target_publish_date', { ascending: true, nullsFirst: false })
           .limit(limit)
         if (args.client_id) q = q.eq('client_id', String(args.client_id))
         if (args.status)    q = q.eq('status', String(args.status))
-        if (args.silo_id)   q = q.eq('silo_id', String(args.silo_id))
         const { data, error } = await q
         if (error) throw error
         return ok(fmt(data))
@@ -228,7 +226,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
       case 'get_post': {
         const cols = args.include_content
           ? '*'
-          : 'id, client_id, title, target_keyword, status, content_type, seo_title, meta_description, slug, focus_topic, suggested_tags, target_publish_date, wp_post_id, bc_post_id, wp_site_url, published_url, generated_at, silo_id, word_count, topic_rationale'
+          : 'id, client_id, title, target_keyword, status, content_type, seo_title, meta_description, slug, focus_topic, suggested_tags, target_publish_date, wp_post_id, bc_post_id, wp_site_url, published_url, generated_at, word_count, topic_rationale'
         const { data, error } = await db
           .from('content_posts')
           .select(cols)
@@ -247,7 +245,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
           .order('created_at', { ascending: true })
         if (args.client_id) q = q.eq('client_id', String(args.client_id))
         const { data, error } = await q
-        if (error) throw error
+        if (error) return fail('Silo feature not yet enabled (migration 149 pending)')
         // Annotate with post counts
         const siloIds = (data as { id: string }[]).map(s => s.id)
         if (siloIds.length === 0) return ok('[]')
@@ -275,7 +273,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
           .select('*')
           .eq('id', String(args.silo_id))
           .maybeSingle()
-        if (error) throw error
+        if (error) return fail('Silo feature not yet enabled (migration 149 pending)')
         if (!silo) return fail('Silo not found')
         const [keywordsRes, pagesRes, topicsRes] = await Promise.all([
           db.from('content_silo_keywords').select('id, keyword, keyword_type, intent, keyword_score, selected').eq('silo_id', String(args.silo_id)),
@@ -303,7 +301,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
         if (args.keyword_type)  q = q.eq('keyword_type', String(args.keyword_type))
         if (args.selected_only) q = q.eq('selected', true)
         const { data, error } = await q
-        if (error) throw error
+        if (error) return fail('Silo feature not yet enabled (migration 149 pending)')
         return ok(fmt(data))
       }
 
@@ -315,7 +313,7 @@ export async function handle(name: string, args: Record<string, unknown>, db: Su
           .order('created_at')
         if (args.status) q = q.eq('status', String(args.status))
         const { data, error } = await q
-        if (error) throw error
+        if (error) return fail('Silo feature not yet enabled (migration 149 pending)')
         return ok(fmt(data))
       }
 
