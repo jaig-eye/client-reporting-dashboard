@@ -671,7 +671,7 @@ export async function GET(request: NextRequest) {
           .is('target_publish_date', null)
           .is('wp_post_id', null)
           .is('bc_post_id', null)
-          .lte('created_at', saStaleCutoff)
+          .lte('generated_at', saStaleCutoff)
 
         const allDueSaPosts = [...(dueSaPosts ?? []), ...(datelessSaPosts ?? [])] as { id: string; title: string | null }[]
 

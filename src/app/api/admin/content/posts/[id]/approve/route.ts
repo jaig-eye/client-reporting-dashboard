@@ -14,7 +14,7 @@ import { sendDiscordMessage }  from '@/lib/discord'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const cookieStore = await cookies()
@@ -22,14 +22,24 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Read optional auto flag — sent by the cron for auto-push
+  let isAuto = false
+  try {
+    const body = await request.json() as { auto?: boolean }
+    isAuto = body?.auto === true
+  } catch { /* no body is fine */ }
+
   const { id } = await params
   const db = createAdminClient()
 
+  // silo_id is intentionally excluded: migration 149 (content_silos) has not been
+  // applied to production yet. Selecting a non-existent column causes PostgREST to
+  // error, which was the root cause of the "Post not found" 404 on auto-push.
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (postErr || !post) {
     return NextResponse.json({ error: 'Post not found' }, { status: 404 })
@@ -299,7 +309,10 @@ export async function POST(
 
       let saStatus: 'draft' | 'future' | 'publish' = 'draft'
       let saDate: string | undefined
-      if (saPublishMode !== 'draft_only' && p.target_publish_date) {
+      if (isAuto || saPublishMode === 'publish') {
+        // Auto-push from cron or explicit publish mode — go live immediately
+        saStatus = 'publish'
+      } else if (saPublishMode !== 'draft_only' && p.target_publish_date) {
         saDate   = `${String(p.target_publish_date)}T${saPublishTime}:00`
         saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
       }
@@ -380,8 +393,9 @@ export async function POST(
         .catch(() => {})
     }
 
-    // Auto-update WP hub page if this post belongs to a silo (fire-and-forget)
-    if (p.silo_id) {
+    // Auto-update WP hub page if this post belongs to a silo (fire-and-forget).
+    // p.silo_id is only populated once migration 149 (content_silos) is applied.
+    if ((p as Record<string, unknown>).silo_id) {
       ;(async () => {
         try {
           const { data: siloRaw } = await db

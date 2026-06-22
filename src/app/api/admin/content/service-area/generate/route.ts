@@ -104,7 +104,7 @@ async function generatePage(topicId: string) {
     .from('content_topics')
     .select('id, city, state_abbr, service_name, client_id, content_type, status, target_publish_date')
     .eq('id', topicId)
-    .single()
+    .maybeSingle()
 
   if (!topic || topic.content_type !== 'service_area') {
     return { error: 'Topic not found or not a service_area topic' }
@@ -159,7 +159,7 @@ async function generatePage(topicId: string) {
       status:         'active',
     }, { onConflict: 'client_id,name' })
     .select('id')
-    .single()
+    .maybeSingle()
 
   if (saSilo) {
     sasiloId = saSilo.id as string
@@ -419,10 +419,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
       heading_count:     headingCount,
       target_publish_date: (topic.target_publish_date as string | null) ?? null,
       generated_at:      new Date().toISOString(),
-      silo_id:           sasiloId,
+      // Only include silo_id when non-null — column requires migration 149 (content_silos)
+      ...(sasiloId ? { silo_id: sasiloId } : {}),
     })
     .select('id')
-    .single()
+    .maybeSingle()
 
   if (postErr || !post) {
     await db.from('content_topics').update({ status: 'approved', generation_error: postErr?.message ?? 'Failed to save post' }).eq('id', topicId)
