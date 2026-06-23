@@ -1865,7 +1865,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           const saPostIdToTopic = new Map<string, SaTopic>()
           const seenSaPostIds   = new Set<string>()
           for (const t of saTopics) {
-            if (t.post?.id) { saPostIdToTopic.set(t.post.id, t); seenSaPostIds.add(t.post.id) }
+            if (t.post?.id) {
+              saPostIdToTopic.set(t.post.id, t)
+              // Only mark as seen for non-rejected topics — rejected-topic posts should
+              // surface as orphan rows so the admin can see and clean them up.
+              if (t.status !== 'rejected') seenSaPostIds.add(t.post.id)
+            }
           }
 
           type SARowItem = { kind: 'topic'; data: SaTopic } | { kind: 'post'; data: SaPost }

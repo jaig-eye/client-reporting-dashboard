@@ -109,7 +109,7 @@ async function generatePage(topicId: string) {
   if (!topic || topic.content_type !== 'service_area') {
     return { error: 'Topic not found or not a service_area topic' }
   }
-  if (topic.status !== 'approved') {
+  if (topic.status !== 'approved' && topic.status !== 'generating') {
     return { error: 'Topic is not approved' }
   }
 
@@ -118,8 +118,25 @@ async function generatePage(topicId: string) {
   const serviceName  = (topic.service_name as string | null) ?? 'Service'
   const clientId     = topic.client_id as string
 
-  // Mark as generating
+  // Mark as generating (no-op if route handler already claimed it — idempotent)
   await db.from('content_topics').update({ status: 'generating' }).eq('id', topicId)
+
+  // Post-level dedup: if a non-rejected post already exists for this city+service, link the
+  // topic to it and return early without burning an AI call.
+  const { data: existingPost } = await db
+    .from('content_posts')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('city', city)
+    .eq('service_name', serviceName)
+    .not('status', 'eq', 'rejected')
+    .maybeSingle()
+  if (existingPost) {
+    await db.from('content_topics')
+      .update({ status: 'generated', post_id: existingPost.id })
+      .eq('id', topicId)
+    return { ok: true, post_id: existingPost.id, deduped: true }
+  }
 
   // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
   const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
@@ -480,7 +497,20 @@ export async function POST(request: NextRequest) {
   const { topic_id } = body
   if (!topic_id) return NextResponse.json({ error: 'topic_id required' }, { status: 400 })
 
-  // Use waitUntil for background generation (same as blog route)
+  const db = createAdminClient()
+  // Claim the topic atomically before scheduling background work — closes the race window
+  // where cron re-fetches 'approved' topics between this response returning and generatePage
+  // setting the status to 'generating' via waitUntil.
+  const { data: claimed } = await db
+    .from('content_topics')
+    .update({ status: 'generating' })
+    .eq('id', topic_id)
+    .eq('status', 'approved')
+    .select('id')
+    .maybeSingle()
+  if (!claimed) {
+    return NextResponse.json({ error: 'Topic not available for generation' }, { status: 409 })
+  }
   waitUntil(generatePage(topic_id))
   return NextResponse.json({ ok: true, queued: true })
 }

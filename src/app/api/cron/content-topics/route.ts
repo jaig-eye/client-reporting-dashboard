@@ -556,27 +556,34 @@ export async function GET(request: NextRequest) {
         // Fetch all eligible pending SA topics (dated)
         const { data: pendingSaTopics } = await db
           .from('content_topics')
-          .select('id, target_publish_date, search_volume, keyword_difficulty')
+          .select('id, target_publish_date, search_volume, keyword_difficulty, city, state_abbr, service_name')
           .eq('client_id', saClientId)
           .eq('content_type', 'service_area')
           .eq('status', 'pending')
           .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
           .not('target_publish_date', 'is', null)
 
-        // Group by date, pick best saLimit per group
-        type PendingSaTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
+        // Group by date, pick best saLimit per group — with city+service dedup so only one
+        // topic per combo is approved even if multiple duplicates exist for the same date.
+        type PendingSaTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null; city: string | null; state_abbr: string | null; service_name: string | null }
         const saGrouped = new Map<string, PendingSaTopic[]>()
         for (const t of (pendingSaTopics ?? []) as PendingSaTopic[]) {
           const key = t.target_publish_date ?? 'none'
           saGrouped.set(key, [...(saGrouped.get(key) ?? []), t])
         }
         const saToApprove: string[] = []
+        const seenSaCombos = new Set<string>()
         for (const [, group] of Array.from(saGrouped)) {
           const picked = (group as PendingSaTopic[])
             .sort((a: PendingSaTopic, b: PendingSaTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
               || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
             .slice(0, saLimit)
-          saToApprove.push(...picked.map((t: PendingSaTopic) => t.id))
+          for (const t of picked) {
+            const combo = `${t.city ?? ''}|${t.state_abbr ?? ''}|${t.service_name ?? ''}`
+            if (seenSaCombos.has(combo)) continue
+            seenSaCombos.add(combo)
+            saToApprove.push(t.id)
+          }
         }
 
         // Also approve dateless SA topics pending >3 days, capped at saLimit
@@ -673,7 +680,8 @@ export async function GET(request: NextRequest) {
           .is('bc_post_id', null)
           .lte('generated_at', saStaleCutoff)
 
-        const allDueSaPosts = [...(dueSaPosts ?? []), ...(datelessSaPosts ?? [])] as { id: string; title: string | null }[]
+        const allDueSaPosts = [...(dueSaPosts ?? []), ...(datelessSaPosts ?? [])]
+          .slice(0, saLimit) as { id: string; title: string | null }[]
 
         const saPushResults: { title: string | null; ok: boolean; error?: string }[] = []
 
