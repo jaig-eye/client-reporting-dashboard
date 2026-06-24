@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Disable Next.js client-side router cache so every page navigation
-  // fetches fresh server data instead of serving a 30-second stale snapshot.
   experimental: {
-    staleTimes: { dynamic: 0, static: 0 },
+    // 30s dynamic cache makes tab-switching instant (zero server round-trip).
+    // 5-min unstable_cache + revalidateTag in sync cron ensures fresh metrics after each sync.
+    staleTimes: { dynamic: 30, static: 180 },
   },
   images: {
     remotePatterns: [

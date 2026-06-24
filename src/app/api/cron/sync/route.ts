@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
@@ -99,6 +100,10 @@ export async function GET(request: NextRequest) {
       return { client: client.name, status: 'error' as const, error: errStr }
     })
   )
+
+  // Bust the dashboard data cache for every client that synced so the next page
+  // visit re-fetches fresh metrics instead of serving the 5-minute stale copy.
+  revalidateTag('client-metrics')
 
   return NextResponse.json({ synced: results.length, adsRan: runAds, otherRan: runOther, results })
 }

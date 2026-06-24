@@ -10,6 +10,7 @@ import React, { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { applyAdFuel, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, resolveMetaConversions } from '@/lib/metrics'
@@ -27,6 +28,80 @@ import {
 } from '@/lib/metric-layouts'
 
 export const dynamic = 'force-dynamic'
+
+// Cache campaign metrics for 5 minutes. Busted by revalidateTag('client-metrics') in sync cron.
+const _getCachedGoogleCampaignMetrics = unstable_cache(
+  async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean) => {
+    const db = createAdminClient()
+    const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
+      db.from('google_ads_ad_metrics')
+        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
+        .eq('client_id', clientId).eq('campaign_id', campaignId)
+        .gte('date', dateFrom).lte('date', dateTo),
+      db.from('google_ads_metrics')
+        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date')
+        .eq('client_id', clientId).eq('campaign_id', campaignId)
+        .gte('date', dateFrom).lte('date', dateTo),
+      showCompare
+        ? db.from('google_ads_ad_metrics')
+            .select('spend,impressions,clicks,conversions,conversions_value,all_conversions_value')
+            .eq('client_id', clientId).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+      showCompare
+        ? db.from('google_ads_metrics')
+            .select('search_impression_share')
+            .eq('client_id', clientId).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+    ])
+    return { rows: rows ?? [], campRow: campRow ?? [], priorRows: priorRows ?? [], priorIsRows: priorIsRows ?? [] }
+  },
+  ['campaign-google'],
+  { revalidate: 300, tags: ['client-metrics'] }
+)
+
+const _getCachedMetaCampaignMetrics = unstable_cache(
+  async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean, adsetMetaFrom: string) => {
+    const db = createAdminClient()
+    const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
+      db.from('meta_ads_metrics')
+        .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+        .eq('client_id', clientId).eq('campaign_id', campaignId)
+        .gte('date', dateFrom).lte('date', dateTo),
+      db.from('meta_ads_ad_metrics')
+        .select('ad_id,adset_id,adset_name,ad_status,adset_daily_budget,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+        .eq('client_id', clientId).eq('campaign_id', campaignId)
+        .gte('date', dateFrom).lte('date', dateTo),
+      showCompare
+        ? db.from('meta_ads_metrics')
+            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+            .eq('client_id', clientId).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+      showCompare
+        ? db.from('meta_ads_ad_metrics')
+            .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+            .eq('client_id', clientId).eq('campaign_id', campaignId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+      db.rpc('get_adset_budgets_for_campaign', {
+        p_campaign_id: campaignId,
+        p_client_id:   clientId,
+        p_from_date:   adsetMetaFrom,
+      }),
+    ])
+    return {
+      campRows:      campRows      ?? [],
+      rows:          rows          ?? [],
+      priorCampRows: priorCampRows ?? [],
+      priorRows:     priorRows     ?? [],
+      adsetMetaRows: adsetMetaRows ?? [],
+    }
+  },
+  ['campaign-meta'],
+  { revalidate: 300, tags: ['client-metrics'] }
+)
 
 const META_DEFAULT_NAMES = new Set(['ad set', 'ad', 'new ad set', 'new ad', 'untitled ad set', 'untitled ad'])
 function isMetaDefaultName(name: string) {
@@ -188,34 +263,9 @@ export default async function CampaignDetailPage({
   }
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
-      db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .gte('date', dateFrom)
-        .lte('date', dateTo),
-      db.from('google_ads_metrics')
-        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date')
-        .eq('client_id', client.id).eq('campaign_id', campaignId)
-        .gte('date', dateFrom).lte('date', dateTo),
-      showCompare
-        ? db.from('google_ads_ad_metrics')
-            .select('spend,impressions,clicks,conversions,conversions_value,all_conversions_value')
-            .eq('client_id', client.id)
-            .eq('campaign_id', campaignId)
-            .gte('date', priorFrom)
-            .lte('date', priorTo)
-        : Promise.resolve({ data: [] as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[] }),
-      showCompare
-        ? db.from('google_ads_metrics')
-            .select('search_impression_share')
-            .eq('client_id', client.id)
-            .eq('campaign_id', campaignId)
-            .gte('date', priorFrom)
-            .lte('date', priorTo)
-        : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
-    ])
+    const { rows, campRow, priorRows, priorIsRows } = await _getCachedGoogleCampaignMetrics(
+      client.id, campaignId, dateFrom, dateTo, priorFrom, priorTo, showCompare
+    )
     const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null; date?: string }[] | null) ?? []
     // Sort desc by date so the most-recent row's name/type is used — not the oldest
     const sortedRows = [...campRows].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
@@ -227,7 +277,7 @@ export default async function CampaignDetailPage({
     const isRows = campRows.filter(r => r.search_impression_share !== null)
     avgImprShare = isRows.length > 0 ? isRows.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / isRows.length : null
     // Prior period impression share for delta
-    const priorIsFiltered = (priorIsRows ?? []).filter(r => r.search_impression_share !== null)
+    const priorIsFiltered = (priorIsRows as { search_impression_share: number | null }[]).filter(r => r.search_impression_share !== null)
     priorAvgImprShare = priorIsFiltered.length > 0
       ? priorIsFiltered.reduce((s, r) => s + (r.search_impression_share ?? 0), 0) / priorIsFiltered.length
       : null
@@ -258,44 +308,9 @@ export default async function CampaignDetailPage({
       action_values: { action_type: string; value: string }[] | null
     }
     const adsetMetaFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0] })()
-    const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
-      db.from('meta_ads_metrics')
-        .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .gte('date', dateFrom)
-        .lte('date', dateTo),
-      db.from('meta_ads_ad_metrics')
-        .select('ad_id,adset_id,adset_name,ad_status,adset_daily_budget,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
-        .eq('client_id', client.id)
-        .eq('campaign_id', campaignId)
-        .gte('date', dateFrom)
-        .lte('date', dateTo),
-      showCompare
-        ? db.from('meta_ads_metrics')
-            .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
-            .eq('client_id', client.id)
-            .eq('campaign_id', campaignId)
-            .gte('date', priorFrom)
-            .lte('date', priorTo)
-        : Promise.resolve({ data: [] as MetaCampRow[] }),
-      showCompare
-        ? db.from('meta_ads_ad_metrics')
-            .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
-            .eq('client_id', client.id)
-            .eq('campaign_id', campaignId)
-            .gte('date', priorFrom)
-            .lte('date', priorTo)
-        : Promise.resolve({ data: [] as MetaAdRow[] }),
-      // Use DISTINCT ON RPC so each adset returns exactly one row (the most recent
-      // non-null adset_daily_budget). The old LIMIT 1000 flat-scan could miss budget
-      // rows for lower-volume adsets when high-volume adsets dominated the window.
-      db.rpc('get_adset_budgets_for_campaign', {
-        p_campaign_id: campaignId,
-        p_client_id:   client.id,
-        p_from_date:   adsetMetaFrom,
-      }),
-    ])
+    const { campRows, rows, priorCampRows, priorRows, adsetMetaRows } = await _getCachedMetaCampaignMetrics(
+      client.id, campaignId, dateFrom, dateTo, priorFrom, priorTo, showCompare, adsetMetaFrom
+    )
     if ((campRows ?? []).length > 0) {
       // Sort desc by date so we always use the current name, not an old one from the range
       const sortedMeta = [...(campRows as (MetaCampRow & { campaign_created_at?: string | null })[])].sort(

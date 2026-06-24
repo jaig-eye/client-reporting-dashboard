@@ -7,6 +7,7 @@
 import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -14,6 +15,44 @@ import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
 
 export const dynamic = 'force-dynamic'
+
+// Cache GA4 metric queries for 10 minutes. Busted by revalidateTag('client-metrics') in sync cron.
+const _getCachedGA4Metrics = unstable_cache(
+  async (
+    clientId: string,
+    primaryGa4Id: string | null,
+    from: string, to: string,
+    priorFrom: string, priorTo: string,
+    showCompare: boolean,
+  ) => {
+    const db = createAdminClient()
+    const currQ = db.from('ga4_metrics').select('*')
+      .eq('client_id', clientId)
+      .gte('date', from).lte('date', to)
+      .order('date', { ascending: true })
+      .limit(10000)
+    const priorQ = db.from('ga4_metrics')
+      .select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
+      .eq('client_id', clientId)
+      .gte('date', priorFrom).lte('date', priorTo)
+      .limit(10000)
+    const srcQ = db.from('ga4_source_metrics')
+      .select('source,medium,campaign,sessions,conversions,engaged_sessions')
+      .eq('client_id', clientId)
+      .gte('date', from).lte('date', to)
+      .limit(10000)
+    const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
+      primaryGa4Id ? currQ.eq('connection_id', primaryGa4Id) : currQ,
+      showCompare
+        ? (primaryGa4Id ? priorQ.eq('connection_id', primaryGa4Id) : priorQ)
+        : Promise.resolve({ data: null }),
+      primaryGa4Id ? srcQ.eq('connection_id', primaryGa4Id) : srcQ,
+    ])
+    return { rows: rows ?? [], priorRows: priorRows ?? null, srcRows: srcRows ?? [] }
+  },
+  ['dashboard-ga4'],
+  { revalidate: 600, tags: ['client-metrics'] }
+)
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function fmtNum(n: number) { return n.toLocaleString() }
@@ -98,34 +137,14 @@ export default async function GA4Page({
     )
   }
 
-  // Fetch GA4 metrics (current + prior period + UTM sources in parallel).
-  // Filter by primaryGa4Id so clients with multiple GA4 connections (old + reconnected)
-  // don't have their sessions double-counted.
-  const currQ = db.from('ga4_metrics').select('*')
-    .eq('client_id', client.id)
-    .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-    .order('date', { ascending: true })
-    .limit(10000)
-
-  const priorQ = db.from('ga4_metrics')
-    .select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
-    .eq('client_id', client.id)
-    .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
-    .limit(10000)
-
-  const srcQ = db.from('ga4_source_metrics')
-    .select('source,medium,campaign,sessions,conversions,engaged_sessions')
-    .eq('client_id', client.id)
-    .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-    .limit(10000)
-
-  const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
-    primaryGa4Id ? currQ.eq('connection_id', primaryGa4Id) : currQ,
-    showCompare
-      ? (primaryGa4Id ? priorQ.eq('connection_id', primaryGa4Id) : priorQ)
-      : Promise.resolve({ data: null }),
-    primaryGa4Id ? srcQ.eq('connection_id', primaryGa4Id) : srcQ,
-  ])
+  // Fetch GA4 metrics (cached 10 min, busted by sync cron via revalidateTag).
+  const { rows, priorRows, srcRows } = await _getCachedGA4Metrics(
+    client.id,
+    primaryGa4Id,
+    fmtDate(fromDate), fmtDate(toDate),
+    fmtDate(priorFrom), fmtDate(priorTo),
+    showCompare,
+  )
 
   const ga4Rows = (rows ?? []) as {
     date: string; channel_group: string | null;

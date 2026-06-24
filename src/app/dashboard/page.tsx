@@ -8,6 +8,7 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings, pctOfBenchmark, scoreColor } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
@@ -47,6 +48,94 @@ function subtractOneDay(date: string): string {
   d.setUTCDate(d.getUTCDate() - 1)
   return d.toISOString().slice(0, 10)
 }
+
+// Cache the heavy metrics DB block for 5 minutes. Busted by revalidateTag('client-metrics')
+// in the sync cron so clients see fresh data immediately after each sync run.
+const _getCachedDashboardMetrics = unstable_cache(
+  async (
+    clientId: string,
+    from: string, to: string,
+    priorFrom: string, priorTo: string,
+    showCompare: boolean,
+    hasGoogle: boolean,
+    hasMeta: boolean,
+  ) => {
+    const db = createAdminClient()
+    const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes, gBudgetRes, mBudgetRes] = await Promise.all([
+      hasGoogle
+        ? db.from('google_ads_metrics').select('*').eq('client_id', clientId)
+            .gte('date', from).lte('date', to)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasMeta
+        ? db.from('meta_ads_metrics').select('*').eq('client_id', clientId)
+            .gte('date', from).lte('date', to)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      showCompare && hasGoogle
+        ? db.from('google_ads_ad_metrics')
+            .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversions_value,date')
+            .eq('client_id', clientId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      showCompare && hasMeta
+        ? db.from('meta_ads_ad_metrics')
+            .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
+            .eq('client_id', clientId)
+            .gte('date', priorFrom).lte('date', priorTo)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasGoogle
+        ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
+            .eq('client_id', clientId).eq('source', 'google_ads')
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasMeta
+        ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
+            .eq('client_id', clientId).eq('source', 'meta_ads')
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasMeta
+        ? db.from('meta_ads_ad_metrics')
+            .select('ad_id, campaign_id, date, spend, impressions, clicks')
+            .eq('client_id', clientId)
+            .gte('date', from).lte('date', to)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasGoogle
+        ? db.from('google_ads_metrics')
+            .select('campaign_id,campaign_status,daily_budget,date')
+            .eq('client_id', clientId)
+            .not('daily_budget', 'is', null)
+            .order('date', { ascending: false })
+            .limit(500)
+        : Promise.resolve({ data: [] as unknown[] }),
+
+      hasMeta
+        ? db.from('meta_ads_metrics')
+            .select('campaign_id,campaign_status,daily_budget,date')
+            .eq('client_id', clientId)
+            .not('daily_budget', 'is', null)
+            .order('date', { ascending: false })
+            .limit(500)
+        : Promise.resolve({ data: [] as unknown[] }),
+    ])
+    return {
+      gData:        gRes.data       ?? [],
+      mData:        mRes.data       ?? [],
+      gPriorData:   gPriorRes.data  ?? [],
+      mPriorData:   mPriorRes.data  ?? [],
+      gAssignData:  gAssignRes.data ?? [],
+      mAssignData:  mAssignRes.data ?? [],
+      mAdSpendData: mAdSpendRes.data ?? [],
+      gBudgetData:  gBudgetRes.data ?? [],
+      mBudgetData:  mBudgetRes.data ?? [],
+    }
+  },
+  ['dashboard-main'],
+  { revalidate: 300, tags: ['client-metrics'] }
+)
 
 export default async function DashboardPage({
   searchParams,
@@ -124,74 +213,18 @@ export default async function DashboardPage({
     }
   }
 
-  // ─── Data fetching ────────────────────────────────────────────────────────
-  const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes, gBudgetRes, mBudgetRes] = await Promise.all([
-    hasGoogle
-      ? db.from('google_ads_metrics').select('*').eq('client_id', client.id)
-          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    hasMeta
-      ? db.from('meta_ads_metrics').select('*').eq('client_id', client.id)
-          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    showCompare && hasGoogle
-      ? db.from('google_ads_ad_metrics')
-          .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversions_value,date')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    showCompare && hasMeta
-      ? db.from('meta_ads_ad_metrics')
-          .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    hasGoogle
-      ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
-          .eq('client_id', client.id).eq('source', 'google_ads')
-      : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
-
-    hasMeta
-      ? db.from('client_campaign_assignments').select('campaign_id, display_mode, hidden')
-          .eq('client_id', client.id).eq('source', 'meta_ads')
-      : Promise.resolve({ data: [] as { campaign_id: string; display_mode: string; hidden: boolean }[] }),
-
-    // Ad-level metrics for Meta — source of truth; campaign-level table can lag or diverge
-    hasMeta
-      ? db.from('meta_ads_ad_metrics').select('ad_id, campaign_id, date, spend, impressions, clicks')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    // Current budget state — no date filter, ORDER BY date DESC so the first row per
-    // campaign is its most recent budget. Used to show the real current budget regardless
-    // of which historical period the user is viewing.
-    hasGoogle
-      ? db.from('google_ads_metrics')
-          .select('campaign_id,campaign_status,daily_budget,date')
-          .eq('client_id', client.id)
-          .not('daily_budget', 'is', null)
-          .order('date', { ascending: false })
-          .limit(500)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-
-    hasMeta
-      ? db.from('meta_ads_metrics')
-          .select('campaign_id,campaign_status,daily_budget,date')
-          .eq('client_id', client.id)
-          .not('daily_budget', 'is', null)
-          .order('date', { ascending: false })
-          .limit(500)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-  ])
+  // ─── Data fetching (cached 5 min, busted by sync cron via revalidateTag) ──
+  const { gData, mData, gPriorData, mPriorData, gAssignData, mAssignData, mAdSpendData, gBudgetData, mBudgetData } =
+    await _getCachedDashboardMetrics(
+      client.id,
+      fmtDate(fromDate), fmtDate(toDate),
+      fmtDate(priorFrom), fmtDate(priorTo),
+      showCompare, hasGoogle, hasMeta,
+    )
 
   const assignmentsData = [
-    ...((gAssignRes.data ?? []) as { campaign_id: string; display_mode: string; hidden: boolean }[]),
-    ...((mAssignRes.data ?? []) as { campaign_id: string; display_mode: string; hidden: boolean }[]),
+    ...(gAssignData as { campaign_id: string; display_mode: string; hidden: boolean }[]),
+    ...(mAssignData as { campaign_id: string; display_mode: string; hidden: boolean }[]),
   ]
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
@@ -355,7 +388,7 @@ export default async function DashboardPage({
   const metaAdSpendByCampaign:           Record<string, number> = {}
   const metaAdImprByCampaign:            Record<string, number> = {}
   const metaAdClicksByCampaign:          Record<string, number> = {}
-  const dedupedAdRows = dedupeBy((mAdSpendRes.data ?? []) as AdMetricRow[], r => `${r.ad_id}_${r.date}`)
+  const dedupedAdRows = dedupeBy(mAdSpendData as AdMetricRow[], r => `${r.ad_id}_${r.date}`)
   for (const r of dedupedAdRows) {
     const key = `${r.campaign_id}_${r.date}`
     metaAdSpendByCampaignDate[key]  = (metaAdSpendByCampaignDate[key]  ?? 0) + Number(r.spend       ?? 0)
@@ -367,8 +400,8 @@ export default async function DashboardPage({
   }
 
   const currentMetrics = [
-    ...normalise(dedupeBy((gRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
-    ...normalise(dedupeBy((mRes.data  ?? []) as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
+    ...normalise(dedupeBy(gData as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
+    ...normalise(dedupeBy(mData as Record<string, unknown>[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
   ]
 
   // Override Meta spend, impressions, clicks in currentMetrics before summarizeMetrics
@@ -383,8 +416,8 @@ export default async function DashboardPage({
   }
 
   const priorMetrics = [
-    ...normalise(dedupeBy((gPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
-    ...normalise(dedupeBy((mPriorRes.data ?? []) as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
+    ...normalise(dedupeBy(gPriorData as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'google_ads'),
+    ...normalise(dedupeBy(mPriorData as Record<string, unknown>[], r => `${r.ad_id ?? '?'}_${r.date ?? '?'}`), 'meta_ads'),
   ]
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -507,13 +540,13 @@ export default async function DashboardPage({
   // same ad account from producing non-deterministic results in the Map.
   type BudgetRow = { campaign_id: string; campaign_status: string | null; daily_budget: number | null; date: string }
   const googleCurrentBudget = new Map<string, { budget: number; status: string | null }>()
-  for (const r of dedupeBy((gBudgetRes.data ?? []) as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
+  for (const r of dedupeBy(gBudgetData as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
     if (!googleCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
       googleCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
     }
   }
   const metaCurrentBudget = new Map<string, { budget: number; status: string | null }>()
-  for (const r of dedupeBy((mBudgetRes.data ?? []) as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
+  for (const r of dedupeBy(mBudgetData as BudgetRow[], r => `${r.campaign_id ?? '?'}_${r.date ?? '?'}`)) {
     if (!metaCurrentBudget.has(r.campaign_id) && r.daily_budget != null) {
       metaCurrentBudget.set(r.campaign_id, { budget: Number(r.daily_budget), status: r.campaign_status ?? null })
     }

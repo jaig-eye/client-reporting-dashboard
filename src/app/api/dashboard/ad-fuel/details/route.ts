@@ -76,5 +76,7 @@ export async function GET(request: NextRequest) {
     return d >= cutoffDate
   })
 
-  return NextResponse.json({ ledger, dailyDebits })
+  const response = NextResponse.json({ ledger, dailyDebits })
+  response.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120')
+  return response
 }

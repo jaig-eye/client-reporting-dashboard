@@ -97,6 +97,20 @@ export async function GET(request: NextRequest) {
     sites.map(site => pingUrl(site.url).then(r => ({ ...r, siteId: site.id } as CheckResult)))
   )
 
+  // Pre-load all open incidents in ONE query — eliminates N+1 SELECT per down/recovering site.
+  const { data: openIncidentsData } = await db
+    .from('site_incidents')
+    .select('id, site_id, started_at')
+    .in('site_id', sites.map(s => s.id))
+    .is('ended_at', null)
+  const openIncidentBySiteId = new Map(
+    (openIncidentsData ?? []).map(i => [i.site_id, i] as [string, { id: string; site_id: string; started_at: string }])
+  )
+
+  // Batch site_checks inserts — collect all records then insert once after the loop.
+  type SiteCheckRow = { site_id: string; checked_at: string; is_up: boolean; status_code: number | null; response_ms: number | null; final_url: string | null; error: string | null }
+  const siteChecksToInsert: SiteCheckRow[] = []
+
   const today = new Date().toISOString().slice(0, 10)
 
   let downtimeAlerts = 0
@@ -109,8 +123,8 @@ export async function GET(request: NextRequest) {
 
     const { isUp, statusCode, responseMs, finalUrl, error } = result.value
 
-    // Write raw check
-    await db.from('site_checks').insert({
+    // Collect raw check for batch insert after loop
+    siteChecksToInsert.push({
       site_id:     site.id,
       checked_at:  checkedAt,
       is_up:       isUp,
@@ -147,18 +161,15 @@ export async function GET(request: NextRequest) {
           : 'other'
 
         // Open incident — guard against duplicate open incidents on overlapping cron runs
-        const { data: existingIncident } = await db
-          .from('site_incidents')
-          .select('id')
-          .eq('site_id', site.id)
-          .is('ended_at', null)
-          .maybeSingle()
+        const existingIncident = openIncidentBySiteId.get(site.id)
         if (!existingIncident) {
           await db.from('site_incidents').insert({
             site_id:    site.id,
             started_at: checkedAt,
             cause,
           })
+          // Track the new incident so recovery logic in this same run can find it
+          openIncidentBySiteId.set(site.id, { id: 'pending', site_id: site.id, started_at: checkedAt })
         }
 
         // admin_alerts row
@@ -201,16 +212,10 @@ export async function GET(request: NextRequest) {
 
       // Recovery — was down, now up
       if (wasDown) {
-        // Close open incident
-        const { data: openIncident } = await db
-          .from('site_incidents')
-          .select('id, started_at')
-          .eq('site_id', site.id)
-          .is('ended_at', null)
-          .order('started_at', { ascending: false })
-          .maybeSingle()
+        // Close open incident using pre-loaded map (no per-site DB call)
+        const openIncident = openIncidentBySiteId.get(site.id)
 
-        if (openIncident) {
+        if (openIncident && openIncident.id !== 'pending') {
           const durationS = Math.floor((new Date(checkedAt).getTime() - new Date(openIncident.started_at).getTime()) / 1000)
           await db.from('site_incidents').update({
             ended_at:   checkedAt,
@@ -235,6 +240,11 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+  }
+
+  // Batch insert all site_checks rows in one call (was one INSERT per site)
+  if (siteChecksToInsert.length > 0) {
+    await db.from('site_checks').insert(siteChecksToInsert)
   }
 
   // Daily rollup — upsert today's stats per site

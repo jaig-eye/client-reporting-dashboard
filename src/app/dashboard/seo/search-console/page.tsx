@@ -10,6 +10,7 @@
 import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -19,6 +20,29 @@ import GscTrendChart from './GscTrendChart'
 import type { GscDailyPoint } from './GscTrendChart'
 
 export const dynamic = 'force-dynamic'
+
+// Cache GSC RPC calls for 15 minutes. Busted by revalidateTag('client-metrics') in sync cron.
+const _getCachedGSCMetrics = unstable_cache(
+  async (
+    clientId: string,
+    connectionId: string,
+    from: string, to: string,
+    compFrom: string | null, compTo: string | null,
+    showCompare: boolean,
+  ) => {
+    const db = createAdminClient()
+    const rpcBase = { p_client_id: clientId, p_connection_id: connectionId, p_top_n: 25 }
+    const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
+      db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: from, p_date_to: to }),
+      showCompare && compFrom && compTo
+        ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: compFrom, p_date_to: compTo })
+        : Promise.resolve({ data: null }),
+    ])
+    return { currRpc, compRpc }
+  },
+  ['dashboard-gsc'],
+  { revalidate: 900, tags: ['client-metrics'] }
+)
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function fmtNum(n: number) { return n.toLocaleString() }
@@ -112,12 +136,15 @@ export default async function SearchConsolePage({
     distribution: { top3: number; page1: number; page2: number; beyond: number }
   }
 
-  const rpcBase = { p_client_id: client.id, p_connection_id: primaryConnectionId, p_top_n: 25 }
-  const [{ data: currRpc }, { data: compRpc }, settings] = await Promise.all([
-    db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(fromDate), p_date_to: fmtDate(toDate) }),
-    showCompare && compFrom && compTo
-      ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: fmtDate(compFrom), p_date_to: fmtDate(compTo) })
-      : Promise.resolve({ data: null }),
+  const [{ currRpc, compRpc }, settings] = await Promise.all([
+    _getCachedGSCMetrics(
+      client.id,
+      primaryConnectionId,
+      fmtDate(fromDate), fmtDate(toDate),
+      compFrom ? fmtDate(compFrom) : null,
+      compTo   ? fmtDate(compTo)   : null,
+      showCompare,
+    ),
     getAgencySettings(),
   ])
 

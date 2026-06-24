@@ -2,6 +2,7 @@
 
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import type { Client } from '@/lib/types'
@@ -9,6 +10,33 @@ import DateRangePicker from '@/components/DateRangePicker'
 import SparkMetricCard from '@/components/SparkMetricCard'
 
 export const dynamic = 'force-dynamic'
+
+const GHL_SELECT = 'date,contacts_created,total_calls,incoming_calls,outgoing_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data'
+
+// Cache GHL metric queries for 10 minutes. Busted by revalidateTag('client-metrics') in sync cron.
+const _getCachedGHLMetrics = unstable_cache(
+  async (
+    clientId: string,
+    from: string, to: string,
+    priorFrom: string, priorTo: string,
+    showCompare: boolean,
+  ) => {
+    const db = createAdminClient()
+    const [{ data: rows }, { data: priorRows }] = await Promise.all([
+      db.from('ghl_metrics').select(GHL_SELECT)
+        .eq('client_id', clientId).gte('date', from).lte('date', to)
+        .order('date', { ascending: true }),
+      showCompare
+        ? db.from('ghl_metrics').select(GHL_SELECT)
+            .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo)
+            .order('date', { ascending: true })
+        : Promise.resolve({ data: [] as unknown[] }),
+    ])
+    return { rows: rows ?? [], priorRows: priorRows ?? [] }
+  },
+  ['dashboard-ghl'],
+  { revalidate: 600, tags: ['client-metrics'] }
+)
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function fmtNum(n: number) { return n.toLocaleString() }
@@ -77,20 +105,12 @@ export default async function GhlCrmPage({
     priorFrom = new Date(priorTo.getTime() - periodMs)
   }
 
-  const [{ data: rows }, { data: priorRows }] = await Promise.all([
-    db.from('ghl_metrics')
-      .select('date,contacts_created,total_calls,incoming_calls,outgoing_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
-      .eq('client_id', client.id)
-      .gte('date', fmtDate(fromDate)).lte('date', fmtDate(toDate))
-      .order('date', { ascending: true }),
-    showCompare
-      ? db.from('ghl_metrics')
-          .select('date,contacts_created,total_calls,incoming_calls,outgoing_calls,missed_calls,forms_submitted,reviews_received,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,lost_opportunities,won_value,raw_data')
-          .eq('client_id', client.id)
-          .gte('date', fmtDate(priorFrom)).lte('date', fmtDate(priorTo))
-          .order('date', { ascending: true })
-      : Promise.resolve({ data: [] as GhlRow[] }),
-  ])
+  const { rows, priorRows } = await _getCachedGHLMetrics(
+    client.id,
+    fmtDate(fromDate), fmtDate(toDate),
+    fmtDate(priorFrom), fmtDate(priorTo),
+    showCompare,
+  )
 
   const data      = (rows      ?? []) as GhlRow[]
   const priorData = (priorRows ?? []) as GhlRow[]
