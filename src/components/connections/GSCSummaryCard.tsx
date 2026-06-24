@@ -1,9 +1,31 @@
 // GSC Summary Card — shown on the dashboard cockpit when google_search_console is connected.
 // Displays total clicks, impressions, avg CTR, avg position, and top 5 queries.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { unstable_cache } from 'next/cache'
+import { fetchGSCLiveData } from '@/lib/gsc-live'
 import ConnectionSummaryCard from './ConnectionSummaryCard'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
+
+const _getCachedGSCSummary = unstable_cache(
+  async (
+    connectionId:    string,
+    dateFrom:        string,
+    dateTo:          string,
+    compareDateFrom: string | null,
+    compareDateTo:   string | null,
+  ) => {
+    const showCompare = !!(compareDateFrom && compareDateTo)
+    const [curr, comp] = await Promise.all([
+      fetchGSCLiveData(connectionId, dateFrom, dateTo, 5),
+      showCompare
+        ? fetchGSCLiveData(connectionId, compareDateFrom!, compareDateTo!, 5)
+        : Promise.resolve(null),
+    ])
+    return { curr, comp }
+  },
+  ['dashboard-gsc-card'],
+  { revalidate: 900, tags: ['client-metrics'] }
+)
 
 function fmtNum(n: number) { return n.toLocaleString() }
 function fmtPct(n: number) { return `${(n * 100).toFixed(2)}%` }
@@ -22,26 +44,16 @@ interface Props {
   compareDateTo?: string
 }
 
-export default async function GSCSummaryCard({ clientId, connectionId, dateFrom, dateTo, compareDateFrom, compareDateTo }: Props) {
-  const db = createAdminClient()
-
+export default async function GSCSummaryCard({ connectionId, dateFrom, dateTo, compareDateFrom, compareDateTo }: Props) {
   const showCompare = !!(compareDateFrom && compareDateTo)
 
-  type GscRpc = {
-    totals:  { clicks: number; impressions: number; ctr: number; position: number }
-    queries: Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>
-  }
-
-  const rpcBase = { p_client_id: clientId, p_connection_id: connectionId, p_top_n: 5 }
-  const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
-    db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: dateFrom, p_date_to: dateTo }),
-    showCompare
-      ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: compareDateFrom!, p_date_to: compareDateTo! })
-      : Promise.resolve({ data: null }),
-  ])
-
-  const curr     = currRpc as GscRpc | null
-  const comp     = compRpc as GscRpc | null
+  const { curr, comp } = await _getCachedGSCSummary(
+    connectionId,
+    dateFrom,
+    dateTo,
+    compareDateFrom ?? null,
+    compareDateTo   ?? null,
+  )
 
   const totClicks = curr?.totals?.clicks      ?? 0
   const totImpr   = curr?.totals?.impressions ?? 0
@@ -59,7 +71,6 @@ export default async function GSCSummaryCard({ clientId, connectionId, dateFrom,
   const deltaCtr    = showCompare ? calcDelta(avgCtr,    compAvgCtr) : null
   const deltaPos    = showCompare ? calcDelta(avgPos,    compAvgPos) : null
 
-  // Top 5 queries already returned by RPC (ordered by clicks)
   const topQueries = (curr?.queries ?? []).map(q => [q.query, q.clicks] as [string, number])
 
   function DeltaBadge({ delta, invert = false }: { delta: number | null; invert?: boolean }) {

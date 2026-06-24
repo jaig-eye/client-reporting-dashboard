@@ -1,10 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // GSC Search Console Page — /dashboard/seo/search-console
 // Shows total clicks, impressions, avg CTR, avg position from Google Search Console
-// with top queries and top pages breakdowns.
-//
-// Data is aggregated in Postgres via get_gsc_summary() RPC to avoid timeouts
-// on large clients with 90-day ranges.
+// with top queries and top pages breakdowns. Data is fetched live from the GSC API
+// (cached 15min via unstable_cache) rather than from a DB sync.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Suspense } from 'react'
@@ -18,29 +16,28 @@ import { getAgencySettings } from '@/lib/agency-settings'
 import { GscQueriesTable, GscPagesTable } from './GscSortableTable'
 import GscTrendChart from './GscTrendChart'
 import type { GscDailyPoint } from './GscTrendChart'
+import { fetchGSCLiveData } from '@/lib/gsc-live'
+import type { GSCSummaryResult } from '@/lib/gsc-live'
 
 export const dynamic = 'force-dynamic'
 
-// Cache GSC RPC calls for 15 minutes. Busted by revalidateTag('client-metrics') in sync cron.
-const _getCachedGSCMetrics = unstable_cache(
+// Cache GSC live API calls for 15 minutes. Busted by revalidateTag('client-metrics') in sync cron.
+const _getCachedGSCLive = unstable_cache(
   async (
-    clientId: string,
     connectionId: string,
     from: string, to: string,
     compFrom: string | null, compTo: string | null,
     showCompare: boolean,
   ) => {
-    const db = createAdminClient()
-    const rpcBase = { p_client_id: clientId, p_connection_id: connectionId, p_top_n: 25 }
-    const [{ data: currRpc }, { data: compRpc }] = await Promise.all([
-      db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: from, p_date_to: to }),
+    const [curr, comp] = await Promise.all([
+      fetchGSCLiveData(connectionId, from, to, 25),
       showCompare && compFrom && compTo
-        ? db.rpc('get_gsc_summary', { ...rpcBase, p_date_from: compFrom, p_date_to: compTo })
-        : Promise.resolve({ data: null }),
+        ? fetchGSCLiveData(connectionId, compFrom, compTo, 25)
+        : Promise.resolve(null),
     ])
-    return { currRpc, compRpc }
+    return { curr, comp }
   },
-  ['dashboard-gsc'],
+  ['dashboard-gsc-live'],
   { revalidate: 900, tags: ['client-metrics'] }
 )
 
@@ -53,14 +50,6 @@ function calcDelta(curr: number, prev: number): number | null {
   return ((curr - prev) / Math.abs(prev)) * 100
 }
 
-type GscSummaryRow = {
-  query?:      string
-  page?:       string
-  clicks:      number
-  impressions: number
-  ctr:         number
-  position:    number
-}
 
 export default async function SearchConsolePage({
   searchParams,
@@ -122,23 +111,10 @@ export default async function SearchConsolePage({
     )
   }
 
-  // Fetch GSC summary via aggregate RPC — avoids the PostgREST row-limit issue.
-  // Raw gsc_metrics stores one row per (date, query, page) — a busy site produces
-  // 3,000+ rows/day, so PostgREST's row limit would truncate to the oldest ~3 days.
-  // The RPC aggregates everything in Postgres and returns compact summary objects.
   const primaryConnectionId = gscConnections[0].id
 
-  type GscRpcResult = {
-    totals:       { clicks: number; impressions: number; ctr: number; position: number }
-    queries:      GscSummaryRow[]
-    pages:        GscSummaryRow[]
-    daily:        Array<{ date: string; clicks: number; impressions: number }>
-    distribution: { top3: number; page1: number; page2: number; beyond: number }
-  }
-
-  const [{ currRpc, compRpc }, settings] = await Promise.all([
-    _getCachedGSCMetrics(
-      client.id,
+  const [{ curr: currRaw, comp: compRaw }, settings] = await Promise.all([
+    _getCachedGSCLive(
       primaryConnectionId,
       fmtDate(fromDate), fmtDate(toDate),
       compFrom ? fmtDate(compFrom) : null,
@@ -148,8 +124,8 @@ export default async function SearchConsolePage({
     getAgencySettings(),
   ])
 
-  const curr = currRpc as GscRpcResult | null
-  const comp = compRpc as GscRpcResult | null
+  const curr = currRaw as GSCSummaryResult | null
+  const comp = compRaw as GSCSummaryResult | null
 
   // ── Daily trend data (for chart) ──────────────────────────────────────────
   const dailyData: GscDailyPoint[] = (curr?.daily ?? []).map(d => ({

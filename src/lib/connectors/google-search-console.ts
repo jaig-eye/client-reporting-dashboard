@@ -21,7 +21,7 @@ const GSC_BASE       = 'https://www.googleapis.com/webmasters/v3'
 // OAuth helpers (shared pattern with google-ads.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function refreshAccessToken(
+export async function refreshAccessToken(
   refreshToken: string
 ): Promise<{ access_token: string; expires_in: number }> {
   const res = await fetch(TOKEN_ENDPOINT, {
@@ -39,7 +39,7 @@ async function refreshAccessToken(
   return data
 }
 
-function isExpiringSoon(expiresAt?: string): boolean {
+export function isExpiringSoon(expiresAt?: string): boolean {
   if (!expiresAt) return true
   return new Date(expiresAt).getTime() < Date.now() + 5 * 60 * 1000
 }
