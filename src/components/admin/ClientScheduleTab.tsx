@@ -2072,6 +2072,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                     {p.published_url && (
                                       <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ View</a>
                                     )}
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ fontSize: '0.65rem', padding: '2px 7px', color: 'var(--red)', borderColor: 'var(--red-border)' }}
+                                      title="Dismiss this post"
+                                      onClick={async () => {
+                                        if (!confirm('Remove this post from the schedule?')) return
+                                        setSaPosts(prev => prev.filter(x => x.id !== p.id))
+                                        await fetch(`/api/admin/content/posts/${p.id}/dismiss`, { method: 'POST' })
+                                      }}
+                                    >×</button>
                                   </div>
                                 </td>
                               </tr>
@@ -2091,7 +2101,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                             <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pageLabel}</td>
                             <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{fmtDate(p.target_publish_date)}</td>
                             <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
-                              {p.published_url && <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ Live</a>}
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                {p.published_url && <a href={p.published_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ Live</a>}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.65rem', padding: '2px 7px', color: 'var(--red)', borderColor: 'var(--red-border)' }}
+                                  title="Dismiss this post"
+                                  onClick={async () => {
+                                    if (!confirm('Remove this post from the schedule?')) return
+                                    setSaPosts(prev => prev.filter(x => x.id !== p.id))
+                                    await fetch(`/api/admin/content/posts/${p.id}/dismiss`, { method: 'POST' })
+                                  }}
+                                >×</button>
+                              </div>
                             </td>
                           </tr>
                         )
