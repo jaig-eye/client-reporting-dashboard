@@ -46,6 +46,20 @@ export async function GET(request: NextRequest) {
     db.rpc('latest_campaign_budget_by_client'),
   ])
 
+  // Safety guard: if any spend or ledger RPC errored (DB overload / statement timeout),
+  // abort rather than sending alerts based on $0 spend. Proceeding would write a falsely
+  // high balance into last_fuel_alert_balance, suppressing all future legitimate alerts
+  // for that client because the tier-crossing dedup would see no change.
+  if (gSpendRes.error || mSpendRes.error || ledgerRes.error) {
+    const errors = {
+      google: gSpendRes.error?.message,
+      meta:   mSpendRes.error?.message,
+      ledger: ledgerRes.error?.message,
+    }
+    console.error('[ad-fuel-alerts] Critical RPC failed — skipping to avoid corrupting alert state:', errors)
+    return NextResponse.json({ skipped: true, reason: 'Spend data unavailable', errors })
+  }
+
   const gMap: Record<string, number> = {}
   const mMap: Record<string, number> = {}
   for (const r of (gSpendRes.data ?? []) as SumRow[]) gMap[r.client_id] = Number(r.spend ?? 0)

@@ -48,6 +48,26 @@ export async function GET(request: NextRequest) {
     db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
   ])
 
+  // Safety guard: if either spend RPC or the ledger query errored (DB overload, statement
+  // timeout, connection pool exhaustion), abort rather than proceeding with $0 spend data.
+  //
+  // The silent failure mode without this guard:
+  //   gSpendRes.data = null  →  gMap = {}  →  rawSpend = $0  →  balance = afPurchased (looks positive)
+  //   → any paused client hits the auto-RESUME branch → campaigns re-enabled on a depleted account.
+  //
+  // Ledger failure is the mirror image:
+  //   ledgerRes.data = null  →  afPurchased = $0  →  balance = -rawSpend (looks negative)
+  //   → every client hits the auto-PAUSE branch → campaigns paused when balance is fine.
+  if (gSpendRes.error || mSpendRes.error || ledgerRes.error) {
+    const errors = {
+      google: gSpendRes.error?.message,
+      meta:   mSpendRes.error?.message,
+      ledger: ledgerRes.error?.message,
+    }
+    console.error('[auto-pause-ads] Critical RPC failed — aborting to prevent incorrect pause/resume:', errors)
+    return NextResponse.json({ skipped: true, reason: 'Spend data unavailable — see logs', errors }, { status: 503 })
+  }
+
   const clients = (clientsRes.data ?? []) as ClientRow[]
   if (clients.length === 0) return NextResponse.json({ checked: 0, paused: [], resumed: [] })
 
