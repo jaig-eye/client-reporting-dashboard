@@ -57,7 +57,10 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   const totalPosts    = initialPosts.length
   const approvedCount = approvedIds.size
-  const isComplete    = totalPosts > 0 && approvedCount >= totalPosts
+  // A session is complete when every post has been approved OR rejected — not only approved.
+  // Without this, rejecting even one post locks the completion screen behind an impossible condition.
+  const actionedCount = approvedIds.size + rejectedIds.size
+  const isComplete    = totalPosts > 0 && actionedCount >= totalPosts
 
   // Count clients done
   const clientsDone = clientIds.filter(cid => {

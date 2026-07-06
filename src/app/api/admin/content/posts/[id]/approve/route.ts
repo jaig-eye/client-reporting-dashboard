@@ -122,7 +122,7 @@ export async function POST(
         .from('client_connections')
         .select('id, connector:connectors!inner(auth, config)')
         .eq('id', String(p.connection_id))
-        .single()
+        .maybeSingle()
       bcConnData = data as BcConnRow | null
     }
 

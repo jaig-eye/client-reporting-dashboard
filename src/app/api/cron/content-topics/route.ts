@@ -959,7 +959,7 @@ export async function GET(request: NextRequest) {
           .limit(1)
 
         if (!recentReminder || recentReminder.length === 0) {
-          const clientIds = [...new Set((reviewPosts as PostRow[]).map(p => p.client_id))]
+          const clientIds = Array.from(new Set((reviewPosts as PostRow[]).map(p => p.client_id)))
           const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
           const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
           const earliest = (reviewPosts as PostRow[])[0].target_publish_date
@@ -993,7 +993,7 @@ export async function GET(request: NextRequest) {
         .order('target_publish_date', { ascending: true })
 
       if (skippedPosts && skippedPosts.length > 0) {
-        const clientIds = [...new Set((skippedPosts as PostRow[]).map(p => p.client_id))]
+        const clientIds = Array.from(new Set((skippedPosts as PostRow[]).map(p => p.client_id)))
         const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
         const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
         const lines = (skippedPosts as PostRow[]).map(p =>
