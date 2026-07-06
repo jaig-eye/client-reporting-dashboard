@@ -20,16 +20,17 @@ export default function MonthlyReviewClientSection({
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = approvedCount === posts.length
 
-  const [collapsed, setCollapsed] = useState(false)
+  // null = auto-driven by isComplete; true/false = user explicitly set
+  const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null)
 
-  // Auto-collapse when all posts are done
-  const effectivelyCollapsed = collapsed || (isComplete && approvedCount > 0)
+  // Auto-collapse on completion but let users override by clicking the header
+  const effectivelyCollapsed = userCollapsed !== null ? userCollapsed : (isComplete && approvedCount > 0)
 
   return (
     <div style={{ marginBottom: 16 }}>
       {/* Client header (accordion toggle) */}
       <button
-        onClick={() => setCollapsed(c => !c)}
+        onClick={() => setUserCollapsed(!effectivelyCollapsed)}
         style={{
           width:        '100%',
           display:      'flex',

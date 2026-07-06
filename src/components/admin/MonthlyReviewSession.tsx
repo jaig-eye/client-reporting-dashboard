@@ -75,60 +75,48 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       })
       if (!res.ok) throw new Error(await res.text())
 
-      setApprovedIds(prev => {
-        const next = new Set(prev)
-        next.add(postId)
+      // Compute sound cue using current render values — must run outside the state setter
+      // to avoid double-invocation in React Strict Mode and stale-closure issues.
+      const post = initialPosts.find(p => p.id === postId)
+      if (post) {
+        const clientPosts  = postsByClient.get(post.client_id) ?? []
+        const nextApproved = new Set(approvedIds)
+        nextApproved.add(postId)
+        const allDone    = clientPosts.every(p => nextApproved.has(p.id) || rejectedIds.has(p.id))
+        const wasAllDone = clientPosts.every(p => approvedIds.has(p.id)  || rejectedIds.has(p.id))
 
-        // Determine which client this post belongs to
-        const post = initialPosts.find(p => p.id === postId)
-        if (post) {
-          const clientPosts = postsByClient.get(post.client_id) ?? []
-          const allDone     = clientPosts.every(p => next.has(p.id) || rejectedIds.has(p.id))
-          const wasAllDone  = clientPosts.every(p => prev.has(p.id) || rejectedIds.has(p.id))
-
-          // Check if whole month is done
-          const totalApproved = next.size
-          if (totalApproved >= totalPosts) {
-            playMonthDone()
-          } else if (allDone && !wasAllDone) {
-            playClientDone()
-          } else {
-            playApprove()
-          }
+        if (nextApproved.size >= totalPosts) {
+          playMonthDone()
+        } else if (allDone && !wasAllDone) {
+          playClientDone()
         } else {
           playApprove()
         }
+      } else {
+        playApprove()
+      }
 
-        return next
-      })
+      setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     } catch (e) {
       console.error('Approve failed:', e)
       alert('Failed to approve post. Please try again.')
     } finally {
       setLoadingId(null)
     }
-  }, [initialPosts, postsByClient, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
+  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
 
   const handleReject = useCallback(async (postId: string) => {
     setLoadingId(postId)
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/reject`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ source: 'monthly_review' }),
+      const res = await fetch(`/api/admin/content/posts/${postId}/dismiss`, {
+        method: 'POST',
       })
-      if (!res.ok) {
-        // Reject may not exist yet — fall back to a status update
-        await fetch(`/api/admin/content/posts/${postId}/status`, {
-          method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ status: 'rejected' }),
-        })
-      }
+      if (!res.ok) throw new Error(await res.text())
+      setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     } catch (e) {
       console.error('Reject failed:', e)
+      alert('Failed to reject post. Please try again.')
     } finally {
-      setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       setLoadingId(null)
     }
   }, [])
@@ -154,8 +142,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         postId={editorPostId}
         defaultConnectionId={editorPost?.connection_id ?? null}
         sites={allSites}
-        onClose={() => { setEditorPostId(null); setEditorPostId(null) }}
-        onUpdate={() => { setEditorPostId(null); setEditorPostId(null) }}
+        onClose={() => setEditorPostId(null)}
+        onUpdate={() => setEditorPostId(null)}
       />
     )
   }
