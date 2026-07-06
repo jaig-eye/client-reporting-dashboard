@@ -88,7 +88,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         const allDone    = clientPosts.every(p => nextApproved.has(p.id) || rejectedIds.has(p.id))
         const wasAllDone = clientPosts.every(p => approvedIds.has(p.id)  || rejectedIds.has(p.id))
 
-        if (nextApproved.size >= totalPosts) {
+        if (nextApproved.size + rejectedIds.size >= totalPosts) {
           playMonthDone()
         } else if (allDone && !wasAllDone) {
           playClientDone()
@@ -168,7 +168,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
       {isComplete ? (
         <MonthlyReviewComplete
-          totalPosts={totalPosts}
+          totalPosts={approvedCount}
           clientsTotal={clientIds.length}
           month={displayMonth}
           onExit={() => { window.location.href = '/admin/content' }}

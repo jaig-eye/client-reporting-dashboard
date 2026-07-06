@@ -18,7 +18,7 @@ export default function MonthlyReviewClientSection({
   clientName, posts, approvedIds, rejectedIds, loadingId, onApprove, onReject, onOpenEditor,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
-  const isComplete    = approvedCount === posts.length
+  const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id))
 
   // null = auto-driven by isComplete; true/false = user explicitly set
   const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null)
