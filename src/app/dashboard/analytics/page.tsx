@@ -282,9 +282,12 @@ export default async function GA4Page({
       utmMap.set(key, { sessions: r.sessions ?? 0, conversions: r.conversions ?? 0, engaged_sessions: r.engaged_sessions ?? 0 })
     }
   }
+  // Cap at 200 unique combos for RSC serialization — client component handles display (top 20).
+  // DB query already limits raw rows to 10K; this prevents serializing thousands of combos.
   const utmRowsAll = Array.from(utmMap.entries())
     .map(([key, v]) => { const [source, medium, campaign] = key.split('|||'); return { source, medium, campaign, ...v } })
     .sort((a, b) => b.sessions - a.sessions)
+    .slice(0, 200)
 
   const secondaryCards = [
     { label: 'Avg. Session',     value: fmtSec(avgDuration)           },

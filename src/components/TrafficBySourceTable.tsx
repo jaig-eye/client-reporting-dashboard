@@ -23,30 +23,25 @@ export default function TrafficBySourceTable({ rows }: { rows: SourceRow[] }) {
   const mediums   = useMemo(() => Array.from(new Set(rows.map(r => r.medium   ?? '(none)'))).sort(),   [rows])
   const campaigns = useMemo(() => Array.from(new Set(rows.map(r => r.campaign ?? '(not set)'))).sort(), [rows])
 
-  const filtered = useMemo(() => {
+  // allFiltered is the full match set (before display cap) — used for totals and count.
+  const allFiltered = useMemo(() => {
     return rows
       .filter(r => !sourceFilter   || (r.source   ?? '(direct)') === sourceFilter)
       .filter(r => !mediumFilter   || (r.medium   ?? '(none)')   === mediumFilter)
       .filter(r => !campaignFilter || (r.campaign ?? '(not set)') === campaignFilter)
-      .slice(0, 20)
   }, [rows, sourceFilter, mediumFilter, campaignFilter])
 
+  const filtered  = useMemo(() => allFiltered.slice(0, 20), [allFiltered])
+  const matchCount = allFiltered.length
+
+  // Totals aggregate the full filtered set, not just the displayed 20 rows.
   const totals = useMemo(() => {
-    const sessions         = filtered.reduce((s, r) => s + (r.sessions         ?? 0), 0)
-    const engaged_sessions = filtered.reduce((s, r) => s + (r.engaged_sessions ?? 0), 0)
-    const conversions      = filtered.reduce((s, r) => s + (r.conversions      ?? 0), 0)
+    const sessions         = allFiltered.reduce((s, r) => s + (r.sessions         ?? 0), 0)
+    const engaged_sessions = allFiltered.reduce((s, r) => s + (r.engaged_sessions ?? 0), 0)
+    const conversions      = allFiltered.reduce((s, r) => s + (r.conversions      ?? 0), 0)
     const engRate = sessions > 0 ? engaged_sessions / sessions : 0
     return { sessions, engaged_sessions, conversions, engRate }
-  }, [filtered])
-
-  // Count total matching rows (before the 20-row cap) for the count label
-  const matchCount = useMemo(() => {
-    return rows
-      .filter(r => !sourceFilter   || (r.source   ?? '(direct)') === sourceFilter)
-      .filter(r => !mediumFilter   || (r.medium   ?? '(none)')   === mediumFilter)
-      .filter(r => !campaignFilter || (r.campaign ?? '(not set)') === campaignFilter)
-      .length
-  }, [rows, sourceFilter, mediumFilter, campaignFilter])
+  }, [allFiltered])
 
   const hasFilters = sourceFilter || mediumFilter || campaignFilter
 
