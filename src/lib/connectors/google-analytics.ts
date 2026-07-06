@@ -230,7 +230,7 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
 
   async refreshAuth(auth) {
     const rt = auth.refresh_token as string | undefined
-    if (!rt) return null
+    if (!rt) throw new Error('GA4 refresh_token missing — re-connect the integration')
     if (!isExpiringSoon(auth.token_expires_at as string | undefined)) return null
     const refreshed = await refreshAccessToken(rt)
     return {

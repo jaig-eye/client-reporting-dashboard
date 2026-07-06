@@ -13,6 +13,7 @@ import type { Client, ClientConnection, Connector } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
+import TrafficBySourceTable from '@/components/TrafficBySourceTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -281,10 +282,9 @@ export default async function GA4Page({
       utmMap.set(key, { sessions: r.sessions ?? 0, conversions: r.conversions ?? 0, engaged_sessions: r.engaged_sessions ?? 0 })
     }
   }
-  const utmRows20 = Array.from(utmMap.entries())
+  const utmRowsAll = Array.from(utmMap.entries())
     .map(([key, v]) => { const [source, medium, campaign] = key.split('|||'); return { source, medium, campaign, ...v } })
     .sort((a, b) => b.sessions - a.sessions)
-    .slice(0, 20)
 
   const secondaryCards = [
     { label: 'Avg. Session',     value: fmtSec(avgDuration)           },
@@ -430,45 +430,10 @@ export default async function GA4Page({
               <div className="mb-4">
                 <h2 className="section-title">Traffic by Source / Medium</h2>
                 <p className="section-desc">
-                  {utmRows20.length > 0 ? `Top ${utmRows20.length} source/medium combinations` : 'No UTM/source data synced yet — run a sync to populate.'}
+                  {utmRowsAll.length > 0 ? `${utmRowsAll.length} source/medium combinations` : 'No UTM/source data synced yet — run a sync to populate.'}
                 </p>
               </div>
-              {utmRows20.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="data-table" style={{ minWidth: 600 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: 'left' }}>Source</th>
-                        <th style={{ textAlign: 'left' }}>Medium</th>
-                        <th style={{ textAlign: 'left' }}>Campaign</th>
-                        <th style={{ textAlign: 'right' }}>Sessions</th>
-                        <th style={{ textAlign: 'right' }}>Engaged</th>
-                        <th style={{ textAlign: 'right' }}>Eng. Rate</th>
-                        <th style={{ textAlign: 'right' }}>Conversions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {utmRows20.map((r, i) => {
-                        const engRate = r.sessions > 0 ? r.engaged_sessions / r.sessions : 0
-                        const showCampaign = r.campaign !== '(not set)' && r.campaign !== ''
-                        return (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 500 }}>{r.source}</td>
-                            <td style={{ color: 'var(--text-muted)' }}>{r.medium}</td>
-                            <td style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>{showCampaign ? r.campaign : '—'}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.sessions)}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(r.engaged_sessions)}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(engRate)}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.conversions > 0 ? fmtNum(r.conversions) : '—'}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-sm" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No UTM/source data synced yet — run a sync to populate.</p>
-              )}
+              <TrafficBySourceTable rows={utmRowsAll} />
             </div>
           </>
         )}

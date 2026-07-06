@@ -360,7 +360,7 @@ export async function syncClient(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GSC_CHUNK_DAYS        = 30
-const GSC_CHUNK_CONCURRENCY = 5
+const GSC_CHUNK_CONCURRENCY = 1
 
 /**
  * Fetches GSC data in 30-day windows and upserts each chunk immediately.
