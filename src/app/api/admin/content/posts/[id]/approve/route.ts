@@ -22,11 +22,16 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Read optional auto flag — sent by the cron for auto-push
+  // Read optional flags from body:
+  //   auto   — sent by the cron for auto-push (skips duplicate-push guard)
+  //   action — 'approve_only' marks the post as admin-approved without pushing to WP/BC
+  //             'approve_and_push' (default) pushes immediately (existing behaviour)
   let isAuto = false
+  let action  = 'approve_and_push'
   try {
-    const body = await request.json() as { auto?: boolean }
-    isAuto = body?.auto === true
+    const body = await request.json() as { auto?: boolean; action?: string }
+    isAuto  = body?.auto === true
+    if (body?.action) action = body.action
   } catch { /* no body is fine */ }
 
   const { id } = await params
@@ -53,6 +58,32 @@ export async function POST(
   if (p.bc_post_id) {
     return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
   }
+
+  // ─── approve_only: mark as admin-approved; cron will push on schedule ──────
+  if (action === 'approve_only') {
+    const adminSession = await getAdminSession()
+    const approvedBy   = adminSession?.email ?? (adminSession?.isSuperAdmin ? 'super_admin' : 'admin')
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: updateErr } = await (db as any).from('content_posts').update({
+      status:            'approved',
+      admin_approved_at: new Date().toISOString(),
+      admin_approved_by: approvedBy,
+    }).eq('id', id)
+
+    if (updateErr) {
+      return NextResponse.json({ error: 'Failed to approve post' }, { status: 500 })
+    }
+
+    logActivity(adminSession, 'approved', 'post', {
+      resourceId: id,
+      clientId:   String(p.client_id),
+      meta:       { title: p.title, approved_only: true },
+    })
+
+    return NextResponse.json({ ok: true, status: 'approved' })
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Resolve WP connection: prefer stored connection_id (WP only), fall back to any active WP connection
   type ConnRow = { id: string; external_id: string; connector: { auth: Record<string, unknown>; config: Record<string, unknown> } }

@@ -225,7 +225,7 @@ export async function GET(request: NextRequest) {
     // Within each group, highest search_volume first, then lowest keyword_difficulty.
     if (auto_approve_topics) {
       const approveThreshold = new Date()
-      approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 9)
+      approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 14) // bumped from 9: topics approve sooner so posts generate early enough for admin review window
 
       // Fetch all eligible pending topics (dated)
       const { data: pendingTopics } = await db
@@ -355,34 +355,24 @@ export async function GET(request: NextRequest) {
       }
     }))
 
-    // ── Auto-push: generated posts not yet uploaded, publish date approaching ─
+    // ── Auto-push: admin-approved posts with publish date approaching ─────────
+    // Requires explicit admin approval (status = 'approved') — prevents unreviewed posts
+    // from auto-publishing. Dateless posts are excluded: they can't be reviewed in the
+    // list view and must be manually pushed.
     if (auto_push_posts) {
-      // Auto-push fires when today >= target_publish_date - 2 days
       const pushThreshold = new Date()
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
       const { data: duePosts } = await db
         .from('content_posts')
         .select('id, title')
         .eq('client_id', client_id)
-        .in('status', ['for_review', 'pending'])
+        .eq('status', 'approved')
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
         .is('wp_post_id', null)
         .is('bc_post_id', null)
 
-      // Also push dateless posts that have been sitting for more than 3 days
-      const staleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
-      const { data: datelessPosts } = await db
-        .from('content_posts')
-        .select('id, title')
-        .eq('client_id', client_id)
-        .in('status', ['for_review', 'pending'])
-        .is('target_publish_date', null)
-        .is('wp_post_id', null)
-        .is('bc_post_id', null)
-        .lte('created_at', staleCutoff)
-
-      const allDuePosts = [...(duePosts ?? []), ...(datelessPosts ?? [])] as { id: string; title: string | null }[]
+      const allDuePosts = (duePosts ?? []) as { id: string; title: string | null }[]
 
       // Resolve client name once for notifications
       let clientNameForPush = topicAccum.get(client_id)?.clientName ?? ''
@@ -661,26 +651,13 @@ export async function GET(request: NextRequest) {
           .select('id, title')
           .eq('client_id', saClientId)
           .eq('content_type', 'service_area')
-          .in('status', ['for_review', 'pending'])
+          .eq('status', 'approved')
           .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
           .not('target_publish_date', 'is', null)
           .is('wp_post_id', null)
           .is('bc_post_id', null)
 
-        // Also push dateless SA posts sitting for >3 days
-        const saStaleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
-        const { data: datelessSaPosts } = await db
-          .from('content_posts')
-          .select('id, title')
-          .eq('client_id', saClientId)
-          .eq('content_type', 'service_area')
-          .in('status', ['for_review', 'pending'])
-          .is('target_publish_date', null)
-          .is('wp_post_id', null)
-          .is('bc_post_id', null)
-          .lte('generated_at', saStaleCutoff)
-
-        const allDueSaPosts = [...(dueSaPosts ?? []), ...(datelessSaPosts ?? [])]
+        const allDueSaPosts = (dueSaPosts ?? [])
           .slice(0, saLimit) as { id: string; title: string | null }[]
 
         const saPushResults: { title: string | null; ok: boolean; error?: string }[] = []
@@ -881,14 +858,22 @@ export async function GET(request: NextRequest) {
         }).then(null, () => {})
       }
 
-      for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
-        const channelId = channelMap.get(clientId)
-        if (channelId) {
+      // ONE consolidated Discord message for all generated posts (not per-client)
+      const totalPostsReady = Array.from(postAccum.values()).reduce((s, { items }) => s + items.length, 0)
+      if (totalPostsReady > 0) {
+        const opsChannelId = process.env.DISCORD_OPS_CHANNEL_ID ?? null
+        if (opsChannelId) {
+          const clientLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
+            `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
+          )
           void sendDiscordMessage(
-            discordBotToken, channelId,
-            `✍️ **${items.length} post${items.length === 1 ? '' : 's'}** ready for review for **${clientName}** → ${contentUrl}`
+            discordBotToken, opsChannelId,
+            `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for review\n${clientLines.join('\n')}\nReview: ${contentUrl}`
           ).catch(() => {})
         }
+      }
+      // Per-client admin_alerts (in-app notifications — no Discord noise)
+      for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
         db.from('admin_alerts').insert({
           type:        'content',
           severity:    'info',
@@ -899,6 +884,84 @@ export async function GET(request: NextRequest) {
           meta:        { content_type: 'posts', count: items.length, items: items.map((p: PostSummary) => ({ title: p.title, keyword: p.targetKeyword, publish_date: p.targetPublishDate })) },
           link_url:    contentUrl,
         }).then(null, () => {})
+      }
+    }
+  }
+
+  // ── Consolidated content review alerts (ONE Discord message each) ────────────
+  // These query across ALL clients so there's never per-client Discord noise.
+  {
+    const opsChannelId    = process.env.DISCORD_OPS_CHANNEL_ID ?? null
+    const contentReviewUrl = `${appUrl}/admin/content`
+
+    if (discordBotToken && opsChannelId) {
+      type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
+
+      // Review reminder: posts needing approval in 3–7 days (not yet in the critical window)
+      const reminderFrom = new Date(); reminderFrom.setUTCDate(reminderFrom.getUTCDate() + 3)
+      const reminderTo   = new Date(); reminderTo.setUTCDate(reminderTo.getUTCDate() + 7)
+      const { data: reviewPosts } = await db
+        .from('content_posts')
+        .select('id, title, target_publish_date, client_id')
+        .in('status', ['for_review', 'pending'])
+        .gte('target_publish_date', reminderFrom.toISOString().slice(0, 10))
+        .lte('target_publish_date', reminderTo.toISOString().slice(0, 10))
+        .not('target_publish_date', 'is', null)
+        .is('wp_post_id', null).is('bc_post_id', null)
+        .order('target_publish_date', { ascending: true })
+
+      if (reviewPosts && reviewPosts.length > 0) {
+        // Dedup: skip if review_reminder already sent in last 20 hours
+        const { data: recentReminder } = await db.from('admin_alerts')
+          .select('id').eq('type', 'content')
+          .filter('meta->>content_type', 'eq', 'review_reminder')
+          .gte('created_at', new Date(Date.now() - 20 * 3_600_000).toISOString())
+          .limit(1)
+
+        if (!recentReminder || recentReminder.length === 0) {
+          const clientIds = [...new Set((reviewPosts as PostRow[]).map(p => p.client_id))]
+          const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
+          const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+          const earliest = (reviewPosts as PostRow[])[0].target_publish_date
+          const displayPosts = (reviewPosts as PostRow[]).slice(0, 8)
+          const lines = displayPosts.map(p =>
+            `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
+          )
+          if (reviewPosts.length > 8) lines.push(`…and ${reviewPosts.length - 8} more`)
+          void sendDiscordMessage(discordBotToken, opsChannelId,
+            `📋 **${reviewPosts.length} post${reviewPosts.length === 1 ? '' : 's'} awaiting approval**${earliest ? ` — earliest deadline: ${earliest}` : ''}\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
+          ).catch(() => {})
+          db.from('admin_alerts').insert({
+            type: 'content', severity: 'info',
+            title: `${reviewPosts.length} post${reviewPosts.length === 1 ? '' : 's'} awaiting approval`,
+            body: lines.join('\n'),
+            meta: { content_type: 'review_reminder', count: reviewPosts.length, earliest_deadline: earliest },
+            link_url: contentReviewUrl,
+          }).then(null, () => {})
+        }
+      }
+
+      // Missed-approval alert: posts due within 2 days still not approved (critical)
+      const missedDeadline = new Date(); missedDeadline.setUTCDate(missedDeadline.getUTCDate() + 2)
+      const { data: skippedPosts } = await db
+        .from('content_posts')
+        .select('id, title, target_publish_date, client_id')
+        .in('status', ['for_review', 'pending'])
+        .lte('target_publish_date', missedDeadline.toISOString().slice(0, 10))
+        .not('target_publish_date', 'is', null)
+        .is('wp_post_id', null).is('bc_post_id', null)
+        .order('target_publish_date', { ascending: true })
+
+      if (skippedPosts && skippedPosts.length > 0) {
+        const clientIds = [...new Set((skippedPosts as PostRow[]).map(p => p.client_id))]
+        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
+        const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+        const lines = (skippedPosts as PostRow[]).map(p =>
+          `• ${clientNameMap.get(p.client_id) ?? p.client_id} — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
+        )
+        void sendDiscordMessage(discordBotToken, opsChannelId,
+          `⚠️ **Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved**\n${lines.join('\n')}\nManual push or approval required → ${contentReviewUrl}`
+        ).catch(() => {})
       }
     }
   }
