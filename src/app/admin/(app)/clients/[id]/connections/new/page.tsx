@@ -49,7 +49,7 @@ export default async function NewClientConnectionPage({
   async function loadCachedAccounts() {
     const cached = await db.from('connector_accounts')
       .select('external_id, external_name')
-      .eq('connector_id', connectorId)
+      .eq('connector_id', connectorId!)
       .order('external_name')
     return (cached.data ?? []) as { external_id: string; external_name: string | null }[]
   }
