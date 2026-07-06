@@ -13,6 +13,56 @@ interface AgencyWritingPrompt {
   service_area_master_prompt?: string
   discord_ops_channel_id?: string | null
   consolidated_email_notifications?: boolean
+  monthly_review_schedule?: string
+}
+
+const REVIEW_SCHEDULE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'first_monday',    label: 'First Monday of the month' },
+  { value: 'first_tuesday',   label: 'First Tuesday of the month' },
+  { value: 'first_wednesday', label: 'First Wednesday of the month' },
+  { value: 'first_thursday',  label: 'First Thursday of the month' },
+  { value: 'first_friday',    label: 'First Friday of the month' },
+  { value: 'first_weekday',   label: 'First weekday of the month' },
+  { value: 'day_1',           label: '1st of the month' },
+  { value: 'day_5',           label: '5th of the month' },
+  { value: 'day_15',          label: '15th of the month' },
+]
+
+function nextReviewDate(schedule: string): string {
+  const now   = new Date()
+  const year  = now.getFullYear()
+  const month = now.getMonth()
+
+  function firstDayOfWeek(y: number, m: number, dow: number): Date {
+    const d = new Date(y, m, 1)
+    while (d.getDay() !== dow) d.setDate(d.getDate() + 1)
+    return d
+  }
+
+  function firstWeekday(y: number, m: number): Date {
+    const d = new Date(y, m, 1)
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1)
+    return d
+  }
+
+  const DAY_MAP: Record<string, number> = {
+    first_monday: 1, first_tuesday: 2, first_wednesday: 3, first_thursday: 4, first_friday: 5,
+  }
+
+  let candidate: Date
+  if (schedule in DAY_MAP) {
+    candidate = firstDayOfWeek(year, month, DAY_MAP[schedule])
+    if (candidate <= now) candidate = firstDayOfWeek(year, month + 1, DAY_MAP[schedule])
+  } else if (schedule === 'first_weekday') {
+    candidate = firstWeekday(year, month)
+    if (candidate <= now) candidate = firstWeekday(year, month + 1)
+  } else {
+    const dayNum = parseInt(schedule.replace('day_', ''), 10)
+    candidate = new Date(year, month, dayNum)
+    if (candidate <= now) candidate = new Date(year, month + 1, dayNum)
+  }
+
+  return candidate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
@@ -95,6 +145,7 @@ export default function ContentSettingsPanel({
 
   const [opsChannelId,     setOpsChannelId]     = useState('')
   const [consolidatedEmail, setConsolidatedEmail] = useState(true)
+  const [reviewSchedule,   setReviewSchedule]   = useState('first_monday')
   const [notifSaving,      setNotifSaving]      = useState(false)
   const [notifSaved,       setNotifSaved]       = useState(false)
   const [notifError,       setNotifError]       = useState('')
@@ -110,6 +161,7 @@ export default function ContentSettingsPanel({
         setSaPrompt(d.service_area_master_prompt ?? '')
         setOpsChannelId(d.discord_ops_channel_id ?? '')
         setConsolidatedEmail(d.consolidated_email_notifications ?? true)
+        setReviewSchedule(d.monthly_review_schedule ?? 'first_monday')
       })
   }, [])
 
@@ -120,6 +172,7 @@ export default function ContentSettingsPanel({
       body: JSON.stringify({
         discord_ops_channel_id:           opsChannelId.trim() || null,
         consolidated_email_notifications: consolidatedEmail,
+        monthly_review_schedule:          reviewSchedule,
       }),
     })
     setNotifSaving(false)
@@ -302,6 +355,23 @@ export default function ContentSettingsPanel({
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
             All content Discord alerts (topics generated, posts ready, review reminders, BC spot-checks) post to this single channel.
             Leave blank to silence Discord notifications.
+          </p>
+        </div>
+
+        <div>
+          <Label hint="when the monthly content review session is triggered">Monthly Review Schedule</Label>
+          <select
+            className="input"
+            value={reviewSchedule}
+            onChange={e => setReviewSchedule(e.target.value)}
+            style={{ width: '100%', fontSize: '0.875rem' }}
+          >
+            {REVIEW_SCHEDULE_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            Next review: <strong>{nextReviewDate(reviewSchedule)}</strong> — posts auto-approve 35 days before publish so they&rsquo;re ready for this session.
           </p>
         </div>
 
