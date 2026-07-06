@@ -62,6 +62,8 @@ export async function PUT(request: NextRequest) {
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
     'payment_sound_url',
+    'discord_ops_channel_id',
+    'consolidated_email_notifications',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

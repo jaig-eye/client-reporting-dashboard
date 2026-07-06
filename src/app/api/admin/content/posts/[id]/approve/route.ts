@@ -29,7 +29,7 @@ export async function POST(
   let isAuto = false
   let action  = 'approve_and_push'
   try {
-    const body = await request.json() as { auto?: boolean; action?: string }
+    const body = await request.json() as { auto?: boolean; action?: string; source?: string }
     isAuto  = body?.auto === true
     if (body?.action) action = body.action
   } catch { /* no body is fine */ }

@@ -194,16 +194,42 @@ export default async function ContentPage({
   )
 
   const tabs = [
-    { id: 'calendar', label: 'Calendar' },
+    { id: 'calendar', label: 'Pipeline' },
     { id: 'silos',    label: 'Silos' },
     { id: 'settings', label: 'Settings' },
   ]
+
+  const pendingReviewCount = reviewQueue.filter(p => p.status !== 'approved').length
 
   return (
     <div>
       <div className="page-header">
         <h1 className="page-title">Content</h1>
       </div>
+
+      {/* Monthly Review banner */}
+      {pendingReviewCount > 0 && (
+        <div style={{
+          display:      'flex',
+          alignItems:   'center',
+          gap:          12,
+          padding:      '12px 16px',
+          marginBottom: 16,
+          background:   'var(--blue-subtle)',
+          border:       '1px solid var(--blue-border)',
+          borderRadius: 8,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--blue)', flex: 1 }}>
+            <strong>Monthly Review Ready</strong> — {pendingReviewCount} post{pendingReviewCount === 1 ? '' : 's'} across your clients need approval
+          </span>
+          <a
+            href="/admin/content/monthly-review"
+            className="btn btn-primary btn-sm"
+          >
+            Start Monthly Review →
+          </a>
+        </div>
+      )}
 
       {/* Tab nav */}
       <div className="flex gap-1 mb-6" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
@@ -247,7 +273,7 @@ export default async function ContentPage({
                   textTransform:  'capitalize',
                 }}
               >
-                {v === 'list' ? 'Review List' : 'Calendar'}
+                {v === 'list' ? 'Review Queue' : 'Timeline'}
               </a>
             ))}
             {activeView === 'list' && (

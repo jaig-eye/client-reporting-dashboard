@@ -109,12 +109,39 @@ export default function ContentCalendar({
   const router   = useRouter()
   const today    = new Date()
 
-  const [windowStart,   setWindowStart]   = useState({ year: today.getFullYear(), month: today.getMonth() })
-  const [clientFilter,  setClientFilter]  = useState<string>('all')
-  const [statusFilter,  setStatusFilter]  = useState<string>('all')
-  const [items,         setItems]         = useState(initialItems)
-  const [rationaleFor,  setRationaleFor]  = useState<CalendarItem | null>(null)
-  const [activeCalView, setActiveCalView] = useState<'blog' | 'service'>('blog')
+  const [windowStart,    setWindowStart]    = useState({ year: today.getFullYear(), month: today.getMonth() })
+  const [clientFilter,   setClientFilter]   = useState<string>('all')
+  const [statusFilter,   setStatusFilter]   = useState<string>('all')
+  const [items,          setItems]          = useState(initialItems)
+  const [rationaleFor,   setRationaleFor]   = useState<CalendarItem | null>(null)
+  const [activeCalView,  setActiveCalView]  = useState<'blog' | 'service'>('blog')
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => {
+    // Auto-collapse fully-published past months
+    const nowKey = `${today.getFullYear()}-${String(today.getMonth()).padStart(2, '0')}`
+    const collapsed = new Set<string>()
+    const byKey = new Map<string, CalendarItem[]>()
+    for (const item of initialItems) {
+      if (!item.targetPublishDate) continue
+      const d   = new Date(item.targetPublishDate + 'T00:00:00')
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
+      byKey.set(key, [...(byKey.get(key) ?? []), item])
+    }
+    for (const [key, monthItems] of Array.from(byKey)) {
+      if (key >= nowKey) continue // only collapse past months
+      const allPublished = monthItems.every(i => i.status === 'draft_saved' || i.status === 'published')
+      if (allPublished) collapsed.add(key)
+    }
+    return collapsed
+  })
+
+  const toggleMonthCollapse = (key: string) => {
+    setCollapsedMonths(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else               next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => { setItems(initialItems) }, [initialItems])
 
@@ -307,6 +334,30 @@ export default function ContentCalendar({
         </div>
       )}
 
+      {/* ── "Needs review" callout ───────────────────────────────────────────── */}
+      {statusFilter === 'all' && items.some(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')) && (
+        <div style={{
+          display:      'flex',
+          alignItems:   'center',
+          gap:          10,
+          padding:      '10px 14px',
+          marginBottom: 16,
+          background:   '#fef3c7',
+          border:       '1px solid #f59e0b',
+          borderRadius: 8,
+        }}>
+          <span style={{ fontSize: 13, color: '#92400e', flex: 1 }}>
+            {items.filter(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')).length} posts need approval
+          </span>
+          <button
+            onClick={() => setStatusFilter('for_review')}
+            style={{ fontSize: 12, color: '#92400e', fontWeight: 600, background: 'none', border: '1px solid #f59e0b', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}
+          >
+            Show pending only
+          </button>
+        </div>
+      )}
+
       {/* ── Month sections ───────────────────────────────────────────────────── */}
       {filtered.length === 0 && unscheduled.length === 0 ? (
         <div className="card p-8" style={{ textAlign: 'center' }}>
@@ -322,22 +373,39 @@ export default function ContentCalendar({
             <div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 {windowMonths.map(({ year, month, key }) => {
-                  const monthItems = byMonth.get(key) ?? []
+                  const monthItems  = byMonth.get(key) ?? []
                   if (monthItems.length === 0) return null
-                  const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
+                  const pillColor   = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
+                  const isCollapsed = collapsedMonths.has(key)
+                  const publishedCount = monthItems.filter(i => i.status === 'draft_saved' || i.status === 'published').length
                   return (
                     <div key={key}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                        <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
-                          {MONTH_ABBREV[month]}
-                        </span>
-                        <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
-                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>{monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'}</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                        {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                      </div>
+                      <button
+                        onClick={() => toggleMonthCollapse(key)}
+                        style={{ width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isCollapsed ? 0 : 14 }}>
+                          <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
+                            {MONTH_ABBREV[month]}
+                          </span>
+                          <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
+                          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                          {isCollapsed ? (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                              {publishedCount} published [show ▼]
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                              {monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'} [▲]
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {!isCollapsed && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                          {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

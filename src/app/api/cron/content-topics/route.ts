@@ -93,12 +93,16 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications')
     .single()
 
-  const notifEmail  = (agencySettings?.notification_email as string | null) ?? null
-  const agencyName  = (agencySettings?.agency_name        as string | null) ?? 'Agency Dashboard'
-  const appUrl      = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const notifEmail          = (agencySettings?.notification_email          as string | null)  ?? null
+  const agencyName          = (agencySettings?.agency_name                 as string | null)  ?? 'Agency Dashboard'
+  const consolidatedEmail   = (agencySettings?.consolidated_email_notifications as boolean | null) ?? true
+  const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+
+  // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
+  const opsChannelId = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
 
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
@@ -225,7 +229,7 @@ export async function GET(request: NextRequest) {
     // Within each group, highest search_volume first, then lowest keyword_difficulty.
     if (auto_approve_topics) {
       const approveThreshold = new Date()
-      approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 14) // bumped from 9: topics approve sooner so posts generate early enough for admin review window
+      approveThreshold.setUTCDate(approveThreshold.getUTCDate() + 35) // 35 days: posts generate ~5 weeks ahead for the monthly review workflow
 
       // Fetch all eligible pending topics (dated)
       const { data: pendingTopics } = await db
@@ -482,8 +486,8 @@ export async function GET(request: NextRequest) {
           const bcBlogUrl = `https://login.bigcommerce.com/manage/content/blog`
           const alertMsg  = `⚠️ BC post due tomorrow — ${bp.title ?? '(untitled)'} for ${clientNameBc} needs manual publish: ${bcBlogUrl}`
 
-          if (discordBotTk && channelIdBc) {
-            void sendDiscordMessage(discordBotTk, channelIdBc, alertMsg).catch(() => {})
+          if (discordBotTk && opsChannelId) {
+            void sendDiscordMessage(discordBotTk, opsChannelId, alertMsg).catch(() => {})
           }
 
           db.from('admin_alerts').insert({
@@ -713,9 +717,9 @@ export async function GET(request: NextRequest) {
               link_url:    contentUrl,
             }).then(null, () => {})
 
-            if (saDiscordToken && saChannelId) {
+            if (saDiscordToken && opsChannelId) {
               void sendDiscordMessage(
-                saDiscordToken, saChannelId,
+                saDiscordToken, opsChannelId,
                 `📍 **${successSaPosts.length} service area page${successSaPosts.length === 1 ? '' : 's'} auto-pushed** for **${saClientName}** — review in draft: ${contentUrl}`
               ).catch(() => {})
             }
@@ -766,8 +770,8 @@ export async function GET(request: NextRequest) {
             const bcPagesUrl = `https://login.bigcommerce.com/manage/content/pages`
             const alertMsg   = `⚠️ BC service area page due tomorrow — ${bp.title ?? '(untitled)'} for ${saClientName} needs manual publish: ${bcPagesUrl}`
 
-            if (saDiscordTokenSpot && saChannelId) {
-              void sendDiscordMessage(saDiscordTokenSpot, saChannelId, alertMsg).catch(() => {})
+            if (saDiscordTokenSpot && opsChannelId) {
+              void sendDiscordMessage(saDiscordTokenSpot, opsChannelId, alertMsg).catch(() => {})
             }
             db.from('admin_alerts').insert({
               type:        'content',
@@ -787,112 +791,148 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ── Batch emails — one per client for topics, one for posts ───────────────
+  // ── Batch emails — consolidated or per-client based on agency setting ────────
   if (notifEmail) {
     const shouldEmailTopics = agencySettings?.notify_topics_created || agencySettings?.notify_topic_ready
 
-    if (shouldEmailTopics) {
-      for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
-        const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
+    if (consolidatedEmail) {
+      // ONE email covering all clients that had activity this run
+      const allTopicClients  = Array.from(topicAccum.entries())
+      const allPostClients   = Array.from(postAccum.entries())
+      const hasTopics        = shouldEmailTopics && allTopicClients.length > 0
+      const hasPosts         = agencySettings?.notify_post_generated && allPostClients.length > 0
+
+      if (hasTopics || hasPosts) {
+        const totalTopics = allTopicClients.reduce((s, [, { items }]) => s + items.length, 0)
+        const totalPosts  = allPostClients.reduce((s, [, { items }]) => s + items.length, 0)
+        const reviewLink  = `${appUrl}/admin/content`
+        const sections: string[] = []
+
+        if (hasTopics) {
+          sections.push(`<h2 style="margin:0 0 8px;font-size:16px">New Topics (${totalTopics})</h2>`)
+          for (const [, { clientName, items }] of allTopicClients) {
+            sections.push(`<p style="margin:4px 0"><strong>${clientName}</strong> — ${items.length} topic${items.length === 1 ? '' : 's'}</p>`)
+            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map((t: TopicSummary) => `<li>${t.target_keyword ?? t.topic}${t.target_publish_date ? ` <em>(${t.target_publish_date})</em>` : ''}</li>`).join('')}</ul>`)
+          }
+        }
+        if (hasPosts) {
+          sections.push(`<h2 style="margin:16px 0 8px;font-size:16px">Posts Generated (${totalPosts})</h2>`)
+          for (const [, { clientName, items }] of allPostClients) {
+            sections.push(`<p style="margin:4px 0"><strong>${clientName}</strong> — ${items.length} post${items.length === 1 ? '' : 's'}</p>`)
+            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map((p: PostSummary) => `<li>${p.title ?? '(untitled)'}${p.targetPublishDate ? ` <em>(${p.targetPublishDate})</em>` : ''}</li>`).join('')}</ul>`)
+          }
+        }
+
+        const parts: string[] = []
+        if (hasTopics) parts.push(`${totalTopics} topic${totalTopics === 1 ? '' : 's'}`)
+        if (hasPosts)  parts.push(`${totalPosts} post${totalPosts === 1 ? '' : 's'}`)
+        const subjectSummary = parts.join(' + ')
+        const clientCount    = new Set([...allTopicClients.map(([id]) => id), ...allPostClients.map(([id]) => id)]).size
+
         try {
           await sendEmail({
             to:      notifEmail,
-            subject: `${agencyName} | ${clientName} — Topics Ready for Review`,
-            html:    buildTopicsEmail({ agencyName, clientName, topics: items, clientLink }),
+            subject: `${agencyName} | Content Update — ${subjectSummary} across ${clientCount} client${clientCount === 1 ? '' : 's'}`,
+            html:    `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">${sections.join('\n')}<p style="margin-top:16px"><a href="${reviewLink}">Review in dashboard →</a></p></div>`,
           })
         } catch (e) {
-          console.error(`[content-topics cron] Topics email failed for client ${clientId}:`, e)
+          console.error('[content-topics cron] Consolidated email failed:', e)
         }
       }
-    }
-
-    if (agencySettings?.notify_post_generated) {
-      for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
-        const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
-        try {
-          await sendEmail({
-            to:      notifEmail,
-            subject: `${agencyName} | ${clientName} — Posts Ready for Review`,
-            html:    buildPostsEmail({ agencyName, clientName, posts: items, clientLink }),
-          })
-        } catch (e) {
-          console.error(`[content-topics cron] Posts email failed for client ${clientId}:`, e)
+    } else {
+      // Legacy: one email per client
+      if (shouldEmailTopics) {
+        for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
+          const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
+          try {
+            await sendEmail({
+              to:      notifEmail,
+              subject: `${agencyName} | ${clientName} — Topics Ready for Review`,
+              html:    buildTopicsEmail({ agencyName, clientName, topics: items, clientLink }),
+            })
+          } catch (e) {
+            console.error(`[content-topics cron] Topics email failed for client ${clientId}:`, e)
+          }
+        }
+      }
+      if (agencySettings?.notify_post_generated) {
+        for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
+          const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
+          try {
+            await sendEmail({
+              to:      notifEmail,
+              subject: `${agencyName} | ${clientName} — Posts Ready for Review`,
+              html:    buildPostsEmail({ agencyName, clientName, posts: items, clientLink }),
+            })
+          } catch (e) {
+            console.error(`[content-topics cron] Posts email failed for client ${clientId}:`, e)
+          }
         }
       }
     }
   }
 
-  // ── Discord notifications — one per client for topics, one for posts ─────────
+  // ── Discord notifications — ONE consolidated ops-channel message ─────────────
   const discordBotToken = (agencySettings?.discord_bot_token as string | null) ?? null
-  if (discordBotToken) {
-    const allClientIds = Array.from(new Set([...Array.from(topicAccum.keys()), ...Array.from(postAccum.keys())]))
-    if (allClientIds.length > 0) {
-      const { data: clientRows } = await db
-        .from('clients')
-        .select('id, discord_channel_id')
-        .in('id', allClientIds)
-      const channelMap = new Map<string, string>()
-      for (const cl of (clientRows ?? []) as { id: string; discord_channel_id?: string | null }[]) {
-        if (cl.discord_channel_id) channelMap.set(cl.id, cl.discord_channel_id)
-      }
+  const contentUrl      = `${appUrl}/admin/content`
 
-      const contentUrl = `${appUrl}/admin/content`
-
-      for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
-        const channelId = channelMap.get(clientId)
-        if (channelId) {
-          void sendDiscordMessage(
-            discordBotToken, channelId,
-            `📋 **${items.length} new topic${items.length === 1 ? '' : 's'}** ready for **${clientName}** — review and approve: ${contentUrl}`
-          ).catch(() => {})
-        }
-        db.from('admin_alerts').insert({
-          type:        'content',
-          severity:    'info',
-          client_id:   clientId,
-          client_name: clientName,
-          title:       `${items.length} topic${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
-          body:        items.map((t: TopicSummary) => `• ${t.target_keyword ?? t.topic}${t.target_publish_date ? ` (${t.target_publish_date})` : ''}`).join('\n'),
-          meta:        { content_type: 'topics', count: items.length, items: items.map((t: TopicSummary) => ({ keyword: t.target_keyword ?? t.topic, publish_date: t.target_publish_date })) },
-          link_url:    contentUrl,
-        }).then(null, () => {})
-      }
-
-      // ONE consolidated Discord message for all generated posts (not per-client)
-      const totalPostsReady = Array.from(postAccum.values()).reduce((s, { items }) => s + items.length, 0)
-      if (totalPostsReady > 0) {
-        const opsChannelId = process.env.DISCORD_OPS_CHANNEL_ID ?? null
-        if (opsChannelId) {
-          const clientLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
-            `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
-          )
-          void sendDiscordMessage(
-            discordBotToken, opsChannelId,
-            `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for review\n${clientLines.join('\n')}\nReview: ${contentUrl}`
-          ).catch(() => {})
-        }
-      }
-      // Per-client admin_alerts (in-app notifications — no Discord noise)
-      for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
-        db.from('admin_alerts').insert({
-          type:        'content',
-          severity:    'info',
-          client_id:   clientId,
-          client_name: clientName,
-          title:       `${items.length} post${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
-          body:        items.map((p: PostSummary) => `• ${p.title ?? '(untitled)'}${p.targetPublishDate ? ` (${p.targetPublishDate})` : ''}`).join('\n'),
-          meta:        { content_type: 'posts', count: items.length, items: items.map((p: PostSummary) => ({ title: p.title, keyword: p.targetKeyword, publish_date: p.targetPublishDate })) },
-          link_url:    contentUrl,
-        }).then(null, () => {})
-      }
+  if (discordBotToken && opsChannelId) {
+    // ONE message for all topics generated this run
+    const totalTopicsReady = Array.from(topicAccum.values()).reduce((s, { items }) => s + items.length, 0)
+    if (totalTopicsReady > 0) {
+      const topicLines = Array.from(topicAccum.entries()).map(([, { clientName, items }]) =>
+        `• **${clientName}** — ${items.length} topic${items.length === 1 ? '' : 's'}`
+      )
+      void sendDiscordMessage(
+        discordBotToken, opsChannelId,
+        `📋 **${totalTopicsReady} topic${totalTopicsReady === 1 ? '' : 's'} generated** — auto-approves in ~24h\n${topicLines.join('\n')}\nReview: ${contentUrl}`
+      ).catch(() => {})
     }
+
+    // ONE message for all posts generated this run
+    const totalPostsReady = Array.from(postAccum.values()).reduce((s, { items }) => s + items.length, 0)
+    if (totalPostsReady > 0) {
+      const postLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
+        `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
+      )
+      void sendDiscordMessage(
+        discordBotToken, opsChannelId,
+        `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+      ).catch(() => {})
+    }
+  }
+
+  // In-app admin_alerts (topics)
+  for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
+    db.from('admin_alerts').insert({
+      type:        'content',
+      severity:    'info',
+      client_id:   clientId,
+      client_name: clientName,
+      title:       `${items.length} topic${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
+      body:        items.map((t: TopicSummary) => `• ${t.target_keyword ?? t.topic}${t.target_publish_date ? ` (${t.target_publish_date})` : ''}`).join('\n'),
+      meta:        { content_type: 'topics', count: items.length, items: items.map((t: TopicSummary) => ({ keyword: t.target_keyword ?? t.topic, publish_date: t.target_publish_date })) },
+      link_url:    contentUrl,
+    }).then(null, () => {})
+  }
+  // In-app admin_alerts (posts)
+  for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
+    db.from('admin_alerts').insert({
+      type:        'content',
+      severity:    'info',
+      client_id:   clientId,
+      client_name: clientName,
+      title:       `${items.length} post${items.length === 1 ? '' : 's'} ready for review — ${clientName}`,
+      body:        items.map((p: PostSummary) => `• ${p.title ?? '(untitled)'}${p.targetPublishDate ? ` (${p.targetPublishDate})` : ''}`).join('\n'),
+      meta:        { content_type: 'posts', count: items.length, items: items.map((p: PostSummary) => ({ title: p.title, keyword: p.targetKeyword, publish_date: p.targetPublishDate })) },
+      link_url:    contentUrl,
+    }).then(null, () => {})
   }
 
   // ── Consolidated content review alerts (ONE Discord message each) ────────────
   // These query across ALL clients so there's never per-client Discord noise.
   {
-    const opsChannelId    = process.env.DISCORD_OPS_CHANNEL_ID ?? null
-    const contentReviewUrl = `${appUrl}/admin/content`
+    const contentReviewUrl = contentUrl
 
     if (discordBotToken && opsChannelId) {
       type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }

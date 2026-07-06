@@ -11,6 +11,8 @@ interface GlobalSettings {
 interface AgencyWritingPrompt {
   master_writing_prompt?: string
   service_area_master_prompt?: string
+  discord_ops_channel_id?: string | null
+  consolidated_email_notifications?: boolean
 }
 
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
@@ -91,6 +93,12 @@ export default function ContentSettingsPanel({
   const [saPromptSaved,   setSaPromptSaved]   = useState(false)
   const [saPromptError,   setSaPromptError]   = useState('')
 
+  const [opsChannelId,     setOpsChannelId]     = useState('')
+  const [consolidatedEmail, setConsolidatedEmail] = useState(true)
+  const [notifSaving,      setNotifSaving]      = useState(false)
+  const [notifSaved,       setNotifSaved]       = useState(false)
+  const [notifError,       setNotifError]       = useState('')
+
   useEffect(() => {
     fetch('/api/admin/content/global-settings')
       .then(r => r.json())
@@ -100,8 +108,24 @@ export default function ContentSettingsPanel({
       .then((d: AgencyWritingPrompt) => {
         setWritingPrompt(d.master_writing_prompt ?? '')
         setSaPrompt(d.service_area_master_prompt ?? '')
+        setOpsChannelId(d.discord_ops_channel_id ?? '')
+        setConsolidatedEmail(d.consolidated_email_notifications ?? true)
       })
   }, [])
+
+  async function saveNotifications() {
+    setNotifSaving(true); setNotifError(''); setNotifSaved(false)
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        discord_ops_channel_id:           opsChannelId.trim() || null,
+        consolidated_email_notifications: consolidatedEmail,
+      }),
+    })
+    setNotifSaving(false)
+    if (res.ok) { setNotifSaved(true); setTimeout(() => setNotifSaved(false), 2500) }
+    else { const d = await res.json(); setNotifError(d.error || 'Failed to save') }
+  }
 
   async function purgeAll() {
     setShowPurge(false)
@@ -252,6 +276,57 @@ export default function ContentSettingsPanel({
           </button>
           {saPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
           {saPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{saPromptError}</span>}
+        </div>
+      </div>
+
+      {/* Content Notifications */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Content Notifications</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>
+            Configure how topic and post alerts are delivered. Discord bot token is set in{' '}
+            <a href="/admin/settings" style={{ color: 'var(--blue)' }}>Agency Settings</a>.
+          </p>
+        </div>
+
+        <div>
+          <Label hint="Discord channel ID where all content events are posted">Discord Ops Channel ID</Label>
+          <input
+            type="text"
+            className="input"
+            value={opsChannelId}
+            onChange={e => setOpsChannelId(e.target.value)}
+            placeholder="e.g. 1234567890123456789"
+            style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem' }}
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            All content Discord alerts (topics generated, posts ready, review reminders, BC spot-checks) post to this single channel.
+            Leave blank to silence Discord notifications.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            type="checkbox"
+            id="consolidated-email"
+            checked={consolidatedEmail}
+            onChange={e => setConsolidatedEmail(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer' }}
+          />
+          <label htmlFor="consolidated-email" style={{ fontSize: '0.875rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+            Send consolidated email digest (all clients in one email per run)
+          </label>
+        </div>
+        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: -8, lineHeight: 1.5 }}>
+          Uncheck to send one email per client (legacy behaviour). Notification email address is set in Agency Settings.
+        </p>
+
+        <div className="flex items-center gap-3">
+          <button className="btn btn-primary" onClick={saveNotifications} disabled={notifSaving}>
+            {notifSaving ? 'Saving…' : 'Save'}
+          </button>
+          {notifSaved  && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {notifError  && <span className="text-xs" style={{ color: 'var(--red)' }}>{notifError}</span>}
         </div>
       </div>
 

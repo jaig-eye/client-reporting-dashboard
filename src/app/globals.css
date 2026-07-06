@@ -122,6 +122,31 @@
   100% { background-position:  200% 0; }
 }
 
+/* ── Monthly Review animations ───────────────────────────────────────────── */
+
+@keyframes monthly-approve-flash {
+  0%   { background: inherit; }
+  25%  { background: #dcfce7; }
+  100% { background: #f0fdf4; }
+}
+
+@keyframes monthly-card-collapse {
+  from { max-height: 120px; opacity: 1; margin-bottom: 4px; }
+  to   { max-height: 0;     opacity: 0; margin-bottom: 0;   overflow: hidden; }
+}
+
+@keyframes monthly-complete-pop {
+  0%   { transform: scale(0.3) rotate(-8deg); opacity: 0; }
+  65%  { transform: scale(1.12) rotate(2deg); opacity: 1; }
+  85%  { transform: scale(0.97); }
+  100% { transform: scale(1) rotate(0deg);    opacity: 1; }
+}
+
+@keyframes monthly-dot-drift {
+  0%, 100% { transform: translateY(0)  translateX(0);  opacity: 0.15; }
+  50%       { transform: translateY(-18px) translateX(8px); opacity: 0.35; }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Reduced motion overrides
 ───────────────────────────────────────────────────────────────────────────── */
