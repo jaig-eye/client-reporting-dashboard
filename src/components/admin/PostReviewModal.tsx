@@ -372,7 +372,7 @@ export default function PostReviewModal({ posts, index, onClose, onApprove, onRe
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={handleReject}
-                disabled={actionState === 'loading' || isApproved}
+                disabled={actionState === 'loading' || !!isApproved}
                 style={{
                   background: isRejected ? '#fee2e2' : 'var(--bg-subtle)',
                   border: `1px solid ${isRejected ? '#fca5a5' : 'var(--border)'}`,
