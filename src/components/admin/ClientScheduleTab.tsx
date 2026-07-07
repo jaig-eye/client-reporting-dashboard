@@ -936,10 +936,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 </div>
               )}
               <div>
-                <Label>Topics per Run</Label>
-                <input className="input" type="number" min={1} max={20} value={schedule.topics_per_run ?? 5} onChange={e => setSched('topics_per_run', Number(e.target.value))} />
-              </div>
-              <div>
                 <Label>Posts per Run</Label>
                 <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
               </div>

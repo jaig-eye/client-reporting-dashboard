@@ -86,12 +86,11 @@ export default function PostReviewList({ initialPosts, allSites }: Props) {
     }
   }, [])
 
-  const handleReject = useCallback(async (postId: string) => {
+  const handleReject = useCallback(async (postId: string, discard?: boolean) => {
     setLoadingId(postId)
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/dismiss`, {
-        method: 'POST',
-      })
+      const url = `/api/admin/content/posts/${postId}/dismiss${discard ? '?discard=true' : ''}`
+      const res = await fetch(url, { method: 'POST' })
       if (!res.ok) throw new Error()
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'rejected' } : p))
     } catch {

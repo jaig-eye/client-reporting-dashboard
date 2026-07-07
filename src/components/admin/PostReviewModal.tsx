@@ -23,7 +23,7 @@ interface Props {
   index:          number
   onClose:        () => void
   onApprove:      (postId: string) => void
-  onReject:       (postId: string) => void
+  onReject:       (postId: string, discard?: boolean) => void
   onNavigate:     (newIndex: number) => void
   onOpenEditor:   (postId: string) => void
 }
@@ -82,16 +82,15 @@ export default function PostReviewModal({ posts, index, onClose, onApprove, onRe
     }
   }, [post, actionState, onApprove, hasNext, index, onNavigate, onClose])
 
-  const handleReject = useCallback(async () => {
+  const handleReject = useCallback(async (discard?: boolean) => {
     if (!post || actionState === 'loading') return
     setActionState('loading')
     try {
-      const res = await fetch(`/api/admin/content/posts/${post.id}/dismiss`, {
-        method: 'POST',
-      })
+      const url = `/api/admin/content/posts/${post.id}/dismiss${discard ? '?discard=true' : ''}`
+      const res = await fetch(url, { method: 'POST' })
       if (!res.ok) throw new Error('Reject failed')
       setActionState('rejected')
-      onReject(post.id)
+      onReject(post.id, discard)
       setTimeout(() => {
         if (hasNext) { onNavigate(index + 1); setActionState('idle') }
         else onClose()
@@ -110,7 +109,7 @@ export default function PostReviewModal({ posts, index, onClose, onApprove, onRe
       if (e.key === 'ArrowLeft'  && hasPrev) onNavigate(index - 1)
       if (e.key === 'ArrowRight' && hasNext) onNavigate(index + 1)
       if (e.key === 'a' || e.key === 'A')   handleApprove()
-      if (e.key === 'r' || e.key === 'R')   handleReject()
+      if (e.key === 'r' || e.key === 'R')   handleReject(false)
       if (e.key === 'e' || e.key === 'E')   { onOpenEditor(post.id); onClose() }
     }
     window.addEventListener('keydown', onKey)
@@ -371,18 +370,34 @@ export default function PostReviewModal({ posts, index, onClose, onApprove, onRe
 
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
-                onClick={handleReject}
-                disabled={actionState === 'loading' || !!isApproved}
+                onClick={() => handleReject(false)}
+                disabled={actionState === 'loading' || !!isApproved || isRejected}
+                title="Reject post and let the cron generate a replacement (R)"
                 style={{
                   background: isRejected ? '#fee2e2' : 'var(--bg-subtle)',
                   border: `1px solid ${isRejected ? '#fca5a5' : 'var(--border)'}`,
-                  cursor: actionState === 'loading' || isApproved ? 'default' : 'pointer',
+                  cursor: actionState === 'loading' || isApproved || isRejected ? 'default' : 'pointer',
                   opacity: isApproved ? 0.4 : 1,
                   padding: '7px 16px', borderRadius: 7,
                   fontSize: '0.8125rem', color: isRejected ? 'var(--red, #dc2626)' : 'var(--text-muted)', fontWeight: 500,
                 }}
               >
-                {isRejected ? 'Rejected' : 'Reject'}
+                {isRejected ? 'Regenerating…' : 'Regenerate'}
+              </button>
+              <button
+                onClick={() => handleReject(true)}
+                disabled={actionState === 'loading' || !!isApproved || isRejected}
+                title="Permanently discard this post and its topic"
+                style={{
+                  background: isRejected ? '#fee2e2' : '#7f1d1d',
+                  border: 'none',
+                  cursor: actionState === 'loading' || isApproved || isRejected ? 'default' : 'pointer',
+                  opacity: isApproved || isRejected ? 0.4 : 1,
+                  padding: '7px 14px', borderRadius: 7,
+                  fontSize: '0.8125rem', color: '#fff', fontWeight: 500,
+                }}
+              >
+                Discard
               </button>
 
               <button

@@ -108,12 +108,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
 
-  const handleReject = useCallback(async (postId: string) => {
+  const handleReject = useCallback(async (postId: string, discard?: boolean) => {
     setLoadingId(postId)
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/dismiss`, {
-        method: 'POST',
-      })
+      const url = `/api/admin/content/posts/${postId}/dismiss${discard ? '?discard=true' : ''}`
+      const res = await fetch(url, { method: 'POST' })
       if (!res.ok) throw new Error(await res.text())
       setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     } catch (e) {

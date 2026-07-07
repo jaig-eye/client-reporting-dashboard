@@ -32,19 +32,18 @@ export async function POST(request: NextRequest) {
   // ── Load saved schedule config ─────────────────────────────────────────────
   const { data: schedule } = await db
     .from('content_settings')
-    .select('posts_per_run, topics_per_run, schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead')
+    .select('posts_per_run, schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead')
     .eq('client_id', client_id)
     .maybeSingle()
 
-  const topicsPerRun = (schedule?.topics_per_run  ?? 5)
-  const frequency    = (schedule?.schedule_frequency ?? 'weekly')
-  const dayOfWeek    = (schedule?.schedule_day_of_week ?? 1)
-  const weeksAhead   = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
-  const anchor       = start_date ? new Date(start_date) : new Date()
+  const frequency  = (schedule?.schedule_frequency ?? 'weekly')
+  const dayOfWeek  = (schedule?.schedule_day_of_week ?? 1)
+  const weeksAhead = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
+  const anchor     = start_date ? new Date(start_date) : new Date()
 
   // ── Compute publish slots synchronously ────────────────────────────────────
   const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek })
-  const count = Math.min(slots.length * topicsPerRun, 50)
+  const count = Math.min(slots.length, 50)
 
   if (count === 0) {
     return NextResponse.json({ error: 'No publish slots computed for the given parameters' }, { status: 400 })
@@ -71,7 +70,7 @@ export async function POST(request: NextRequest) {
           break
         }
         await Promise.all(result.topics.map(async (t, i) => {
-          const slotIndex   = Math.floor((inserted + i) / topicsPerRun)
+          const slotIndex   = inserted + i
           const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
           await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
         }))

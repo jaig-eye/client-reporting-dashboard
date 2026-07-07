@@ -10,7 +10,7 @@ interface Props {
   rejectedIds: Set<string>
   loadingId:   string | null
   onApprove:   (id: string) => void
-  onReject:    (id: string) => void
+  onReject:    (id: string, discard?: boolean) => void
   onOpenEditor:(id: string) => void
 }
 

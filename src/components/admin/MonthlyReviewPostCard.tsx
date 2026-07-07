@@ -27,7 +27,7 @@ interface Props {
   isLoading:   boolean
   isCollapsed: boolean
   onApprove:   (id: string) => void
-  onReject:    (id: string) => void
+  onReject:    (id: string, discard?: boolean) => void
   onOpenEditor:(id: string) => void
 }
 
@@ -100,6 +100,19 @@ export default function MonthlyReviewPostCard({
             {post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}
             {post.content ? ` · ${wordCount(post.content).toLocaleString()}w` : ''}
             {post.isBc ? ' · BC' : ' · WP'}
+            {post.content_type && (
+              <span style={{
+                marginLeft: 6,
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 999,
+                background: post.content_type === 'blog' ? '#dbeafe' : post.content_type === 'service_area' ? '#dcfce7' : post.content_type === 'service_page' ? '#ede9fe' : '#f3f4f6',
+                color:      post.content_type === 'blog' ? '#1d4ed8' : post.content_type === 'service_area' ? '#15803d' : post.content_type === 'service_page' ? '#7c3aed' : '#374151',
+              }}>
+                {post.content_type === 'blog' ? 'Blog' : post.content_type === 'service_area' ? 'SA Page' : post.content_type === 'service_page' ? 'Service Page' : 'Page'}
+              </span>
+            )}
           </div>
         </div>
 
@@ -117,9 +130,19 @@ export default function MonthlyReviewPostCard({
             <button
               className="btn btn-sm btn-danger"
               disabled={isLoading}
-              onClick={() => onReject(post.id)}
+              onClick={() => onReject(post.id, false)}
+              title="Reject this post and let the cron generate a replacement"
             >
-              Reject
+              Regenerate
+            </button>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onReject(post.id, true)}
+              title="Permanently discard this post and its topic"
+              style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
+            >
+              Discard
             </button>
             <button
               className="btn btn-sm btn-primary"
@@ -210,9 +233,19 @@ export default function MonthlyReviewPostCard({
             <button
               className="btn btn-sm btn-danger"
               disabled={isLoading}
-              onClick={() => { setExpanded(false); onReject(post.id) }}
+              onClick={() => { setExpanded(false); onReject(post.id, false) }}
+              title="Reject this post and let the cron generate a replacement"
             >
-              Reject
+              Regenerate
+            </button>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => { setExpanded(false); onReject(post.id, true) }}
+              title="Permanently discard this post and its topic"
+              style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
+            >
+              Discard
             </button>
             <button
               className="btn btn-sm btn-primary"

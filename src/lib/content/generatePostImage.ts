@@ -17,7 +17,13 @@ type ClientSettings = {
   geographic_focus:  string | null
 }
 
-export function buildImagePrompt(post: PostRow, settings: ClientSettings | null): string {
+export function buildImagePrompt(
+  post: PostRow,
+  settings: ClientSettings | null,
+  promptOverride?: string,
+): string {
+  if (promptOverride?.trim()) return promptOverride.trim()
+
   const concept  = post.image_concept?.trim()
   const keyword  = post.target_keyword?.trim()
   const service  = settings?.services?.split(',')[0]?.trim() ?? 'local service'
@@ -46,6 +52,7 @@ export async function generatePostImage(
   db: ReturnType<typeof createAdminClient>,
   postId: string,
   openaiKey: string | null | undefined,
+  promptOverride?: string,
 ): Promise<ImageGenResult> {
   const [postRes, settingsRes] = await Promise.all([
     db.from('content_posts')
@@ -69,7 +76,7 @@ export async function generatePostImage(
     .eq('client_id', post.client_id)
     .maybeSingle()
 
-  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null)
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, promptOverride)
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null

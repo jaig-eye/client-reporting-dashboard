@@ -304,7 +304,7 @@ export async function GET(request: NextRequest) {
       }
     }))
 
-    // ── Post generation: fire for all approved/scheduled topics ───────────
+    // ── Post generation: fire for approved/scheduled topics up to posts_per_run ─
     const { data: approvedTopics } = await db
       .from('content_topics')
       .select('id, topic, target_keyword, target_publish_date, content_type')
@@ -318,7 +318,8 @@ export async function GET(request: NextRequest) {
       clientNameForPost = (cl as { name?: string } | null)?.name ?? client_id
     }
 
-    await Promise.allSettled((approvedTopics ?? []).map(async (topic) => {
+    const topicsToGenerate = (approvedTopics ?? []).slice(0, posts_per_run)
+    await Promise.allSettled(topicsToGenerate.map(async (topic) => {
       const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
       try {
         await db.from('content_topics').update({ status: 'generating' }).eq('id', t.id)

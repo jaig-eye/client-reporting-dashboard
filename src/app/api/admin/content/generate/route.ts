@@ -386,7 +386,7 @@ async function runTopicGeneration({
     // ── Load all settings in parallel ────────────────────────────────────────
     const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
       db.from('content_settings')
-        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines')
+        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt')
         .eq('client_id', effectiveClientId)
         .maybeSingle(),
       db.from('content_settings')
@@ -728,10 +728,12 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
 
-    // Auto-generate featured image in background if key is configured
-    if (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+    // Auto-generate featured image in background if enabled and key is configured
+    const imageEnabled = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
+    const imagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
+    if (imageEnabled && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
       waitUntil(
-        generatePostImage(db, savedPost.id, agencySettings.openai_api_key).catch(() => {})
+        generatePostImage(db, savedPost.id, agencySettings.openai_api_key, imagePromptOverride).catch(() => {})
       )
     }
 
