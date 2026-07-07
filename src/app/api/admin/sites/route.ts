@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   let query = db
     .from('sites')
-    .select('id, name, url, platform, hosting_type, hosting_provider, server_account, status, notes, is_up, last_checked_at, last_status_code, last_response_ms, uptime_7d, ssl_days_remaining, ssl_expires_at, ssl_last_checked, consecutive_failures, client_id, group_id, created_at, updated_at, clients(id, name), site_groups(id, name)')
+    .select('id, name, url, platform, hosting_type, hosting_provider, server_account, status, notes, discord_channel_id, is_up, last_checked_at, last_status_code, last_response_ms, uptime_7d, ssl_days_remaining, ssl_expires_at, ssl_last_checked, consecutive_failures, client_id, group_id, created_at, updated_at, clients(id, name), site_groups(id, name)')
     .order('name')
 
   const status = searchParams.get('status')

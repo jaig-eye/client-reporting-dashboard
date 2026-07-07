@@ -489,7 +489,7 @@ async function runTopicGeneration({
       : contentType === 'regular_page' ? (agencySettings.regular_page_master_prompt || agencySettings.master_writing_prompt)
       : agencySettings.master_writing_prompt
     if (rawMasterPrompt && clientSettings) {
-      const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
+      const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).maybeSingle()
       const clientName = (cl as { name?: string } | null)?.name ?? ''
       const alwaysIncludeLinks = parseManualLinks((clientSettings.manual_link_urls as string[] | null) ?? [])
       const urlsAndAnchors = alwaysIncludeLinks.length > 0
@@ -963,7 +963,7 @@ export async function POST(request: NextRequest) {
   let masterPreamble: string | null = null
   const rawMasterPrompt = (agencySettings as Record<string, unknown>).master_writing_prompt as string | null
   if (rawMasterPrompt && clientSettings && effectiveClientId) {
-    const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
+    const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).maybeSingle()
     const clientName = (cl as { name?: string } | null)?.name ?? ''
     const alwaysIncludeLinks = parseManualLinks((clientSettings.manual_link_urls as string[] | null) ?? [])
     const urlsAndAnchors = alwaysIncludeLinks.length > 0

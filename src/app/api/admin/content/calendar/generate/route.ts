@@ -69,12 +69,13 @@ export async function POST(request: NextRequest) {
           console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} returned 0 topics`)
           break
         }
-        await Promise.all(result.topics.map(async (t, i) => {
+        const fittingTopics = result.topics.slice(0, slots.length - inserted)
+        await Promise.all(fittingTopics.map(async (t, i) => {
           const slotIndex   = inserted + i
-          const publishDate = slots[slotIndex] ?? slots[slots.length - 1]
+          const publishDate = slots[slotIndex]
           await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
         }))
-        inserted += result.topics.length
+        inserted += fittingTopics.length
         console.log(`[calendar/generate] batch ${b + 1}/${totalBatches}: ${result.topics.length} topics (total ${inserted})`)
       }
     })()
