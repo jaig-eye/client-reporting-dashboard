@@ -11,6 +11,8 @@ interface GlobalSettings {
 interface AgencyWritingPrompt {
   master_writing_prompt?: string
   service_area_master_prompt?: string
+  service_page_master_prompt?: string
+  regular_page_master_prompt?: string
   discord_ops_channel_id?: string | null
   consolidated_email_notifications?: boolean
   monthly_review_schedule?: string
@@ -143,6 +145,16 @@ export default function ContentSettingsPanel({
   const [saPromptSaved,   setSaPromptSaved]   = useState(false)
   const [saPromptError,   setSaPromptError]   = useState('')
 
+  const [spPrompt,        setSpPrompt]        = useState('')
+  const [spPromptSaving,  setSpPromptSaving]  = useState(false)
+  const [spPromptSaved,   setSpPromptSaved]   = useState(false)
+  const [spPromptError,   setSpPromptError]   = useState('')
+
+  const [rpPrompt,        setRpPrompt]        = useState('')
+  const [rpPromptSaving,  setRpPromptSaving]  = useState(false)
+  const [rpPromptSaved,   setRpPromptSaved]   = useState(false)
+  const [rpPromptError,   setRpPromptError]   = useState('')
+
   const [opsChannelId,     setOpsChannelId]     = useState('')
   const [consolidatedEmail, setConsolidatedEmail] = useState(true)
   const [reviewSchedule,   setReviewSchedule]   = useState('first_monday')
@@ -159,6 +171,8 @@ export default function ContentSettingsPanel({
       .then((d: AgencyWritingPrompt) => {
         setWritingPrompt(d.master_writing_prompt ?? '')
         setSaPrompt(d.service_area_master_prompt ?? '')
+        setSpPrompt(d.service_page_master_prompt ?? '')
+        setRpPrompt(d.regular_page_master_prompt ?? '')
         setOpsChannelId(d.discord_ops_channel_id ?? '')
         setConsolidatedEmail(d.consolidated_email_notifications ?? true)
         setReviewSchedule(d.monthly_review_schedule ?? 'first_monday')
@@ -227,6 +241,28 @@ export default function ContentSettingsPanel({
     setSaPromptSaving(false)
     if (res.ok) { setSaPromptSaved(true); setTimeout(() => setSaPromptSaved(false), 2500) }
     else { const d = await res.json(); setSaPromptError(d.error || 'Failed to save') }
+  }
+
+  async function saveSpPrompt() {
+    setSpPromptSaving(true); setSpPromptError(''); setSpPromptSaved(false)
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service_page_master_prompt: spPrompt }),
+    })
+    setSpPromptSaving(false)
+    if (res.ok) { setSpPromptSaved(true); setTimeout(() => setSpPromptSaved(false), 2500) }
+    else { const d = await res.json(); setSpPromptError(d.error || 'Failed to save') }
+  }
+
+  async function saveRpPrompt() {
+    setRpPromptSaving(true); setRpPromptError(''); setRpPromptSaved(false)
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regular_page_master_prompt: rpPrompt }),
+    })
+    setRpPromptSaving(false)
+    if (res.ok) { setRpPromptSaved(true); setTimeout(() => setRpPromptSaved(false), 2500) }
+    else { const d = await res.json(); setRpPromptError(d.error || 'Failed to save') }
   }
 
   return (
@@ -329,6 +365,62 @@ export default function ContentSettingsPanel({
           </button>
           {saPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
           {saPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{saPromptError}</span>}
+        </div>
+      </div>
+
+      {/* Service Pages Prompt */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Service Pages Prompt</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>
+            System prompt used for AI-generated service pages (e.g. &ldquo;Residential Plumbing Services&rdquo;).
+            Leave blank to use the built-in blog prompt.
+          </p>
+        </div>
+        <div>
+          <textarea
+            className="input"
+            rows={20}
+            style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
+            value={spPrompt}
+            onChange={e => setSpPrompt(e.target.value)}
+            placeholder="Paste your service page writing prompt here…"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="btn btn-primary" onClick={saveSpPrompt} disabled={spPromptSaving}>
+            {spPromptSaving ? 'Saving…' : 'Save Prompt'}
+          </button>
+          {spPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {spPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{spPromptError}</span>}
+        </div>
+      </div>
+
+      {/* Regular Pages Prompt */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Regular Pages Prompt</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>
+            System prompt used for AI-generated regular pages (About, FAQ, custom content, etc.).
+            Leave blank to use the built-in blog prompt.
+          </p>
+        </div>
+        <div>
+          <textarea
+            className="input"
+            rows={20}
+            style={{ fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical', width: '100%' }}
+            value={rpPrompt}
+            onChange={e => setRpPrompt(e.target.value)}
+            placeholder="Paste your regular page writing prompt here…"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="btn btn-primary" onClick={saveRpPrompt} disabled={rpPromptSaving}>
+            {rpPromptSaving ? 'Saving…' : 'Save Prompt'}
+          </button>
+          {rpPromptSaved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+          {rpPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{rpPromptError}</span>}
         </div>
       </div>
 

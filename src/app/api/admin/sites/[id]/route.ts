@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic'
 const ALLOWED_PATCH = [
   'name', 'url', 'client_id', 'platform', 'hosting_type',
   'hosting_provider', 'server_account', 'group_id', 'status', 'notes',
+  'discord_channel_id',
 ]
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {

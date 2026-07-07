@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json()
-  const { name, url, client_id, platform, hosting_type, hosting_provider, server_account, group_id, notes } = body
+  const { name, url, client_id, platform, hosting_type, hosting_provider, server_account, group_id, notes, discord_channel_id } = body
 
   if (!name || !url) {
     return NextResponse.json({ error: 'name and url are required' }, { status: 400 })
@@ -95,13 +95,14 @@ export async function POST(request: NextRequest) {
     .from('sites')
     .insert({
       name, url,
-      client_id:        client_id        || null,
-      platform:         platform         || 'custom',
-      hosting_type:     hosting_type     || 'client',
-      hosting_provider: hosting_provider || null,
-      server_account:   server_account   || null,
-      group_id:         group_id         || null,
-      notes:            notes            || null,
+      client_id:          client_id          || null,
+      platform:           platform           || 'custom',
+      hosting_type:       hosting_type       || 'client',
+      hosting_provider:   hosting_provider   || null,
+      server_account:     server_account     || null,
+      group_id:           group_id           || null,
+      notes:              notes              || null,
+      discord_channel_id: discord_channel_id || null,
     })
     .select()
     .single()

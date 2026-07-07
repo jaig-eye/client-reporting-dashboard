@@ -27,6 +27,7 @@ interface Site {
   consecutive_failures: number
   client_id:        string | null
   group_id:         string | null
+  discord_channel_id: string | null
   clients:          { id: string; name: string } | null
   site_groups:      { id: string; name: string } | null
 }
@@ -37,6 +38,7 @@ interface Client { id: string; name: string; website: string | null }
 const EMPTY_FORM = {
   name: '', url: '', client_id: '', platform: 'custom', hosting_type: 'client',
   hosting_provider: '', server_account: '', group_id: '', status: 'active', notes: '',
+  discord_channel_id: '',
 }
 
 function StatusDot({ isUp, status }: { isUp: boolean | null; status: string }) {
@@ -225,16 +227,17 @@ export default function SitesPage() {
   function openEdit(site: Site) {
     setEditSite(site)
     setForm({
-      name:             site.name,
-      url:              site.url,
-      client_id:        site.client_id ?? '',
-      platform:         site.platform,
-      hosting_type:     site.hosting_type,
-      hosting_provider: site.hosting_provider ?? '',
-      server_account:   site.server_account   ?? '',
-      group_id:         site.group_id          ?? '',
-      status:           site.status,
-      notes:            site.notes             ?? '',
+      name:               site.name,
+      url:                site.url,
+      client_id:          site.client_id          ?? '',
+      platform:           site.platform,
+      hosting_type:       site.hosting_type,
+      hosting_provider:   site.hosting_provider   ?? '',
+      server_account:     site.server_account     ?? '',
+      group_id:           site.group_id            ?? '',
+      status:             site.status,
+      notes:              site.notes               ?? '',
+      discord_channel_id: site.discord_channel_id ?? '',
     })
     setSaveError('')
     setModalOpen(true)
@@ -244,16 +247,17 @@ export default function SitesPage() {
     setSaving(true)
     setSaveError('')
     const body = {
-      name:             form.name.trim(),
-      url:              form.url.trim(),
-      client_id:        form.client_id        || null,
-      platform:         form.platform,
-      hosting_type:     form.hosting_type,
-      hosting_provider: form.hosting_provider || null,
-      server_account:   form.server_account   || null,
-      group_id:         form.group_id         || null,
-      status:           form.status,
-      notes:            form.notes            || null,
+      name:               form.name.trim(),
+      url:                form.url.trim(),
+      client_id:          form.client_id          || null,
+      platform:           form.platform,
+      hosting_type:       form.hosting_type,
+      hosting_provider:   form.hosting_provider   || null,
+      server_account:     form.server_account     || null,
+      group_id:           form.group_id           || null,
+      status:             form.status,
+      notes:              form.notes              || null,
+      discord_channel_id: form.discord_channel_id || null,
     }
     const url    = editSite ? `/api/admin/sites/${editSite.id}` : '/api/admin/sites'
     const method = editSite ? 'PATCH' : 'POST'
@@ -573,6 +577,15 @@ export default function SitesPage() {
               <div>
                 <label style={labelStyle}>Notes</label>
                 <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+              </div>
+              <div>
+                <label style={labelStyle}>Discord Channel ID <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional — DOWN alerts post here)</span></label>
+                <input
+                  value={form.discord_channel_id}
+                  onChange={e => setForm(f => ({ ...f, discord_channel_id: e.target.value }))}
+                  placeholder="e.g. 1234567890123456789"
+                  style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                />
               </div>
               {saveError && <p style={{ color: 'var(--red)', fontSize: '0.8125rem', margin: 0 }}>{saveError}</p>}
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>

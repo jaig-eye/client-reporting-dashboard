@@ -263,8 +263,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [imageGen,    setImageGen]    = useState(false)
   const [imagePrompt, setImagePrompt] = useState('')
 
-  // Pill: Blog Posts vs Service Pages
-  const [activePill, setActivePill] = useState<'blog' | 'service'>('blog')
+  // Pill: Blog Posts / Service Pages / Service Area Pages / Regular Pages
+  const [activePill, setActivePill] = useState<'blog' | 'service_page' | 'service' | 'regular_page'>('blog')
+
+  // Per-type enable flags (service_page / regular_page — blog always on, service_area has its own toggle)
+  const [generateServicePages,  setGenerateServicePages]  = useState(false)
+  const [generateRegularPages,  setGenerateRegularPages]  = useState(false)
+  const [typeToggleSaving, setTypeToggleSaving] = useState(false)
 
   // Pipeline data
   const [topics,      setTopics]      = useState<Topic[]>([])
@@ -375,6 +380,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         setScheduleOpen(false)
         setImageGen(!!(d.content_image_generation as boolean | null))
         setImagePrompt(String(d.content_image_prompt ?? ''))
+        setGenerateServicePages(!!(d.generate_service_pages as boolean | null))
+        setGenerateRegularPages(!!(d.generate_regular_pages as boolean | null))
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
         setSchedLoading(false)
@@ -521,6 +528,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setSchedSaving(false)
     if (res.ok) { setSchedSaved(true); setTimeout(() => setSchedSaved(false), 2500) }
     else { const d = await res.json(); setSchedError(d.error || 'Failed to save') }
+  }
+
+  async function saveTypeToggles() {
+    setTypeToggleSaving(true)
+    const res = await fetch('/api/admin/content/client-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, generate_service_pages: generateServicePages, generate_regular_pages: generateRegularPages }),
+    })
+    setTypeToggleSaving(false)
+    if (res.ok) showToast('Saved')
+    else showToast((await res.json()).error || 'Failed to save', 'error')
   }
 
   // ── Topic actions ──────────────────────────────────────────────────────────
@@ -847,32 +866,43 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-      {/* ── Pill switcher: Blog Posts / Service Pages ───────────────────── */}
+      {/* ── Pill switcher: 4 content types ─────────────────────────────── */}
       <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)' }}>
-        {(['blog', 'service'] as const).map(pill => (
+        {([
+          { id: 'blog',         label: 'Blog Posts' },
+          { id: 'service_page', label: 'Service Pages' },
+          { id: 'service',      label: 'SA Pages' },
+          { id: 'regular_page', label: 'Regular Pages' },
+        ] as const).map(({ id, label }) => (
           <button
-            key={pill}
-            onClick={() => setActivePill(pill)}
+            key={id}
+            onClick={() => setActivePill(id)}
             style={{
               padding: '0.3125rem 0.875rem',
               fontSize: '0.8125rem',
-              fontWeight: activePill === pill ? 600 : 400,
+              fontWeight: activePill === id ? 600 : 400,
               borderRadius: 6,
               border: 'none',
               cursor: 'pointer',
-              background: activePill === pill ? 'var(--bg-surface, #fff)' : 'transparent',
-              color: activePill === pill ? 'var(--text-primary)' : 'var(--text-muted)',
-              boxShadow: activePill === pill ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              background: activePill === id ? 'var(--bg-surface, #fff)' : 'transparent',
+              color: activePill === id ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: activePill === id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               transition: 'all 0.15s',
               whiteSpace: 'nowrap',
             }}
           >
-            {pill === 'blog' ? 'Blog Posts' : 'Service Pages'}
-            {pill === 'blog' && !!schedule.auto_generate && (
+            {label}
+            {id === 'blog' && !!schedule.auto_generate && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
             )}
-            {pill === 'service' && (!!saSettings.auto_generate) && (
+            {id === 'service' && (!!saSettings.auto_generate) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
+            )}
+            {id === 'service_page' && generateServicePages && (
+              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>On</span>
+            )}
+            {id === 'regular_page' && generateRegularPages && (
+              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>On</span>
             )}
           </button>
         ))}
@@ -1596,7 +1626,44 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       </> /* end activePill === 'blog' */}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION D — SERVICE AREA PAGES (pill: service)
+          SECTION — SERVICE PAGES (pill: service_page)
+      ═══════════════════════════════════════════════════════════════════ */}
+      {activePill === 'service_page' && (
+        <div className="card p-5">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Service Pages</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Enable automatic generation of service-focused landing pages for this client.
+                Each page targets a specific service and is optimized for conversion.
+              </p>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                {generateServicePages ? 'Enabled' : 'Disabled'}
+              </span>
+              <input
+                type="checkbox"
+                checked={generateServicePages}
+                onChange={e => setGenerateServicePages(e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveTypeToggles}
+              disabled={typeToggleSaving}
+            >
+              {typeToggleSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION — SERVICE AREA PAGES (pill: service)
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'service' && saLoading && (
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading service area settings…</p>
@@ -2225,6 +2292,43 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION — REGULAR PAGES (pill: regular_page)
+      ═══════════════════════════════════════════════════════════════════ */}
+      {activePill === 'regular_page' && (
+        <div className="card p-5">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Regular Pages</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Enable automatic generation of general-purpose pages for this client.
+                Each page is created from a custom focus you define per topic (e.g. About Us, FAQ, Contact).
+              </p>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                {generateRegularPages ? 'Enabled' : 'Disabled'}
+              </span>
+              <input
+                type="checkbox"
+                checked={generateRegularPages}
+                onChange={e => setGenerateRegularPages(e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveTypeToggles}
+              disabled={typeToggleSaving}
+            >
+              {typeToggleSaving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       )}

@@ -61,6 +61,8 @@ export async function PUT(request: NextRequest) {
     'metric_alert_window_days',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
+    'service_page_master_prompt',
+    'regular_page_master_prompt',
     'payment_sound_url',
     'discord_ops_channel_id',
     'consolidated_email_notifications',

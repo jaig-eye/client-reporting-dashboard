@@ -22,6 +22,7 @@ interface SiteRow {
   is_up:                boolean | null
   consecutive_failures: number
   client_id:            string | null
+  discord_channel_id:   string | null
   clients:              { name: string; discord_channel_id: string | null } | null
 }
 
@@ -78,7 +79,7 @@ export async function GET(request: NextRequest) {
       .select('discord_bot_token, notification_email, agency_name')
       .single(),
     db.from('sites')
-      .select('id, name, url, status, is_up, consecutive_failures, client_id, clients(name, discord_channel_id)')
+      .select('id, name, url, status, is_up, consecutive_failures, client_id, discord_channel_id, clients(name, discord_channel_id)')
       .eq('status', 'active'),
   ])
 
@@ -184,8 +185,8 @@ export async function GET(request: NextRequest) {
           link_url:    `/admin/sites`,
         })
 
-        const msg = `🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date().toUTCString()}`
-        const channelId = site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+        const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date().toUTCString()}`
+        const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
         await sendDiscordMessage(botToken, channelId, msg)
 
         if (alertEmail) {
@@ -224,7 +225,7 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          const channelId = site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+          const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
           await sendDiscordMessage(botToken, channelId, msg)
 
           if (alertEmail) {

@@ -37,19 +37,23 @@ type TopicData = {
   competitors_researched: { keyword: string; urls: string[]; headings: Record<string, string[]> } | null
   edit_notes:             string | null
   silo_id:                string | null
+  content_type:           string | null
+  custom_focus:           string | null
 }
 
 type AgencySettings = {
-  ai_provider:           string | null
-  ai_model:              string | null
-  ai_api_key:            string
-  openai_api_key:        string | null
-  agency_name:           string | null
-  notification_email:    string | null
-  notify_post_generated: boolean | null
-  notify_post_uploaded:  boolean | null
-  master_writing_prompt: string | null
-  discord_bot_token:     string | null
+  ai_provider:                string | null
+  ai_model:                   string | null
+  ai_api_key:                 string
+  openai_api_key:             string | null
+  agency_name:                string | null
+  notification_email:         string | null
+  notify_post_generated:      boolean | null
+  notify_post_uploaded:       boolean | null
+  master_writing_prompt:      string | null
+  service_page_master_prompt: string | null
+  regular_page_master_prompt: string | null
+  discord_bot_token:          string | null
 }
 
 // ─── Sitemap fetching ─────────────────────────────────────────────────────────
@@ -477,9 +481,13 @@ async function runTopicGeneration({
       clientSettings?.post_structure as string | undefined
     )
 
-    // ── Master writing prompt ──────────────────────────────────────────────────
+    // ── Master writing prompt — pick per content_type ─────────────────────────
     let masterPreamble: string | null = null
-    const rawMasterPrompt = agencySettings.master_writing_prompt
+    const contentType = topicData.content_type ?? 'blog'
+    const rawMasterPrompt =
+      contentType === 'service_page' ? (agencySettings.service_page_master_prompt || agencySettings.master_writing_prompt)
+      : contentType === 'regular_page' ? (agencySettings.regular_page_master_prompt || agencySettings.master_writing_prompt)
+      : agencySettings.master_writing_prompt
     if (rawMasterPrompt && clientSettings) {
       const { data: cl } = await db.from('clients').select('name').eq('id', effectiveClientId).single()
       const clientName = (cl as { name?: string } | null)?.name ?? ''
@@ -634,11 +642,16 @@ LINKING RULES:
         '• Confirm compliance before finalising output'
       : ''
 
-    const userPrompt = `Write a detailed, SEO-optimized blog post on the following topic:
+    const contentTypeLabel =
+      contentType === 'service_page' ? 'service page'
+      : contentType === 'regular_page' ? 'page'
+      : 'blog post'
+    const userPrompt = `Write a detailed, SEO-optimized ${contentTypeLabel} on the following topic:
 
 Title: ${topicData.topic}
 Target keyword: ${topicData.target_keyword || 'derive from topic'}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
+${contentType === 'regular_page' && topicData.custom_focus ? `Page focus: ${topicData.custom_focus}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
 ${siloSection}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
@@ -711,6 +724,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       seo_score:           seoScore,
       schema_type:         brief?.schema_type ?? null,
       excerpt:             parsed.metaDescription || null,
+      content_type:        topicData.content_type ?? 'blog',
+      ...(topicData.custom_focus ? { custom_focus: topicData.custom_focus } : {}),
       // Only include silo_id when set — column requires migration 149 (content_silos)
       ...(topicData.silo_id ? { silo_id: topicData.silo_id } : {}),
     }).select('id').maybeSingle()
@@ -809,7 +824,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, discord_bot_token')
+    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token')
     .single()
 
   if (!agencySettings?.ai_api_key) {
@@ -820,7 +835,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus')
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
