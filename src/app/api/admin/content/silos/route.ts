@@ -171,8 +171,31 @@ export async function PATCH(request: NextRequest) {
   if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
     return NextResponse.json({ error: `Invalid content_type. Must be one of: ${VALID_CONTENT_TYPES.join(', ')}` }, { status: 400 })
 
+  // Validate cluster_keywords shape — each keyword string is sanitized to prevent prompt injection
+  if (body.cluster_keywords !== undefined) {
+    if (!Array.isArray(body.cluster_keywords))
+      return NextResponse.json({ error: 'cluster_keywords must be an array' }, { status: 400 })
+    body.cluster_keywords = (body.cluster_keywords as ClusterKeyword[]).map(k => ({
+      ...k,
+      keyword: String(k.keyword ?? '').replace(/[\r\n"\\]/g, ' ').trim().slice(0, 200),
+    }))
+  }
+
+  // pending_links is written atomically via the append_silo_pending_link RPC.
+  // Direct PATCH is allowed only for clearing/editing the array (admin use); validate shape.
+  if (body.pending_links !== undefined) {
+    if (!Array.isArray(body.pending_links))
+      return NextResponse.json({ error: 'pending_links must be an array' }, { status: 400 })
+    for (const item of body.pending_links as unknown[]) {
+      if (typeof item !== 'object' || item === null || typeof (item as Record<string, unknown>).title !== 'string')
+        return NextResponse.json({ error: 'Each pending_links entry must have a string title' }, { status: 400 })
+    }
+  }
+
+  // pending_links writes go through the append_silo_pending_link RPC for atomic appends.
+  // Direct PATCH of pending_links is intentionally excluded to prevent races.
   const allowed = ['name', 'hub_page_url', 'hub_page_title', 'central_entity', 'description', 'section', 'status',
-    'content_type', 'target_keyword', 'cluster_keywords', 'target_exists', 'priority', 'pending_links']
+    'content_type', 'target_keyword', 'cluster_keywords', 'target_exists', 'priority']
   const update: Record<string, unknown> = {}
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {

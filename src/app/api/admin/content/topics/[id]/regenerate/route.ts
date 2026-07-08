@@ -25,20 +25,21 @@ export async function POST(
   // Fetch original topic
   const { data: original, error: fetchErr } = await db
     .from('content_topics')
-    .select('id, client_id, target_publish_date')
+    .select('id, client_id, target_publish_date, silo_id')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (fetchErr || !original) {
     return NextResponse.json({ error: 'Topic not found' }, { status: 404 })
   }
 
-  // Generate 1 new topic idea for the same publish date
+  // Generate 1 new topic idea for the same publish date, preserving silo context
   const result = await generateTopicsForClient(
     db,
     original.client_id as string,
     1,
     original.target_publish_date as string | undefined,
+    { siloId: (original.silo_id as string | null) ?? undefined },
   )
 
   if (result.error || result.topics.length === 0) {
@@ -52,7 +53,7 @@ export async function POST(
     .from('content_topics')
     .select('topic, target_keyword, search_intent, secondary_keywords, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level')
     .eq('id', newId)
-    .single()
+    .maybeSingle()
 
   if (!newRow) {
     return NextResponse.json({ error: 'Failed to read generated topic' }, { status: 500 })
@@ -77,7 +78,7 @@ export async function POST(
       })
       .eq('id', id)
       .select()
-      .single(),
+      .maybeSingle(),
     db.from('content_topics').delete().eq('id', newId),
   ])
 

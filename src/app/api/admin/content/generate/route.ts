@@ -589,7 +589,8 @@ async function runTopicGeneration({
         type ClusterKw = { keyword: string; status: string }
         const uncoveredKws = ((silo.cluster_keywords ?? []) as ClusterKw[])
           .filter(k => k.status === 'planned')
-          .map(k => `"${k.keyword}"`)
+          .map(k => `"${String(k.keyword ?? '').replace(/[\r\n"\\]/g, ' ').trim().slice(0, 120)}"`)
+          .filter(k => k.length > 2)
           .slice(0, 8)
 
         const crossClusterSection = uncoveredKws.length > 0
@@ -772,7 +773,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       let clientName = ''
       let discordChannelId: string | null = null
       try {
-        const { data: cl } = await db.from('clients').select('name, discord_channel_id').eq('id', effectiveClientId).single()
+        const { data: cl } = await db.from('clients').select('name, discord_channel_id').eq('id', effectiveClientId).maybeSingle()
         clientName = (cl as { name?: string } | null)?.name ?? ''
         discordChannelId = (cl as { discord_channel_id?: string | null } | null)?.discord_channel_id ?? null
       } catch {}
@@ -836,7 +837,7 @@ export async function POST(request: NextRequest) {
   const { data: agencySettings } = await db
     .from('agency_settings')
     .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token')
-    .single()
+    .maybeSingle()
 
   if (!agencySettings?.ai_api_key) {
     return NextResponse.json({ error: 'AI not configured. Add an API key in Agency Settings.' }, { status: 400 })
@@ -854,7 +855,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Idempotency guard
-    const { data: existing } = await db.from('content_topics').select('post_id').eq('id', topic_id).single()
+    const { data: existing } = await db.from('content_topics').select('post_id').eq('id', topic_id).maybeSingle()
     if ((existing as { post_id: string | null } | null)?.post_id) {
       return NextResponse.json({ ok: true, postId: (existing as { post_id: string }).post_id, skipped: true })
     }
@@ -1064,7 +1065,7 @@ export async function POST(request: NextRequest) {
       seo_score:        seoScore,
       schema_type:      null,
       excerpt:          parsed.metaDescription || null,
-    }).select('id').single()
+    }).select('id').maybeSingle()
     if (insertError) {
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })
     }
