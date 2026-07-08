@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { MetaAdRow, GoogleAdRow } from '@/app/api/public/ads/route'
+import type { MetaAdRow, GoogleAdRow } from '@/lib/ads-library'
 
 function fmtMoney(n: number): string {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -18,7 +18,7 @@ function fmtCtr(clicks: number, impressions: number): string {
   return ((clicks / impressions) * 100).toFixed(2) + '%'
 }
 
-function isActive(status: string): boolean {
+export function isAdActive(status: string): boolean {
   const s = (status ?? '').toUpperCase()
   return s === 'ACTIVE' || s === 'ENABLED'
 }
@@ -26,7 +26,7 @@ function isActive(status: string): boolean {
 export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
   const [expanded, setExpanded] = useState(false)
 
-  const active = isActive(ad.ad_status)
+  const active = isAdActive(ad.ad_status)
 
   const previewUrl = ad.platform === 'meta'
     ? (ad.thumbnail_url ?? ad.image_url ?? null)

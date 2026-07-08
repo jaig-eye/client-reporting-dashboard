@@ -210,7 +210,7 @@ export default async function ClientDetailPage({
   )
   if (contentBcConn) connByType.set('bigcommerce', contentBcConn)
   const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-  const adsLibraryUrl  = `${appUrl}/share/ads?token=${client.dashboard_token}`
+  const adsLibraryUrl  = appUrl ? `${appUrl}/share/ads?token=${client.dashboard_token}` : null
 
   function tabUrl(tab: string) {
     return `/admin/clients/${id}?tab=${tab}`
@@ -239,7 +239,7 @@ export default async function ClientDetailPage({
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>/admin/clients/{id}</p>
         </div>
         <div className="flex gap-2">
-          <CopyAdLibraryButton url={adsLibraryUrl} />
+          {adsLibraryUrl && <CopyAdLibraryButton url={adsLibraryUrl} />}
           <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
             Preview Dashboard →
           </Link>

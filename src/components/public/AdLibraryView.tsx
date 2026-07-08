@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import type { MetaAdRow, GoogleAdRow } from '@/app/api/public/ads/route'
-import { AdLibraryCard } from './AdLibraryCard'
+import type { MetaAdRow, GoogleAdRow } from '@/lib/ads-library'
+import { AdLibraryCard, isAdActive } from './AdLibraryCard'
 
 type Platform     = 'all' | 'meta' | 'google'
 type StatusFilter = 'all' | 'active' | 'paused'
@@ -10,11 +10,6 @@ type SortKey      = 'spend' | 'impressions' | 'ctr'
 
 function ctr(ad: MetaAdRow | GoogleAdRow): number {
   return ad.impressions > 0 ? ad.clicks / ad.impressions : 0
-}
-
-function isActive(ad: MetaAdRow | GoogleAdRow): boolean {
-  const s = (ad.ad_status ?? '').toUpperCase()
-  return s === 'ACTIVE' || s === 'ENABLED'
 }
 
 function pill(active: boolean): React.CSSProperties {
@@ -39,8 +34,8 @@ export function AdLibraryView({ meta, google }: { meta: MetaAdRow[]; google: Goo
     let list: (MetaAdRow | GoogleAdRow)[] = []
     if (platform === 'all' || platform === 'meta')   list = list.concat(meta)
     if (platform === 'all' || platform === 'google') list = list.concat(google)
-    if (status === 'active') list = list.filter(isActive)
-    if (status === 'paused') list = list.filter(a => !isActive(a))
+    if (status === 'active') list = list.filter(a => isAdActive(a.ad_status))
+    if (status === 'paused') list = list.filter(a => !isAdActive(a.ad_status))
     if (sort === 'spend')       list = [...list].sort((a, b) => b.spend - a.spend)
     if (sort === 'impressions') list = [...list].sort((a, b) => b.impressions - a.impressions)
     if (sort === 'ctr')         list = [...list].sort((a, b) => ctr(b) - ctr(a))
