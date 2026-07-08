@@ -33,6 +33,7 @@ import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
+import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -208,7 +209,8 @@ export default async function ClientDetailPage({
       .map(c => [c.connector.type, c] as [string, typeof c])
   )
   if (contentBcConn) connByType.set('bigcommerce', contentBcConn)
-  const dashUrl = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
+  const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
+  const adsLibraryUrl  = `${appUrl}/share/ads?token=${client.dashboard_token}`
 
   function tabUrl(tab: string) {
     return `/admin/clients/${id}?tab=${tab}`
@@ -237,6 +239,7 @@ export default async function ClientDetailPage({
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>/admin/clients/{id}</p>
         </div>
         <div className="flex gap-2">
+          <CopyAdLibraryButton url={adsLibraryUrl} />
           <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
             Preview Dashboard →
           </Link>
