@@ -8,6 +8,14 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 
+type ClusterKeyword = {
+  id: string
+  keyword: string
+  title?: string | null
+  status: 'planned' | 'published'
+  priority: number
+}
+
 type SiloRow = {
   id: string
   client_id: string
@@ -18,9 +26,16 @@ type SiloRow = {
   description: string | null
   section: string
   status: string
-  pending_links: Array<{ url: string; title: string; anchor_suggestion: string; added_at: string }>
+  content_type: string
+  target_keyword: string | null
+  cluster_keywords: ClusterKeyword[]
+  target_exists: boolean
+  priority: number
+  pending_links: Array<{ post_id?: string; url?: string; title: string; added_at: string }>
   created_at: string
 }
+
+const VALID_CONTENT_TYPES = ['blog', 'service_page', 'regular_page'] as const
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -32,12 +47,21 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const { data: silos, error } = await db
+  const contentType = request.nextUrl.searchParams.get('content_type')
+
+  let query = db
     .from('content_silos')
     .select('*')
     .eq('client_id', clientId)
     .neq('status', 'archived')
+    .order('priority', { ascending: true })
     .order('created_at', { ascending: true })
+
+  if (contentType && VALID_CONTENT_TYPES.includes(contentType as typeof VALID_CONTENT_TYPES[number])) {
+    query = query.eq('content_type', contentType)
+  }
+
+  const { data: silos, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -83,22 +107,35 @@ export async function POST(request: NextRequest) {
     central_entity?: string | null
     description?: string | null
     section?: string
+    content_type?: string
+    target_keyword?: string | null
+    cluster_keywords?: ClusterKeyword[]
+    target_exists?: boolean
+    priority?: number
   }
 
   if (!body.client_id || !body.name)
     return NextResponse.json({ error: 'Missing client_id or name' }, { status: 400 })
 
+  if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
+    return NextResponse.json({ error: `Invalid content_type. Must be one of: ${VALID_CONTENT_TYPES.join(', ')}` }, { status: 400 })
+
   const db = createAdminClient()
   const { data, error } = await db
     .from('content_silos')
     .insert({
-      client_id:      body.client_id,
-      name:           body.name.trim(),
-      hub_page_url:   body.hub_page_url   ?? null,
-      hub_page_title: body.hub_page_title ?? null,
-      central_entity: body.central_entity ?? null,
-      description:    body.description    ?? null,
-      section:        body.section        ?? 'core',
+      client_id:        body.client_id,
+      name:             body.name.trim(),
+      hub_page_url:     body.hub_page_url     ?? null,
+      hub_page_title:   body.hub_page_title   ?? null,
+      central_entity:   body.central_entity   ?? null,
+      description:      body.description      ?? null,
+      section:          body.section          ?? 'core',
+      content_type:     body.content_type     ?? 'blog',
+      target_keyword:   body.target_keyword   ?? null,
+      cluster_keywords: body.cluster_keywords ?? [],
+      target_exists:    body.target_exists    ?? true,
+      priority:         body.priority         ?? 100,
     })
     .select()
     .single()
@@ -123,9 +160,19 @@ export async function PATCH(request: NextRequest) {
     description: string | null
     section: string
     status: string
+    content_type: string
+    target_keyword: string | null
+    cluster_keywords: ClusterKeyword[]
+    target_exists: boolean
+    priority: number
+    pending_links: unknown[]
   }>
 
-  const allowed = ['name', 'hub_page_url', 'hub_page_title', 'central_entity', 'description', 'section', 'status']
+  if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
+    return NextResponse.json({ error: `Invalid content_type. Must be one of: ${VALID_CONTENT_TYPES.join(', ')}` }, { status: 400 })
+
+  const allowed = ['name', 'hub_page_url', 'hub_page_title', 'central_entity', 'description', 'section', 'status',
+    'content_type', 'target_keyword', 'cluster_keywords', 'target_exists', 'priority', 'pending_links']
   const update: Record<string, unknown> = {}
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {

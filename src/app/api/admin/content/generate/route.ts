@@ -563,7 +563,7 @@ async function runTopicGeneration({
     if (topicData.silo_id) {
       const { data: silo, error: siloErr } = await db
         .from('content_silos')
-        .select('name, hub_page_url, hub_page_title, central_entity')
+        .select('name, hub_page_url, hub_page_title, central_entity, cluster_keywords')
         .eq('id', topicData.silo_id)
         .maybeSingle()
       if (siloErr) console.error('[generate] silo fetch error for topic', topicData.silo_id, ':', siloErr.message)
@@ -585,6 +585,17 @@ async function runTopicGeneration({
             `  - "${s.title}" at ${s.published_url} — covers: ${s.target_keyword ?? 'n/a'}`)
           .join('\n')
 
+        // Uncovered cluster keywords — mention or link where contextually natural
+        type ClusterKw = { keyword: string; status: string }
+        const uncoveredKws = ((silo.cluster_keywords ?? []) as ClusterKw[])
+          .filter(k => k.status === 'planned')
+          .map(k => `"${k.keyword}"`)
+          .slice(0, 8)
+
+        const crossClusterSection = uncoveredKws.length > 0
+          ? `\nUncovered cluster topics in this silo (mention or link where contextually natural — these are future pages that will exist):\n${uncoveredKws.map(k => `  - ${k}`).join('\n')}`
+          : ''
+
         siloSection = `
 TOPICAL SILO — INTERNAL LINKING STRATEGY:
 
@@ -593,7 +604,7 @@ Hub page (MUST include as an internal link in the first or second body section):
   URL: ${silo.hub_page_url}
   Anchor text: use the central entity name or a specific descriptive phrase — NOT "click here" or "learn more"
   Central entity: ${silo.central_entity ?? silo.name}
-${siblingLines ? `\nPublished cluster articles in this silo (link to 1–3 where this article shares a named entity, concept, or step — reason about semantic relevance, not just proximity):\n${siblingLines}` : ''}
+${siblingLines ? `\nPublished cluster articles in this silo (link to 1–3 where this article shares a named entity, concept, or step — reason about semantic relevance, not just proximity):\n${siblingLines}` : ''}${crossClusterSection}
 LINKING RULES:
 - Link to the hub page once (mandatory).
 - Cross-link to sibling articles ONLY when the reader of THIS article would genuinely benefit from reading THAT one — shared entity, shared step, natural "next question."

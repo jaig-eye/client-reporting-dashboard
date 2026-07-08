@@ -314,7 +314,7 @@ export async function generateTopicsForClient(
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
-      .select('id, name, hub_page_url, hub_page_title, central_entity, description')
+      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type')
       .eq('id', opts.siloId)
       .maybeSingle()
     if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
@@ -335,11 +335,34 @@ export async function generateTopicsForClient(
         .map((c: { title: string | null; target_keyword: string | null }) => `  - "${c.title}" — keyword: ${c.target_keyword ?? 'n/a'}`)
         .join('\n')
 
+      // Hub-first block: when hub page doesn't exist yet, inject as FIRST topic instruction
+      const hubFirstBlock = (silo.target_exists === false && silo.target_keyword)
+        ? `
+CRITICAL — HUB PAGE PRIORITY:
+The hub/pillar page does not exist yet. The FIRST topic in your response MUST target:
+  keyword: "${silo.target_keyword}"
+  This topic will be used to create the hub page before any cluster articles.
+  Make it a comprehensive, high-authority page — the definitive resource for this entity.
+`
+        : ''
+
+      // Cluster keyword seeding: inject planned keywords the AI should prioritize
+      type ClusterKw = { id?: string; keyword: string; title?: string | null; status: string; priority?: number }
+      const plannedKws = ((silo.cluster_keywords ?? []) as ClusterKw[])
+        .filter(k => k.status === 'planned')
+        .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+        .slice(0, 12)
+
+      const clusterSeedText = plannedKws.length > 0
+        ? `\nDefined cluster keywords not yet covered (PRIORITIZE topics from this list — generate topics targeting these keywords):\n${plannedKws.map(k => `  - "${k.keyword}"${k.title ? ` (suggested title: "${k.title}")` : ''}`).join('\n')}`
+        : ''
+
       siloPromptBlock = `
-TOPICAL SILO — HUB + CLUSTER STRATEGY:
+${hubFirstBlock}TOPICAL SILO — HUB + CLUSTER STRATEGY:
 Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
 Central entity: ${silo.central_entity ?? silo.name}${silo.description ? `\nContext: ${silo.description}` : ''}
 ${existingClusterText ? `\nAlready-published cluster articles in this silo (DO NOT duplicate these intents):\n${existingClusterText}` : ''}
+${clusterSeedText}
 
 SILO RULES (override any conflicting instructions above):
 1. Every topic must be a distinct subtopic or attribute of the central entity.

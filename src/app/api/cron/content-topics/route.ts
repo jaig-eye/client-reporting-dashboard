@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead, auto_approve_topics, auto_push_posts')
+    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -145,20 +145,24 @@ export async function GET(request: NextRequest) {
       client_id,
       schedule_frequency,
       schedule_day_of_week,
-      topics_per_run      = 5,
-      posts_per_run       = 2,
-      weeks_ahead         = 1,
-      auto_approve_topics = false,
-      auto_push_posts     = false,
+      topics_per_run        = 5,
+      posts_per_run         = 2,
+      weeks_ahead           = 1,
+      auto_approve_topics   = false,
+      auto_push_posts       = false,
+      generate_service_pages = false,
+      generate_regular_pages = false,
     } = row as {
-      client_id:            string
-      schedule_frequency:   string | null
-      schedule_day_of_week: number | null
-      topics_per_run:       number
-      posts_per_run:        number
-      weeks_ahead:          number
-      auto_approve_topics:  boolean
-      auto_push_posts:      boolean
+      client_id:              string
+      schedule_frequency:     string | null
+      schedule_day_of_week:   number | null
+      topics_per_run:         number
+      posts_per_run:          number
+      weeks_ahead:            number
+      auto_approve_topics:    boolean
+      auto_push_posts:        boolean
+      generate_service_pages: boolean
+      generate_regular_pages: boolean
     }
 
     const frequency = (schedule_frequency as string | null) ?? globalFreq
@@ -174,28 +178,56 @@ export async function GET(request: NextRequest) {
       return d > 0 && d <= leadWindow
     })
 
-    // ── Silo auto-selection: pick least-covered active silo once per client ──
+    // ── Silo auto-selection: pick least-covered active silo, filtered by active content types ──
     let autoSiloId: string | undefined
+    let autoSiloTargetExists: boolean | undefined
+    let autoSiloTargetKeyword: string | undefined
     {
+      const activeContentTypes: string[] = ['blog']
+      if (generate_service_pages) activeContentTypes.push('service_page')
+      if (generate_regular_pages) activeContentTypes.push('regular_page')
+
       const { data: activeSilos } = await db
         .from('content_silos')
-        .select('id')
+        .select('id, content_type, target_exists, target_keyword, priority')
         .eq('client_id', client_id)
         .eq('status', 'active')
+        .in('content_type', activeContentTypes)
+        .order('priority', { ascending: true })
 
       if (activeSilos && activeSilos.length > 0) {
-        const siloIds = (activeSilos as { id: string }[]).map(s => s.id)
+        type SiloCandidate = { id: string; content_type: string; target_exists: boolean; target_keyword: string | null; priority: number }
+        const siloList = activeSilos as SiloCandidate[]
+        const siloIds  = siloList.map(s => s.id)
+
         const { data: clusterPosts } = await db
           .from('content_posts')
           .select('silo_id')
           .in('silo_id', siloIds)
           .in('status', ['for_review', 'approved', 'draft_saved', 'published', 'pending'])
+
         const counts = new Map<string, number>(siloIds.map(id => [id, 0]))
         for (const p of (clusterPosts ?? []) as { silo_id: string }[]) {
           counts.set(p.silo_id, (counts.get(p.silo_id) ?? 0) + 1)
         }
-        autoSiloId = Array.from(counts.entries()).sort((a, b) => a[1] - b[1])[0]?.[0]
-        if (autoSiloId) console.log(`[content-topics cron] auto-selected silo ${autoSiloId} for ${client_id} (${counts.get(autoSiloId) ?? 0} posts)`)
+
+        // Sort by priority ASC, then post count ASC (least-covered within same priority tier)
+        const ranked = [...siloList].sort((a, b) => {
+          const priDiff = a.priority - b.priority
+          if (priDiff !== 0) return priDiff
+          return (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0)
+        })
+
+        const chosen = ranked[0]
+        if (chosen) {
+          autoSiloId            = chosen.id
+          autoSiloTargetExists  = chosen.target_exists
+          autoSiloTargetKeyword = chosen.target_keyword ?? undefined
+          console.log(`[content-topics cron] auto-selected silo ${autoSiloId} (${chosen.content_type}, priority=${chosen.priority}, posts=${counts.get(autoSiloId) ?? 0}) for ${client_id}`)
+          if (!chosen.target_exists && chosen.target_keyword) {
+            console.log(`[content-topics cron] silo ${autoSiloId} hub not yet created — target_keyword: "${chosen.target_keyword}"`)
+          }
+        }
       }
     }
 
@@ -218,6 +250,21 @@ export async function GET(request: NextRequest) {
           entry.items.push(...result.topics)
           topicAccum.set(client_id, entry)
           topicsGenerated.push(`${client_id}:${slot}`)
+
+          // Flip target_exists=true if we just generated hub topic for this silo
+          if (autoSiloId && autoSiloTargetExists === false && autoSiloTargetKeyword) {
+            const hubTopic = result.topics.find(t =>
+              t.target_keyword?.toLowerCase().includes(autoSiloTargetKeyword!.toLowerCase()) ||
+              autoSiloTargetKeyword!.toLowerCase().includes((t.target_keyword ?? '').toLowerCase())
+            )
+            if (hubTopic) {
+              await db.from('content_silos').update({ target_exists: true }).eq('id', autoSiloId)
+              console.log(`[content-topics cron] flipped target_exists=true for silo ${autoSiloId} (hub topic: "${hubTopic.topic}")`)
+              autoSiloTargetExists = true
+            } else {
+              console.warn(`[content-topics cron] silo ${autoSiloId} hub not found in generated topics — target_exists not flipped`)
+            }
+          }
         }
       } catch (e) {
         console.error(`[content-topics cron] Topic generation failed for client ${client_id} slot ${slot}:`, e)

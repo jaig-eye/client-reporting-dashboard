@@ -37,12 +37,10 @@ export async function POST(
   const { id } = await params
   const db = createAdminClient()
 
-  // silo_id is intentionally excluded: migration 149 (content_silos) has not been
-  // applied to production yet. Selecting a non-existent column causes PostgREST to
-  // error, which was the root cause of the "Post not found" 404 on auto-push.
+  // silo_id added after migration 164 (content_silos enhancements) applied to production
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id')
     .eq('id', id)
     .maybeSingle()
 
@@ -461,10 +459,12 @@ export async function POST(
             headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
             body:    JSON.stringify({ content: updatedContent, status: hubStatus }),
           })
-          const prev = Array.isArray(silo.pending_links) ? silo.pending_links : []
-          await db.from('content_silos').update({
-            pending_links: [...prev, { url: clusterUrl, title: clusterTitle, added_at: new Date().toISOString() }],
-          }).eq('id', String(p.silo_id))
+          // Atomic append via RPC — prevents race condition when two cluster posts
+          // from the same silo are pushed in the same batch (fetch-spread-update would overwrite)
+          await db.rpc('append_silo_pending_link', {
+            silo_id: String(p.silo_id),
+            link: { url: clusterUrl, title: clusterTitle, added_at: new Date().toISOString() },
+          })
         } catch (e) {
           console.error('[approve] silo hub update failed:', e)
         }

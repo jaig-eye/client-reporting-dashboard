@@ -5,6 +5,7 @@ import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
+import { useSiloSounds } from '@/lib/useSiloSounds'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,14 +104,31 @@ interface Post {
   generated_at:        string
 }
 
+type ClusterKw = {
+  id: string
+  keyword: string
+  title?: string | null
+  status: 'planned' | 'published'
+  priority: number
+}
+
 interface Silo {
-  id:             string
-  name:           string
-  hub_page_url:   string | null
-  central_entity: string | null
-  section:        string
-  clusterCount:   number
-  publishedCount: number
+  id:               string
+  name:             string
+  hub_page_url:     string | null
+  hub_page_title:   string | null
+  central_entity:   string | null
+  description:      string | null
+  section:          string
+  status:           string
+  content_type:     string
+  target_keyword:   string | null
+  cluster_keywords: ClusterKw[]
+  target_exists:    boolean
+  priority:         number
+  pending_links:    Array<{ post_id?: string; url?: string; title: string; added_at: string }>
+  clusterCount:     number
+  publishedCount:   number
 }
 
 interface Props {
@@ -342,13 +360,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Silos
   const [silos,              setSilos]              = useState<Silo[]>([])
   const [silosLoading,       setSilosLoading]       = useState(false)
-  const [showAddSilo,        setShowAddSilo]        = useState(false)
+  const [expandedSiloId,     setExpandedSiloId]     = useState<string | null>(null)
+  const [siloModalOpen,      setSiloModalOpen]      = useState(false)
+  const [siloModalMode,      setSiloModalMode]      = useState<'create' | 'edit'>('create')
+  const [editingSiloId,      setEditingSiloId]      = useState<string | null>(null)
   const [siloSaving,         setSiloSaving]         = useState(false)
-  const [newSiloName,        setNewSiloName]        = useState('')
-  const [newSiloHubUrl,      setNewSiloHubUrl]      = useState('')
-  const [newSiloEntity,      setNewSiloEntity]      = useState('')
-  const [newSiloSection,     setNewSiloSection]     = useState<'core' | 'outer'>('core')
-  const [siloGenerateTarget, setSiloGenerateTarget] = useState<string | null>(null)
+  const [draftSilo,          setDraftSilo]          = useState<{
+    name: string; content_type: string; hub_page_url: string; hub_page_title: string
+    target_keyword: string; target_exists: boolean; cluster_keywords: ClusterKw[]; priority: number; section: string
+  }>({ name: '', content_type: 'blog', hub_page_url: '', hub_page_title: '', target_keyword: '', target_exists: true, cluster_keywords: [], priority: 100, section: 'core' })
+  const [siloGenerating,     setSiloGenerating]     = useState<Record<string, boolean>>({})
+  const [siloArchiveConfirm, setSiloArchiveConfirm] = useState<string | null>(null)
+  const { playSiloCreated, playClusterAdded, playTopicGenerated } = useSiloSounds(true)
 
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
@@ -441,32 +464,137 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   useEffect(() => { loadSilos() }, [loadSilos])
 
-  async function handleAddSilo(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newSiloName.trim()) return
-    setSiloSaving(true)
-    const res = await fetch('/api/admin/content/silos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id:      clientId,
-        name:           newSiloName.trim(),
-        hub_page_url:   newSiloHubUrl.trim() || null,
-        central_entity: newSiloEntity.trim() || null,
-        section:        newSiloSection,
-      }),
+  const EMPTY_DRAFT = { name: '', content_type: 'blog', hub_page_url: '', hub_page_title: '', target_keyword: '', target_exists: true, cluster_keywords: [] as ClusterKw[], priority: 100, section: 'core' }
+
+  function openCreateSiloModal(contentType: string) {
+    setDraftSilo({ ...EMPTY_DRAFT, content_type: contentType })
+    setSiloModalMode('create')
+    setEditingSiloId(null)
+    setSiloModalOpen(true)
+  }
+
+  function openEditSiloModal(silo: Silo) {
+    setDraftSilo({
+      name:             silo.name,
+      content_type:     silo.content_type,
+      hub_page_url:     silo.hub_page_url  ?? '',
+      hub_page_title:   silo.hub_page_title ?? '',
+      target_keyword:   silo.target_keyword ?? '',
+      target_exists:    silo.target_exists,
+      cluster_keywords: Array.isArray(silo.cluster_keywords) ? silo.cluster_keywords : [],
+      priority:         silo.priority ?? 100,
+      section:          silo.section ?? 'core',
     })
+    setSiloModalMode('edit')
+    setEditingSiloId(silo.id)
+    setSiloModalOpen(true)
+  }
+
+  async function handleSaveSilo() {
+    if (!draftSilo.name.trim()) return
+    setSiloSaving(true)
+    const payload = {
+      client_id:        clientId,
+      name:             draftSilo.name.trim(),
+      content_type:     draftSilo.content_type,
+      hub_page_url:     draftSilo.hub_page_url.trim()    || null,
+      hub_page_title:   draftSilo.hub_page_title.trim()  || null,
+      target_keyword:   draftSilo.target_keyword.trim()  || null,
+      target_exists:    draftSilo.target_exists,
+      cluster_keywords: draftSilo.cluster_keywords,
+      priority:         draftSilo.priority,
+      section:          draftSilo.section,
+    }
+    const res = siloModalMode === 'create'
+      ? await fetch('/api/admin/content/silos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      : await fetch(`/api/admin/content/silos?id=${editingSiloId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     setSiloSaving(false)
     if (res.ok) {
-      setNewSiloName(''); setNewSiloHubUrl(''); setNewSiloEntity('')
-      setNewSiloSection('core'); setShowAddSilo(false)
+      setSiloModalOpen(false)
       loadSilos()
+      if (siloModalMode === 'create') playSiloCreated()
+      showToast(siloModalMode === 'create' ? 'Silo created' : 'Silo saved')
+    } else {
+      const d = await res.json().catch(() => ({}))
+      showToast(d.error ?? 'Failed to save', 'error')
     }
   }
 
   async function handleDeleteSilo(siloId: string) {
-    await fetch(`/api/admin/content/silos?id=${siloId}`, { method: 'DELETE' })
+    // Check for active pipeline topics before archiving
+    const checkRes = await fetch(`/api/admin/content/topics?client_id=${clientId}&silo_id=${siloId}`)
+    if (checkRes.ok) {
+      const data = await checkRes.json() as Array<{ status: string }>
+      const active = Array.isArray(data) ? data.filter(t => ['pending', 'approved', 'generating', 'generated', 'scheduled'].includes(t.status)) : []
+      if (active.length > 0) {
+        setSiloArchiveConfirm(siloId)
+        return
+      }
+    }
+    await doArchiveSilo(siloId)
+  }
+
+  async function doArchiveSilo(siloId: string) {
+    setSiloArchiveConfirm(null)
+    await fetch(`/api/admin/content/silos?id=${siloId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }) })
     setSilos(p => p.filter(s => s.id !== siloId))
+    showToast('Silo archived')
+  }
+
+  function handleAddClusterKw() {
+    const next = [...draftSilo.cluster_keywords, { id: crypto.randomUUID(), keyword: '', status: 'planned' as const, priority: draftSilo.cluster_keywords.length + 1 }]
+    setDraftSilo(d => ({ ...d, cluster_keywords: next }))
+    playClusterAdded()
+  }
+
+  function handleRemoveClusterKw(id: string) {
+    setDraftSilo(d => ({ ...d, cluster_keywords: d.cluster_keywords.filter(k => k.id !== id) }))
+  }
+
+  function handleUpdateClusterKw(id: string, field: keyof ClusterKw, value: string) {
+    setDraftSilo(d => ({ ...d, cluster_keywords: d.cluster_keywords.map(k => k.id === id ? { ...k, [field]: value } : k) }))
+  }
+
+  function handleMoveClusterKw(id: string, dir: 'up' | 'down') {
+    setDraftSilo(d => {
+      const arr = [...d.cluster_keywords]
+      const idx = arr.findIndex(k => k.id === id)
+      if (dir === 'up' && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+      if (dir === 'down' && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
+      return { ...d, cluster_keywords: arr.map((k, i) => ({ ...k, priority: i + 1 })) }
+    })
+  }
+
+  async function handleGenerateFromSilo(siloId: string, silo: Silo) {
+    if (!silo.cluster_keywords?.length) {
+      showToast('Add cluster keywords first to guide generation', 'error')
+      return
+    }
+    setSiloGenerating(p => ({ ...p, [siloId]: true }))
+    const res = await fetch('/api/admin/content/calendar/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, silo_id: siloId, weeks_ahead: 4 }),
+    })
+    setSiloGenerating(p => ({ ...p, [siloId]: false }))
+    if (res.ok) {
+      playTopicGenerated()
+      showToast('Topics are generating — they\'ll appear in the pipeline shortly', 'info')
+      setTimeout(() => { loadSilos(); loadPipeline() }, 3000)
+    } else {
+      const d = await res.json().catch(() => ({}))
+      showToast(d.error ?? 'Generation failed', 'error')
+    }
+  }
+
+  async function handleMarkHubUpdated(siloId: string) {
+    await fetch(`/api/admin/content/silos?id=${siloId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_links: [] }),
+    })
+    setSilos(p => p.map(s => s.id === siloId ? { ...s, pending_links: [] } : s))
+    showToast('Hub marked as updated')
   }
 
   const firstConnectionId = clientSites[0]?.connectionId ?? null
@@ -728,7 +856,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks, ...(siloGenerateTarget ? { silo_id: siloGenerateTarget } : {}) }),
+      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks }),
     })
     const data = await res.json()
     setGenerating(false)
@@ -1084,74 +1212,21 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         </div>
       )}
 
-      {/* ── Content Silos card ───────────────────────────────────────────── */}
-      <div className="card" style={{ padding: '14px 18px', marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <h4 className="section-title" style={{ margin: 0, fontSize: '0.875rem' }}>Content Silos</h4>
-          <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem' }} onClick={() => setShowAddSilo(v => !v)}>
-            {showAddSilo ? 'Cancel' : '+ Add Silo'}
-          </button>
-        </div>
-
-        {showAddSilo && (
-          <form onSubmit={handleAddSilo} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px', background: 'var(--bg-subtle)', borderRadius: 6, marginBottom: 10 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Silo Name *</label>
-                <input className="input" value={newSiloName} onChange={e => setNewSiloName(e.target.value)} placeholder="e.g. HVAC Repair" required />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Hub Page URL</label>
-                <input className="input" value={newSiloHubUrl} onChange={e => setNewSiloHubUrl(e.target.value)} placeholder="https://…" />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Central Entity</label>
-                <input className="input" value={newSiloEntity} onChange={e => setNewSiloEntity(e.target.value)} placeholder="e.g. residential HVAC repair" />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 3 }}>Section</label>
-                <select className="input" value={newSiloSection} onChange={e => setNewSiloSection(e.target.value as 'core' | 'outer')}>
-                  <option value="core">Core</option>
-                  <option value="outer">Outer</option>
-                </select>
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button type="submit" className="btn btn-primary btn-sm" disabled={siloSaving}>{siloSaving ? 'Creating…' : 'Create Silo'}</button>
-            </div>
-          </form>
-        )}
-
-        {silosLoading ? (
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>Loading silos…</p>
-        ) : silos.length === 0 ? (
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>No silos yet — create one to enable pillar-cluster topic strategy.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {silos.map(s => (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--bg-subtle)', borderRadius: 5 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.8125rem' }}>{s.name}</span>
-                  {s.hub_page_url && (
-                    <a href={s.hub_page_url} target="_blank" rel="noreferrer" style={{ marginLeft: 6, fontSize: '0.75rem', color: 'var(--blue)' }}>Hub ↗</a>
-                  )}
-                  <span style={{ marginLeft: 6, fontSize: '0.7rem', padding: '1px 5px', borderRadius: 3, background: s.section === 'core' ? 'var(--blue-subtle)' : 'var(--amber-subtle)', color: s.section === 'core' ? 'var(--blue)' : 'var(--amber)' }}>
-                    {s.section}
-                  </span>
-                </div>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', flexShrink: 0 }}>
-                  {s.publishedCount}/{s.clusterCount} posts
-                </span>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '2px 6px', fontSize: '0.7rem', color: 'var(--red)', flexShrink: 0 }}
-                  onClick={() => handleDeleteSilo(s.id)}
-                >×</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* ── Content Silos — Blog ─────────────────────────────────────────── */}
+      <SiloManager
+        contentType="blog"
+        contentTypeLabel="Blog"
+        silos={silos}
+        silosLoading={silosLoading}
+        expandedSiloId={expandedSiloId}
+        setExpandedSiloId={setExpandedSiloId}
+        siloGenerating={siloGenerating}
+        onCreateSilo={() => openCreateSiloModal('blog')}
+        onEditSilo={openEditSiloModal}
+        onArchiveSilo={handleDeleteSilo}
+        onGenerateFromSilo={handleGenerateFromSilo}
+        onMarkHubUpdated={handleMarkHubUpdated}
+      />
 
       {/* ── Publish to sites row ─────────────────────────────────────────── */}
       {clientSites.length > 0 && (
@@ -1629,36 +1704,48 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           SECTION — SERVICE PAGES (pill: service_page)
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'service_page' && (
-        <div className="card p-5">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Service Pages</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Enable automatic generation of service-focused landing pages for this client.
-                Each page targets a specific service and is optimized for conversion.
-              </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card p-5">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Service Pages</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  Enable automatic generation of service-focused landing pages for this client.
+                  Each page targets a specific service and is optimized for conversion.
+                </p>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                  {generateServicePages ? 'Enabled' : 'Disabled'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={generateServicePages}
+                  onChange={e => setGenerateServicePages(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+              </label>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                {generateServicePages ? 'Enabled' : 'Disabled'}
-              </span>
-              <input
-                type="checkbox"
-                checked={generateServicePages}
-                onChange={e => setGenerateServicePages(e.target.checked)}
-                style={{ width: 16, height: 16, cursor: 'pointer' }}
-              />
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" onClick={saveTypeToggles} disabled={typeToggleSaving}>
+                {typeToggleSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              className="btn btn-primary"
-              onClick={saveTypeToggles}
-              disabled={typeToggleSaving}
-            >
-              {typeToggleSaving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+          <SiloManager
+            contentType="service_page"
+            contentTypeLabel="Service Page"
+            silos={silos}
+            silosLoading={silosLoading}
+            expandedSiloId={expandedSiloId}
+            setExpandedSiloId={setExpandedSiloId}
+            siloGenerating={siloGenerating}
+            onCreateSilo={() => openCreateSiloModal('service_page')}
+            onEditSilo={openEditSiloModal}
+            onArchiveSilo={handleDeleteSilo}
+            onGenerateFromSilo={handleGenerateFromSilo}
+            onMarkHubUpdated={handleMarkHubUpdated}
+          />
         </div>
       )}
 
@@ -2223,16 +2310,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <Label>Weeks Ahead</Label>
                   <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
                 </div>
-                {silos.length > 0 && (
-                  <div>
-                    <Label>Target Silo (optional)</Label>
-                    <select className="input" style={{ width: '100%' }} value={siloGenerateTarget ?? ''} onChange={e => setSiloGenerateTarget(e.target.value || null)}>
-                      <option value="">— Standalone (no silo) —</option>
-                      {silos.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                )}
-                <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+<div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
                   <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}>
                     <strong>Using:</strong> {freqSummary}
                   </p>
@@ -2300,36 +2378,48 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           SECTION — REGULAR PAGES (pill: regular_page)
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'regular_page' && (
-        <div className="card p-5">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Regular Pages</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Enable automatic generation of general-purpose pages for this client.
-                Each page is created from a custom focus you define per topic (e.g. About Us, FAQ, Contact).
-              </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card p-5">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Regular Pages</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  Enable automatic generation of general-purpose pages for this client.
+                  Each page is created from a custom focus you define per topic (e.g. About Us, FAQ, Contact).
+                </p>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                  {generateRegularPages ? 'Enabled' : 'Disabled'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={generateRegularPages}
+                  onChange={e => setGenerateRegularPages(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+              </label>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                {generateRegularPages ? 'Enabled' : 'Disabled'}
-              </span>
-              <input
-                type="checkbox"
-                checked={generateRegularPages}
-                onChange={e => setGenerateRegularPages(e.target.checked)}
-                style={{ width: 16, height: 16, cursor: 'pointer' }}
-              />
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" onClick={saveTypeToggles} disabled={typeToggleSaving}>
+                {typeToggleSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              className="btn btn-primary"
-              onClick={saveTypeToggles}
-              disabled={typeToggleSaving}
-            >
-              {typeToggleSaving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+          <SiloManager
+            contentType="regular_page"
+            contentTypeLabel="Regular Page"
+            silos={silos}
+            silosLoading={silosLoading}
+            expandedSiloId={expandedSiloId}
+            setExpandedSiloId={setExpandedSiloId}
+            siloGenerating={siloGenerating}
+            onCreateSilo={() => openCreateSiloModal('regular_page')}
+            onEditSilo={openEditSiloModal}
+            onArchiveSilo={handleDeleteSilo}
+            onGenerateFromSilo={handleGenerateFromSilo}
+            onMarkHubUpdated={handleMarkHubUpdated}
+          />
         </div>
       )}
 
@@ -2365,6 +2455,452 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           onUpdate={() => { setReviewSaPost(null); loadSaPosts(); loadSaTopics() }}
         />
       )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SILO ARCHIVE CONFIRM DIALOG
+      ═══════════════════════════════════════════════════════════════════ */}
+      {siloArchiveConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="card" style={{ maxWidth: 380, width: '90%', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem', margin: 0 }}>Archive silo?</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)', margin: 0 }}>
+              This silo has active topics in the pipeline. Archiving will keep those topics but they&apos;ll no longer be associated with a silo.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button className="btn btn-secondary" onClick={() => setSiloArchiveConfirm(null)}>Cancel</button>
+              <button className="btn btn-danger btn-sm" onClick={() => doArchiveSilo(siloArchiveConfirm)}>Archive Anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SILO CREATE / EDIT MODAL
+      ═══════════════════════════════════════════════════════════════════ */}
+      {siloModalOpen && (
+        <SiloModal
+          mode={siloModalMode}
+          draft={draftSilo}
+          saving={siloSaving}
+          onChange={patch => setDraftSilo(d => ({ ...d, ...patch }))}
+          onAddClusterKw={handleAddClusterKw}
+          onRemoveClusterKw={handleRemoveClusterKw}
+          onUpdateClusterKw={handleUpdateClusterKw}
+          onMoveClusterKw={handleMoveClusterKw}
+          onSave={handleSaveSilo}
+          onClose={() => setSiloModalOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Silo Manager ─────────────────────────────────────────────────────────────
+
+interface SiloManagerProps {
+  contentType: string
+  contentTypeLabel: string
+  silos: Silo[]
+  silosLoading: boolean
+  expandedSiloId: string | null
+  setExpandedSiloId: (id: string | null) => void
+  siloGenerating: Record<string, boolean>
+  onCreateSilo: () => void
+  onEditSilo: (silo: Silo) => void
+  onArchiveSilo: (id: string) => void
+  onGenerateFromSilo: (id: string, silo: Silo) => void
+  onMarkHubUpdated: (id: string) => void
+}
+
+function SiloManager({
+  contentType, contentTypeLabel, silos, silosLoading,
+  expandedSiloId, setExpandedSiloId, siloGenerating,
+  onCreateSilo, onEditSilo, onArchiveSilo, onGenerateFromSilo, onMarkHubUpdated,
+}: SiloManagerProps) {
+  const filtered = silos.filter(s => s.content_type === contentType)
+  const badgeRef = useRef<Record<string, HTMLSpanElement | null>>({})
+
+  useEffect(() => {
+    filtered.forEach(s => {
+      const el = badgeRef.current[s.id]
+      if (el && s.pending_links?.length > 0) {
+        el.classList.remove('silo-badge-pop')
+        void el.offsetWidth
+        el.classList.add('silo-badge-pop')
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered.map(s => s.pending_links?.length).join(',')])
+
+  return (
+    <div className="card" style={{ padding: '14px 18px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h4 className="section-title" style={{ margin: 0, fontSize: '0.875rem' }}>{contentTypeLabel} Silos</h4>
+        <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem' }} onClick={onCreateSilo}>
+          + New Silo
+        </button>
+      </div>
+
+      {silosLoading ? (
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>Loading silos…</p>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div style={{ fontSize: '1.5rem', marginBottom: 6, opacity: 0.4 }}>◎</div>
+          <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>No {contentTypeLabel.toLowerCase()} silos yet</p>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+            Silos organize content into pillar-cluster groups for topical authority
+          </p>
+          <button className="btn btn-secondary btn-sm" onClick={onCreateSilo}>+ Create First Silo</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtered.map((s, idx) => {
+            const isExpanded  = expandedSiloId === s.id
+            const kwList      = Array.isArray(s.cluster_keywords) ? s.cluster_keywords : []
+            const published   = kwList.filter(k => k.status === 'published').length
+            const planned     = kwList.filter(k => k.status === 'planned').length
+            const total       = kwList.length
+            const pct         = total > 0 ? published / total : 0
+            const pendCount   = s.pending_links?.length ?? 0
+            const isGenerating = siloGenerating[s.id]
+
+            return (
+              <div
+                key={s.id}
+                className="silo-card-enter card"
+                style={{ '--silo-i': idx } as React.CSSProperties}
+              >
+                {/* Card header */}
+                <div
+                  onClick={() => setExpandedSiloId(isExpanded ? null : s.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <span className="badge badge-blue" style={{ fontSize: '0.65rem', flexShrink: 0 }}>
+                    {contentTypeLabel}
+                  </span>
+                  <span style={{ fontWeight: 600, fontSize: '0.8125rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.name}
+                  </span>
+                  {pendCount > 0 && (
+                    <span
+                      ref={el => { badgeRef.current[s.id] = el }}
+                      className="badge badge-amber"
+                      style={{ fontSize: '0.65rem', flexShrink: 0 }}
+                    >
+                      {pendCount} link{pendCount !== 1 ? 's' : ''} ↑
+                    </span>
+                  )}
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', flexShrink: 0 }}>
+                    {published}/{total} kw
+                  </span>
+                  <span style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{isExpanded ? '▲' : '▼'}</span>
+                </div>
+                {/* Coverage progress bar */}
+                {total > 0 && (
+                  <div style={{ height: 3, background: 'var(--bg-subtle)', borderRadius: '0 0 0 0', overflow: 'hidden', marginTop: -1 }}>
+                    <div style={{ display: 'flex', height: '100%' }}>
+                      <div style={{ width: `${pct * 100}%`, background: 'var(--green)', transition: 'width 0.3s' }} />
+                      <div style={{ width: `${(planned / total) * 100}%`, background: 'var(--amber)', transition: 'width 0.3s' }} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Expandable body using CSS Grid pattern */}
+                <div className={`silo-body-grid${isExpanded ? ' expanded' : ''}`}>
+                  <div>
+                    <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)' }}>
+                      {/* Target info */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                        {s.hub_page_url && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            Hub:
+                            <a href={s.hub_page_url} target="_blank" rel="noreferrer" style={{ marginLeft: 4, color: 'var(--blue)' }}>
+                              {s.hub_page_url.length > 40 ? '…' + s.hub_page_url.slice(-32) : s.hub_page_url} ↗
+                            </a>
+                          </span>
+                        )}
+                        <span style={{ fontSize: '0.72rem', padding: '1px 6px', borderRadius: 3, background: s.target_exists ? 'var(--green-subtle)' : 'var(--amber-subtle)', color: s.target_exists ? 'var(--green)' : 'var(--amber)' }}>
+                          {s.target_exists ? '✓ hub exists' : '⚠ hub not created'}
+                        </span>
+                      </div>
+                      {s.target_keyword && (
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+                          Target keyword: <em>&ldquo;{s.target_keyword}&rdquo;</em>
+                        </p>
+                      )}
+
+                      {/* Cluster keywords list */}
+                      {kwList.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+                            Cluster Keywords ({total})
+                          </p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 120, overflowY: 'auto' }}>
+                            {kwList.map(k => (
+                              <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}>
+                                <span style={{ color: k.status === 'published' ? 'var(--green)' : 'var(--text-faint)' }}>
+                                  {k.status === 'published' ? '✓' : '○'}
+                                </span>
+                                <span style={{ flex: 1, color: 'var(--text-primary)' }}>&ldquo;{k.keyword}&rdquo;</span>
+                                <span style={{ color: 'var(--text-faint)', fontSize: '0.65rem' }}>[{k.status}]</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Pending links */}
+                      {pendCount > 0 && (
+                        <div style={{ padding: '8px 10px', background: 'var(--amber-subtle)', border: '1px solid var(--amber-border, #fde68a)', borderRadius: 5, marginBottom: 8 }}>
+                          <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--amber)', marginBottom: 4 }}>
+                            {pendCount} cluster page{pendCount !== 1 ? 's' : ''} ready — update hub page on WordPress
+                          </p>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.7rem' }}
+                            onClick={() => onMarkHubUpdated(s.id)}
+                          >
+                            Mark hub updated
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Action row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 }}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.72rem' }} onClick={() => onEditSilo(s)}>
+                            Edit Silo
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.72rem', color: 'var(--red)' }}
+                            onClick={() => onArchiveSilo(s.id)}
+                          >
+                            Archive
+                          </button>
+                        </div>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          style={{ fontSize: '0.75rem' }}
+                          disabled={isGenerating}
+                          onClick={() => onGenerateFromSilo(s.id, s)}
+                        >
+                          {isGenerating
+                            ? 'Generating…'
+                            : s.target_exists === false
+                              ? `Generate Hub ${contentTypeLabel} First →`
+                              : `Generate ${contentTypeLabel} Topics →`
+                          }
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Silo Modal ───────────────────────────────────────────────────────────────
+
+interface SiloModalProps {
+  mode: 'create' | 'edit'
+  draft: {
+    name: string; content_type: string; hub_page_url: string; hub_page_title: string
+    target_keyword: string; target_exists: boolean; cluster_keywords: ClusterKw[]; priority: number; section: string
+  }
+  saving: boolean
+  onChange: (patch: Partial<SiloModalProps['draft']>) => void
+  onAddClusterKw: () => void
+  onRemoveClusterKw: (id: string) => void
+  onUpdateClusterKw: (id: string, field: keyof ClusterKw, value: string) => void
+  onMoveClusterKw: (id: string, dir: 'up' | 'down') => void
+  onSave: () => void
+  onClose: () => void
+}
+
+function SiloModal({ mode, draft, saving, onChange, onAddClusterKw, onRemoveClusterKw, onUpdateClusterKw, onMoveClusterKw, onSave, onClose }: SiloModalProps) {
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    nameRef.current?.focus()
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  const PRIORITY_TIERS = [
+    { label: 'High',   value: 25  },
+    { label: 'Medium', value: 100 },
+    { label: 'Low',    value: 175 },
+  ]
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="card" style={{ maxWidth: 480, width: '100%', maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
+          <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>
+            {mode === 'create' ? 'Create Silo' : 'Edit Silo'}
+          </h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
+        </div>
+
+        {/* Body — scrollable */}
+        <div style={{ padding: '1rem 1.25rem', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Name */}
+          <div>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Silo Name *</label>
+            <input ref={nameRef} className="input" value={draft.name} onChange={e => onChange({ name: e.target.value })} placeholder="e.g. HVAC Repair" />
+          </div>
+
+          {/* Content Type */}
+          <div>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Content Type</label>
+            <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 7, border: '1px solid var(--border)', alignSelf: 'flex-start', width: 'fit-content' }}>
+              {([['blog', 'Blog'], ['service_page', 'Service Page'], ['regular_page', 'Regular Page']] as const).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => onChange({ content_type: val })}
+                  style={{
+                    padding: '0.28rem 0.75rem', fontSize: '0.8rem', borderRadius: 5, border: 'none', cursor: 'pointer',
+                    fontWeight: draft.content_type === val ? 600 : 400,
+                    background: draft.content_type === val ? 'var(--bg-surface)' : 'transparent',
+                    color: draft.content_type === val ? 'var(--text-primary)' : 'var(--text-muted)',
+                    boxShadow: draft.content_type === val ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                  }}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Hub URL + Title */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page URL</label>
+              <input className="input" value={draft.hub_page_url} onChange={e => onChange({ hub_page_url: e.target.value })} placeholder="https://…" />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page Title</label>
+              <input className="input" value={draft.hub_page_title} onChange={e => onChange({ hub_page_title: e.target.value })} placeholder="e.g. HVAC Repair Services" />
+            </div>
+          </div>
+
+          {/* Target Keyword */}
+          <div>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Target Keyword</label>
+            <input className="input" value={draft.target_keyword} onChange={e => onChange({ target_keyword: e.target.value })} placeholder="e.g. hvac repair denver" />
+          </div>
+
+          {/* Hub exists toggle */}
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={draft.target_exists} onChange={e => onChange({ target_exists: e.target.checked })} style={{ width: 16, height: 16 }} />
+              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>Hub page already exists</span>
+            </label>
+            {!draft.target_exists && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--amber)', marginTop: 4, marginLeft: 26 }}>
+                ⚠ Hub page will be generated first before any cluster articles
+              </p>
+            )}
+          </div>
+
+          {/* Priority */}
+          <div>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Priority</label>
+            <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 7, border: '1px solid var(--border)', alignSelf: 'flex-start', width: 'fit-content' }}>
+              {PRIORITY_TIERS.map(({ label, value }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onChange({ priority: value })}
+                  style={{
+                    padding: '0.28rem 0.75rem', fontSize: '0.8rem', borderRadius: 5, border: 'none', cursor: 'pointer',
+                    fontWeight: draft.priority === value ? 600 : 400,
+                    background: draft.priority === value ? 'var(--bg-surface)' : 'transparent',
+                    color: draft.priority === value ? 'var(--text-primary)' : 'var(--text-muted)',
+                    boxShadow: draft.priority === value ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Cluster Keywords */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                Cluster Keywords ({draft.cluster_keywords.length})
+              </label>
+              <button type="button" className="btn btn-secondary btn-sm" style={{ fontSize: '0.7rem' }} onClick={onAddClusterKw}>
+                + Add Keyword
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
+              {draft.cluster_keywords.length === 0 && (
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', padding: '6px 0' }}>
+                  No keywords yet — add cluster keywords to guide AI generation
+                </p>
+              )}
+              {draft.cluster_keywords.map((kw, idx) => (
+                <div key={kw.id} className={idx === draft.cluster_keywords.length - 1 && draft.cluster_keywords.length > 1 ? 'silo-cluster-row-enter' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <input
+                    className="input"
+                    style={{ flex: 2, fontSize: '0.8rem' }}
+                    value={kw.keyword}
+                    onChange={e => onUpdateClusterKw(kw.id, 'keyword', e.target.value)}
+                    placeholder="e.g. emergency hvac repair"
+                  />
+                  <input
+                    className="input"
+                    style={{ flex: 1.5, fontSize: '0.8rem' }}
+                    value={kw.title ?? ''}
+                    onChange={e => onUpdateClusterKw(kw.id, 'title', e.target.value)}
+                    placeholder="Suggested title (optional)"
+                  />
+                  <select
+                    className="input"
+                    style={{ width: 100, fontSize: '0.75rem' }}
+                    value={kw.status}
+                    onChange={e => onUpdateClusterKw(kw.id, 'status', e.target.value)}
+                  >
+                    <option value="planned">planned</option>
+                    <option value="published">published</option>
+                  </select>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                    <button type="button" onClick={() => onMoveClusterKw(kw.id, 'up')} disabled={idx === 0} style={{ background: 'none', border: 'none', cursor: idx > 0 ? 'pointer' : 'default', color: idx > 0 ? 'var(--text-muted)' : 'var(--border)', fontSize: '0.65rem', padding: '0 2px', lineHeight: 1 }}>▲</button>
+                    <button type="button" onClick={() => onMoveClusterKw(kw.id, 'down')} disabled={idx === draft.cluster_keywords.length - 1} style={{ background: 'none', border: 'none', cursor: idx < draft.cluster_keywords.length - 1 ? 'pointer' : 'default', color: idx < draft.cluster_keywords.length - 1 ? 'var(--text-muted)' : 'var(--border)', fontSize: '0.65rem', padding: '0 2px', lineHeight: 1 }}>▼</button>
+                  </div>
+                  <button type="button" onClick={() => onRemoveClusterKw(kw.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.9rem', padding: '0 2px', flexShrink: 0 }}>×</button>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 6 }}>
+              Keywords are ordered by priority (top = highest). URLs auto-populated when pages publish.
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)' }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={onSave} disabled={saving || !draft.name.trim()}>
+            {saving ? 'Saving…' : mode === 'create' ? 'Create Silo' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
