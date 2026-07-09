@@ -58,16 +58,28 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
-  const adminSession  = cookieStore.get('admin_session')?.value
-  const clientToken   = cookieStore.get('client_token')?.value
-
-  if (!isAdminAuthed(adminSession) && !clientToken) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const adminSession = cookieStore.get('admin_session')?.value
+  const clientToken  = cookieStore.get('client_token')?.value
 
   const { searchParams } = new URL(request.url)
-  const adId     = searchParams.get('ad_id')?.trim()
-  const clientId = searchParams.get('client_id')?.trim()
+  const adId          = searchParams.get('ad_id')?.trim()
+  const dashboardToken = searchParams.get('token')?.trim()
+  let clientId        = searchParams.get('client_id')?.trim()
+
+  // Accept dashboard_token as auth for the public Ad Library
+  if (!isAdminAuthed(adminSession) && !clientToken) {
+    if (!dashboardToken) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const db = createAdminClient()
+    const { data: client } = await db
+      .from('clients')
+      .select('id')
+      .eq('dashboard_token', dashboardToken)
+      .maybeSingle()
+    if (!client) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    clientId = client.id as string
+  }
 
   if (!adId || !clientId) {
     return NextResponse.json({ error: 'ad_id and client_id are required' }, { status: 400 })

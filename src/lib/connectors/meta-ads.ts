@@ -368,6 +368,9 @@ async function fetchAdCreatives(
   const needsPostData:    Array<{ adId: string; postId: string }> = []
   // Ads with no real image — fetch creative thumbnail at 720px via a direct creative call
   const needsLargerThumb: Array<{ adId: string; creativeId: string }> = []
+  // Ads whose image_url came only from ossImage (object_story_spec.link_data.picture),
+  // which is often a tiny thumbnail. Pass 3 may upgrade these if Pass 2 fails.
+  const ossOnlyAds = new Set<string>()
 
   // ── Pass 1: batch-fetch creative data for all ad IDs ─────────────────────
   for (let i = 0; i < adIds.length; i += 50) {
@@ -433,7 +436,6 @@ async function fetchAdCreatives(
                              || ''
 
           const ossImage = linkData?.picture ?? ''
-          const hasRealImage = !!(imageUrl || ossImage)
 
           result[adId] = {
             image_url:         imageUrl || ossImage || (!videoId ? thumbUrl : ''),
@@ -446,10 +448,16 @@ async function fetchAdCreatives(
             ad_status:         (body.effective_status as string | undefined) ?? '',
           }
 
-          // Queue for subsequent passes
+          // Track ads whose only image is a low-res ossImage so Pass 3 can upgrade them
+          if (!imageUrl && ossImage) ossOnlyAds.add(adId)
+
+          // Queue Pass 2 for ads backed by a real Facebook/Instagram post
           if (effectivePostId) {
             needsPostData.push({ adId, postId: effectivePostId })
-          } else if (creativeId && !hasRealImage) {
+          }
+          // Queue Pass 3 as a safety net for any ad without a direct creative.image_url.
+          // ossImage alone can be a tiny thumbnail; Pass 2 may also fail silently.
+          if (creativeId && !imageUrl) {
             needsLargerThumb.push({ adId, creativeId })
           }
         } catch {
@@ -489,11 +497,13 @@ async function fetchAdCreatives(
           const fullPicture = data.full_picture as string | undefined
           const message     = (data.message as string | undefined) || (data.story as string | undefined)
 
-          if (fullPicture && result[adId]) result[adId].image_url = fullPicture
-          if (message    && result[adId] && !result[adId].creative_body) {
+          if (fullPicture && result[adId]) {
+            result[adId].image_url = fullPicture
+            ossOnlyAds.delete(adId)  // Pass 2 succeeded — Pass 3 should not overwrite
+          }
+          if (message && result[adId] && !result[adId].creative_body) {
             result[adId].creative_body = message
           }
-          // If the post had a good image, no need for the thumb-upgrade pass
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
@@ -523,7 +533,12 @@ async function fetchAdCreatives(
           const data       = JSON.parse(item.body as string) as Record<string, unknown>
           const largeThumb = data.thumbnail_url as string | undefined
           const { adId }   = slice[j]
-          if (largeThumb && result[adId]) result[adId].image_url = largeThumb
+          // Only apply Pass 3 if image_url is still absent or was only an ossImage fallback.
+          // This prevents overwriting a good full_picture that Pass 2 already found.
+          if (largeThumb && result[adId] && (!result[adId].image_url || ossOnlyAds.has(adId))) {
+            result[adId].image_url = largeThumb
+            ossOnlyAds.delete(adId)
+          }
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }

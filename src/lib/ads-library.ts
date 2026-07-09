@@ -6,6 +6,74 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 type DbClient = ReturnType<typeof createAdminClient>
 
+const META_API_VERSION = 'v21.0'
+const META_BASE_URL    = `https://graph.facebook.com/${META_API_VERSION}`
+
+/**
+ * For Meta ads that have no stored image_url, fetches a fresh image from the
+ * Meta Graph API using the client's stored access token, then writes it back
+ * to the DB so subsequent loads are instant.
+ */
+async function enrichMetaImages(db: DbClient, clientId: string, ads: MetaAdRow[]): Promise<void> {
+  const missing = ads.filter(a => !a.image_url)
+  if (missing.length === 0) return
+
+  const { data: conn } = await db
+    .from('client_connections')
+    .select('connectors!inner(type, auth)')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .eq('connectors.type', 'meta_ads')
+    .limit(1)
+    .maybeSingle()
+  if (!conn) return
+
+  const auth = ((conn.connectors as unknown) as { auth: Record<string, unknown> }).auth ?? {}
+  const accessToken = (auth.system_user_token ?? auth.access_token ?? null) as string | null
+  if (!accessToken) return
+
+  // Process in batches of 50 (Meta Graph API batch limit)
+  const dbUpdates: PromiseLike<unknown>[] = []
+  for (let i = 0; i < missing.length; i += 50) {
+    const batch = missing.slice(i, i + 50)
+    try {
+      const batchRequests = batch.map(ad => ({
+        method: 'GET',
+        relative_url: `${ad.ad_id}?fields=creative%7Bimage_url%2Cthumbnail_url%7D&thumbnail_width=1080&thumbnail_height=1080`,
+      }))
+      const batchUrl = new URL(`${META_BASE_URL}/`)
+      batchUrl.searchParams.set('access_token', accessToken)
+      batchUrl.searchParams.set('batch', JSON.stringify(batchRequests))
+
+      const res = await fetch(batchUrl.toString(), { method: 'POST' })
+      if (!res.ok) continue
+
+      const responses = (await res.json()) as Record<string, unknown>[]
+      for (let j = 0; j < responses.length; j++) {
+        const item = responses[j]
+        if (!item || (item.code as number) !== 200) continue
+        try {
+          const data     = JSON.parse(item.body as string) as Record<string, unknown>
+          const creative = data.creative as Record<string, unknown> | undefined
+          const freshUrl = (creative?.image_url ?? creative?.thumbnail_url ?? null) as string | null
+          if (freshUrl) {
+            batch[j].image_url = freshUrl
+            // Write back to all date rows for this ad so future loads skip enrichment
+            dbUpdates.push(
+              db.from('meta_ads_ad_metrics')
+                .update({ image_url: freshUrl })
+                .eq('client_id', clientId)
+                .eq('ad_id', batch[j].ad_id)
+            ,
+            )
+          }
+        } catch { /* ignore per-item parse errors */ }
+      }
+    } catch { /* ignore batch errors */ }
+  }
+  await Promise.all(dbUpdates as Promise<unknown>[])
+}
+
 export type MetaAdRow = {
   platform: 'meta'
   ad_id: string
@@ -182,8 +250,12 @@ export async function fetchClientAds(
     }
   }
 
-  return {
-    meta:   Array.from(metaMap.values()).filter(a => metaRecent.has(a.ad_id)),
-    google: Array.from(googleMap.values()).filter(a => googleRecent.has(a.ad_id)),
-  }
+  const metaAds   = Array.from(metaMap.values()).filter(a => metaRecent.has(a.ad_id))
+  const googleAds = Array.from(googleMap.values()).filter(a => googleRecent.has(a.ad_id))
+
+  // Live-enrich any Meta ads whose image_url is still null — fetches fresh from
+  // Meta Graph API and writes back to DB so subsequent loads are instant.
+  await enrichMetaImages(db, clientId, metaAds)
+
+  return { meta: metaAds, google: googleAds }
 }

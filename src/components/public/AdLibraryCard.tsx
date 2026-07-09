@@ -77,16 +77,40 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
       }}>
         {previewUrl ? (
           <>
+            {/* Blurred background fill — makes logo/square images look intentional */}
+            <img
+              src={previewUrl}
+              aria-hidden
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: 'cover',
+                filter: 'blur(14px) brightness(0.6)',
+                transform: 'scale(1.15)',
+                pointerEvents: 'none',
+              }}
+            />
+            {/* Main image — contained so nothing is cropped */}
             <img
               src={previewUrl}
               alt={ad.ad_name}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
+              style={{
+                position: 'relative', zIndex: 1,
+                width: '100%', height: '100%',
+                objectFit: 'contain',
+                cursor: 'zoom-in',
+              }}
               onClick={() => setLightbox(true)}
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+              onError={e => {
+                const el = e.target as HTMLImageElement
+                el.style.display = 'none'
+                const prev = el.previousElementSibling as HTMLImageElement | null
+                if (prev) prev.style.display = 'none'
+              }}
             />
             {isVideo && (
               <div style={{
-                position: 'absolute', inset: 0, pointerEvents: 'none',
+                position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
                 <div style={{
