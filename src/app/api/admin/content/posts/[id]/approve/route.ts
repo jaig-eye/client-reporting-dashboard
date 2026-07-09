@@ -472,6 +472,21 @@ export async function POST(
       })()
     }
 
+    // Update silo page status to published + store final URL (fire-and-forget)
+    if (p.silo_id) {
+      ;(async () => {
+        try {
+          const publishedUrl = result.link || wpEditUrl
+          await db.from('content_silo_pages')
+            .update({ status: 'published', target_url: publishedUrl, updated_at: new Date().toISOString() })
+            .eq('content_post_id', id)
+            .eq('silo_id', String(p.silo_id))
+        } catch (e) {
+          console.error('[approve] silo page status update failed:', e)
+        }
+      })()
+    }
+
     const adminSession = await getAdminSession()
     logActivity(adminSession, 'approved', 'post', {
       resourceId: id,

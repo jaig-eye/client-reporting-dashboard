@@ -311,7 +311,7 @@ export default async function ContentPage({
                       return (
                         <div key={s.id} className="card" style={{ padding: '12px 14px' }}>
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.8125rem' }}>{s.name}</span>
+                            <a href={`/admin/content/silos/${s.id}`} style={{ fontWeight: 700, fontSize: '0.8125rem', color: 'var(--text-primary)', textDecoration: 'none' }}>{s.name}</a>
                             <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: 3, background: s.section === 'core' ? 'var(--blue-subtle)' : 'var(--amber-subtle)', color: s.section === 'core' ? 'var(--blue)' : 'var(--amber)', flexShrink: 0 }}>
                               {s.section}
                             </span>
@@ -335,6 +335,11 @@ export default async function ContentPage({
                               ⚠ {pendingCount} pending hub link{pendingCount !== 1 ? 's' : ''}
                             </div>
                           )}
+                          <div style={{ marginTop: 8 }}>
+                            <a href={`/admin/content/silos/${s.id}`} style={{ fontSize: '0.72rem', color: 'var(--blue)', textDecoration: 'none' }}>
+                              View authority planner →
+                            </a>
+                          </div>
                         </div>
                       )
                     })}
