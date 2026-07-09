@@ -23,13 +23,21 @@ export function isAdActive(status: string): boolean {
   return s === 'ACTIVE' || s === 'ENABLED'
 }
 
+function googleTypeLabel(t: string | null): string | null {
+  if (!t) return null
+  if (t === 'RESPONSIVE_DISPLAY_AD') return 'Display'
+  if (t === 'DEMAND_GEN_MULTI_ASSET_AD' || t === 'DEMAND_GEN_VIDEO_RESPONSIVE_AD') return 'Demand Gen'
+  if (t === 'ASSET_GROUP') return 'PMax'
+  return null
+}
+
 export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
   const [expanded, setExpanded] = useState(false)
 
   const active = isAdActive(ad.ad_status)
 
   const previewUrl = ad.platform === 'meta'
-    ? (ad.thumbnail_url ?? ad.image_url ?? null)
+    ? (ad.image_url ?? ad.video_thumb_url ?? ad.thumbnail_url ?? null)
     : (ad.image_url ?? null)
 
   const headline = ad.platform === 'meta'
@@ -103,6 +111,14 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
           }}>
             {active ? 'Active' : 'Paused'}
           </span>
+          {ad.platform === 'google' && googleTypeLabel(ad.ad_type) && (
+            <span style={{
+              fontSize: '0.6875rem', fontWeight: 500, padding: '0.125rem 0.5rem', borderRadius: 4,
+              background: '#dcfce7', color: '#166534',
+            }}>
+              {googleTypeLabel(ad.ad_type)}
+            </span>
+          )}
           {ad.platform === 'meta' && ad.adset_daily_budget != null && (
             <span style={{
               fontSize: '0.6875rem', fontWeight: 500, padding: '0.125rem 0.5rem', borderRadius: 4,

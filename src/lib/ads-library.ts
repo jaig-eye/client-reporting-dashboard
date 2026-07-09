@@ -61,22 +61,27 @@ export async function fetchClientAds(
   db: DbClient,
   clientId: string,
 ): Promise<{ meta: MetaAdRow[]; google: GoogleAdRow[]; error?: string }> {
+  // 90-day window for creative/status accuracy — the most recent row (date DESC)
+  // seeds status/image/title regardless of age. Metrics are only accumulated from
+  // rows within the last 30 days. Ads with no 30-day activity are filtered out.
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)
 
   const [metaRes, googleRes] = await Promise.all([
     db
       .from('meta_ads_ad_metrics')
-      .select('ad_id, ad_name, ad_status, creative_title, creative_body, image_url, thumbnail_url, video_thumb_url, adset_name, campaign_name, adset_daily_budget, spend, impressions, clicks, conversions')
+      .select('ad_id, ad_name, ad_status, creative_title, creative_body, image_url, thumbnail_url, video_thumb_url, adset_name, campaign_name, adset_daily_budget, spend, impressions, clicks, conversions, date')
       .eq('client_id', clientId)
-      .gte('date', thirtyDaysAgo)
+      .gte('date', ninetyDaysAgo)
       .not('ad_status', 'in', '("DELETED","REMOVED")')
       .order('date', { ascending: false }),
     db
       .from('google_ads_ad_metrics')
-      .select('ad_id, ad_name, ad_status, ad_type, headlines, descriptions, image_url, ad_group_name, campaign_name, spend, impressions, clicks, conversions')
+      .select('ad_id, ad_name, ad_status, ad_type, headlines, descriptions, image_url, ad_group_name, campaign_name, spend, impressions, clicks, conversions, date')
       .eq('client_id', clientId)
-      .gte('date', thirtyDaysAgo)
+      .gte('date', ninetyDaysAgo)
       .not('ad_status', 'in', '("DELETED","REMOVED")')
+      .not('ad_type', 'in', '("RESPONSIVE_SEARCH_AD","EXPANDED_TEXT_AD","AD_GROUP_PLACEHOLDER")')
       .order('date', { ascending: false }),
   ])
 
@@ -84,15 +89,24 @@ export async function fetchClientAds(
   if (googleRes.error) return { meta: [], google: [], error: `google_ads: ${googleRes.error.message}` }
 
   // Aggregate per ad_id. Rows are ordered DESC so the first row seen is the
-  // most recent — this ensures adset_daily_budget reflects the current budget.
-  const metaMap = new Map<string, MetaAdRow>()
+  // most recent — creative/status fields (image, title, ad_status) are seeded
+  // from that row regardless of date. Metrics are only accumulated for rows
+  // within the last 30 days. Ads with no 30-day activity are excluded via the
+  // metaRecent / googleRecent sets.
+  const metaMap    = new Map<string, MetaAdRow>()
+  const metaRecent = new Set<string>()
   for (const row of metaRes.data ?? []) {
+    const inWindow = row.date >= thirtyDaysAgo
+    if (inWindow) metaRecent.add(row.ad_id)
+
     const e = metaMap.get(row.ad_id)
     if (e) {
-      e.spend       += Number(row.spend)
-      e.impressions += Number(row.impressions)
-      e.clicks      += Number(row.clicks)
-      e.conversions += Number(row.conversions)
+      if (inWindow) {
+        e.spend       += Number(row.spend)
+        e.impressions += Number(row.impressions)
+        e.clicks      += Number(row.clicks)
+        e.conversions += Number(row.conversions)
+      }
     } else {
       metaMap.set(row.ad_id, {
         platform:           'meta',
@@ -107,22 +121,28 @@ export async function fetchClientAds(
         adset_name:         row.adset_name ?? '',
         campaign_name:      row.campaign_name ?? '',
         adset_daily_budget: row.adset_daily_budget != null ? Number(row.adset_daily_budget) : null,
-        spend:              Number(row.spend),
-        impressions:        Number(row.impressions),
-        clicks:             Number(row.clicks),
-        conversions:        Number(row.conversions),
+        spend:              inWindow ? Number(row.spend)       : 0,
+        impressions:        inWindow ? Number(row.impressions) : 0,
+        clicks:             inWindow ? Number(row.clicks)      : 0,
+        conversions:        inWindow ? Number(row.conversions) : 0,
       })
     }
   }
 
-  const googleMap = new Map<string, GoogleAdRow>()
+  const googleMap    = new Map<string, GoogleAdRow>()
+  const googleRecent = new Set<string>()
   for (const row of googleRes.data ?? []) {
+    const inWindow = row.date >= thirtyDaysAgo
+    if (inWindow) googleRecent.add(row.ad_id)
+
     const e = googleMap.get(row.ad_id)
     if (e) {
-      e.spend       += Number(row.spend)
-      e.impressions += Number(row.impressions)
-      e.clicks      += Number(row.clicks)
-      e.conversions += Number(row.conversions)
+      if (inWindow) {
+        e.spend       += Number(row.spend)
+        e.impressions += Number(row.impressions)
+        e.clicks      += Number(row.clicks)
+        e.conversions += Number(row.conversions)
+      }
     } else {
       googleMap.set(row.ad_id, {
         platform:       'google',
@@ -135,16 +155,16 @@ export async function fetchClientAds(
         image_url:      row.image_url ?? null,
         ad_group_name:  row.ad_group_name ?? '',
         campaign_name:  row.campaign_name ?? '',
-        spend:          Number(row.spend),
-        impressions:    Number(row.impressions),
-        clicks:         Number(row.clicks),
-        conversions:    Number(row.conversions),
+        spend:          inWindow ? Number(row.spend)       : 0,
+        impressions:    inWindow ? Number(row.impressions) : 0,
+        clicks:         inWindow ? Number(row.clicks)      : 0,
+        conversions:    inWindow ? Number(row.conversions) : 0,
       })
     }
   }
 
   return {
-    meta:   Array.from(metaMap.values()),
-    google: Array.from(googleMap.values()),
+    meta:   Array.from(metaMap.values()).filter(a => metaRecent.has(a.ad_id)),
+    google: Array.from(googleMap.values()).filter(a => googleRecent.has(a.ad_id)),
   }
 }
