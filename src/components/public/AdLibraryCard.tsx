@@ -33,12 +33,15 @@ function googleTypeLabel(t: string | null): string | null {
 
 export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
   const [expanded, setExpanded] = useState(false)
+  const [lightbox, setLightbox] = useState(false)
 
   const active = isAdActive(ad.ad_status)
 
   const previewUrl = ad.platform === 'meta'
     ? (ad.image_url ?? ad.video_thumb_url ?? ad.thumbnail_url ?? null)
     : (ad.image_url ?? null)
+
+  const isVideo = ad.platform === 'meta' && !!ad.video_thumb_url
 
   const headline = ad.platform === 'meta'
     ? (ad.creative_title ?? '')
@@ -70,15 +73,34 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
         width: '100%', aspectRatio: '16/9',
         background: '#f3f4f6', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        overflow: 'hidden',
+        overflow: 'hidden', position: 'relative',
       }}>
         {previewUrl ? (
-          <img
-            src={previewUrl}
-            alt={ad.ad_name}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-          />
+          <>
+            <img
+              src={previewUrl}
+              alt={ad.ad_name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
+              onClick={() => setLightbox(true)}
+              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            />
+            {isVideo && (
+              <div style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.52)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="white">
+                    <path d="M6.5 5.5l9 4.5-9 4.5V5.5z"/>
+                  </svg>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <div style={{
             width: '100%', height: '100%',
@@ -91,6 +113,36 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
           </div>
         )}
       </div>
+
+      {/* Lightbox */}
+      {lightbox && previewUrl && (
+        <div
+          onClick={() => setLightbox(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.88)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={previewUrl}
+            alt={ad.ad_name}
+            style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: 8 }}
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setLightbox(false)}
+            style={{
+              position: 'absolute', top: 20, right: 24,
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: '#fff', fontSize: '1.5rem', lineHeight: 1, opacity: 0.8,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Card content */}
       <div style={{ padding: '0.875rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

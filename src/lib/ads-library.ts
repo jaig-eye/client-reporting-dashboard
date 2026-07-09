@@ -81,7 +81,7 @@ export async function fetchClientAds(
       .eq('client_id', clientId)
       .gte('date', ninetyDaysAgo)
       .not('ad_status', 'in', '("DELETED","REMOVED")')
-      .not('ad_type', 'in', '("RESPONSIVE_SEARCH_AD","EXPANDED_TEXT_AD","AD_GROUP_PLACEHOLDER")')
+      .in('ad_type', ['RESPONSIVE_DISPLAY_AD', 'DEMAND_GEN_MULTI_ASSET_AD', 'DEMAND_GEN_VIDEO_RESPONSIVE_AD', 'ASSET_GROUP'])
       .order('date', { ascending: false }),
   ])
 
@@ -160,6 +160,25 @@ export async function fetchClientAds(
         clicks:         inWindow ? Number(row.clicks)      : 0,
         conversions:    inWindow ? Number(row.conversions) : 0,
       })
+    }
+  }
+
+  // For PMax (ASSET_GROUP) ads without a stored image_url, pull the first
+  // MARKETING_IMAGE from google_ads_asset_group_assets. The asset_group_id
+  // matches ad_id in the metrics table.
+  const pmaxIds = Array.from(googleMap.keys()).filter(
+    id => googleMap.get(id)?.ad_type === 'ASSET_GROUP',
+  )
+  if (pmaxIds.length > 0) {
+    const { data: pmaxAssets } = await db
+      .from('google_ads_asset_group_assets')
+      .select('asset_group_id, image_url')
+      .in('asset_group_id', pmaxIds)
+      .eq('field_type', 'MARKETING_IMAGE')
+      .not('image_url', 'is', null)
+    for (const asset of pmaxAssets ?? []) {
+      const entry = googleMap.get(asset.asset_group_id as string)
+      if (entry && !entry.image_url) entry.image_url = asset.image_url as string
     }
   }
 
