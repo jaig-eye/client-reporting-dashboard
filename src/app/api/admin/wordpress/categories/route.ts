@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     .from('client_connections')
     .select('external_id, connector:connectors(auth, config)')
     .eq('id', connectionId)
-    .single()
+    .maybeSingle()
 
   if (!conn) return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
 

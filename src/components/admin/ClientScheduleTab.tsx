@@ -1136,30 +1136,29 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
-              <div>
-                <Label>Default Categories</Label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '9rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
-                  {categories.length === 0
-                    ? <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }}>No categories found</span>
-                    : categories.map(c => {
-                        const selected = (schedule.default_category_ids ?? []).includes(c.id)
-                        return (
-                          <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={() => {
-                                const cur = schedule.default_category_ids ?? []
-                                setSched('default_category_ids', selected ? cur.filter(id => id !== c.id) : [...cur, c.id])
-                              }}
-                            />
-                            {c.name}
-                          </label>
-                        )
-                      })
-                  }
+              {categories.length > 0 && (
+                <div>
+                  <Label>Default Categories</Label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '9rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
+                    {categories.map(c => {
+                      const selected = (schedule.default_category_ids ?? []).includes(c.id)
+                      return (
+                        <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => {
+                              const cur = schedule.default_category_ids ?? []
+                              setSched('default_category_ids', selected ? cur.filter(id => id !== c.id) : [...cur, c.id])
+                            }}
+                          />
+                          {c.name}
+                        </label>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
               <div style={{ gridColumn: '1 / -1' }}>
                 <Label>WordPress Publish Mode</Label>
                 <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.375rem' }}>
