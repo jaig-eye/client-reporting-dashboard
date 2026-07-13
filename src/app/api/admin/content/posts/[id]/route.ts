@@ -1,6 +1,6 @@
 // PATCH /api/admin/content/posts/[id]
 // Body: { status?, title?, seoTitle?, content?, metaDescription?, slug?,
-//         targetKeyword?, suggestedTags?, featuredImageUrl?, wpStatus?, authorId? }
+//         targetKeyword?, suggestedTags?, featuredImageUrl?, wpStatus?, authorId?, categoryIds? }
 // Status-only updates (reject, restore) and full Save Changes from the review drawer.
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,6 +22,7 @@ type PatchBody = {
   featuredImageUrl?: string | null
   wpStatus?:        string | null
   authorId?:        number | null
+  categoryIds?:     number[] | null
   connectionId?:    string | null
 }
 
@@ -52,6 +53,7 @@ export async function PATCH(
   if (body.featuredImageUrl !== undefined) update.featured_image_url = body.featuredImageUrl
   if (body.wpStatus        !== undefined) update.wp_status        = body.wpStatus
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
+  if (body.categoryIds     !== undefined) update.wp_category_ids  = body.categoryIds
   if (body.connectionId    !== undefined) update.connection_id    = body.connectionId
 
   if (Object.keys(update).length === 0)

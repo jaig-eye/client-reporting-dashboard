@@ -63,6 +63,11 @@ interface Author {
   name: string
 }
 
+interface WpCategory {
+  id:   number
+  name: string
+}
+
 interface Topic {
   id:                    string
   topic:                 string
@@ -271,6 +276,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Schedule form state
   const [schedule,     setSchedule]     = useState<Partial<ClientScheduleSettings>>({})
   const [authors,      setAuthors]      = useState<Author[]>([])
+  const [categories,   setCategories]   = useState<WpCategory[]>([])
   const [schedSaving,  setSchedSaving]  = useState(false)
   const [schedSaved,   setSchedSaved]   = useState(false)
   const [schedError,   setSchedError]   = useState('')
@@ -390,6 +396,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           auto_generate:         (d.auto_generate          as boolean)        ?? false,
           connection_id:         (d.connection_id          as string  | null) ?? null,
           default_author_id:     (d.default_author_id      as number  | null) ?? null,
+          default_category_ids:  Array.isArray(d.default_category_ids) ? (d.default_category_ids as number[]) : null,
           post_structure:        (d.post_structure          as string)         ?? '',
           target_length:         (d.target_length           as number)         ?? 1500,
           publish_time:          (d.publish_time            as string  | null) ?? null,
@@ -617,6 +624,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         if ('authors' in d && Array.isArray(d.authors)) setAuthors(d.authors)
       })
       .catch(() => setAuthors([]))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedule.connection_id, firstConnectionId])
+
+  // ── Load categories ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const connId = schedule.connection_id || firstConnectionId
+    if (!connId) { setCategories([]); return }
+    fetch(`/api/admin/wordpress/categories?connection_id=${connId}`)
+      .then(r => r.json())
+      .then((d: { categories?: WpCategory[] } | { error: string }) => {
+        if ('categories' in d && Array.isArray(d.categories)) setCategories(d.categories)
+      })
+      .catch(() => setCategories([]))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schedule.connection_id, firstConnectionId])
 
@@ -1115,6 +1135,30 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <option value="">— Default —</option>
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
+              </div>
+              <div>
+                <Label>Default Categories</Label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '9rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
+                  {categories.length === 0
+                    ? <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }}>No categories found</span>
+                    : categories.map(c => {
+                        const selected = (schedule.default_category_ids ?? []).includes(c.id)
+                        return (
+                          <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => {
+                                const cur = schedule.default_category_ids ?? []
+                                setSched('default_category_ids', selected ? cur.filter(id => id !== c.id) : [...cur, c.id])
+                              }}
+                            />
+                            {c.name}
+                          </label>
+                        )
+                      })
+                  }
+                </div>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <Label>WordPress Publish Mode</Label>

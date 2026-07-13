@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data } = await db
     .from('content_settings')
-    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, monthly_publish_day, topics_per_run, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt')
+    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, default_category_ids, monthly_publish_day, topics_per_run, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt')
     .eq('client_id', clientId)
     .maybeSingle()
 
@@ -42,6 +42,7 @@ const CONTENT_FIELDS = [
   'topic_guidelines', 'auto_approve_topics', 'auto_push_posts', 'wizard_completed',
   'generate_service_pages', 'generate_regular_pages',
   'content_image_generation', 'content_image_prompt',
+  'default_category_ids',
 ] as const
 
 export async function PUT(request: NextRequest) {

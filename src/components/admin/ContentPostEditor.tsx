@@ -49,6 +49,7 @@ interface PostDetail {
   internalLinks:    number | null
   publishedUrl:     string | null
   wpAuthorId:       number | null
+  wpCategoryIds:    number[] | null
   wpPostId:         number | null
   wpSiteUrl:        string | null
   bcPostId:         number | null
@@ -69,6 +70,11 @@ interface WpTag {
   id:   number
   name: string
   slug: string
+}
+
+interface WpCategory {
+  id:   number
+  name: string
 }
 
 type WpPublishStatus = 'draft' | 'publish' | 'future'
@@ -174,11 +180,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [editNotes,     setEditNotes]     = useState('')
   const [showEditNotes, setShowEditNotes] = useState(false)
 
-  // Authors + WP tags
+  // Authors + WP tags + categories
   const [authors,        setAuthors]        = useState<Author[]>([])
   const [authorsLoading, setAuthorsLoading] = useState(false)
   const [defaultAuthorId, setDefaultAuthorId] = useState<number | null>(null)
   const [wpTags,         setWpTags]         = useState<WpTag[]>([])
+  const [categories,     setCategories]     = useState<WpCategory[]>([])
+  const [categoryIds,    setCategoryIds]    = useState<number[]>([])
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
@@ -208,6 +216,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
+        setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         // Seed connection: post's stored connection > schedule default > first BC site > first any site
         const autoSite = sites.find(s => s.connectorType === 'bigcommerce') ?? sites[0]
@@ -236,13 +245,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     if (!connId) return
     setAuthorsLoading(true)
     try {
-      const [authRes, tagRes, settingsRes] = await Promise.all([
+      const [authRes, tagRes, catRes, settingsRes] = await Promise.all([
         fetch(`/api/admin/wordpress/authors?connection_id=${connId}`),
         fetch(`/api/admin/wordpress/tags?connection_id=${connId}`),
+        fetch(`/api/admin/wordpress/categories?connection_id=${connId}`),
         post ? fetch(`/api/admin/content/settings?client_id=${post.clientId}`) : Promise.resolve(null),
       ])
       if (authRes.ok) setAuthors((await authRes.json()).authors ?? [])
       if (tagRes.ok)  setWpTags((await tagRes.json()).tags ?? [])
+      if (catRes.ok)  setCategories((await catRes.json()).categories ?? [])
       if (settingsRes?.ok) {
         const s = await settingsRes.json()
         const defId = s?.default_author_id ?? null
@@ -314,7 +325,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId, connectionId: connectionId || null,
+          wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
+          connectionId: connectionId || null,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
@@ -350,7 +362,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId, connectionId,
+          wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
+          connectionId,
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
@@ -829,6 +842,31 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   </select>
                 </div>
               </div>
+
+              {/* WP Categories */}
+              {categories.length > 0 && (
+                <div className="mb-4">
+                  <label style={labelStyle}>WP Categories</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '8rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
+                    {categories.map(c => {
+                      const selected = categoryIds.includes(c.id)
+                      return (
+                        <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => {
+                              setCategoryIds(cur => selected ? cur.filter(id => id !== c.id) : [...cur, c.id])
+                              markDirty()
+                            }}
+                          />
+                          {c.name}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* AI re-edit */}
               <div className="mb-4">

@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -184,6 +184,8 @@ export async function POST(request: NextRequest) {
           generated_by:     'scheduled',
           ai_model:         model,
           prompt_used:      userPrompt,
+          wp_author_id:     (cs as Record<string, unknown>).default_author_id    ?? null,
+          wp_category_ids:  (cs as Record<string, unknown>).default_category_ids ?? null,
         })
 
         totalGenerated++

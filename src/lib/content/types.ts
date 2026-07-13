@@ -59,6 +59,7 @@ export interface ClientScheduleSettings {
   auto_generate:         boolean
   connection_id:         string | null
   default_author_id:     number | null
+  default_category_ids:  number[] | null
   post_structure:        string
   target_length:         number
   publish_time:          string | null

@@ -40,7 +40,7 @@ export async function POST(
   // silo_id added after migration 164 (content_silos enhancements) applied to production
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
     .eq('id', id)
     .maybeSingle()
 
@@ -288,11 +288,13 @@ export async function POST(
   // Fetch publish time and wp_publish_mode from content settings
   const { data: csRow } = await db
     .from('content_settings')
-    .select('publish_time, wp_publish_mode')
+    .select('publish_time, wp_publish_mode, default_author_id, default_category_ids')
     .eq('client_id', String(p.client_id))
     .maybeSingle()
-  const publishTime    = (csRow as { publish_time?: string | null; wp_publish_mode?: string | null } | null)?.publish_time ?? '09:00'
-  const wpPublishMode  = (csRow as { publish_time?: string | null; wp_publish_mode?: string | null } | null)?.wp_publish_mode ?? 'scheduled_draft'
+  type CsRow = { publish_time?: string | null; wp_publish_mode?: string | null; default_author_id?: number | null; default_category_ids?: number[] | null }
+  const cs             = csRow as CsRow | null
+  const publishTime    = cs?.publish_time   ?? '09:00'
+  const wpPublishMode  = cs?.wp_publish_mode ?? 'scheduled_draft'
 
   // Determine WP status and scheduled date from target_publish_date
   let wpPublishStatus: 'draft' | 'future' | 'publish' = 'draft'
@@ -388,6 +390,16 @@ export async function POST(
         },
       })
     } else {
+      const authorId = p.wp_author_id
+        ? Number(p.wp_author_id)
+        : (cs?.default_author_id ? Number(cs.default_author_id) : undefined)
+
+      const postCategoryIds = Array.isArray(p.wp_category_ids) && (p.wp_category_ids as number[]).length > 0
+        ? (p.wp_category_ids as number[])
+        : (Array.isArray(cs?.default_category_ids) && (cs!.default_category_ids as number[]).length > 0
+            ? (cs!.default_category_ids as number[])
+            : undefined)
+
       result = await publishPost(siteUrl, auth, {
         title:          String(p.title ?? ''),
         content:        String(p.content ?? ''),
@@ -396,6 +408,8 @@ export async function POST(
         slug:           p.slug ? String(p.slug) : undefined,
         tags:           tagIds.length > 0 ? tagIds : undefined,
         featured_media: featuredMediaId,
+        author:         authorId,
+        categories:     postCategoryIds,
         meta: {
           rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
           rank_math_description:   p.meta_description ? String(p.meta_description) : '',
