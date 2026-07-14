@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
       .select('discord_bot_token, notification_email, agency_name')
-      .single(),
+      .maybeSingle(),
     db.from('sites')
       .select('id, name, url, status, is_up, consecutive_failures, client_id, discord_channel_id, clients(name, discord_channel_id)')
       .eq('status', 'active'),
@@ -93,7 +93,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ checked: 0 })
   }
 
-  // Ping all sites concurrently
   const results = await Promise.allSettled(
     sites.map(site => pingUrl(site.url).then(r => ({ ...r, siteId: site.id } as CheckResult)))
   )
@@ -112,7 +111,7 @@ export async function GET(request: NextRequest) {
   type SiteCheckRow = { site_id: string; checked_at: string; is_up: boolean; status_code: number | null; response_ms: number | null; final_url: string | null; error: string | null }
   const siteChecksToInsert: SiteCheckRow[] = []
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = checkedAt.slice(0, 10)
 
   let downtimeAlerts = 0
   let recoveryAlerts = 0
@@ -124,7 +123,6 @@ export async function GET(request: NextRequest) {
 
     const { isUp, statusCode, responseMs, finalUrl, error } = result.value
 
-    // Collect raw check for batch insert after loop
     siteChecksToInsert.push({
       site_id:     site.id,
       checked_at:  checkedAt,
@@ -136,11 +134,13 @@ export async function GET(request: NextRequest) {
     })
 
     const wasDown = site.is_up === false
+    // Site-level channel: own channel, then client-level default, then agency-wide fallback.
+    const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
-      // Only flip is_up to false when the threshold is first crossed.
-      // Setting it on failure #1 made wasUp always false on failure #2, so alerts never fired.
+      // Only flip is_up to false when the threshold is first crossed; the is_up !== false guard
+      // prevents re-alerting on every subsequent check while the site stays down.
       const thresholdCrossed = newFailCount >= FLAP_THRESHOLD && site.is_up !== false
 
       await db.from('sites').update({
@@ -185,15 +185,14 @@ export async function GET(request: NextRequest) {
           link_url:    `/admin/sites`,
         })
 
-        const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date().toUTCString()}`
-        const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
-        await sendDiscordMessage(botToken, channelId, msg)
+        const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
+        await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({
             to:      alertEmail,
             subject: `[${agencyName}] Site DOWN: ${site.name}`,
-            html:    `<p><strong>${site.name}</strong> is down.</p><p>URL: ${site.url}<br>Status: ${statusCode ?? error ?? 'no response'}<br>Time: ${new Date().toUTCString()}</p>`,
+            html:    `<p><strong>${site.name}</strong> is down.</p><p>URL: ${site.url}<br>Status: ${statusCode ?? error ?? 'no response'}<br>Time: ${new Date(checkedAt).toUTCString()}</p>`,
             text:    msg,
           }).catch(() => {})
         }
@@ -225,8 +224,7 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
-          await sendDiscordMessage(botToken, channelId, msg)
+          await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
           if (alertEmail) {
             await sendEmail({
@@ -278,18 +276,19 @@ export async function GET(request: NextRequest) {
     incidentsBySite.set(row.site_id, (incidentsBySite.get(row.site_id) ?? 0) + 1)
   }
 
-  await Promise.all(
-    Array.from(bySite.entries()).map(([siteId, stats]) =>
-      db.from('site_check_daily').upsert({
+  if (bySite.size > 0) {
+    await db.from('site_check_daily').upsert(
+      Array.from(bySite.entries()).map(([siteId, stats]) => ({
         site_id:         siteId,
         date:            today,
         uptime_pct:      stats.total > 0 ? (stats.up / stats.total) * 100 : null,
         avg_response_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null,
         check_count:     stats.total,
         incident_count:  incidentsBySite.get(siteId) ?? 0,
-      }, { onConflict: 'site_id,date' })
+      })),
+      { onConflict: 'site_id,date' }
     )
-  )
+  }
 
   // Compute 7-day uptime per site and update sites table
   const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
