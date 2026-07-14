@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, topics_per_run, posts_per_run, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages')
+    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -145,8 +145,6 @@ export async function GET(request: NextRequest) {
       client_id,
       schedule_frequency,
       schedule_day_of_week,
-      topics_per_run        = 1,
-      posts_per_run         = 2,
       weeks_ahead           = 1,
       auto_approve_topics   = false,
       auto_push_posts       = false,
@@ -156,8 +154,6 @@ export async function GET(request: NextRequest) {
       client_id:              string
       schedule_frequency:     string | null
       schedule_day_of_week:   number | null
-      topics_per_run:         number
-      posts_per_run:          number
       weeks_ahead:            number
       auto_approve_topics:    boolean
       auto_push_posts:        boolean
@@ -244,7 +240,7 @@ export async function GET(request: NextRequest) {
       if (existing && existing.length > 0) continue
 
       try {
-        const result = await generateTopicsForClient(db, client_id, topics_per_run, slot, { suppressEmail: true, siloId: autoSiloId })
+        const result = await generateTopicsForClient(db, client_id, 1, slot, { suppressEmail: true, siloId: autoSiloId })
         if (result.topics.length > 0) {
           const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
           entry.items.push(...result.topics)
@@ -287,7 +283,7 @@ export async function GET(request: NextRequest) {
         .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
-      // Group by date, pick best posts_per_run per group
+      // Group by date, pick best 1 per group (one topic → one post per slot)
       type PendingTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
       const grouped = new Map<string, PendingTopic[]>()
       for (const t of (pendingTopics ?? []) as PendingTopic[]) {
@@ -299,7 +295,7 @@ export async function GET(request: NextRequest) {
         const picked = (group as PendingTopic[])
           .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
             || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
-          .slice(0, posts_per_run)
+          .slice(0, 1)
         toApprove.push(...picked.map((t: PendingTopic) => t.id))
       }
 
@@ -310,7 +306,7 @@ export async function GET(request: NextRequest) {
         console.log(`[content-topics cron] auto-approved ${toApprove.length} topics (${grouped.size} date groups) for ${client_id}`)
       }
 
-      // Also approve dateless topics pending >3 days, capped at posts_per_run
+      // Also approve dateless topics pending >3 days (1 per run)
       const staleCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString()
       const { data: datelessRaw } = await db
         .from('content_topics')
@@ -322,7 +318,7 @@ export async function GET(request: NextRequest) {
       const datelessPicked = ((datelessRaw ?? []) as PendingTopic[])
         .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
           || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
-        .slice(0, posts_per_run)
+        .slice(0, 1)
       if (datelessPicked.length) {
         await db.from('content_topics')
           .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
@@ -351,7 +347,7 @@ export async function GET(request: NextRequest) {
       }
     }))
 
-    // ── Post generation: fire for approved/scheduled topics up to posts_per_run ─
+    // ── Post generation: fire for the single approved/scheduled topic per slot ──
     const { data: approvedTopics } = await db
       .from('content_topics')
       .select('id, topic, target_keyword, target_publish_date, content_type')
@@ -365,7 +361,7 @@ export async function GET(request: NextRequest) {
       clientNameForPost = (cl as { name?: string } | null)?.name ?? client_id
     }
 
-    const topicsToGenerate = (approvedTopics ?? []).slice(0, posts_per_run)
+    const topicsToGenerate = (approvedTopics ?? []).slice(0, 1)
     await Promise.allSettled(topicsToGenerate.map(async (topic) => {
       const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
       try {

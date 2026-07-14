@@ -52,8 +52,6 @@ export interface ClientScheduleSettings {
   schedule_frequency:    string | null
   schedule_day_of_week:  number | null
   monthly_publish_day:   number | null
-  posts_per_run:         number
-  topics_per_run:        number
   weeks_ahead:           number
   schedule_start_date:   string | null
   auto_generate:         boolean

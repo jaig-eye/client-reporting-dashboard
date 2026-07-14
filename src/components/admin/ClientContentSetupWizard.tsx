@@ -30,7 +30,6 @@ interface Schedule {
   frequency: string
   dayOfWeek: number
   publishTime: string
-  topicsPerRun: number
   weeksAhead: number
   autoGenerate: boolean
   autoApprove: boolean
@@ -98,7 +97,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // Step 5 state
   const [schedule, setSchedule] = useState<Schedule>({
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
-    topicsPerRun: 1, weeksAhead: 6, autoGenerate: true,
+    weeksAhead: 6, autoGenerate: true,
     autoApprove: false, autoPush: false,
   })
 
@@ -143,6 +142,23 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             setSitemapUrl(wp.config.site_url + '/sitemap.xml')
             setWpUrl(wp.config.site_url)
           }
+        }
+      } catch { /* ignore */ }
+
+      // Pre-populate Step 6 from existing client settings (re-run support)
+      try {
+        const res = await fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
+        if (res.ok) {
+          const cs = await res.json() as {
+            generate_service_pages?: boolean
+            generate_regular_pages?: boolean
+            service_page_topic_guidelines?: string | null
+            regular_page_topic_guidelines?: string | null
+          }
+          if (cs.generate_service_pages) setEnableServicePages(true)
+          if (cs.generate_regular_pages) setEnableRegularPages(true)
+          if (cs.service_page_topic_guidelines) setSpGuidelinesWiz(cs.service_page_topic_guidelines)
+          if (cs.regular_page_topic_guidelines) setRpGuidelinesWiz(cs.regular_page_topic_guidelines)
         }
       } catch { /* ignore */ }
     }
@@ -268,7 +284,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         schedule_day_of_week: schedule.dayOfWeek,
         schedule_start_date:  new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
-        topics_per_run:       schedule.topicsPerRun,
+        topics_per_run:       1,
         weeks_ahead:          schedule.weeksAhead,
         auto_generate:                  schedule.autoGenerate,
         auto_approve_topics:            schedule.autoApprove,
@@ -823,12 +839,6 @@ function StepSchedule({ schedule, setSchedule }: { schedule: Schedule; setSchedu
         <Field label="Publish Time">
           <input type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
         </Field>
-        <Field label="Topics per Run">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input type="range" min={1} max={10} value={schedule.topicsPerRun} onChange={e => setSchedule({ ...schedule, topicsPerRun: Number(e.target.value) })} style={{ flex: 1 }} />
-            <span style={{ minWidth: 20, fontWeight: 700, color: 'var(--text-primary)' }}>{schedule.topicsPerRun}</span>
-          </div>
-        </Field>
         <Field label="Weeks Ahead">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <input type="range" min={2} max={12} value={schedule.weeksAhead} onChange={e => setSchedule({ ...schedule, weeksAhead: Number(e.target.value) })} style={{ flex: 1 }} />
@@ -1049,7 +1059,6 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
 
   const summaryRows = [
     { label: 'Frequency',         value: freqLabel },
-    { label: 'Topics per run',    value: String(schedule.topicsPerRun) },
     { label: 'Weeks ahead',       value: String(schedule.weeksAhead) },
     { label: 'Publish time',      value: schedule.publishTime },
     { label: 'Sitemap pages',     value: pagesCount > 0 ? String(pagesCount) : '—' },

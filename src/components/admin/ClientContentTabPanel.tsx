@@ -51,7 +51,6 @@ interface Props {
     saPublishedPostsCount: number
   }
   gscData:        GscData
-  postsPerRun?:   number
   initialSubTab?: string
 }
 
@@ -291,7 +290,6 @@ function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
             {freqLabel}{dayLabel ? ` · ${dayLabel}s` : ''}
-            {s?.posts_per_run != null ? ` · ${s.posts_per_run} post${Number(s.posts_per_run) !== 1 ? 's' : ''}/run` : ''}
           </div>
         </div>
         <button

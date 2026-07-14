@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, posts_per_run, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
     // Skip if not due today — bypass when admin targets a specific client or when not cron
     if (isCronAuth && !targetClientId && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
 
-    const postsPerRun  = (cs.posts_per_run  as number | null) ?? 1
+    const postsPerRun  = 1
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
     // Load existing post topics to avoid repeats

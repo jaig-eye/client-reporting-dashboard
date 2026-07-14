@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
   // ── Load saved schedule config ─────────────────────────────────────────────
   const { data: schedule } = await db
     .from('content_settings')
-    .select('posts_per_run, schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead')
+    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead')
     .eq('client_id', client_id)
     .maybeSingle()
 

@@ -51,13 +51,7 @@ export async function PATCH(
   // Scoped to target_publish_date so approving week-1 topics never affects week-2 topics.
   const topic = data as { id: string; status: string; generate_by_date: string | null; client_id: string; target_publish_date: string | null }
   if (patch.status === 'approved' && topic.target_publish_date) {
-    const [{ data: clientCfg }, { data: globalCfg }] = await Promise.all([
-      db.from('content_settings').select('posts_per_run').eq('client_id', topic.client_id).maybeSingle(),
-      db.from('content_settings').select('posts_per_run').is('client_id', null).maybeSingle(),
-    ])
-    const postsNeeded = (clientCfg as { posts_per_run: number } | null)?.posts_per_run
-      ?? (globalCfg as { posts_per_run: number } | null)?.posts_per_run
-      ?? 1
+    const postsNeeded = 1
 
     const { count: approvedCount } = await db
       .from('content_topics')

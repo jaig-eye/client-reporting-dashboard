@@ -15,11 +15,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { topic_ids?: string[] }
+  const body = await request.json() as { topic_ids?: string[]; client_id?: string }
   const topicIds = body.topic_ids ?? []
+  const clientId = body.client_id ?? null
 
   if (topicIds.length === 0) {
     return NextResponse.json({ error: 'No topic_ids provided' }, { status: 400 })
+  }
+  if (!clientId) {
+    return NextResponse.json({ error: 'client_id required' }, { status: 400 })
   }
 
   const db = createAdminClient()
@@ -27,6 +31,7 @@ export async function POST(request: NextRequest) {
     .from('content_topics')
     .update({ status: 'rejected', updated_at: new Date().toISOString() })
     .in('id', topicIds)
+    .eq('client_id', clientId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ rejected: topicIds.length })

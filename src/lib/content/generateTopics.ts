@@ -375,8 +375,24 @@ SILO RULES (override any conflicting instructions above):
     }
   }
 
+  const effectiveContentType = siloContentType ?? opts?.contentType ?? 'blog'
+
+  const contentTypeLabel = effectiveContentType === 'service_page'
+    ? 'service landing page'
+    : effectiveContentType === 'regular_page'
+      ? 'evergreen page'
+      : 'blog post'
+
+  const contentTypeInstructions = effectiveContentType === 'service_page'
+    ? `Each topic must become a dedicated SERVICE LANDING PAGE — not a blog article. Focus on commercial/transactional intent: pages that a visitor lands on when they are actively looking to hire or buy. Structure topics around individual services, service variants, or service+location combinations. Every page must have a clear CTA and conversion goal.`
+    : effectiveContentType === 'regular_page'
+      ? `Each topic must become an EVERGREEN INFORMATIONAL PAGE — not a blog article. Focus on foundational content that stays relevant year-round: About Us, FAQ, Resources, How We Work, Process, Testimonials concept pages, comparison guides, or educational reference pages. These pages should support navigation and build topical authority without time-sensitive angles.`
+      : `Each topic must become a BLOG POST — an article-format piece targeting informational, educational, or comparison search intent. Blog posts are dated and can be time-sensitive. Focus on questions, how-tos, comparisons, and long-tail informational queries.`
+
   const systemPrompt = `You are an SEO content strategist for ${settings.agency_name ?? 'a digital agency'}.
-Suggest blog post topic ideas for a client based on their business context and Google Search Console data.
+Suggest ${contentTypeLabel} topic ideas for a client based on their business context and Google Search Console data.
+
+${contentTypeInstructions}
 
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
@@ -413,7 +429,7 @@ ${sitemapText}
 ${avoidText ? `\nAlready covered — DO NOT suggest these again:\n${avoidText}` : ''}
 ${guidelinesText}
 
-Suggest ${count} high-impact blog post topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
+Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
 
   const provider = settings.ai_provider || 'anthropic'
   const model    = settings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
@@ -479,8 +495,7 @@ Suggest ${count} high-impact blog post topics${siloName ? ` for the "${siloName}
     competitors_researched: t.target_keyword ? (competitorMap.get(t.target_keyword) ?? null) : null,
     // Only include silo_id when set — column requires migration 149 (content_silos)
     ...(opts?.siloId ? { silo_id: opts.siloId } : {}),
-    // Derive content_type from silo; fall back to explicit opt then default 'blog'
-    content_type:         siloContentType ?? opts?.contentType ?? 'blog',
+    content_type:         effectiveContentType,
     status:               'pending',
     target_publish_date:  targetPublishDate ?? null,
   }))

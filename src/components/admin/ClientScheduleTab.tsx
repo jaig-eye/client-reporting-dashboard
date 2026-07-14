@@ -141,7 +141,6 @@ interface Props {
   clientName:   string
   sites:        SiteOption[]
   aiConfigured: boolean
-  postsPerRun?: number
   isActive?:    boolean
 }
 
@@ -401,8 +400,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           schedule_frequency:    (d.schedule_frequency    as string  | null) ?? null,
           schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
           monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
-          posts_per_run:         (d.posts_per_run          as number)         ?? 2,
-          topics_per_run:        (d.topics_per_run         as number)         ?? 1,
           weeks_ahead:           (d.weeks_ahead            as number)         ?? 6,
           schedule_start_date:   (d.schedule_start_date    as string  | null) ?? null,
           auto_generate:         (d.auto_generate          as boolean)        ?? false,
@@ -796,7 +793,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
-      }).catch(e => console.error('[generateForSlot]', e))
+      }).then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      }).catch(e => {
+        console.error('[generateForSlot]', e)
+        setTopics(prev => prev.map(topic => topic.id === t.id ? { ...topic, status: 'approved' } : topic))
+      })
     )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
   }
 
@@ -843,7 +845,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const res = await fetch('/api/admin/content/topics/bulk-reject', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic_ids: topicIds }),
+      body: JSON.stringify({ topic_ids: topicIds, client_id: clientId }),
     })
     if (res.ok) {
       setTopics(p => p.map(t => topicIds.includes(t.id) ? { ...t, status: 'rejected' } : t))
@@ -998,8 +1000,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const postsPerRun  = schedule.posts_per_run  ?? 2
-  const topicsPerRun = schedule.topics_per_run ?? 1
   const freqSummary  = schedule.schedule_frequency
     ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · 1 topic/slot`
     : '1 topic/slot'
@@ -1182,10 +1182,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </select>
                 </div>
               )}
-              <div>
-                <Label>Posts per Run</Label>
-                <input className="input" type="number" min={1} max={10} value={schedule.posts_per_run ?? 2} onChange={e => setSched('posts_per_run', Number(e.target.value))} />
-              </div>
               <div>
                 <Label>Weeks Ahead</Label>
                 <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
@@ -1416,10 +1412,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   const topicsInGroup      = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
                   const approvedInGroup    = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
                   const generatableInGroup = topicsInGroup.filter(t => t.status === 'approved').length
-                  // Slot ready = quota met AND there are approved-but-not-yet-generated topics to trigger
-                  const slotReady = approvedInGroup >= postsPerRun && generatableInGroup > 0
-                  // Clean up: slot has a generated/reviewed post AND stale pending/approved topics
-                  const hasGeneratedInSlot = group.some(r =>
+                  const slotReady = approvedInGroup >= 1 && generatableInGroup > 0
+                  // Check unfiltered slot for generated/published content (filter hides draft_saved/published)
+                  const rawSlotItems = groups.get(dateKey) ?? []
+                  const hasGeneratedInSlot = rawSlotItems.some(r =>
                     (r.kind === 'topic' && r.data.status === 'generated') ||
                     (r.kind === 'post'  && ['for_review', 'draft_saved', 'published'].includes(r.data.status))
                   )
@@ -1436,17 +1432,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
                             {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
                           </span>
-                          {/* Approval dots */}
-                          <div style={{ display: 'flex', gap: 3 }}>
-                            {Array.from({ length: postsPerRun }).map((_, i) => (
-                              <span key={i} style={{
-                                display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                                background: i < approvedInGroup ? 'var(--green)' : 'var(--border)',
-                              }} />
-                            ))}
-                          </div>
+                          {/* Approval dot (1 per slot) */}
+                          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: approvedInGroup >= 1 ? 'var(--green)' : 'var(--border)' }} />
                           <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
-                            {approvedInGroup}/{postsPerRun}{slotReady ? ' ✓' : ''}
+                            {approvedInGroup >= 1 ? '✓' : '0/1'}
                           </span>
                           {slotReady && (
                             <button
@@ -1912,7 +1901,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           <PipelineCalendar
             clientId={clientId}
             contentType="service_page"
-            postsPerRun={postsPerRun}
             connectionId={schedule.connection_id ?? null}
             sites={clientSites}
             onShowToast={showToast}
@@ -2629,7 +2617,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           <PipelineCalendar
             clientId={clientId}
             contentType="regular_page"
-            postsPerRun={postsPerRun}
             connectionId={schedule.connection_id ?? null}
             sites={clientSites}
             onShowToast={showToast}
@@ -3129,7 +3116,6 @@ function SiloModal({ mode, draft, saving, onChange, onAddClusterKw, onRemoveClus
 interface PipelineCalendarProps {
   clientId:      string
   contentType:   'service_page' | 'regular_page'
-  postsPerRun:   number
   connectionId:  string | null
   sites:         SiteOption[]
   onShowToast:   (msg: string, type?: 'success' | 'error' | 'info') => void
@@ -3139,7 +3125,7 @@ interface PipelineCalendarProps {
 }
 
 function PipelineCalendar({
-  clientId, contentType, postsPerRun, connectionId, sites,
+  clientId, contentType, connectionId, sites,
   onShowToast, aiConfigured, isActive, refreshSignal,
 }: PipelineCalendarProps) {
   const [topics,         setTopics]         = useState<Topic[]>([])
@@ -3213,7 +3199,12 @@ function PipelineCalendar({
       fetch('/api/admin/content/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
-      }).catch(e => console.error('[PipelineCalendar.generateForSlot]', e))
+      }).then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      }).catch(e => {
+        console.error('[PipelineCalendar.generateForSlot]', e)
+        setTopics(prev => prev.map(topic => topic.id === t.id ? { ...topic, status: 'approved' } : topic))
+      })
     )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
   }
 
@@ -3246,7 +3237,7 @@ function PipelineCalendar({
   async function cleanSlot(topicIds: string[]) {
     const res = await fetch('/api/admin/content/topics/bulk-reject', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic_ids: topicIds }),
+      body: JSON.stringify({ topic_ids: topicIds, client_id: clientId }),
     })
     if (res.ok) {
       setTopics(p => p.map(t => topicIds.includes(t.id) ? { ...t, status: 'rejected' } : t))
@@ -3386,8 +3377,10 @@ function PipelineCalendar({
                   const topicsInGroup      = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
                   const approvedInGroup    = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
                   const generatableInGroup = topicsInGroup.filter(t => t.status === 'approved').length
-                  const slotReady         = approvedInGroup >= postsPerRun && generatableInGroup > 0
-                  const hasGeneratedInSlot = group.some(r =>
+                  const slotReady         = approvedInGroup >= 1 && generatableInGroup > 0
+                  // Check unfiltered slot for generated/published content (filter hides draft_saved/published)
+                  const rawSlotItems = groups.get(dateKey) ?? []
+                  const hasGeneratedInSlot = rawSlotItems.some(r =>
                     (r.kind === 'topic' && r.data.status === 'generated') ||
                     (r.kind === 'post'  && ['for_review', 'draft_saved', 'published'].includes(r.data.status))
                   )
@@ -3401,13 +3394,9 @@ function PipelineCalendar({
                           <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
                             {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
                           </span>
-                          <div style={{ display: 'flex', gap: 3 }}>
-                            {Array.from({ length: postsPerRun }).map((_, i) => (
-                              <span key={i} style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: i < approvedInGroup ? 'var(--green)' : 'var(--border)' }} />
-                            ))}
-                          </div>
+                          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: approvedInGroup >= 1 ? 'var(--green)' : 'var(--border)' }} />
                           <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
-                            {approvedInGroup}/{postsPerRun}{slotReady ? ' ✓' : ''}
+                            {approvedInGroup >= 1 ? '✓' : '0/1'}
                           </span>
                           {slotReady && (
                             <button className="btn btn-secondary"
