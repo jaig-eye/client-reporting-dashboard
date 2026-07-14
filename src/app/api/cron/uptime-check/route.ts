@@ -7,7 +7,7 @@ import { sendEmail } from '@/lib/email'
 export const maxDuration = 300
 
 const TIMEOUT_MS = 15_000
-const FLAP_THRESHOLD = 2
+const FLAP_THRESHOLD = 1
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
@@ -278,16 +278,18 @@ export async function GET(request: NextRequest) {
     incidentsBySite.set(row.site_id, (incidentsBySite.get(row.site_id) ?? 0) + 1)
   }
 
-  for (const [siteId, stats] of Array.from(bySite.entries())) {
-    await db.from('site_check_daily').upsert({
-      site_id:         siteId,
-      date:            today,
-      uptime_pct:      stats.total > 0 ? (stats.up / stats.total) * 100 : null,
-      avg_response_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null,
-      check_count:     stats.total,
-      incident_count:  incidentsBySite.get(siteId) ?? 0,
-    }, { onConflict: 'site_id,date' })
-  }
+  await Promise.all(
+    Array.from(bySite.entries()).map(([siteId, stats]) =>
+      db.from('site_check_daily').upsert({
+        site_id:         siteId,
+        date:            today,
+        uptime_pct:      stats.total > 0 ? (stats.up / stats.total) * 100 : null,
+        avg_response_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null,
+        check_count:     stats.total,
+        incident_count:  incidentsBySite.get(siteId) ?? 0,
+      }, { onConflict: 'site_id,date' })
+    )
+  )
 
   // Compute 7-day uptime per site and update sites table
   const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)

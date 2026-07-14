@@ -282,7 +282,7 @@ export default function SitesPage() {
   const labelStyle: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-faint)', display: 'block', marginBottom: 4 }
 
   return (
-    <div style={{ padding: '1.5rem 2rem', maxWidth: 1400, margin: '0 auto' }}>
+    <div>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
