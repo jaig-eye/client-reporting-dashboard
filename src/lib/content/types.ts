@@ -64,9 +64,13 @@ export interface ClientScheduleSettings {
   target_length:         number
   publish_time:          string | null
   wp_publish_mode:       'scheduled_draft' | 'draft_only'
-  topic_guidelines:      string | null
-  auto_approve_topics:   boolean
-  auto_push_posts:       boolean
+  topic_guidelines:               string | null
+  auto_approve_topics:            boolean
+  auto_push_posts:                boolean
+  service_page_topic_guidelines:  string | null
+  regular_page_topic_guidelines:  string | null
+  service_page_auto_generate:     boolean
+  regular_page_auto_generate:     boolean
 }
 
 export interface ClientBrandDna {

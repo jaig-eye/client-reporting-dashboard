@@ -379,6 +379,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [siloArchiveConfirm, setSiloArchiveConfirm] = useState<string | null>(null)
   const { playSiloCreated, playClusterAdded, playTopicGenerated } = useSiloSounds(true)
 
+  // SP / RP per-type config (guidelines, auto_generate)
+  const [spGuidelines,     setSpGuidelines]     = useState<string | null>(null)
+  const [spAutoGenerate,   setSpAutoGenerate]    = useState(false)
+  const [spGuidelinesOpen, setSpGuidelinesOpen]  = useState(false)
+  const [rpGuidelines,     setRpGuidelines]      = useState<string | null>(null)
+  const [rpAutoGenerate,   setRpAutoGenerate]    = useState(false)
+  const [rpGuidelinesOpen, setRpGuidelinesOpen]  = useState(false)
+  const [guidelinesSaving, setGuidelinesSaving]  = useState(false)
+  // Signals used to tell PipelineCalendar instances to reload after silo-based generation
+  const [spRefreshSignal,  setSpRefreshSignal]   = useState(0)
+  const [rpRefreshSignal,  setRpRefreshSignal]   = useState(0)
+
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
     setSchedLoading(true)
@@ -390,7 +402,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
           monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
           posts_per_run:         (d.posts_per_run          as number)         ?? 2,
-          topics_per_run:        (d.topics_per_run         as number)         ?? 5,
+          topics_per_run:        (d.topics_per_run         as number)         ?? 1,
           weeks_ahead:           (d.weeks_ahead            as number)         ?? 6,
           schedule_start_date:   (d.schedule_start_date    as string  | null) ?? null,
           auto_generate:         (d.auto_generate          as boolean)        ?? false,
@@ -412,6 +424,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         setImagePrompt(String(d.content_image_prompt ?? ''))
         setGenerateServicePages(!!(d.generate_service_pages as boolean | null))
         setGenerateRegularPages(!!(d.generate_regular_pages as boolean | null))
+        setSpGuidelines((d.service_page_topic_guidelines as string | null) ?? null)
+        setSpAutoGenerate(!!(d.service_page_auto_generate as boolean | null))
+        setRpGuidelines((d.regular_page_topic_guidelines as string | null) ?? null)
+        setRpAutoGenerate(!!(d.regular_page_auto_generate as boolean | null))
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
         setSchedLoading(false)
@@ -587,7 +603,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     if (res.ok) {
       playTopicGenerated()
       showToast('Topics are generating — they\'ll appear in the pipeline shortly', 'info')
-      setTimeout(() => { loadSilos(); loadPipeline() }, 3000)
+      setTimeout(() => {
+        loadSilos()
+        if (silo.content_type === 'blog') loadPipeline()
+        else if (silo.content_type === 'service_page') setSpRefreshSignal(s => s + 1)
+        else if (silo.content_type === 'regular_page') setRpRefreshSignal(s => s + 1)
+      }, 3000)
     } else {
       const d = await res.json().catch(() => ({}))
       showToast(d.error ?? 'Generation failed', 'error')
@@ -690,6 +711,40 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     else showToast((await res.json()).error || 'Failed to save', 'error')
   }
 
+  async function saveSpConfig() {
+    setGuidelinesSaving(true)
+    const res = await fetch('/api/admin/content/client-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: clientId,
+        generate_service_pages: generateServicePages,
+        service_page_topic_guidelines: spGuidelines ?? null,
+        service_page_auto_generate: spAutoGenerate,
+      }),
+    })
+    setGuidelinesSaving(false)
+    if (res.ok) showToast('Service Pages config saved')
+    else showToast((await res.json() as { error?: string }).error || 'Failed to save', 'error')
+  }
+
+  async function saveRpConfig() {
+    setGuidelinesSaving(true)
+    const res = await fetch('/api/admin/content/client-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: clientId,
+        generate_regular_pages: generateRegularPages,
+        regular_page_topic_guidelines: rpGuidelines ?? null,
+        regular_page_auto_generate: rpAutoGenerate,
+      }),
+    })
+    setGuidelinesSaving(false)
+    if (res.ok) showToast('Regular Pages config saved')
+    else showToast((await res.json() as { error?: string }).error || 'Failed to save', 'error')
+  }
+
   // ── Topic actions ──────────────────────────────────────────────────────────
   async function regenerateTopic(id: string) {
     setTopicLoading(p => ({ ...p, [id]: true }))
@@ -782,6 +837,20 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     setEditNotes(t.edit_notes ?? '')
     setEditingId(t.id)
     setExpandedId(null)
+  }
+
+  async function cleanSlot(topicIds: string[]) {
+    const res = await fetch('/api/admin/content/topics/bulk-reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic_ids: topicIds }),
+    })
+    if (res.ok) {
+      setTopics(p => p.map(t => topicIds.includes(t.id) ? { ...t, status: 'rejected' } : t))
+      showToast(`Cleaned up ${topicIds.length} stale topic${topicIds.length !== 1 ? 's' : ''}`)
+    } else {
+      showToast('Cleanup failed', 'error')
+    }
   }
 
   // ── Service Area helpers ───────────────────────────────────────────────────
@@ -930,11 +999,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const postsPerRun  = schedule.posts_per_run  ?? 2
-  const topicsPerRun = schedule.topics_per_run ?? 5
+  const topicsPerRun = schedule.topics_per_run ?? 1
   const freqSummary  = schedule.schedule_frequency
-    ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · ${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
-    : `${topicsPerRun} topic${topicsPerRun !== 1 ? 's' : ''}/run`
-  const willCreate   = Math.min(modalWeeks * topicsPerRun, 50)
+    ? `${FREQ_LABEL[schedule.schedule_frequency] ?? schedule.schedule_frequency} · 1 topic/slot`
+    : '1 topic/slot'
+  const willCreate   = Math.min(modalWeeks, 50)
   const showDayPicker = schedule.schedule_frequency === 'weekly' || schedule.schedule_frequency === 'biweekly'
   const isConfigured  = !!(schedule.schedule_frequency && schedule.schedule_start_date)
 
@@ -1242,7 +1311,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>AI Content Plan</div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Generate {schedule.topics_per_run ?? 5} {FREQ_LABEL[schedule.schedule_frequency ?? 'weekly'] ?? 'weekly'} topics for your next {schedule.weeks_ahead ?? 1} publish slot{(schedule.weeks_ahead ?? 1) > 1 ? 's' : ''}
+              Generate 1 topic per {FREQ_LABEL[schedule.schedule_frequency ?? 'weekly']?.toLowerCase() ?? 'weekly'} slot for your next {schedule.weeks_ahead ?? 1} publish date{(schedule.weeks_ahead ?? 1) > 1 ? 's' : ''}
             </div>
           </div>
           <button className="btn btn-primary btn-sm" onClick={() => setCalendarModalOpen(true)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -1344,11 +1413,20 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   if (group.length === 0) return null
 
                   // Slot approval progress (topics in this date group)
-                  const topicsInGroup = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
+                  const topicsInGroup      = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
                   const approvedInGroup    = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
                   const generatableInGroup = topicsInGroup.filter(t => t.status === 'approved').length
                   // Slot ready = quota met AND there are approved-but-not-yet-generated topics to trigger
                   const slotReady = approvedInGroup >= postsPerRun && generatableInGroup > 0
+                  // Clean up: slot has a generated/reviewed post AND stale pending/approved topics
+                  const hasGeneratedInSlot = group.some(r =>
+                    (r.kind === 'topic' && r.data.status === 'generated') ||
+                    (r.kind === 'post'  && ['for_review', 'draft_saved', 'published'].includes(r.data.status))
+                  )
+                  const staleTopicIds = topicsInGroup
+                    .filter(t => ['pending', 'approved'].includes(t.status))
+                    .map(t => t.id)
+                  const showCleanup = hasGeneratedInSlot && staleTopicIds.length > 0
 
                   return [
                     // Date section header row
@@ -1380,6 +1458,16 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               {slotGenerating[dateKey]
                               ? '…'
                               : <><Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot</>}
+                            </button>
+                          )}
+                          {showCleanup && (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--text-faint)', marginLeft: 'auto' }}
+                              onClick={() => cleanSlot(staleTopicIds)}
+                              title="Remove stale topics from this slot — a post has already been generated"
+                            >
+                              Clean up ({staleTopicIds.length})
                             </button>
                           )}
                         </div>
@@ -1748,33 +1836,65 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'service_page' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="card p-5">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Service Pages</p>
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  Enable automatic generation of service-focused landing pages for this client.
-                  Each page targets a specific service and is optimized for conversion.
-                </p>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                  {generateServicePages ? 'Enabled' : 'Disabled'}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={generateServicePages}
-                  onChange={e => setGenerateServicePages(e.target.checked)}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                />
-              </label>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" onClick={saveTypeToggles} disabled={typeToggleSaving}>
-                {typeToggleSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+          {/* Config panel */}
+          <div
+            className="card p-4 cursor-pointer select-none"
+            onClick={() => setSpGuidelinesOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Pages Configuration</span>
+            <span style={{ flex: 1 }} />
+            {spAutoGenerate && <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>}
+            {generateServicePages
+              ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓ Enabled</span>
+              : <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Disabled</span>}
+            <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{spGuidelinesOpen ? '▲' : '▼'}</span>
           </div>
+          {spGuidelinesOpen && (
+            <div className="card p-5" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, marginTop: -8 }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                Service pages share the same WordPress connection, schedule frequency, author, and category settings as Blog Posts.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Enable Service Pages</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Generate AI service landing pages for this client.</p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{generateServicePages ? 'Enabled' : 'Disabled'}</span>
+                  <input type="checkbox" checked={generateServicePages} onChange={e => setGenerateServicePages(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                </label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Auto Generate</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Automatically generate topics when the cron runs.</p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{spAutoGenerate ? 'On' : 'Off'}</span>
+                  <input type="checkbox" checked={spAutoGenerate} onChange={e => setSpAutoGenerate(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                </label>
+              </div>
+              <div style={{ marginBottom: '0.875rem' }}>
+                <Label>Topic Guidelines</Label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="Additional instructions for generating service page topics…"
+                  value={spGuidelines ?? ''}
+                  onChange={e => setSpGuidelines(e.target.value || null)}
+                  style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button className="btn btn-secondary" onClick={() => setSpGuidelinesOpen(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveSpConfig} disabled={guidelinesSaving}>
+                  {guidelinesSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
           <SiloManager
             contentType="service_page"
             contentTypeLabel="Service Page"
@@ -1788,6 +1908,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onArchiveSilo={handleDeleteSilo}
             onGenerateFromSilo={handleGenerateFromSilo}
             onMarkHubUpdated={handleMarkHubUpdated}
+          />
+          <PipelineCalendar
+            clientId={clientId}
+            contentType="service_page"
+            postsPerRun={postsPerRun}
+            connectionId={schedule.connection_id ?? null}
+            sites={clientSites}
+            onShowToast={showToast}
+            aiConfigured={aiConfigured}
+            isActive={isActive && activePill === 'service_page'}
+            refreshSignal={spRefreshSignal}
           />
         </div>
       )}
@@ -2422,33 +2553,65 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'regular_page' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="card p-5">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.25rem' }}>Regular Pages</p>
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  Enable automatic generation of general-purpose pages for this client.
-                  Each page is created from a custom focus you define per topic (e.g. About Us, FAQ, Contact).
-                </p>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0 }}>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                  {generateRegularPages ? 'Enabled' : 'Disabled'}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={generateRegularPages}
-                  onChange={e => setGenerateRegularPages(e.target.checked)}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                />
-              </label>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" onClick={saveTypeToggles} disabled={typeToggleSaving}>
-                {typeToggleSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+          {/* Config panel */}
+          <div
+            className="card p-4 cursor-pointer select-none"
+            onClick={() => setRpGuidelinesOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Regular Pages Configuration</span>
+            <span style={{ flex: 1 }} />
+            {rpAutoGenerate && <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>}
+            {generateRegularPages
+              ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓ Enabled</span>
+              : <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Disabled</span>}
+            <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{rpGuidelinesOpen ? '▲' : '▼'}</span>
           </div>
+          {rpGuidelinesOpen && (
+            <div className="card p-5" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, marginTop: -8 }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                Regular pages share the same WordPress connection, schedule frequency, author, and category settings as Blog Posts.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Enable Regular Pages</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Generate evergreen pages (About, FAQ, Resources, etc.) for this client.</p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{generateRegularPages ? 'Enabled' : 'Disabled'}</span>
+                  <input type="checkbox" checked={generateRegularPages} onChange={e => setGenerateRegularPages(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                </label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Auto Generate</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Automatically generate topics when the cron runs.</p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{rpAutoGenerate ? 'On' : 'Off'}</span>
+                  <input type="checkbox" checked={rpAutoGenerate} onChange={e => setRpAutoGenerate(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                </label>
+              </div>
+              <div style={{ marginBottom: '0.875rem' }}>
+                <Label>Topic Guidelines</Label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="Additional instructions for generating regular page topics…"
+                  value={rpGuidelines ?? ''}
+                  onChange={e => setRpGuidelines(e.target.value || null)}
+                  style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button className="btn btn-secondary" onClick={() => setRpGuidelinesOpen(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveRpConfig} disabled={guidelinesSaving}>
+                  {guidelinesSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
           <SiloManager
             contentType="regular_page"
             contentTypeLabel="Regular Page"
@@ -2462,6 +2625,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onArchiveSilo={handleDeleteSilo}
             onGenerateFromSilo={handleGenerateFromSilo}
             onMarkHubUpdated={handleMarkHubUpdated}
+          />
+          <PipelineCalendar
+            clientId={clientId}
+            contentType="regular_page"
+            postsPerRun={postsPerRun}
+            connectionId={schedule.connection_id ?? null}
+            sites={clientSites}
+            onShowToast={showToast}
+            aiConfigured={aiConfigured}
+            isActive={isActive && activePill === 'regular_page'}
+            refreshSignal={rpRefreshSignal}
           />
         </div>
       )}
@@ -2945,6 +3119,508 @@ function SiloModal({ mode, draft, saving, onChange, onAddClusterKw, onRemoveClus
         </div>
       </div>
     </div>
+  )
+}
+
+// ─── Pipeline Calendar ────────────────────────────────────────────────────────
+// Self-contained content pipeline for service_page or regular_page content types.
+// Manages its own data fetching, actions, and UI so the parent stays lean.
+
+interface PipelineCalendarProps {
+  clientId:      string
+  contentType:   'service_page' | 'regular_page'
+  postsPerRun:   number
+  connectionId:  string | null
+  sites:         SiteOption[]
+  onShowToast:   (msg: string, type?: 'success' | 'error' | 'info') => void
+  aiConfigured:  boolean
+  isActive:      boolean
+  refreshSignal: number
+}
+
+function PipelineCalendar({
+  clientId, contentType, postsPerRun, connectionId, sites,
+  onShowToast, aiConfigured, isActive, refreshSignal,
+}: PipelineCalendarProps) {
+  const [topics,         setTopics]         = useState<Topic[]>([])
+  const [posts,          setPosts]          = useState<Post[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [showRejected,   setShowRejected]   = useState(false)
+  const [expandedId,     setExpandedId]     = useState<string | null>(null)
+  const [editingId,      setEditingId]      = useState<string | null>(null)
+  const [editTitle,      setEditTitle]      = useState('')
+  const [editNotes,      setEditNotes]      = useState('')
+  const [topicLoading,   setTopicLoading]   = useState<Record<string, boolean>>({})
+  const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
+  const [reviewPost,     setReviewPost]     = useState<Post | null>(null)
+  const [calModalOpen,   setCalModalOpen]   = useState(false)
+  const [modalStartDate, setModalStartDate] = useState(today())
+  const [modalWeeks,     setModalWeeks]     = useState(6)
+  const [generating,     setGenerating]     = useState(false)
+  const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+  const topicsRef = useRef<Topic[]>([])
+  useEffect(() => { topicsRef.current = topics }, [topics])
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  useEffect(() => {
+    if (!isActive) { setCalModalOpen(false); setReviewPost(null) }
+  }, [isActive])
+
+  const loadPipeline = useCallback(() => {
+    setLoading(true)
+    Promise.all([
+      fetch(`/api/admin/content/topics?client_id=${clientId}&content_type=${contentType}`).then(r => r.json()),
+      fetch(`/api/admin/content/posts?client_id=${clientId}&content_type=${contentType}`).then(r => r.json()),
+    ]).then(([t, p]) => {
+      setTopics(Array.isArray(t) ? t as Topic[] : [])
+      setPosts(Array.isArray(p)  ? p  as Post[]  : [])
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [clientId, contentType])
+
+  useEffect(() => { loadPipeline() }, [loadPipeline])
+  useEffect(() => { if (refreshSignal > 0) loadPipeline() }, [refreshSignal, loadPipeline])
+
+  async function topicAction(id: string, status: 'approved' | 'rejected') {
+    setTopicLoading(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+    setTopicLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      setTopics(p => p.map(t => t.id === id ? { ...t, status } : t))
+      onShowToast(status === 'approved' ? 'Topic approved' : 'Topic rejected')
+    } else { onShowToast('Action failed', 'error') }
+  }
+
+  function generatePost(topicId: string) {
+    setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'generating' } : t))
+    onShowToast('Post generation started — check back shortly', 'info')
+    fetch('/api/admin/content/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic_id: topicId, suppress_email: true }),
+    }).catch(e => console.error('[PipelineCalendar.generatePost]', e))
+  }
+
+  function generateForSlot(dateKey: string, group: Topic[]) {
+    const approved = group.filter(t => t.status === 'approved')
+    if (!approved.length) return
+    setSlotGenerating(p => ({ ...p, [dateKey]: true }))
+    setTopics(prev => prev.map(t => approved.find(a => a.id === t.id) ? { ...t, status: 'generating' } : t))
+    onShowToast(`Generating ${approved.length} post${approved.length !== 1 ? 's' : ''}…`, 'info')
+    Promise.all(approved.map(t =>
+      fetch('/api/admin/content/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: t.id, suppress_email: true }),
+      }).catch(e => console.error('[PipelineCalendar.generateForSlot]', e))
+    )).finally(() => setSlotGenerating(p => ({ ...p, [dateKey]: false })))
+  }
+
+  async function retryGenerate(topicId: string) {
+    setTopicLoading(p => ({ ...p, [topicId]: true }))
+    await fetch(`/api/admin/content/topics/${topicId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'approved' }),
+    })
+    setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'approved', generation_error: null } : t))
+    setTopicLoading(p => ({ ...p, [topicId]: false }))
+    generatePost(topicId)
+  }
+
+  async function saveEdit(id: string) {
+    if (!editTitle.trim()) { onShowToast('Title cannot be empty', 'error'); return }
+    setTopicLoading(p => ({ ...p, [id]: true }))
+    const res = await fetch(`/api/admin/content/topics/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: editTitle.trim(), edit_notes: editNotes.trim() || null }),
+    })
+    setTopicLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      setTopics(p => p.map(t => t.id === id ? { ...t, topic: editTitle.trim(), edit_notes: editNotes.trim() || null } : t))
+      setEditingId(null)
+      onShowToast('Title updated')
+    } else { onShowToast('Failed to update', 'error') }
+  }
+
+  async function cleanSlot(topicIds: string[]) {
+    const res = await fetch('/api/admin/content/topics/bulk-reject', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic_ids: topicIds }),
+    })
+    if (res.ok) {
+      setTopics(p => p.map(t => topicIds.includes(t.id) ? { ...t, status: 'rejected' } : t))
+      onShowToast(`Cleaned up ${topicIds.length} stale topic${topicIds.length !== 1 ? 's' : ''}`)
+    } else { onShowToast('Cleanup failed', 'error') }
+  }
+
+  async function generateCalendar(e: React.FormEvent) {
+    e.preventDefault()
+    setGenerating(true)
+    const res = await fetch('/api/admin/content/calendar/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks, content_type: contentType }),
+    })
+    const data = await res.json() as { ok?: boolean; queued?: boolean; count?: number; error?: string }
+    setGenerating(false)
+    if (res.ok) {
+      setCalModalOpen(false)
+      if (data.queued) {
+        onShowToast('Topics are generating — they\'ll appear here automatically', 'info')
+        const prevCount = topicsRef.current.length
+        let polls = 0
+        if (pollRef.current) clearInterval(pollRef.current)
+        pollRef.current = setInterval(() => {
+          polls++
+          loadPipeline()
+          const done = topicsRef.current.length > prevCount || polls >= 12
+          if (done) {
+            clearInterval(pollRef.current!)
+            pollRef.current = null
+            if (topicsRef.current.length > prevCount)
+              onShowToast(`${topicsRef.current.length - prevCount} topics generated`, 'success')
+          }
+        }, 15_000)
+      } else {
+        onShowToast(`${data.count ?? 0} topics generated`)
+        loadPipeline()
+      }
+    } else { onShowToast(data.error || 'Generation failed', 'error') }
+  }
+
+  // ── Build calendar data ──────────────────────────────────────────────────────
+  const allItems: RowItem[] = []
+  const seenPostIds = new Set<string>()
+  const topicIdToPost = new Map<string, Post>()
+
+  topics.forEach(t => {
+    const linkedPost = t.post?.id
+      ? posts.find(p => p.id === t.post!.id)
+      : posts.find(p => p.target_keyword === t.target_keyword && p.target_publish_date === t.target_publish_date && !seenPostIds.has(p.id))
+    if (linkedPost) { seenPostIds.add(linkedPost.id); topicIdToPost.set(t.id, linkedPost) }
+    allItems.push({ kind: 'topic', data: t })
+  })
+  posts.forEach(p => {
+    if (!seenPostIds.has(p.id) && ['for_review', 'draft_saved', 'published'].includes(p.status))
+      allItems.push({ kind: 'post', data: p })
+  })
+
+  const groups = new Map<string, RowItem[]>()
+  for (const item of allItems) {
+    const date = item.data.target_publish_date ?? 'unscheduled'
+    const arr = groups.get(date) ?? []; arr.push(item); groups.set(date, arr)
+  }
+  const dateKeys = Array.from(groups.keys()).filter(k => k !== 'unscheduled').sort((a, b) => a.localeCompare(b))
+  if (groups.has('unscheduled')) dateKeys.push('unscheduled')
+  const statusCounts = computeStatusCounts(topics, posts)
+  const rejectedCount = topics.filter(t => t.status === 'rejected').length + posts.filter(p => p.status === 'rejected').length
+  const typeLabel = contentType === 'service_page' ? 'Service Page' : 'Regular Page'
+
+  return (
+    <>
+      {/* AI Content Plan card */}
+      {aiConfigured ? (
+        <div className="card" style={{ borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle, #eff6ff)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2563eb)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>AI {typeLabel} Plan</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Generate 1 {typeLabel.toLowerCase()} topic per publish slot</div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={() => setCalModalOpen(true)} style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Generate Plan
+          </button>
+        </div>
+      ) : (
+        <div style={{ padding: '10px 14px', marginBottom: 12, fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
+          AI not configured — add a provider in Settings to generate content plans
+        </div>
+      )}
+
+      {/* Calendar table */}
+      <div className="card p-6">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+          <h4 className="section-title" style={{ margin: 0 }}>{typeLabel} Calendar</h4>
+        </div>
+        {!loading && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
+            <ContentStatusBar counts={statusCounts} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0, marginLeft: 12 }}>{topics.length + posts.length} items</span>
+          </div>
+        )}
+        {loading ? (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+        ) : allItems.length === 0 ? (
+          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>
+            No topics yet — click &quot;Generate Plan&quot; or generate topics from a silo above.
+          </p>
+        ) : (
+          <div>
+            <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: 130 }} /><col /><col style={{ width: 110 }} /><col style={{ width: 130 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Status</th>
+                  <th style={{ textAlign: 'left', fontWeight: 600, fontSize: '0.72rem' }}>Title</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Publish Date</th>
+                  <th style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.72rem' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dateKeys.map(dateKey => {
+                  const group = (groups.get(dateKey) ?? []).filter(item => {
+                    if (!showRejected) {
+                      if (item.kind === 'topic' && item.data.status === 'rejected') return false
+                      if (item.kind === 'post'  && item.data.status === 'rejected') return false
+                    }
+                    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
+                    return true
+                  })
+                  if (group.length === 0) return null
+
+                  const topicsInGroup      = group.filter(r => r.kind === 'topic').map(r => r.data as Topic)
+                  const approvedInGroup    = topicsInGroup.filter(t => ['approved', 'generating', 'generated'].includes(t.status)).length
+                  const generatableInGroup = topicsInGroup.filter(t => t.status === 'approved').length
+                  const slotReady         = approvedInGroup >= postsPerRun && generatableInGroup > 0
+                  const hasGeneratedInSlot = group.some(r =>
+                    (r.kind === 'topic' && r.data.status === 'generated') ||
+                    (r.kind === 'post'  && ['for_review', 'draft_saved', 'published'].includes(r.data.status))
+                  )
+                  const staleTopicIds = topicsInGroup.filter(t => ['pending', 'approved'].includes(t.status)).map(t => t.id)
+                  const showCleanup   = hasGeneratedInSlot && staleTopicIds.length > 0
+
+                  return [
+                    <tr key={`hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)' }}>
+                      <td colSpan={4} style={{ padding: '5px 8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>
+                            {dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}
+                          </span>
+                          <div style={{ display: 'flex', gap: 3 }}>
+                            {Array.from({ length: postsPerRun }).map((_, i) => (
+                              <span key={i} style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: i < approvedInGroup ? 'var(--green)' : 'var(--border)' }} />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
+                            {approvedInGroup}/{postsPerRun}{slotReady ? ' ✓' : ''}
+                          </span>
+                          {slotReady && (
+                            <button className="btn btn-secondary"
+                              style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--blue)', marginLeft: 4 }}
+                              onClick={() => generateForSlot(dateKey, topicsInGroup)}
+                              disabled={slotGenerating[dateKey]}
+                            >
+                              {slotGenerating[dateKey] ? '…' : <><Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot</>}
+                            </button>
+                          )}
+                          {showCleanup && (
+                            <button className="btn btn-secondary"
+                              style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--text-faint)', marginLeft: 'auto' }}
+                              onClick={() => cleanSlot(staleTopicIds)}
+                              title="Remove stale topics — a post already exists for this slot"
+                            >
+                              Clean up ({staleTopicIds.length})
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>,
+
+                    ...group.map(item => {
+                      const id = item.data.id
+                      const isExpanded = expandedId === id
+                      const isEditing  = editingId  === id
+
+                      if (item.kind === 'topic') {
+                        const t = item.data
+                        const linkedPost    = topicIdToPost.get(t.id)
+                        const displayStatus = (linkedPost?.status === 'draft_saved' || linkedPost?.status === 'published') ? 'published' as const : getTopicDisplayStatus(t)
+                        const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
+                        const hasReview     = linkedPost && ['for_review', 'generated', 'draft_saved'].includes(linkedPost.status)
+                        const hasError      = !!t.generation_error && !['rejected', 'generated'].includes(t.status)
+
+                        return [
+                          <tr key={`topic-${t.id}`}
+                            style={{ cursor: hasDetail ? 'pointer' : 'default', background: isExpanded ? 'var(--bg-subtle)' : undefined, borderLeft: hasError ? '2px solid #f59e0b' : undefined }}
+                            onClick={() => { if (hasDetail && !isEditing) setExpandedId(isExpanded ? null : id) }}
+                          >
+                            <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                                {hasError && <span title={t.generation_error ?? ''} style={{ fontSize: '0.7rem', color: '#f59e0b', cursor: 'help' }}>⚠</span>}
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                              <div style={{ fontWeight: 500, fontSize: '0.8125rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {t.topic}{hasDetail && <span style={{ fontSize: '0.6rem', marginLeft: 4, opacity: 0.5 }}>↗</span>}
+                              </div>
+                              {t.target_keyword && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                                  {t.target_keyword}
+                                  {t.cluster_group && <span style={{ marginLeft: 5, fontSize: '0.62rem', background: 'var(--bg-muted)', padding: '0 4px', borderRadius: 3 }}>{t.cluster_group}</span>}
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {fmtDate(t.target_publish_date)}
+                            </td>
+                            <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                {hasReview && (
+                                  <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                    onClick={() => setReviewPost(linkedPost!)}>
+                                    <ArrowRight size={11} weight="bold" /> {linkedPost?.status === 'draft_saved' ? 'Edit' : 'Review'}
+                                  </button>
+                                )}
+                                {hasError && (
+                                  <button className="btn btn-secondary" style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                    onClick={() => retryGenerate(t.id)} disabled={topicLoading[t.id]} title="Retry generation">
+                                    <ArrowClockwise size={11} weight="bold" /> Retry
+                                  </button>
+                                )}
+                                {t.status === 'approved' && !hasReview && (
+                                  <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }}
+                                    onClick={() => generatePost(t.id)} title="Generate post now">
+                                    <Play size={12} weight="fill" />
+                                  </button>
+                                )}
+                                {!['approved', 'generating', 'generated'].includes(t.status) && (
+                                  <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }}
+                                    onClick={() => topicAction(t.id, 'approved')} disabled={topicLoading[t.id]} title="Approve topic">
+                                    <Check size={12} weight="bold" />
+                                  </button>
+                                )}
+                                {!['generating', 'generated', 'rejected'].includes(t.status) && (
+                                  <button className="btn btn-secondary" style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
+                                    onClick={() => topicAction(t.id, 'rejected')} disabled={topicLoading[t.id]} title="Reject topic">
+                                    <X size={12} weight="bold" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>,
+                          isExpanded && (
+                            <tr key={`expand-${t.id}`}>
+                              <td colSpan={4} style={{ padding: '0 0 12px 0', background: 'var(--bg-subtle)' }}>
+                                <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {([
+                                    { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+                                    { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+                                    { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
+                                    { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+                                    { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+                                  ] as const).filter(s => t[s.key]).map(({ key, label, color, bg }) => (
+                                    <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 4px 4px 0', padding: '4px 8px' }}>
+                                      <p style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: 2 }}>{label}</p>
+                                      <p style={{ fontSize: '0.78rem', color: '#374151', lineHeight: 1.4 }}>{t[key]}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          ),
+                          isEditing && (
+                            <tr key={`edit-${t.id}`}>
+                              <td colSpan={4} style={{ padding: '4px 0 12px 0', background: 'var(--bg-subtle)' }}>
+                                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <input className="input" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Topic title" style={{ fontSize: '0.875rem' }} autoFocus />
+                                  <textarea className="input" rows={2} value={editNotes} onChange={e => setEditNotes(e.target.value)} placeholder="Direction notes (optional)" style={{ fontSize: '0.8125rem', resize: 'vertical' }} />
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button className="btn btn-primary btn-sm" onClick={() => saveEdit(t.id)}>Save</button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ),
+                        ]
+                      }
+
+                      // Orphan post row
+                      const p = item.data as Post
+                      const displayStatus = getPostDisplayStatus(p)
+                      const siteUrl = p.published_url ?? (p.wp_site_url ? `${p.wp_site_url}/wp-admin/post.php?post=${p.wp_post_id}&action=edit` : null)
+                      return (
+                        <tr key={`post-${p.id}`}>
+                          <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}><StatusPill status={displayStatus} /></td>
+                          <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                            <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{p.title ?? p.seo_title ?? '—'}</div>
+                            {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(p.target_publish_date)}</td>
+                          <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                            <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                              <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setReviewPost(p)}>
+                                <ArrowRight size={11} weight="bold" /> {p.status === 'draft_saved' ? 'Edit' : 'Review'}
+                              </button>
+                              {siteUrl && <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ Live</a>}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    }),
+                  ]
+                })}
+              </tbody>
+            </table>
+            {rejectedCount > 0 && (
+              <button style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                onClick={() => setShowRejected(r => !r)}>
+                {showRejected ? 'Hide' : 'Show'} Rejected ({rejectedCount})
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Calendar generate modal */}
+      {calModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setCalModalOpen(false) }}>
+          <div className="card" style={{ maxWidth: 460, width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
+              <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Generate {typeLabel} Plan</h3>
+              <button onClick={() => setCalModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
+            </div>
+            <form onSubmit={generateCalendar} style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <Label>Start Date</Label>
+                <input className="input" type="date" value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <Label>Weeks to Plan</Label>
+                <input className="input" type="number" min={1} max={24} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} style={{ width: '100%' }} />
+              </div>
+              <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
+                <p className="text-xs" style={{ color: 'var(--blue)' }}>
+                  Creates 1 {typeLabel.toLowerCase()} topic per slot across {modalWeeks} week{modalWeeks !== 1 ? 's' : ''}. Topics are assigned to your silos by priority.
+                </p>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setCalModalOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={generating}>{generating ? 'Generating…' : 'Generate →'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Post review editor */}
+      {reviewPost && (
+        <ContentPostEditor
+          postId={reviewPost.id}
+          defaultConnectionId={connectionId}
+          sites={sites}
+          onClose={() => setReviewPost(null)}
+          onUpdate={() => { setReviewPost(null); loadPipeline() }}
+        />
+      )}
+    </>
   )
 }
 

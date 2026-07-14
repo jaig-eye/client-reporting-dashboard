@@ -71,7 +71,7 @@ export async function generateTopicsForClient(
   clientId: string,
   count:    number,
   targetPublishDate?: string,
-  opts?: { suppressEmail?: boolean; siloId?: string },
+  opts?: { suppressEmail?: boolean; siloId?: string; contentType?: string },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
@@ -311,6 +311,7 @@ export async function generateTopicsForClient(
   // ── Silo context (topical authority hub + cluster strategy) ───────────────
   let siloPromptBlock = ''
   let siloName: string | null = null
+  let siloContentType: string | null = null
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
@@ -320,7 +321,8 @@ export async function generateTopicsForClient(
     if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
 
     if (silo) {
-      siloName = silo.name as string
+      siloName        = silo.name as string
+      siloContentType = (silo.content_type as string | null) ?? null
 
       // Fetch existing cluster posts in this silo to prevent duplicate intents
       const { data: existingClusters } = await db
@@ -477,6 +479,8 @@ Suggest ${count} high-impact blog post topics${siloName ? ` for the "${siloName}
     competitors_researched: t.target_keyword ? (competitorMap.get(t.target_keyword) ?? null) : null,
     // Only include silo_id when set — column requires migration 149 (content_silos)
     ...(opts?.siloId ? { silo_id: opts.siloId } : {}),
+    // Derive content_type from silo; fall back to explicit opt then default 'blog'
+    content_type:         siloContentType ?? opts?.contentType ?? 'blog',
     status:               'pending',
     target_publish_date:  targetPublishDate ?? null,
   }))

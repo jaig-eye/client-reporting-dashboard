@@ -73,7 +73,7 @@ export async function PUT(request: NextRequest) {
     posts_per_run:        posts_per_run        ?? 1,
     schedule_frequency:   schedule_frequency   ?? 'weekly',
     schedule_day_of_week: schedule_day_of_week ?? 1,
-    topics_per_run:       topics_per_run       ?? 5,
+    topics_per_run:       topics_per_run       ?? 1,
     weeks_ahead:          weeks_ahead          ?? 4,
     sitemap_urls:         Array.isArray(sitemap_urls) ? sitemap_urls : [],
     manual_link_urls:     Array.isArray(manual_link_urls) ? manual_link_urls : [],

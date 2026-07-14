@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
       client_id,
       schedule_frequency,
       schedule_day_of_week,
-      topics_per_run        = 5,
+      topics_per_run        = 1,
       posts_per_run         = 2,
       weeks_ahead           = 1,
       auto_approve_topics   = false,

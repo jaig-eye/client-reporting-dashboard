@@ -22,8 +22,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { client_id: string; start_date?: string; weeks_ahead?: number; silo_id?: string }
-  const { client_id, start_date, weeks_ahead: weeksAheadParam, silo_id } = body
+  const body = await request.json() as { client_id: string; start_date?: string; weeks_ahead?: number; silo_id?: string; content_type?: string }
+  const { client_id, start_date, weeks_ahead: weeksAheadParam, silo_id, content_type } = body
 
   if (!client_id) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
 
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       for (let b = 0; b < totalBatches; b++) {
         const batchCount = Math.min(BATCH_SIZE, count - inserted)
         const result = await generateTopicsForClient(db, client_id, batchCount, undefined,
-          { suppressEmail: true, siloId: silo_id ?? undefined })
+          { suppressEmail: true, siloId: silo_id ?? undefined, contentType: content_type ?? undefined })
         if (result.error) {
           console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} error:`, result.error)
           break

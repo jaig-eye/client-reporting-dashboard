@@ -55,7 +55,7 @@ interface Props {
   onComplete: () => void
 }
 
-const TOTAL_STEPS = 7
+const TOTAL_STEPS = 8
 
 const FREQ_OPTIONS = [
   { id: 'daily',    label: 'Daily',       sub: '1 post/day' },
@@ -98,11 +98,17 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // Step 5 state
   const [schedule, setSchedule] = useState<Schedule>({
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
-    topicsPerRun: 5, weeksAhead: 6, autoGenerate: true,
+    topicsPerRun: 1, weeksAhead: 6, autoGenerate: true,
     autoApprove: false, autoPush: false,
   })
 
-  // Step 6 state
+  // Step 6 state — additional content types
+  const [enableServicePages,    setEnableServicePages]    = useState(false)
+  const [spGuidelinesWiz,       setSpGuidelinesWiz]       = useState('')
+  const [enableRegularPages,    setEnableRegularPages]    = useState(false)
+  const [rpGuidelinesWiz,       setRpGuidelinesWiz]       = useState('')
+
+  // Step 7 state
   const [research,       setResearch]       = useState<ResearchData | null>(null)
   const [researchDone,   setResearchDone]   = useState(false)
 
@@ -264,11 +270,15 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         publish_time:         schedule.publishTime,
         topics_per_run:       schedule.topicsPerRun,
         weeks_ahead:          schedule.weeksAhead,
-        auto_generate:        schedule.autoGenerate,
-        auto_approve_topics:  schedule.autoApprove,
-        auto_push_posts:      schedule.autoPush,
-        eeat_data:            eeatData,
-        wizard_completed:     wizardCompleted,
+        auto_generate:                  schedule.autoGenerate,
+        auto_approve_topics:            schedule.autoApprove,
+        auto_push_posts:                schedule.autoPush,
+        generate_service_pages:         enableServicePages,
+        service_page_topic_guidelines:  spGuidelinesWiz || null,
+        generate_regular_pages:         enableRegularPages,
+        regular_page_topic_guidelines:  rpGuidelinesWiz || null,
+        eeat_data:                      eeatData,
+        wizard_completed:               wizardCompleted,
       }),
     })
     if (!res.ok) {
@@ -393,8 +403,20 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             />
           )}
           {step === 5 && <StepSchedule schedule={schedule} setSchedule={setSchedule} />}
-          {step === 6 && <StepResearch research={research} done={researchDone} />}
-          {step === 7 && (
+          {step === 6 && (
+            <StepContentTypes
+              enableServicePages={enableServicePages}
+              setEnableServicePages={setEnableServicePages}
+              spGuidelines={spGuidelinesWiz}
+              setSpGuidelines={setSpGuidelinesWiz}
+              enableRegularPages={enableRegularPages}
+              setEnableRegularPages={setEnableRegularPages}
+              rpGuidelines={rpGuidelinesWiz}
+              setRpGuidelines={setRpGuidelinesWiz}
+            />
+          )}
+          {step === 7 && <StepResearch research={research} done={researchDone} />}
+          {step === 8 && (
             <StepReady
               clientName={clientName}
               brand={brand}
@@ -411,7 +433,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         </div>
 
         {/* Footer nav */}
-        {step < 7 && (
+        {step < 8 && (
           <div style={{
             padding: '1rem 1.5rem 1.25rem',
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -430,7 +452,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               className="btn btn-primary"
               style={{ fontSize: '0.875rem' }}
             >
-              {step === 6 ? 'Continue →' : 'Continue →'}
+              {step === 6 ? 'Skip →' : 'Continue →'}
             </button>
           </div>
         )}
@@ -839,7 +861,91 @@ function StepSchedule({ schedule, setSchedule }: { schedule: Schedule; setSchedu
   )
 }
 
-// ─── Step 6: Research ─────────────────────────────────────────────────────────
+// ─── Step 6: Additional Content Types ─────────────────────────────────────────
+
+function StepContentTypes({
+  enableServicePages, setEnableServicePages, spGuidelines, setSpGuidelines,
+  enableRegularPages, setEnableRegularPages, rpGuidelines, setRpGuidelines,
+}: {
+  enableServicePages: boolean; setEnableServicePages: (v: boolean) => void
+  spGuidelines: string; setSpGuidelines: (v: string) => void
+  enableRegularPages: boolean; setEnableRegularPages: (v: boolean) => void
+  rpGuidelines: string; setRpGuidelines: (v: string) => void
+}) {
+  return (
+    <div>
+      <StepTitle>Additional Content Types</StepTitle>
+      <StepSub>
+        Optionally enable AI-generated Service Pages and Regular Pages alongside your blog posts.
+        You can also configure these later from the Content Schedule tab.
+      </StepSub>
+
+      {/* Service Pages */}
+      <div className="card p-4" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <input
+            type="checkbox"
+            id="wiz-sp"
+            checked={enableServicePages}
+            onChange={e => setEnableServicePages(e.target.checked)}
+            style={{ width: 18, height: 18, marginTop: 2, cursor: 'pointer', flexShrink: 0 }}
+          />
+          <label htmlFor="wiz-sp" style={{ cursor: 'pointer', flex: 1 }}>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Service Pages</p>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: enableServicePages ? '0.75rem' : 0 }}>
+              AI-generated landing pages targeting each of your services. Great for service-based businesses that want dedicated pages per offering.
+            </p>
+          </label>
+        </div>
+        {enableServicePages && (
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="Topic guidelines for service pages (optional) — e.g. 'Focus on local intent, include pricing ranges…'"
+            value={spGuidelines}
+            onChange={e => setSpGuidelines(e.target.value)}
+            style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem', marginTop: 8 }}
+          />
+        )}
+      </div>
+
+      {/* Regular Pages */}
+      <div className="card p-4">
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <input
+            type="checkbox"
+            id="wiz-rp"
+            checked={enableRegularPages}
+            onChange={e => setEnableRegularPages(e.target.checked)}
+            style={{ width: 18, height: 18, marginTop: 2, cursor: 'pointer', flexShrink: 0 }}
+          />
+          <label htmlFor="wiz-rp" style={{ cursor: 'pointer', flex: 1 }}>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Regular Pages</p>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: enableRegularPages ? '0.75rem' : 0 }}>
+              Evergreen pages like About Us, FAQ, Resources, and more. Ideal for filling out a site&apos;s content architecture.
+            </p>
+          </label>
+        </div>
+        {enableRegularPages && (
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="Topic guidelines for regular pages (optional) — e.g. 'Keep a professional tone, avoid technical jargon…'"
+            value={rpGuidelines}
+            onChange={e => setRpGuidelines(e.target.value)}
+            style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem', marginTop: 8 }}
+          />
+        )}
+      </div>
+
+      <p style={{ marginTop: 16, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+        You can skip this step — additional content types can be enabled at any time from the Content Schedule tab.
+      </p>
+    </div>
+  )
+}
+
+// ─── Step 7: Research ─────────────────────────────────────────────────────────
 
 function StepResearch({ research, done }: { research: ResearchData | null; done: boolean }) {
   return (
@@ -925,7 +1031,7 @@ function StatusRow({ label, status }: { label: string; status: 'loading' | 'done
   )
 }
 
-// ─── Step 7: Ready ────────────────────────────────────────────────────────────
+// ─── Step 8: Ready ────────────────────────────────────────────────────────────
 
 function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi, saving, saveMsg, onSave, onSaveAndGenerate }: {
   clientName: string
