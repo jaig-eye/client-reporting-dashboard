@@ -36,16 +36,20 @@ export default async function ShareAdsPage({
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8f9fb' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '2rem 1.5rem' }}>
-        <div style={{ marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827', margin: 0 }}>
+      <style>{`
+        .adlib-page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
+        @media (max-width: 600px) { .adlib-page { padding: 1.25rem 1rem; } }
+      `}</style>
+      <div className="adlib-page">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: '#111827', margin: 0 }}>
             {client.name}
           </h1>
           <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: '0.25rem 0 0' }}>
             Ad Library · Last 30 days · {total} {total === 1 ? 'ad' : 'ads'}
           </p>
         </div>
-        <AdLibraryView meta={meta} google={google} />
+        <AdLibraryView meta={meta} google={google} token={token} />
       </div>
     </div>
   )

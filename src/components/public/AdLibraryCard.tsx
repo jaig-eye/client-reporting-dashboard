@@ -31,15 +31,21 @@ function googleTypeLabel(t: string | null): string | null {
   return null
 }
 
-export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
+export function AdLibraryCard({ ad, token }: { ad: MetaAdRow | GoogleAdRow; token?: string }) {
   const [expanded, setExpanded] = useState(false)
   const [lightbox, setLightbox] = useState(false)
 
   const active = isAdActive(ad.ad_status)
 
-  const previewUrl = ad.platform === 'meta'
+  // For Meta ads, route through the proxy so expired CDN signatures are refreshed automatically.
+  // The proxy fetches a live URL from the Graph API (cached 30 min) and returns a 302 redirect.
+  const proxyUrl = (token && ad.platform === 'meta')
+    ? `/api/proxy/meta-image?ad_id=${encodeURIComponent(ad.ad_id)}&token=${encodeURIComponent(token)}`
+    : null
+
+  const previewUrl = proxyUrl ?? (ad.platform === 'meta'
     ? (ad.image_url ?? ad.video_thumb_url ?? ad.thumbnail_url ?? null)
-    : (ad.image_url ?? null)
+    : (ad.image_url ?? null))
 
   const isVideo = ad.platform === 'meta' && !!ad.video_thumb_url
 
@@ -77,7 +83,7 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
       }}>
         {previewUrl ? (
           <>
-            {/* Blurred background fill — makes logo/square images look intentional */}
+            {/* Blurred background fill */}
             <img
               src={previewUrl}
               aria-hidden
@@ -90,7 +96,7 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
                 pointerEvents: 'none',
               }}
             />
-            {/* Main image — contained so nothing is cropped */}
+            {/* Main image */}
             <img
               src={previewUrl}
               alt={ad.ad_name}
@@ -147,6 +153,7 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
             background: 'rgba(0,0,0,0.88)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             cursor: 'zoom-out',
+            padding: '1rem',
           }}
         >
           <img
@@ -161,6 +168,7 @@ export function AdLibraryCard({ ad }: { ad: MetaAdRow | GoogleAdRow }) {
               position: 'absolute', top: 20, right: 24,
               background: 'none', border: 'none', cursor: 'pointer',
               color: '#fff', fontSize: '1.5rem', lineHeight: 1, opacity: 0.8,
+              padding: '0.5rem',
             }}
           >
             ✕
