@@ -107,23 +107,34 @@ export async function POST(request: NextRequest) {
     const postsPerRun  = 1
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
-    // Load existing post topics to avoid repeats and keyword cannibalization
-    const { data: existingPosts } = await db
-      .from('content_posts')
-      .select('focus_topic, title, target_keyword')
-      .eq('client_id', cs.client_id)
-      .not('status', 'eq', 'rejected')
-      .order('generated_at', { ascending: false })
-      .limit(100)
+    // Load existing posts and queued topics together to prevent cannibalization
+    const [{ data: existingPosts }, { data: queuedTopics }] = await Promise.all([
+      db.from('content_posts')
+        .select('focus_topic, title, target_keyword')
+        .eq('client_id', cs.client_id)
+        .not('status', 'eq', 'rejected')
+        .order('generated_at', { ascending: false })
+        .limit(100),
+      db.from('content_topics')
+        .select('topic, target_keyword')
+        .eq('client_id', cs.client_id)
+        .in('status', ['approved', 'pending']),
+    ])
 
-    const avoidList = ((existingPosts ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[])
-      .map(p => {
-        const label = p.focus_topic || p.title || ''
-        if (!label) return null
-        return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
-      })
-      .filter(Boolean)
-      .join('\n')
+    const avoidList = [
+      ...((existingPosts ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[])
+        .map(p => {
+          const label = p.focus_topic || p.title || ''
+          if (!label) return null
+          return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
+        }),
+      ...((queuedTopics ?? []) as { topic?: string; target_keyword?: string | null }[])
+        .map(t => {
+          const label = t.topic || ''
+          if (!label) return null
+          return t.target_keyword ? `"${label}" (keyword: ${t.target_keyword}) [queued]` : `"${label}" [queued]`
+        }),
+    ].filter(Boolean).join('\n')
 
     // Build client context
     const contextLines: string[] = []

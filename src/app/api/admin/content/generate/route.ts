@@ -601,13 +601,25 @@ async function runTopicGeneration({
       getGscInternalLinks(db, effectiveClientId, topicData.target_keyword),
       Promise.resolve(parseManualLinks((clientSettings?.manual_link_urls as string[] | null) ?? [])),
     ])
+    // Filter GSC entries whose query already maps to a covered keyword to reduce cannibalization signals
+    const coveredKeywords = new Set(
+      [...existingPosts, ...pendingTopics]
+        .map(p => ((p as Record<string, unknown>).target_keyword as string | null)?.toLowerCase().trim())
+        .filter(Boolean) as string[]
+    )
+    const filteredGscLinks = gscLinks.filter(l => {
+      const q = l.query.toLowerCase().trim()
+      return !Array.from(coveredKeywords).some(kw => q.includes(kw) || kw.includes(q))
+    })
+    filteredGscLinks.forEach(l => allowedInternalUrls.add(l.url))
+    // Always add ALL GSC URLs to the allowed set (so linking to them is valid even if filtered from prompt)
     gscLinks.forEach(l => allowedInternalUrls.add(l.url))
     manualLinks.forEach(l => allowedInternalUrls.add(l.url))
 
     const internalLinkLines: string[] = []
-    if (gscLinks.length > 0) {
+    if (filteredGscLinks.length > 0) {
       internalLinkLines.push('GSC internal link targets (link destinations ONLY — these URLs are ranking on page 2 and benefit from internal links; do NOT use these query strings as topic or keyword inspiration — topic choice must be your own original research into uncovered opportunities):')
-      gscLinks.forEach(l => internalLinkLines.push(`  - ${l.url}  (ranks for: "${l.query}", pos ${l.position})`))
+      filteredGscLinks.forEach(l => internalLinkLines.push(`  - ${l.url}  (ranks for: "${l.query}", pos ${l.position})`))
     }
     if (manualLinks.length > 0) {
       internalLinkLines.push('Always-include internal links (must appear in the post):')
@@ -996,7 +1008,7 @@ export async function POST(request: NextRequest) {
   const agency           = (agencySettings.agency_name as string | null) || 'the agency'
   const effectiveClientId = client_id ?? null
 
-  const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
+  const [clientSettingsRes, globalSettingsRes, existingPostsRes, pendingTopicsRes2, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
           .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix')
@@ -1009,10 +1021,17 @@ export async function POST(request: NextRequest) {
       .maybeSingle(),
     effectiveClientId
       ? db.from('content_posts')
-          .select('focus_topic, title')
+          .select('focus_topic, title, target_keyword')
           .eq('client_id', effectiveClientId)
+          .not('status', 'eq', 'rejected')
           .order('generated_at', { ascending: false })
-          .limit(50)
+          .limit(100)
+      : Promise.resolve({ data: null }),
+    effectiveClientId
+      ? db.from('content_topics')
+          .select('topic, target_keyword')
+          .eq('client_id', effectiveClientId)
+          .in('status', ['approved', 'pending'])
       : Promise.resolve({ data: null }),
     effectiveClientId
       ? db.from('content_sitemap_pages')
@@ -1036,6 +1055,10 @@ export async function POST(request: NextRequest) {
       const digits = ph.replace(/\D/g, '')
       contextLines.push(`REQUIRED: Every time the phone number ${ph} appears in the post HTML, it MUST be wrapped as <a href="tel:${digits}">${ph}</a> — never display it as plain unlinked text.`)
     }
+    if (clientSettings.blog_url_prefix) {
+      const prefix = String(clientSettings.blog_url_prefix).replace(/\/+$/, '')
+      contextLines.push(`Blog URL structure: Blog posts on this site use the path prefix "${prefix}/". All valid blog post URLs are already listed in the "Available site pages" list above — use ONLY those exact URLs. Do NOT construct or infer any blog post URL by combining this prefix with a slug.`)
+    }
   }
 
   const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
@@ -1043,6 +1066,9 @@ export async function POST(request: NextRequest) {
   const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
   if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
   if (excludedUrls.length > 0) contextLines.push(`\nExcluded pages — do NOT link to or reference these:\n${excludedUrls.join('\n')}`)
+
+  // Seed the allowed set from DB-cached sitemap pages for hallucination validation
+  const manualAllowedUrls = new Set<string>(sitemapRows.filter(r => !r.is_excluded).map(r => r.url))
 
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -1068,16 +1094,25 @@ export async function POST(request: NextRequest) {
     const excluded = new Set(excludedUrls)
     const unique   = Array.from(new Set(allPages)).filter(u => !excluded.has(u)).slice(0, 60)
     if (unique.length > 0) contextLines.push(`\nAvailable site pages for internal linking:\n${unique.join('\n')}`)
+    unique.forEach(u => manualAllowedUrls.add(u))
   }
 
   const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
-  const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string }[]
-  const avoidList = existingPosts
-    .map(p => p.focus_topic || p.title)
-    .filter(Boolean)
-    .slice(0, 30)
-    .join('\n')
+  const existingPosts2   = (existingPostsRes.data  ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[]
+  const pendingTopics2   = (pendingTopicsRes2.data  ?? []) as { topic?: string; target_keyword?: string | null }[]
+  const avoidList = [
+    ...existingPosts2.map(p => {
+      const label = p.focus_topic || p.title || ''
+      if (!label) return null
+      return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
+    }),
+    ...pendingTopics2.map(t => {
+      const label = t.topic || ''
+      if (!label) return null
+      return t.target_keyword ? `"${label}" (keyword: ${t.target_keyword}) [queued]` : `"${label}" [queued]`
+    }),
+  ].filter(Boolean).join('\n')
 
   const postStructure = mergePostStructures(
     globalSettings?.post_structure,
@@ -1131,6 +1166,7 @@ export async function POST(request: NextRequest) {
   }
 
   const parsed = parseResponse(rawText)
+  parsed.content = stripHallucinatedLinks(parsed.content, manualAllowedUrls)
 
   let postId: string | null = null
   if (effectiveClientId) {
