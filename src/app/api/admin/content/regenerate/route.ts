@@ -67,6 +67,47 @@ export async function POST(request: NextRequest) {
   function headingCount(html: string) { return (html.match(/<h[23][^>]*>/gi) || []).length }
   function internalLinks(html: string) { return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http')).length }
 
+  function parseManualLinks(manualLinkUrls: string[]): { url: string }[] {
+    return (manualLinkUrls ?? []).flatMap(s => {
+      try {
+        const p = JSON.parse(s)
+        if (p && typeof p === 'object' && p.url) return [{ url: String(p.url) }]
+      } catch { /* ignore */ }
+      if (typeof s === 'string' && s.startsWith('http')) return [{ url: s }]
+      return []
+    })
+  }
+
+  function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
+    if (allowedUrls.size === 0) return html
+    const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
+    const allowed = new Set(Array.from(allowedUrls).map(norm))
+    const internalHosts = new Set<string>()
+    Array.from(allowed).forEach(u => {
+      try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
+    })
+    return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
+      const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
+      if (!m) return match
+      const href = m[1].trim()
+      if (/^(mailto:|tel:|#)/.test(href)) return match
+      if (/^https?:/.test(href)) {
+        try {
+          const parsed = new URL(href)
+          const hostname = parsed.hostname.toLowerCase()
+          if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+          if (allowed.has(norm(href))) return match
+          if (allowed.has(norm(parsed.pathname))) return match
+          console.warn('[regenerate] stripped hallucinated internal link:', href)
+          return text
+        } catch { return match }
+      }
+      if (allowed.has(norm(href))) return match
+      console.warn('[regenerate] stripped hallucinated internal link:', href)
+      return text
+    })
+  }
+
   try {
     let rawText = ''
     if (provider === 'anthropic') {
@@ -91,6 +132,19 @@ export async function POST(request: NextRequest) {
     }
 
     const parsed = parseResponse(rawText)
+
+    // Build allowed URL set and strip any hallucinated internal links the AI invented
+    const allowedUrls = new Set<string>()
+    if (post.client_id) {
+      const [{ data: contentSettingsData }, { data: sitemapData }] = await Promise.all([
+        db.from('content_settings').select('manual_link_urls').eq('client_id', post.client_id).maybeSingle(),
+        db.from('content_sitemap_pages').select('url').eq('client_id', post.client_id).eq('is_excluded', false).limit(100),
+      ])
+      ;(sitemapData ?? []).forEach((r: { url: string }) => allowedUrls.add(r.url))
+      parseManualLinks((contentSettingsData?.manual_link_urls as string[] | null) ?? [])
+        .forEach(l => allowedUrls.add(l.url))
+    }
+    parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
 
     // Update the post in the database
     await db.from('content_posts').update({

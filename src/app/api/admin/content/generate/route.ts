@@ -281,13 +281,16 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
     if (/^(mailto:|tel:|#)/.test(href)) return match        // safe: not a page link
     if (/^https?:/.test(href)) {
       try {
-        const hostname = new URL(href).hostname.toLowerCase()
-        if (!internalHosts.has(hostname)) return match      // genuinely external — leave alone
+        const parsed = new URL(href)
+        const hostname = parsed.hostname.toLowerCase()
+        // Known external hostname — leave untouched
+        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
+        if (allowed.has(norm(href))) return match
+        if (allowed.has(norm(parsed.pathname))) return match
+        console.warn('[generate] stripped hallucinated internal link:', href)
+        return text
       } catch { return match }
-      // Absolute internal URL — validate against allowed set
-      if (allowed.has(norm(href))) return match
-      console.warn('[generate] stripped hallucinated internal link:', href)
-      return text
     }
     // Relative URL — validate against allowed set
     if (allowed.has(norm(href))) return match
@@ -1096,6 +1099,10 @@ export async function POST(request: NextRequest) {
     if (unique.length > 0) contextLines.push(`\nAvailable site pages for internal linking:\n${unique.join('\n')}`)
     unique.forEach(u => manualAllowedUrls.add(u))
   }
+
+  // Seed manual link URLs so links the AI correctly generates to them aren't stripped
+  parseManualLinks((clientSettings?.manual_link_urls as string[] | null) ?? [])
+    .forEach(l => manualAllowedUrls.add(l.url))
 
   const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 

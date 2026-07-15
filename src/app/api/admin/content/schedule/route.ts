@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids, blog_url_prefix')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, manual_link_urls, phone_number, default_author_id, default_category_ids, blog_url_prefix')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -163,6 +163,9 @@ export async function POST(request: NextRequest) {
         pages.forEach(u => allowedInternalUrls.add(u))
       }
     }
+    // Seed manually configured link URLs so they aren't stripped as hallucinations
+    parseManualLinks((cs.manual_link_urls as string[] | null) ?? [])
+      .forEach(l => allowedInternalUrls.add(l.url))
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
     const systemPrompt  = buildSystemPrompt(agency, clientContext, avoidList)
@@ -286,6 +289,17 @@ function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: strin
   }
 }
 
+function parseManualLinks(manualLinkUrls: string[]): { url: string; label: string }[] {
+  return (manualLinkUrls ?? []).flatMap(s => {
+    try {
+      const p = JSON.parse(s)
+      if (p && typeof p === 'object' && p.url) return [{ url: String(p.url), label: String(p.label ?? '') }]
+    } catch { /* ignore */ }
+    if (typeof s === 'string' && s.startsWith('http')) return [{ url: s, label: '' }]
+    return []
+  })
+}
+
 function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
   if (allowedUrls.size === 0) return html
   const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
@@ -301,12 +315,16 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
     if (/^(mailto:|tel:|#)/.test(href)) return match
     if (/^https?:/.test(href)) {
       try {
-        const hostname = new URL(href).hostname.toLowerCase()
-        if (!internalHosts.has(hostname)) return match      // genuinely external — leave alone
+        const parsed = new URL(href)
+        const hostname = parsed.hostname.toLowerCase()
+        // Known external hostname — leave untouched
+        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
+        if (allowed.has(norm(href))) return match
+        if (allowed.has(norm(parsed.pathname))) return match
+        console.warn('[schedule] stripped hallucinated internal link:', href)
+        return text
       } catch { return match }
-      if (allowed.has(norm(href))) return match
-      console.warn('[schedule] stripped hallucinated internal link:', href)
-      return text
     }
     if (allowed.has(norm(href))) return match
     console.warn('[schedule] stripped hallucinated internal link:', href)

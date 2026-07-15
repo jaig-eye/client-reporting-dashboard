@@ -94,6 +94,36 @@ function formatEeat(eeatRaw: unknown): string {
   return parts.join('. ')
 }
 
+function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
+  if (allowedUrls.size === 0) return html
+  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
+  const allowed = new Set(Array.from(allowedUrls).map(norm))
+  const internalHosts = new Set<string>()
+  Array.from(allowed).forEach(u => {
+    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
+  })
+  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
+    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
+    if (!m) return match
+    const href = m[1].trim()
+    if (/^(mailto:|tel:|#)/.test(href)) return match
+    if (/^https?:/.test(href)) {
+      try {
+        const parsed = new URL(href)
+        const hostname = parsed.hostname.toLowerCase()
+        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        if (allowed.has(norm(href))) return match
+        if (allowed.has(norm(parsed.pathname))) return match
+        console.warn('[sa-generate] stripped hallucinated internal link:', href)
+        return text
+      } catch { return match }
+    }
+    if (allowed.has(norm(href))) return match
+    console.warn('[sa-generate] stripped hallucinated internal link:', href)
+    return text
+  })
+}
+
 // ─── Core generation ──────────────────────────────────────────────────────────
 
 async function generatePage(topicId: string) {
@@ -215,7 +245,8 @@ async function generatePage(topicId: string) {
   // Fetch internal link data in parallel:
   // - Priority pages from sitemap (conversion/contact pages)
   // - Published/draft sibling SA pages for the same service (for silo linking)
-  const [priorityPagesRes, siblingPostsRes] = await Promise.all([
+  // - All non-excluded sitemap pages (for link validation)
+  const [priorityPagesRes, siblingPostsRes, allSitemapRes] = await Promise.all([
     db.from('content_sitemap_pages')
       .select('url, title')
       .eq('client_id', clientId)
@@ -229,6 +260,11 @@ async function generatePage(topicId: string) {
       .in('status', ['published', 'draft_saved'])
       .neq('city', city)
       .limit(20),
+    db.from('content_sitemap_pages')
+      .select('url')
+      .eq('client_id', clientId)
+      .eq('is_excluded', false)
+      .limit(100),
   ])
 
   // Parse manual_link_urls from content_settings (JSON array of {url, label})
@@ -258,6 +294,17 @@ async function generatePage(topicId: string) {
   // Build sibling service area links
   type SiblingPost = { city: string | null; state_abbr: string | null; published_url: string | null; slug: string | null }
   const siblingPosts = (siblingPostsRes.data ?? []) as SiblingPost[]
+
+  // Build allowed URL set for hallucination validation
+  const allowedInternalUrls = new Set<string>()
+  ;(allSitemapRes.data ?? []).forEach((r: { url: string }) => allowedInternalUrls.add(r.url))
+  manualLinks.forEach(l => allowedInternalUrls.add(l.url))
+  siblingPosts.forEach(p => {
+    const url = p.published_url || (p.slug ? `/${p.slug}` : null)
+    if (url) allowedInternalUrls.add(url)
+  })
+  if (servicePageUrl) allowedInternalUrls.add(servicePageUrl)
+
   const siblingLinkList = siblingPosts
     .map(p => {
       const url = p.published_url || (p.slug ? `/${p.slug}` : null)
@@ -406,6 +453,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   }
 
   const parsed = parseResponse(rawText)
+  parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
   const slug   = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
 
   // Find connection_id from SA settings
