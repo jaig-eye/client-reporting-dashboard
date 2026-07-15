@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
     const blogUrlPrefix = cs.blog_url_prefix as string | null
     if (blogUrlPrefix) {
       const prefix = blogUrlPrefix.replace(/\/+$/, '')
-      contextLines.push(`Blog URL structure: Blog posts on this site are published under the path prefix "${prefix}" (e.g. "${prefix}/example-post-slug"). All URLs in the "Available site pages" list already use this structure — only use those exact URLs for internal links.`)
+      contextLines.push(`Blog URL structure: Blog posts on this site use the path prefix "${prefix}/". All valid blog post URLs are already listed in the "Available site pages" list above — use ONLY those exact URLs. Do NOT construct or infer any blog post URL by combining this prefix with a slug.`)
     }
 
     // Fetch sitemap pages for internal linking context
@@ -237,7 +237,7 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
     return matches
       .map(m => m[1].trim())
       .filter(url => !url.endsWith('.xml'))
-      .slice(0, 40)
+      .slice(0, 100)
   } catch {
     return []
   }
@@ -279,11 +279,24 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
   if (allowedUrls.size === 0) return html
   const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
   const allowed = new Set(Array.from(allowedUrls).map(norm))
+  const internalHosts = new Set<string>()
+  Array.from(allowed).forEach(u => {
+    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative — skip */ }
+  })
   return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
     const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
     if (!m) return match
     const href = m[1].trim()
-    if (/^(https?:|mailto:|tel:|#)/.test(href)) return match
+    if (/^(mailto:|tel:|#)/.test(href)) return match
+    if (/^https?:/.test(href)) {
+      try {
+        const hostname = new URL(href).hostname.toLowerCase()
+        if (!internalHosts.has(hostname)) return match      // genuinely external — leave alone
+      } catch { return match }
+      if (allowed.has(norm(href))) return match
+      console.warn('[schedule] stripped hallucinated internal link:', href)
+      return text
+    }
     if (allowed.has(norm(href))) return match
     console.warn('[schedule] stripped hallucinated internal link:', href)
     return text

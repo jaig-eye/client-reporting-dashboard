@@ -261,20 +261,38 @@ function computeInternalLinks(html: string): number {
 // ─── Link validator ───────────────────────────────────────────────────────────
 
 // Strips any internal <a href> that is NOT in the provided allowedUrls set.
-// External links (http/https/mailto/tel) and anchor links (#) are left untouched.
-// This is the last line of defence against the model hallucinating internal URLs.
+// Absolute external links (different hostname) and mailto/tel/# are left untouched.
+// Absolute internal links (same hostname as the site) ARE validated — the AI generates
+// absolute URLs as prompted, so bypassing https:// would make this function a no-op.
 function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
   if (allowedUrls.size === 0) return html
   const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
   const allowed = new Set(Array.from(allowedUrls).map(norm))
+  // Derive known internal hostnames from the allowed set so we can distinguish
+  // absolute internal links from genuine external links.
+  const internalHosts = new Set<string>()
+  Array.from(allowed).forEach(u => {
+    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative URL — skip */ }
+  })
   return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
     const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
     if (!m) return match
     const href = m[1].trim()
-    if (/^(https?:|mailto:|tel:|#)/.test(href)) return match // external / anchor — leave alone
-    if (allowed.has(norm(href))) return match                // verified sitemap URL — keep
+    if (/^(mailto:|tel:|#)/.test(href)) return match        // safe: not a page link
+    if (/^https?:/.test(href)) {
+      try {
+        const hostname = new URL(href).hostname.toLowerCase()
+        if (!internalHosts.has(hostname)) return match      // genuinely external — leave alone
+      } catch { return match }
+      // Absolute internal URL — validate against allowed set
+      if (allowed.has(norm(href))) return match
+      console.warn('[generate] stripped hallucinated internal link:', href)
+      return text
+    }
+    // Relative URL — validate against allowed set
+    if (allowed.has(norm(href))) return match
     console.warn('[generate] stripped hallucinated internal link:', href)
-    return text                                              // hallucinated — keep text, drop link
+    return text
   })
 }
 
@@ -414,7 +432,7 @@ async function runTopicGeneration({
 
   try {
     // ── Load all settings in parallel ────────────────────────────────────────
-    const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
+    const [clientSettingsRes, globalSettingsRes, existingPostsRes, pendingTopicsRes, sitemapPagesRes] = await Promise.all([
       db.from('content_settings')
         .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt, blog_url_prefix')
         .eq('client_id', effectiveClientId)
@@ -429,6 +447,12 @@ async function runTopicGeneration({
         .not('status', 'eq', 'rejected')
         .order('generated_at', { ascending: false })
         .limit(100),
+      // Also load approved/pending topics not yet generated so concurrent runs can't cannibalize
+      db.from('content_topics')
+        .select('topic, target_keyword')
+        .eq('client_id', effectiveClientId)
+        .in('status', ['approved', 'pending'])
+        .neq('id', topicData.id),
       db.from('content_sitemap_pages')
         .select('url, is_priority, is_excluded, created_at')
         .eq('client_id', effectiveClientId),
@@ -452,7 +476,7 @@ async function runTopicGeneration({
       }
       if (clientSettings.blog_url_prefix) {
         const prefix = String(clientSettings.blog_url_prefix).replace(/\/+$/, '')
-        contextLines.push(`Blog URL structure: Blog posts on this site are published under the path prefix "${prefix}" (e.g. "${prefix}/example-post-slug"). All URLs in the "Available site pages" list already use this structure — only use those exact URLs for internal links.`)
+        contextLines.push(`Blog URL structure: Blog posts on this site use the path prefix "${prefix}/". All valid blog post URLs are already listed in the "Available site pages" list above — use ONLY those exact URLs. Do NOT construct or infer any blog post URL by combining this prefix with a slug.`)
       }
     }
 
@@ -507,14 +531,20 @@ async function runTopicGeneration({
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
     const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[]
-    const avoidList = existingPosts
-      .map(p => {
+    const pendingTopics = (pendingTopicsRes.data ?? []) as { topic?: string; target_keyword?: string | null }[]
+    const avoidEntries = [
+      ...existingPosts.map(p => {
         const label = p.focus_topic || p.title || ''
         if (!label) return null
         return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
-      })
-      .filter(Boolean)
-      .join('\n')
+      }),
+      ...pendingTopics.map(t => {
+        const label = t.topic || ''
+        if (!label) return null
+        return t.target_keyword ? `"${label}" (keyword: ${t.target_keyword}) [queued]` : `"${label}" [queued]`
+      }),
+    ].filter(Boolean)
+    const avoidList = avoidEntries.join('\n')
 
     const postStructure = mergePostStructures(
       globalSettings?.post_structure,
@@ -576,8 +606,8 @@ async function runTopicGeneration({
 
     const internalLinkLines: string[] = []
     if (gscLinks.length > 0) {
-      internalLinkLines.push('GSC-suggested internal links (pages ranking page 2 — reinforce with a link from this post):')
-      gscLinks.forEach(l => internalLinkLines.push(`  - ${l.url}  (query: "${l.query}", pos ${l.position})`))
+      internalLinkLines.push('GSC internal link targets (link destinations ONLY — these URLs are ranking on page 2 and benefit from internal links; do NOT use these query strings as topic or keyword inspiration — topic choice must be your own original research into uncovered opportunities):')
+      gscLinks.forEach(l => internalLinkLines.push(`  - ${l.url}  (ranks for: "${l.query}", pos ${l.position})`))
     }
     if (manualLinks.length > 0) {
       internalLinkLines.push('Always-include internal links (must appear in the post):')
@@ -589,8 +619,11 @@ async function runTopicGeneration({
     if (brief) {
       if (brief.h2_outline?.length > 0)
         briefLines.push(`\nRequired H2 structure (follow this outline — expand each section):\n${brief.h2_outline.map((h: string, i: number) => `  ${i + 1}. ${h}`).join('\n')}`)
-      if (brief.internal_link_targets?.length > 0)
+      if (brief.internal_link_targets?.length > 0) {
         briefLines.push(`\nRequired internal links (must appear in the post with contextually natural anchor text):\n${brief.internal_link_targets.map((u: string) => `  - ${u}`).join('\n')}`)
+        // Ensure required brief links are in the allowed set so stripHallucinatedLinks keeps them
+        ;(brief.internal_link_targets as string[]).forEach((u: string) => allowedInternalUrls.add(u))
+      }
       if (brief.faq_opportunities?.length > 0)
         briefLines.push(`\nInclude a FAQ section addressing these questions:\n${brief.faq_opportunities.map((q: string) => `  - ${q}`).join('\n')}`)
       if (brief.local_seo_angle)   briefLines.push(`\nLocal SEO angle to weave in: ${brief.local_seo_angle}`)
