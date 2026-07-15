@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed }     from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 /**
  * POST /api/admin/content/regenerate
@@ -16,6 +17,8 @@ export async function POST(request: NextRequest) {
   if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const body = await request.json()
   const { post_id, edit_notes } = body as { post_id: string; edit_notes?: string }
@@ -101,8 +104,14 @@ export async function POST(request: NextRequest) {
       edit_notes:      edit_notes || null,
       ai_model:        model,
       prompt_used:     finalPrompt,
-      status:          'pending',  // reset to pending after re-generation
+      status:          'pending',
     }).eq('id', post_id)
+
+    logActivity(adminSession, 'regenerated', 'post', {
+      resourceId: post_id,
+      ip,
+      meta: { title: parsed.title, model, has_edit_notes: !!edit_notes },
+    })
 
     return NextResponse.json(parsed)
 

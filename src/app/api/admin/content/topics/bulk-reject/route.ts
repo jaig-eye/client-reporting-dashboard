@@ -7,13 +7,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const body = await request.json() as { topic_ids?: string[]; client_id?: string }
   const topicIds = body.topic_ids ?? []
@@ -34,5 +37,12 @@ export async function POST(request: NextRequest) {
     .eq('client_id', clientId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  logActivity(adminSession, 'rejected', 'topics', {
+    clientId,
+    ip,
+    meta: { count: topicIds.length },
+  })
+
   return NextResponse.json({ rejected: topicIds.length })
 }

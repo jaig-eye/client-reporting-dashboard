@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies }           from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed }     from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export const maxDuration = 300
 
@@ -27,6 +28,9 @@ export async function POST(request: NextRequest) {
   if (!isCronAuth && !isAdminAuth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const adminSession = isAdminAuth ? await getAdminSession() : null
+  const ip = isAdminAuth ? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() : undefined
 
   // Optional: target a single client (admin-only manual trigger)
   const body = await request.json().catch(() => ({})) as Record<string, unknown>
@@ -193,6 +197,14 @@ export async function POST(request: NextRequest) {
         errors.push(`client ${cs.client_id}: ${String(err)}`)
       }
     }
+  }
+
+  if (isAdminAuth) {
+    logActivity(adminSession, 'generated', 'post', {
+      clientId: targetClientId ?? undefined,
+      ip,
+      meta: { trigger: 'manual_schedule', generated: totalGenerated, errors: errors.length },
+    })
   }
 
   return NextResponse.json({ generated: totalGenerated, errors })

@@ -64,13 +64,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${appUrl}/access`)
   }
 
-  // Valid — set HttpOnly session cookie and redirect to dashboard
+  // Record the IP against this client for future IP-change detection
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
+  if (ip) {
+    const { data: client } = await db
+      .from('clients')
+      .select('id, last_known_ip')
+      .eq('dashboard_token', dashboardToken)
+      .maybeSingle()
+    if (client && !client.last_known_ip) {
+      void db.from('clients').update({ last_known_ip: ip }).eq('id', client.id)
+    }
+  }
+
+  // Valid — set HttpOnly session cookie (90 days) and redirect to dashboard
   const response = NextResponse.redirect(`${appUrl}/dashboard`)
   response.cookies.set('client_token', dashboardToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    maxAge: 60 * 60 * 24 * 365, // 1 year — permanent access
+    maxAge: 60 * 60 * 24 * 90,
     path: '/',
   })
   return response

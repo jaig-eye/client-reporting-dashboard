@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export const maxDuration = 60
 
@@ -91,6 +92,8 @@ export async function POST(request: NextRequest) {
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const body = await request.json() as { client_id: string; site_url?: string; site_text?: string }
   const { client_id } = body
@@ -246,6 +249,12 @@ ${content}`
   } catch {
     return NextResponse.json({ error: 'Failed to parse AI response. Try again.' }, { status: 500 })
   }
+
+  logActivity(adminSession, 'generated', 'brand_dna', {
+    clientId: client_id,
+    ip,
+    meta: { site_url: resolvedBase ?? siteUrl },
+  })
 
   return NextResponse.json(result)
 }

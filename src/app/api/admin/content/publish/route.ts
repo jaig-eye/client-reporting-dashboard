@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { publishPost, ensureTagIds } from '@/lib/connectors/wordpress'
+import { logActivity } from '@/lib/activity'
 
 export async function POST(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
   if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const body = await request.json()
   const {
@@ -100,6 +103,11 @@ export async function POST(request: NextRequest) {
       }).eq('id', post_id)
     }
 
+    logActivity(adminSession, 'published', 'post', {
+      resourceId: post_id,
+      ip,
+      meta: { title, wpStatus, site_url: siteUrl, wp_post_id: result.id },
+    })
     return NextResponse.json({ ...result, url: result.link })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

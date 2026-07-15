@@ -13,8 +13,29 @@ const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: (process.env.NODE_ENV === 'production' ? 'none' : 'lax') as 'none' | 'lax',
-  maxAge: 60 * 60 * 24 * 30,
+  maxAge: 60 * 60 * 24 * 14,
   path: '/',
+}
+
+// In-memory rate limit: 5 attempts per IP per 15 minutes
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+const RATE_LIMIT_MAX = 5
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
+
+function checkRateLimit(ip: string): boolean {
+  const now   = Date.now()
+  const entry = rateLimitMap.get(ip)
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+    return true
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false
+  entry.count++
+  return true
+}
+
+function resetRateLimit(ip: string): void {
+  rateLimitMap.delete(ip)
 }
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
@@ -29,6 +50,14 @@ function generateOtp(): string {
 }
 
 export async function POST(request: NextRequest) {
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  if (!checkRateLimit(ip)) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Try again in 15 minutes.' },
+      { status: 429 }
+    )
+  }
+
   const { email, password, code } = await request.json()
 
   if (!password) {
@@ -68,6 +97,7 @@ export async function POST(request: NextRequest) {
         super_admin_otp_expires_at: null,
       })
 
+      resetRateLimit(ip)
       const res = NextResponse.json({ ok: true, role: 'super_admin' })
       res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
       res.cookies.delete('admin_user_id')
@@ -131,9 +161,10 @@ export async function POST(request: NextRequest) {
 
   logActivity(
     { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
-    'logged_in', 'user', { resourceId: user.id, meta: { email: user.email } }
+    'logged_in', 'user', { resourceId: user.id, meta: { email: user.email, ip } }
   )
 
+  resetRateLimit(ip)
   const res = NextResponse.json({ ok: true, role: user.role })
   res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
   res.cookies.set('admin_user_id', user.id, COOKIE_OPTS)

@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 export const maxDuration = 300
 
@@ -18,6 +20,8 @@ export async function POST(req: NextRequest) {
   if (!requireAdmin(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const body = await req.json().catch(() => ({}))
   const days: number = body.days ?? 90  // default 90 days for global historical sync
@@ -61,5 +65,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  logActivity(adminSession, 'synced', 'connector', {
+    ip,
+    meta: { scope: 'all_clients', total_records: total, days },
+  })
   return NextResponse.json({ results, total_records: total })
 }

@@ -2,19 +2,23 @@
 // Manually triggers Google Ads account discovery to pick up newly added sub-accounts.
 
 import { NextResponse }          from 'next/server'
+import { NextRequest }           from 'next/server'
 import { cookies }               from 'next/headers'
 import { createAdminClient }     from '@/lib/supabase/server'
-import { isAdminAuthed }         from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity }           from '@/lib/activity'
 import { googleAdsConnector }    from '@/lib/connectors/google-ads'
 import type { Connector }        from '@/lib/types'
 
 export const maxDuration = 60
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const db = createAdminClient()
 
@@ -61,5 +65,9 @@ export async function POST() {
     }
   }
 
+  logActivity(adminSession, 'synced', 'connector', {
+    ip,
+    meta: { type: 'google_ads_account_refresh', connectors: results.length },
+  })
   return NextResponse.json({ refreshed: results.length, results })
 }

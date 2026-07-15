@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import type { AdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 import { parseBody } from '@/lib/apiError'
 import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
@@ -375,6 +377,7 @@ async function runTopicGeneration({
   topicData,
   agencySettings,
   suppressEmail,
+  adminSession,
 }: {
   db:               ReturnType<typeof createAdminClient>
   topicId:          string
@@ -382,6 +385,7 @@ async function runTopicGeneration({
   topicData:        TopicData
   agencySettings:   AgencySettings
   suppressEmail:    boolean
+  adminSession?:    AdminSession | null
 }): Promise<void> {
   const provider = agencySettings.ai_provider || 'anthropic'
   const model    = agencySettings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
@@ -778,6 +782,12 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
 
+    logActivity(adminSession ?? null, 'generated', 'post', {
+      resourceId: savedPost.id,
+      clientId:   effectiveClientId,
+      meta:       { topic: topicData.topic, title: parsed.title, model },
+    })
+
     // Auto-generate featured image in background if enabled and key is configured
     const imageEnabled = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
     const imagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
@@ -840,6 +850,7 @@ export async function POST(request: NextRequest) {
   if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
 
   const body = await parseBody<{
     prompt?:         string
@@ -894,6 +905,7 @@ export async function POST(request: NextRequest) {
       topicData:        topic as unknown as TopicData,
       agencySettings:   agencySettings as unknown as AgencySettings,
       suppressEmail:    !!suppress_email,
+      adminSession,
     }))
 
     return NextResponse.json({ ok: true, queued: true })

@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
 
@@ -33,6 +34,8 @@ export async function PATCH(
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const adminSession = await getAdminSession()
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
 
   const { id } = await params
   const body = await request.json() as PatchBody
@@ -62,6 +65,12 @@ export async function PATCH(
   const db = createAdminClient()
   const { error } = await db.from('content_posts').update(update).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  logActivity(adminSession, 'updated', 'post', {
+    resourceId: id,
+    ip,
+    meta: { fields: Object.keys(update) },
+  })
 
   return NextResponse.json({ ok: true })
 }

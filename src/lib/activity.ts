@@ -9,12 +9,16 @@ export function logActivity(
     resourceId?:  string
     clientId?:    string
     clientName?:  string
+    ip?:          string
     meta?:        Record<string, unknown>
   }
 ): void {
   const userName = session?.isSuperAdmin
     ? 'Super Admin'
     : (session?.name ?? 'System')
+
+  const meta: Record<string, unknown> = { ...(opts?.meta ?? {}) }
+  if (opts?.ip) meta.ip = opts.ip
 
   void createAdminClient()
     .from('activity_log')
@@ -26,6 +30,6 @@ export function logActivity(
       resource_id:   opts?.resourceId  ?? null,
       client_id:     opts?.clientId    ?? null,
       client_name:   opts?.clientName  ?? null,
-      meta:          opts?.meta        ?? {},
+      meta,
     })
 }

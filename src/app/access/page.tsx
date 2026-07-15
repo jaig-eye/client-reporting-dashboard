@@ -1,7 +1,16 @@
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { isAdminAuthed } from '@/lib/auth'
 import { WarningCircle } from '@phosphor-icons/react/dist/ssr'
 
-// Clients land here when their token cookie is missing
-export default function AccessPage() {
+export default async function AccessPage() {
+  const cookieStore = await cookies()
+  const adminSession = cookieStore.get('admin_session')?.value
+
+  if (isAdminAuthed(adminSession)) {
+    redirect('/admin/dashboard')
+  }
+
   return (
     <div
       style={{

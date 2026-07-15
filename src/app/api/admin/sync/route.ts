@@ -4,6 +4,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { syncClient } from '@/lib/sync'
+import { getAdminSession } from '@/lib/auth'
+import { logActivity } from '@/lib/activity'
 
 // Allow up to ~13 minutes for large syncs (Vercel Pro: up to 900s)
 export const maxDuration = 800
@@ -14,6 +16,7 @@ export async function POST(req: NextRequest) {
   if (!session || session !== process.env.ADMIN_PASSWORD) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const adminSession = await getAdminSession()
 
   let body: { clientId?: string; connectionId?: string; jobType?: string; days?: number; excludeGsc?: boolean; adsOnly?: boolean }
   try {
@@ -29,6 +32,8 @@ export async function POST(req: NextRequest) {
 
   const resolvedJobType = jobType === 'backfill' ? 'backfill' : 'manual'
 
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+
   try {
     const records = await syncClient(
       clientId,
@@ -41,6 +46,11 @@ export async function POST(req: NextRequest) {
       excludeGsc,
       adsOnly ? ['google_ads', 'meta_ads'] : undefined,
     )
+    logActivity(adminSession, 'synced', 'connector', {
+      clientId,
+      ip,
+      meta: { jobType: resolvedJobType, connectionId, records },
+    })
     return NextResponse.json({ ok: true, records })
   } catch (err) {
     console.error('Sync error:', err)
