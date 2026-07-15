@@ -258,6 +258,26 @@ function computeInternalLinks(html: string): number {
   return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http://') && !l.includes('https://')).length
 }
 
+// ─── Link validator ───────────────────────────────────────────────────────────
+
+// Strips any internal <a href> that is NOT in the provided allowedUrls set.
+// External links (http/https/mailto/tel) and anchor links (#) are left untouched.
+// This is the last line of defence against the model hallucinating internal URLs.
+function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
+  if (allowedUrls.size === 0) return html
+  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
+  const allowed = new Set(Array.from(allowedUrls).map(norm))
+  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
+    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
+    if (!m) return match
+    const href = m[1].trim()
+    if (/^(https?:|mailto:|tel:|#)/.test(href)) return match // external / anchor — leave alone
+    if (allowed.has(norm(href))) return match                // verified sitemap URL — keep
+    console.warn('[generate] stripped hallucinated internal link:', href)
+    return text                                              // hallucinated — keep text, drop link
+  })
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 // Pull the NON-NEGOTIABLE RULES section out of the master prompt so we can
@@ -293,7 +313,7 @@ How to use the client context above — MUST follow every rule:
 - Priority pages: include internal links to at least 2 of the priority pages listed in the context. Anchor text must be descriptive and contextually natural — never generic ("click here").
 - Excluded pages: never link to, cite, or reference any URL listed under excluded pages.
 - Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
-- Available site pages: when linking internally for SEO value, prefer URLs from the available site pages list over invented paths.` : ''
+- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.` : ''
 
   if (masterPreamble) {
     const rules = extractNonNegotiableRules(masterPreamble)
@@ -333,7 +353,7 @@ SEO guidelines:
 - Include at least 1 outbound link to a credible external resource when factually relevant
 - Add descriptive alt text to any <img> tags including the focus keyword
 - External links: target="_blank" rel="noopener noreferrer"
-- Internal links: use relative paths when linking within the same domain
+- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
 ${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
 }
 
@@ -437,6 +457,11 @@ async function runTopicGeneration({
     if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
     if (excludedUrls.length > 0) contextLines.push(`\nExcluded pages — do NOT link to or reference these:\n${excludedUrls.join('\n')}`)
 
+    // Accumulate every URL we hand to the model — used to strip hallucinated links after generation
+    const allowedInternalUrls = new Set<string>(
+      sitemapRows.filter(r => !r.is_excluded).map(r => r.url)
+    )
+
     const sitemapUrls: string[] = (() => {
       const urls = clientSettings?.sitemap_urls
       if (Array.isArray(urls) && urls.length > 0) return urls as string[]
@@ -471,6 +496,7 @@ async function runTopicGeneration({
         .slice(0, sitemapPageCap)
       if (scored.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${scored.join('\n')}`)
+      scored.forEach(u => allowedInternalUrls.add(u))
     }
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
@@ -537,6 +563,8 @@ async function runTopicGeneration({
       getGscInternalLinks(db, effectiveClientId, topicData.target_keyword),
       Promise.resolve(parseManualLinks((clientSettings?.manual_link_urls as string[] | null) ?? [])),
     ])
+    gscLinks.forEach(l => allowedInternalUrls.add(l.url))
+    manualLinks.forEach(l => allowedInternalUrls.add(l.url))
 
     const internalLinkLines: string[] = []
     if (gscLinks.length > 0) {
@@ -584,6 +612,12 @@ async function runTopicGeneration({
           .in('status', ['for_review', 'approved', 'draft_saved', 'published'])
           .not('published_url', 'is', null)
           .limit(20)
+
+        // Track silo URLs as allowed internal links
+        allowedInternalUrls.add(silo.hub_page_url)
+        ;(siblings ?? []).forEach((s: { published_url: string | null }) => {
+          if (s.published_url) allowedInternalUrls.add(s.published_url)
+        })
 
         const siblingLines = (siblings ?? [])
           .filter((s: { title: string | null; published_url: string | null; target_keyword: string | null }) => s.published_url && s.title)
@@ -714,6 +748,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     }
 
     const parsed = parseResponse(rawText)
+
+    // Strip any internal links the model invented that aren't in the provided sitemap
+    parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
 
     // ── Save post ──────────────────────────────────────────────────────────────
     let connectionId = (clientSettings?.connection_id as string | null) ?? null

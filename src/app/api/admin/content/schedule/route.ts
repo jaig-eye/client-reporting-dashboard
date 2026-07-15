@@ -134,10 +134,12 @@ export async function POST(request: NextRequest) {
 
     // Fetch sitemap pages for internal linking context
     const sitemapUrl = cs.sitemap_url as string | null
+    const allowedInternalUrls = new Set<string>()
     if (sitemapUrl) {
       const pages = await fetchSitemapPages(sitemapUrl)
       if (pages.length > 0) {
         contextLines.push(`\nAvailable site pages for internal linking:\n${pages.join('\n')}`)
+        pages.forEach(u => allowedInternalUrls.add(u))
       }
     }
 
@@ -170,6 +172,7 @@ export async function POST(request: NextRequest) {
 
         const parsed = parseAIResponse(rawText)
         if (!parsed.title && !parsed.content) continue
+        parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
 
         await db.from('content_posts').insert({
           client_id:        cs.client_id,
@@ -262,6 +265,21 @@ function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: strin
   }
 }
 
+function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
+  if (allowedUrls.size === 0) return html
+  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
+  const allowed = new Set(Array.from(allowedUrls).map(norm))
+  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
+    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
+    if (!m) return match
+    const href = m[1].trim()
+    if (/^(https?:|mailto:|tel:|#)/.test(href)) return match
+    if (allowed.has(norm(href))) return match
+    console.warn('[schedule] stripped hallucinated internal link:', href)
+    return text
+  })
+}
+
 function buildSystemPrompt(agency: string, clientContext: string, avoidTopics: string): string {
   return `You are a professional SEO content writer for ${agency}.
 ${clientContext ? `\n${clientContext}` : ''}
@@ -283,6 +301,7 @@ SEO guidelines:
 - Include at least 1 outbound link to a credible external resource when factually relevant
 - Add descriptive alt text to any <img> tags including the focus keyword
 - For external links use target="_blank" rel="noopener noreferrer"
+- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not explicitly in that list is a critical error.
 ${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}
 Return ONLY a JSON object with exactly these fields:
 {
