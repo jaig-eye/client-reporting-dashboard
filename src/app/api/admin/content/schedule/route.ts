@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: clientSettingsRows } = await db
     .from('content_settings')
-    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids')
+    .select('client_id, business_background, services, target_audience, geographic_focus, brand_voice, post_structure, schedule_frequency, schedule_day_of_week, target_length, connection_id, sitemap_url, phone_number, default_author_id, default_category_ids, blog_url_prefix')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -136,6 +136,11 @@ export async function POST(request: NextRequest) {
     if (phoneNumber)             contextLines.push(`Business phone: ${phoneNumber} (when referencing phone in content, format as ${phoneNumber} linked with tel: href, e.g. <a href="tel:${phoneNumber.replace(/\D/g, '')}">`)
     const structureNote = (cs.post_structure as string | null) ?? globalStructure
     if (structureNote)           contextLines.push(`\nPreferred post structure:\n${structureNote}`)
+    const blogUrlPrefix = cs.blog_url_prefix as string | null
+    if (blogUrlPrefix) {
+      const prefix = blogUrlPrefix.replace(/\/+$/, '')
+      contextLines.push(`Blog URL structure: Blog posts on this site are published under the path prefix "${prefix}" (e.g. "${prefix}/example-post-slug"). All URLs in the "Available site pages" list already use this structure — only use those exact URLs for internal links.`)
+    }
 
     // Fetch sitemap pages for internal linking context
     const sitemapUrl = cs.sitemap_url as string | null

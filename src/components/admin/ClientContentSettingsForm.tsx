@@ -79,8 +79,9 @@ export default function ClientContentSettingsForm({
 }) {
   const [form,        setForm]        = useState<BrandDnaForm>({ business_background: '', services: '', target_audience: '', geographic_focus: '', brand_voice: '', phone_number: '', cta_list: '' })
   const [eeat,        setEeat]        = useState<EeatData>(EMPTY_EEAT)
-  const [sitemapUrls, setSitemapUrls] = useState<string[]>([])
-  const [manualLinks, setManualLinks] = useState<ManualLink[]>([])
+  const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
+  const [blogUrlPrefix, setBlogUrlPrefix] = useState('')
+  const [manualLinks,   setManualLinks]   = useState<ManualLink[]>([])
   const [saving,      setSaving]      = useState(false)
   const [saved,       setSaved]       = useState(false)
   const [error,       setError]       = useState('')
@@ -116,6 +117,7 @@ export default function ClientContentSettingsForm({
           ? d.sitemap_urls as string[]
           : (d.sitemap_url ? [String(d.sitemap_url)] : [])
         setSitemapUrls(urls)
+        setBlogUrlPrefix(String(d.blog_url_prefix ?? ''))
         const links: ManualLink[] = ((d.manual_link_urls ?? []) as string[]).map(s => {
           try { const p = JSON.parse(s); if (p?.url) return { url: String(p.url), label: String(p.label ?? '') } } catch { /* skip */ }
           if (typeof s === 'string' && s.startsWith('http')) return { url: s, label: '' }
@@ -227,6 +229,7 @@ export default function ClientContentSettingsForm({
         ...form,
         eeat_data:        eeat,
         sitemap_urls:     sitemapUrls.filter(u => u.trim()),
+        blog_url_prefix:  blogUrlPrefix.trim() || null,
         manual_link_urls: manualLinks.filter(l => l.url.trim()).map(l => JSON.stringify({ url: l.url.trim(), label: l.label.trim() })),
       }),
     })
@@ -401,6 +404,20 @@ export default function ClientContentSettingsForm({
             ))}
             <button type="button" onClick={addSitemap} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Sitemap</button>
           </div>
+        </div>
+
+        <div>
+          <Label hint="e.g. /blog — prefix applied to blog post URLs in AI context">Blog URL Prefix</Label>
+          <input
+            className="input"
+            type="text"
+            value={blogUrlPrefix}
+            onChange={e => setBlogUrlPrefix(e.target.value)}
+            placeholder="/blog  (leave blank if posts live at the site root)"
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            Set this if blog posts are published under a sub-path (e.g. <code>/blog</code> or <code>/articles</code>). The AI uses this to understand the site&rsquo;s URL structure when generating internal links.
+          </p>
         </div>
 
         <div>

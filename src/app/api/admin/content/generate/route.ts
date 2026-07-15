@@ -416,7 +416,7 @@ async function runTopicGeneration({
     // ── Load all settings in parallel ────────────────────────────────────────
     const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
       db.from('content_settings')
-        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt')
+        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt, blog_url_prefix')
         .eq('client_id', effectiveClientId)
         .maybeSingle(),
       db.from('content_settings')
@@ -449,6 +449,10 @@ async function runTopicGeneration({
         const ph     = String(clientSettings.phone_number)
         const digits = ph.replace(/\D/g, '')
         contextLines.push(`REQUIRED: Every time the phone number ${ph} appears in the post HTML, it MUST be wrapped as <a href="tel:${digits}">${ph}</a> — never display it as plain unlinked text.`)
+      }
+      if (clientSettings.blog_url_prefix) {
+        const prefix = String(clientSettings.blog_url_prefix).replace(/\/+$/, '')
+        contextLines.push(`Blog URL structure: Blog posts on this site are published under the path prefix "${prefix}" (e.g. "${prefix}/example-post-slug"). All URLs in the "Available site pages" list already use this structure — only use those exact URLs for internal links.`)
       }
     }
 
@@ -962,7 +966,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
