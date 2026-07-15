@@ -66,11 +66,9 @@ export async function GET(request: NextRequest) {
   const dashboardToken = searchParams.get('token')?.trim()
   let clientId        = searchParams.get('client_id')?.trim()
 
-  // Accept dashboard_token as auth for the public Ad Library
-  if (!isAdminAuthed(adminSession) && !clientToken) {
-    if (!dashboardToken) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  // When a dashboard token is provided, always derive client_id from it — even if
+  // the requester is also admin-authed (e.g. admin previewing the public share page).
+  if (dashboardToken) {
     const db = createAdminClient()
     const { data: client } = await db
       .from('clients')
@@ -79,6 +77,8 @@ export async function GET(request: NextRequest) {
       .maybeSingle()
     if (!client) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     clientId = client.id as string
+  } else if (!isAdminAuthed(adminSession) && !clientToken) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   if (!adId || !clientId) {
