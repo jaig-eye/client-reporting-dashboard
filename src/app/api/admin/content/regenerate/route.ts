@@ -44,8 +44,9 @@ export async function POST(request: NextRequest) {
 
   // Build the revised prompt
   const originalPrompt = post.prompt_used || `Write a blog post titled: ${post.title}`
-  const editInstruction = edit_notes
-    ? `\n\nRevision instructions from the editor:\n${edit_notes}`
+  const safeEditNotes  = edit_notes?.slice(0, 2000)
+  const editInstruction = safeEditNotes
+    ? `\n\nRevision instructions from the editor:\n${safeEditNotes}`
     : ''
   const finalPrompt = `${originalPrompt}${editInstruction}`
 
@@ -76,6 +77,20 @@ export async function POST(request: NextRequest) {
       if (typeof s === 'string' && s.startsWith('http')) return [{ url: s }]
       return []
     })
+  }
+
+  function stripDangerousHtml(html: string): string {
+    return html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+      .replace(/<embed\b[^>]*\/?>/gi, '')
+      .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
+      .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
+      .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
+      .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
+      .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
   }
 
   function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
@@ -145,6 +160,7 @@ export async function POST(request: NextRequest) {
         .forEach(l => allowedUrls.add(l.url))
     }
     parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
+    parsed.content = stripDangerousHtml(parsed.content)
 
     // Update the post in the database
     await db.from('content_posts').update({

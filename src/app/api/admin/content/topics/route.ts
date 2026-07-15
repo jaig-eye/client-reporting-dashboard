@@ -67,7 +67,9 @@ export async function POST(request: NextRequest) {
       state_abbr:   state_abbr  ?? null,
       service_name: service_name ?? null,
       topic:        topic       ?? (city && service_name ? `${service_name} in ${city}, ${state_abbr}` : 'Service Area Page'),
-      status:       bodyStatus  ?? 'pending',
+      status:       (['pending', 'approved', 'scheduled'] as const).includes(bodyStatus as 'pending' | 'approved' | 'scheduled')
+        ? (bodyStatus as string)
+        : 'pending',
     })
     .select()
     .single()

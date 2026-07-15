@@ -94,6 +94,20 @@ function formatEeat(eeatRaw: unknown): string {
   return parts.join('. ')
 }
 
+function stripDangerousHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^>]*\/?>/gi, '')
+    .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
+    .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
+    .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
+}
+
 function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
   if (allowedUrls.size === 0) return html
   const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
@@ -454,6 +468,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   const parsed = parseResponse(rawText)
   parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
+  parsed.content = stripDangerousHtml(parsed.content)
   const slug   = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
 
   // Find connection_id from SA settings

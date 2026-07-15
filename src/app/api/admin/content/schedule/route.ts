@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       db.from('content_topics')
         .select('topic, target_keyword')
         .eq('client_id', cs.client_id)
-        .in('status', ['approved', 'pending']),
+        .not('status', 'in', '("rejected","generating")'),
     ])
 
     const avoidList = [
@@ -190,6 +190,10 @@ export async function POST(request: NextRequest) {
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
             body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
           })
+          if (!res.ok) {
+            const errBody = await res.text()
+            throw new Error(`AI error ${res.status}: ${errBody.slice(0, 200)}`)
+          }
           const data = await res.json()
           const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
           rawText = tb?.text || ''
@@ -200,6 +204,10 @@ export async function POST(request: NextRequest) {
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
           })
+          if (!res.ok) {
+            const errBody = await res.text()
+            throw new Error(`AI error ${res.status}: ${errBody.slice(0, 200)}`)
+          }
           const data = await res.json()
           rawText = data.choices?.[0]?.message?.content || ''
         }
@@ -207,6 +215,7 @@ export async function POST(request: NextRequest) {
         const parsed = parseAIResponse(rawText)
         if (!parsed.title && !parsed.content) continue
         parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
+        parsed.content = stripDangerousHtml(parsed.content)
 
         const nowIso  = new Date().toISOString()
         const todayStr = nowIso.slice(0, 10)
@@ -304,6 +313,20 @@ function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: strin
     case 'monthly_end':   return dom === 28
     default:              return today === dayOfWeek
   }
+}
+
+function stripDangerousHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^>]*\/?>/gi, '')
+    .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
+    .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
+    .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
 }
 
 function parseManualLinks(manualLinkUrls: string[]): { url: string; label: string }[] {

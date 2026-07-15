@@ -212,6 +212,22 @@ function sanitizeEmDashes(html: string): string {
   })
 }
 
+// Strips HTML tags that should never appear in AI-generated blog content.
+// Defends against jailbroken or misconfigured model output and prompt injection.
+function stripDangerousHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^>]*\/?>/gi, '')
+    .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
+    .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
+    .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
+}
+
 function parseResponse(rawText: string) {
   const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   const jsonMatch = stripped.match(/\{[\s\S]*\}/)
@@ -743,7 +759,7 @@ LINKING RULES:
 
     // ── Editor direction notes ────────────────────────────────────────────────
     const editNotesSection = topicData.edit_notes?.trim()
-      ? `\nEditor Direction Notes (follow these closely for this specific post):\n${topicData.edit_notes}`
+      ? `\nEditor Direction Notes (follow these closely for this specific post):\n${topicData.edit_notes.slice(0, 2000)}`
       : ''
 
     // ── Search intent writing instructions ───────────────────────────────────
@@ -808,6 +824,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // Strip any internal links the model invented that aren't in the provided sitemap
     parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
 
+    // Sanitize dangerous tags the model should never generate but occasionally does
+    parsed.content = stripDangerousHtml(parsed.content)
+
     // ── Save post ──────────────────────────────────────────────────────────────
     let connectionId = (clientSettings?.connection_id as string | null) ?? null
     if (!connectionId) {
@@ -852,7 +871,15 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       generated_by:        'topic',
       ai_model:            model,
       prompt_used:         userPrompt,
-      target_publish_date: topicData.target_publish_date ?? null,
+      // Clamp publish date to today if topic's date is in the past or unset; without
+      // this a topic created months ago would produce a post with a stale date that
+      // falls outside the monthly review window and is never surfaced to admins.
+      target_publish_date: (() => {
+        const today = new Date().toISOString().slice(0, 10)
+        return (topicData.target_publish_date && topicData.target_publish_date >= today)
+          ? topicData.target_publish_date
+          : today
+      })(),
       seo_score:           seoScore,
       schema_type:         brief?.schema_type ?? null,
       excerpt:             parsed.metaDescription || null,
@@ -1174,6 +1201,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = parseResponse(rawText)
   parsed.content = stripHallucinatedLinks(parsed.content, manualAllowedUrls)
+  parsed.content = stripDangerousHtml(parsed.content)
 
   let postId: string | null = null
   if (effectiveClientId) {
