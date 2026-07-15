@@ -107,16 +107,21 @@ export async function POST(request: NextRequest) {
     const postsPerRun  = 1
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
-    // Load existing post topics to avoid repeats
+    // Load existing post topics to avoid repeats and keyword cannibalization
     const { data: existingPosts } = await db
       .from('content_posts')
-      .select('focus_topic, title')
+      .select('focus_topic, title, target_keyword')
       .eq('client_id', cs.client_id)
+      .not('status', 'eq', 'rejected')
       .order('generated_at', { ascending: false })
-      .limit(50)
+      .limit(100)
 
-    const avoidList = ((existingPosts ?? []) as { focus_topic?: string; title?: string }[])
-      .map(p => p.focus_topic || p.title)
+    const avoidList = ((existingPosts ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[])
+      .map(p => {
+        const label = p.focus_topic || p.title || ''
+        if (!label) return null
+        return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
+      })
       .filter(Boolean)
       .join('\n')
 
@@ -302,7 +307,7 @@ SEO guidelines:
 - Add descriptive alt text to any <img> tags including the focus keyword
 - For external links use target="_blank" rel="noopener noreferrer"
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not explicitly in that list is a critical error.
-${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or in progress. You MUST NOT target the same keyword, answer the same core question, or produce content that would compete for the same search ranking as any post listed below. Choose a topic with a clearly different target keyword and distinct search intent:\n${avoidTopics}` : ''}
 Return ONLY a JSON object with exactly these fields:
 {
   "title": "Post H1 title — descriptive, includes focus keyword",

@@ -326,7 +326,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}${rulesReminder}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or in progress. You MUST NOT target the same keyword, answer the same core question, or produce content that would compete for the same search ranking as any post listed below. Choose a topic with a clearly different target keyword and distinct search intent:\n${avoidTopics}` : ''}${rulesReminder}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -354,7 +354,7 @@ SEO guidelines:
 - Add descriptive alt text to any <img> tags including the focus keyword
 - External links: target="_blank" rel="noopener noreferrer"
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
-${avoidTopics ? `\nTopics already covered — do NOT repeat:\n${avoidTopics}` : ''}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or in progress. You MUST NOT target the same keyword, answer the same core question, or produce content that would compete for the same search ranking as any post listed below. Choose a topic with a clearly different target keyword and distinct search intent:\n${avoidTopics}` : ''}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -424,10 +424,11 @@ async function runTopicGeneration({
         .is('client_id', null)
         .maybeSingle(),
       db.from('content_posts')
-        .select('focus_topic, title')
+        .select('focus_topic, title, target_keyword')
         .eq('client_id', effectiveClientId)
+        .not('status', 'eq', 'rejected')
         .order('generated_at', { ascending: false })
-        .limit(50),
+        .limit(100),
       db.from('content_sitemap_pages')
         .select('url, is_priority, is_excluded, created_at')
         .eq('client_id', effectiveClientId),
@@ -501,11 +502,14 @@ async function runTopicGeneration({
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
-    const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string }[]
+    const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[]
     const avoidList = existingPosts
-      .map(p => p.focus_topic || p.title)
+      .map(p => {
+        const label = p.focus_topic || p.title || ''
+        if (!label) return null
+        return p.target_keyword ? `"${label}" (keyword: ${p.target_keyword})` : `"${label}"`
+      })
       .filter(Boolean)
-      .slice(0, 30)
       .join('\n')
 
     const postStructure = mergePostStructures(
