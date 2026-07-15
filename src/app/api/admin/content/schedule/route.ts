@@ -104,6 +104,13 @@ export async function POST(request: NextRequest) {
     // Skip if not due today — bypass when admin targets a specific client or when not cron
     if (isCronAuth && !targetClientId && !isDueToday(frequency, dayOfWeek, lastGeneratedAt)) continue
 
+    // Idempotency guard: cron should never generate twice in the same UTC day.
+    // Prevents duplicate posts when a cron run and a manual admin run overlap.
+    if (isCronAuth) {
+      const todayUTC = new Date().toISOString().slice(0, 10)
+      if (lastGeneratedAt && lastGeneratedAt.slice(0, 10) === todayUTC) continue
+    }
+
     const postsPerRun  = 1
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
@@ -175,9 +182,11 @@ export async function POST(request: NextRequest) {
         const userPrompt = `Write a new SEO-optimized blog post for this business. Research what topics would rank well for this industry — focus on: services they offer, commonly searched questions their customers ask, local/seasonal relevance where applicable, or subjects similar businesses write about. Choose a unique, targeted topic not yet covered. Target approximately ${targetLength} words.`
 
         let rawText = ''
+        const aiSignal = AbortSignal.timeout(85_000)
         if (provider === 'anthropic') {
           const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
+            signal: aiSignal,
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
             body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
           })
@@ -187,6 +196,7 @@ export async function POST(request: NextRequest) {
         } else {
           const res = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
+            signal: aiSignal,
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
           })
@@ -198,27 +208,34 @@ export async function POST(request: NextRequest) {
         if (!parsed.title && !parsed.content) continue
         parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
 
-        await db.from('content_posts').insert({
-          client_id:        cs.client_id,
-          connection_id:    cs.connection_id || null,
-          status:           'pending',
-          title:            parsed.title,
-          seo_title:        parsed.seoTitle || parsed.title,
-          content:          parsed.content,
-          meta_description: parsed.metaDescription,
-          slug:             parsed.slug,
-          target_keyword:   parsed.focusKeyword,
-          suggested_tags:   parsed.suggestedTags,
-          word_count:       wordCount(parsed.content),
-          heading_count:    headingCount(parsed.content),
-          internal_links:   internalLinks(parsed.content),
-          generated_by:     'scheduled',
-          ai_model:         model,
-          prompt_used:      userPrompt,
-          wp_author_id:     (cs as Record<string, unknown>).default_author_id    ?? null,
-          wp_category_ids:  (cs as Record<string, unknown>).default_category_ids ?? null,
+        const nowIso  = new Date().toISOString()
+        const todayStr = nowIso.slice(0, 10)
+        const { error: insertErr } = await db.from('content_posts').insert({
+          client_id:           cs.client_id,
+          connection_id:       cs.connection_id || null,
+          status:              'pending',
+          title:               parsed.title,
+          seo_title:           parsed.seoTitle || parsed.title,
+          content:             parsed.content,
+          meta_description:    parsed.metaDescription,
+          slug:                parsed.slug,
+          target_keyword:      parsed.focusKeyword,
+          suggested_tags:      parsed.suggestedTags,
+          word_count:          wordCount(parsed.content),
+          heading_count:       headingCount(parsed.content),
+          internal_links:      internalLinks(parsed.content),
+          generated_by:        'scheduled',
+          ai_model:            model,
+          prompt_used:         userPrompt,
+          generated_at:        nowIso,
+          target_publish_date: todayStr,
+          wp_author_id:        (cs as Record<string, unknown>).default_author_id    ?? null,
+          wp_category_ids:     (cs as Record<string, unknown>).default_category_ids ?? null,
         })
-
+        if (insertErr) {
+          errors.push(`client ${cs.client_id}: DB insert failed — ${insertErr.message}`)
+          continue
+        }
         totalGenerated++
       } catch (err) {
         errors.push(`client ${cs.client_id}: ${String(err)}`)
@@ -271,8 +288,8 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
  */
 function isDueToday(frequency: string, dayOfWeek: number, lastGeneratedAt: string | null): boolean {
   const now   = new Date()
-  const today = now.getDay()    // 0=Sun … 6=Sat
-  const dom   = now.getDate()   // 1–31
+  const today = now.getUTCDay()    // 0=Sun … 6=Sat (UTC-consistent — server TZ may not be local)
+  const dom   = now.getUTCDate()   // 1–31 (UTC-consistent)
   const daysSinceLast = lastGeneratedAt
     ? (Date.now() - new Date(lastGeneratedAt).getTime()) / 86_400_000
     : Infinity

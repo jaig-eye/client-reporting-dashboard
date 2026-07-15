@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
   // Reset topics stuck in 'generating' for more than 1 hour (timed out or crashed)
   await db
     .from('content_topics')
-    .update({ status: 'scheduled', generation_error: 'Timed out — reset by cron' })
+    .update({ status: 'approved', generation_error: 'Timed out — reset by cron. Click retry to regenerate.' })
     .eq('status', 'generating')
     .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
 

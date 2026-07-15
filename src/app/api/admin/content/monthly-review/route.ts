@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     .lte('target_publish_date', windowEnd)
     .not('target_publish_date', 'is', null)
     .order('target_publish_date', { ascending: true })
-    .limit(80)
+    .limit(300)
 
   if (postsErr) {
     return NextResponse.json({ error: postsErr.message }, { status: 500 })
