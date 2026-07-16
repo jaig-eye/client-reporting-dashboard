@@ -99,8 +99,8 @@ async function fetchPage(url: string): Promise<{ status: number; html: string }>
       headers: { 'User-Agent': AGENT_UA, 'Accept': 'text/html,application/xhtml+xml' },
       redirect: 'follow',
     })
-    clearTimeout(timer)
     const html = await res.text()
+    clearTimeout(timer)
     return { status: res.status, html }
   } catch {
     clearTimeout(timer)
@@ -113,6 +113,18 @@ async function fetchPage(url: string): Promise<{ status: number; html: string }>
 export function auditHtml(url: string, status: number, html: string): PageResult {
   const issues: PageIssue[] = []
   let errors = 0, warnings = 0
+
+  // Unreachable pages: skip SEO signal evaluation on empty responses
+  if (status === 0) {
+    issues.push({ type: 'fetch_error', sev: 'error', msg: 'Page unreachable or timed out' })
+    return {
+      url, httpStatus: 0, title: null, titleLength: 0,
+      metaDescription: null, metaLength: 0, h1Count: 0, h1Text: null,
+      wordCount: 0, imgsTotal: 0, imgsNoAlt: 0,
+      hasSchema: false, hasCanonical: false, metaRobots: '',
+      score: 0, errors: 1, warnings: 0, issues,
+    }
+  }
 
   // ── Meta signals ──
   const title       = extractText(html, /<title[^>]*>([\s\S]*?)<\/title>/i)
@@ -128,15 +140,18 @@ export function auditHtml(url: string, status: number, html: string): PageResult
                      ?? ''
   const metaRobots = metaRobotsRaw.toLowerCase()
 
-  // ── Headings ──
-  const h1Matches = Array.from(html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi))
-  const h1Count   = h1Matches.length
-  const h1Text    = h1Count > 0 ? stripTags(h1Matches[0][1]).slice(0, 200) || null : null
-
   // ── Body content ──
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)
   const bodyHtml  = bodyMatch?.[1] ?? html
   const wordCount = countWords(bodyHtml)
+
+  // ── Headings (strip scripts first to avoid JS template string false positives) ──
+  const bodyNs    = bodyHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+  const h1Matches = Array.from(bodyNs.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi))
+  const h1Count   = h1Matches.length
+  const h1Text    = h1Count > 0 ? stripTags(h1Matches[0][1]).slice(0, 200) || null : null
 
   // ── Images ──
   const imgTags  = Array.from(html.matchAll(/<img\b([^>]*)>/gi))
@@ -152,9 +167,7 @@ export function auditHtml(url: string, status: number, html: string): PageResult
   const hasCanonical = /<link[^>]+rel=["']canonical["']/i.test(html)
 
   // ── Issue detection ──
-  if (status === 0) {
-    issues.push({ type: 'fetch_error', sev: 'error', msg: 'Page unreachable or timed out' }); errors++
-  } else if (status >= 400) {
+  if (status >= 400) {
     issues.push({ type: 'http_error', sev: 'error', msg: `HTTP ${status} response` }); errors++
   }
 
@@ -278,7 +291,10 @@ export async function runSiteAudit(input: SiteAuditInput): Promise<AuditResult> 
   }
 
   // Always include homepage; deduplicate; cap
-  const deduped = Array.from(new Set([base + '/', ...urls])).slice(0, MAX_PAGES)
+  const homepage = base + '/'
+  const deduped = Array.from(
+    new Set([homepage, ...urls.map(u => (u === base ? homepage : u))])
+  ).slice(0, MAX_PAGES)
 
   const pages = await runBatch(deduped)
 

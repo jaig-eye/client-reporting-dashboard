@@ -16,8 +16,9 @@ export const dynamic     = 'force-dynamic'
 export const maxDuration = 300   // 5 minutes for bulk runs
 
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronSecret = process.env.CRON_SECRET
+  const authHeader  = request.headers.get('authorization')
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -42,9 +43,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, audited: 0 })
   }
 
+  // Clean up audit rows orphaned by a previous cron hard-kill (Vercel bypasses catch)
+  await db.from('site_audits')
+    .update({ status: 'failed', error_message: 'Timed out (cron killed)', completed_at: new Date().toISOString() })
+    .eq('status', 'running')
+    .lt('started_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
+
+  const startedAt      = Date.now()
+  const TIME_BUDGET_MS = 240_000   // stop 60s before Vercel's 300s hard limit
+
   const results: Array<{ siteId: string; status: string; pages?: number; score?: number; error?: string }> = []
 
   for (const site of sites as Array<{ id: string; url: string; client_id: string | null; audit_scope: string }>) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      console.log('[cron/site-audits] time budget reached, deferring remaining sites')
+      break
+    }
     // Resolve key pages from content_sitemap_pages
     let keyPages: string[] = []
     if ((site.audit_scope ?? 'key') === 'key' && site.client_id) {
@@ -78,7 +92,7 @@ export async function GET(request: NextRequest) {
       })
 
       if (result.pages.length > 0) {
-        await db.from('site_audit_pages').insert(
+        const { error: pagesInsertErr } = await db.from('site_audit_pages').insert(
           result.pages.map(p => ({
             audit_id:        auditRow.id,
             site_id:         site.id,
@@ -101,6 +115,7 @@ export async function GET(request: NextRequest) {
             issues:          p.issues,
           }))
         )
+        if (pagesInsertErr) throw new Error(`Failed to store page results: ${pagesInsertErr.message}`)
       }
 
       await Promise.all([

@@ -106,7 +106,7 @@ export async function POST(
     .select()
     .single()
 
-  if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+  if (insertErr || !auditRow) return NextResponse.json({ error: insertErr?.message ?? 'Failed to create audit record' }, { status: 500 })
 
   // 4. Resolve key pages from content_sitemap_pages (if client is linked)
   let keyPages: string[] = []
@@ -131,7 +131,7 @@ export async function POST(
 
     // 6. Store page results
     if (result.pages.length > 0) {
-      await db.from('site_audit_pages').insert(
+      const { error: pagesInsertErr } = await db.from('site_audit_pages').insert(
         result.pages.map(p => ({
           audit_id:        auditRow.id,
           site_id:         params.id,
@@ -154,6 +154,7 @@ export async function POST(
           issues:          p.issues,
         }))
       )
+      if (pagesInsertErr) throw new Error(`Failed to store page results: ${pagesInsertErr.message}`)
     }
 
     // 7. Mark audit completed + update site summary

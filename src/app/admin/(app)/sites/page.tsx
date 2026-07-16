@@ -313,14 +313,14 @@ export default function SitesPage() {
           last_audit_at:  new Date().toISOString(),
         }),
       } : s))
-      if (data.pages?.length) setAuditPages(prev => ({ ...prev, [siteId]: data.pages }))
+      if (data.pages?.length) loadAuditPages(siteId, true)
     } finally {
       setAuditLoading(prev => { const n = new Set(prev); n.delete(siteId); return n })
     }
   }
 
-  async function loadAuditPages(siteId: string) {
-    if (auditPages[siteId]) return
+  async function loadAuditPages(siteId: string, force = false) {
+    if (!force && auditPages[siteId]) return
     const res = await fetch(`/api/admin/sites/${siteId}/audit`)
     if (!res.ok) return
     const data = await res.json()
