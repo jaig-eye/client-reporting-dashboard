@@ -9,6 +9,7 @@ const ALLOWED_PATCH = [
   'name', 'url', 'client_id', 'platform', 'hosting_type',
   'hosting_provider', 'server_account', 'group_id', 'status', 'notes',
   'discord_channel_id',
+  'audit_enabled', 'audit_scope',
 ]
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {

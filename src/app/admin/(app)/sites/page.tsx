@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple, DownloadSimple, X } from '@phosphor-icons/react'
 
 const PLATFORMS = ['wordpress', 'ghl', 'bigcommerce', 'shopify', 'custom', 'other'] as const
@@ -30,10 +30,23 @@ interface Site {
   discord_channel_id: string | null
   clients:          { id: string; name: string } | null
   site_groups:      { id: string; name: string } | null
+  audit_enabled:    boolean
+  audit_scope:      string
+  last_audit_at:    string | null
+  audit_score:      number | null
+  audit_errors:     number | null
+  audit_warnings:   number | null
 }
 
 interface Group  { id: string; name: string }
 interface Client { id: string; name: string; website: string | null }
+
+interface AuditPageRow {
+  url: string; score: number | null
+  errors: number; warnings: number; title: string | null
+  h1_count: number; has_schema: boolean; has_canonical: boolean
+  issues: { type: string; sev: string; msg: string }[]
+}
 
 const EMPTY_FORM = {
   name: '', url: '', client_id: '', platform: 'custom', hosting_type: 'client',
@@ -111,6 +124,11 @@ export default function SitesPage() {
 
   // Delete confirm
   const [deleteId, setDeleteId] = useState<string | null>(null)
+
+  // Audit expand / data
+  const [openAuditId,  setOpenAuditId]  = useState<string | null>(null)
+  const [auditPages,   setAuditPages]   = useState<Record<string, AuditPageRow[]>>({})
+  const [auditLoading, setAuditLoading] = useState<Set<string>>(new Set())
 
   // Import all unmonitored sites at once
   const [importing, setImporting] = useState(false)
@@ -274,6 +292,41 @@ export default function SitesPage() {
     if (res.ok) { setDeleteId(null); fetchSites() }
   }
 
+  async function handleAuditToggle(siteId: string, enabled: boolean, scope: string) {
+    setAuditLoading(prev => new Set(prev).add(siteId))
+    try {
+      const res = await fetch(`/api/admin/sites/${siteId}/audit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, scope }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setSites(prev => prev.map(s => s.id === siteId ? {
+        ...s,
+        audit_enabled:  enabled,
+        audit_scope:    scope,
+        ...(data.audit?.score != null && {
+          audit_score:    data.audit.score,
+          audit_errors:   data.audit.errors,
+          audit_warnings: data.audit.warnings,
+          last_audit_at:  new Date().toISOString(),
+        }),
+      } : s))
+      if (data.pages?.length) setAuditPages(prev => ({ ...prev, [siteId]: data.pages }))
+    } finally {
+      setAuditLoading(prev => { const n = new Set(prev); n.delete(siteId); return n })
+    }
+  }
+
+  async function loadAuditPages(siteId: string) {
+    if (auditPages[siteId]) return
+    const res = await fetch(`/api/admin/sites/${siteId}/audit`)
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.pages) setAuditPages(prev => ({ ...prev, [siteId]: data.pages }))
+  }
+
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '0.5rem 0.75rem', borderRadius: 8,
     border: '1px solid var(--border)', background: 'var(--bg-subtle)',
@@ -408,7 +461,7 @@ export default function SitesPage() {
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
             <thead>
               <tr>
-                {['', 'Name', 'Client', 'URL', 'Platform', 'Hosting', '7d Uptime', 'SSL', 'Last Check', ''].map((h, i) => (
+                {['', 'Name', 'Client', '7d Uptime', 'SSL', 'Audit', 'Score', ''].map((h, i) => (
                   <th key={i} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)' }}>
                     {h}
                   </th>
@@ -417,71 +470,200 @@ export default function SitesPage() {
             </thead>
             <tbody>
               {sortedSites.map(site => (
-                <tr
-                  key={site.id}
-                  style={{ cursor: 'default' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}
-                >
-                  <td style={{ padding: '0.625rem 0.75rem', paddingRight: 4 }}>
-                    <StatusDot isUp={site.is_up} status={site.status} />
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                    {site.name}
-                    {site.status !== 'active' && (
-                      <span style={{ marginLeft: 6, fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
-                        {site.status}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {site.clients?.name ?? '—'}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', maxWidth: 220 }}>
-                    <a href={site.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', maxWidth: 220 }}>
-                      {site.url.replace(/^https?:\/\//, '')}
-                    </a>
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem' }}>
-                    <PlatformBadge p={site.platform} />
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    <span style={{ fontSize: '0.75rem' }}>
-                      {site.hosting_type === 'ours' ? 'Ours' : 'Client'}
-                      {site.hosting_provider ? ` · ${site.hosting_provider}` : ''}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
-                    {site.uptime_7d != null ? (
-                      <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? '#10b981' : site.uptime_7d >= 95 ? '#f59e0b' : '#ef4444' }}>
-                        {Number(site.uptime_7d).toFixed(1)}%
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem' }}>
-                    <SslBadge days={site.ssl_days_remaining} />
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap', fontSize: '0.75rem' }}>
-                    {timeAgo(site.last_checked_at)}
-                    {site.last_status_code != null && (
-                      <span style={{ marginLeft: 4, color: site.last_status_code < 400 ? 'var(--text-faint)' : 'var(--red)' }}>
-                        ({site.last_status_code})
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.75rem' }}>
-                    <div style={{ display: 'flex', gap: '0.375rem' }}>
-                      <button onClick={() => openEdit(site)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-faint)' }}>
-                        <PencilSimple size={13} />
-                      </button>
-                      <button onClick={() => setDeleteId(site.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--red)' }}>
-                        <TrashSimple size={13} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                <Fragment key={site.id}>
+                  <tr
+                    onClick={() => {
+                      const next = openAuditId === site.id ? null : site.id
+                      setOpenAuditId(next)
+                      if (next) loadAuditPages(site.id)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
+                    onMouseLeave={e => { if (openAuditId !== site.id) e.currentTarget.style.background = '' }}
+                  >
+                    <td style={{ padding: '0.625rem 0.75rem', paddingRight: 4 }}>
+                      <StatusDot isUp={site.is_up} status={site.status} />
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {site.name}
+                        {site.status !== 'active' && (
+                          <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
+                            {site.status}
+                          </span>
+                        )}
+                        <PlatformBadge p={site.platform} />
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>
+                        <a href={site.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
+                          {site.url.replace(/^https?:\/\//, '')}
+                        </a>
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {site.clients?.name ?? '—'}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
+                      {site.uptime_7d != null ? (
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? '#10b981' : site.uptime_7d >= 95 ? '#f59e0b' : '#ef4444' }}>
+                          {Number(site.uptime_7d).toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }}>
+                      <SslBadge days={site.ssl_days_remaining} />
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
+                      {auditLoading.has(site.id) ? (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Running…</span>
+                      ) : (
+                        <label style={{ position: 'relative', display: 'inline-block', width: 36, height: 20, cursor: 'pointer', flexShrink: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={site.audit_enabled ?? false}
+                            onChange={e => handleAuditToggle(site.id, e.target.checked, site.audit_scope ?? 'key')}
+                            style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+                          />
+                          <span style={{ position: 'absolute', inset: 0, borderRadius: 999, background: site.audit_enabled ? 'var(--blue)' : 'var(--border)', transition: 'background 0.2s' }} />
+                          <span style={{ position: 'absolute', top: 2, left: site.audit_enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                        </label>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
+                      {site.audit_score != null ? (
+                        <>
+                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? '#10b981' : site.audit_score >= 60 ? '#f59e0b' : '#ef4444' }}>
+                            {site.audit_score}
+                          </span>
+                          {(site.audit_errors != null || site.audit_warnings != null) && (
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                              {site.audit_errors ?? 0}E · {site.audit_warnings ?? 0}W
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: '0.375rem' }}>
+                        <button onClick={() => openEdit(site)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-faint)' }}>
+                          <PencilSimple size={13} />
+                        </button>
+                        <button onClick={() => setDeleteId(site.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--red)' }}>
+                          <TrashSimple size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {openAuditId === site.id && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ padding: '1rem 1.25rem' }}>
+                          {/* Summary bar */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                            {site.audit_score != null && (
+                              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: site.audit_score >= 80 ? '#10b981' : site.audit_score >= 60 ? '#f59e0b' : '#ef4444', lineHeight: 1 }}>
+                                {site.audit_score}
+                              </span>
+                            )}
+                            {(site.audit_errors != null || site.audit_warnings != null) && (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                {site.audit_errors ?? 0} errors · {site.audit_warnings ?? 0} warnings
+                                {auditPages[site.id] && ` · ${auditPages[site.id].length} pages`}
+                              </span>
+                            )}
+                            {site.last_audit_at && (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
+                                Last audited {timeAgo(site.last_audit_at)}
+                              </span>
+                            )}
+                            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Scope:</span>
+                              <select
+                                value={site.audit_scope ?? 'key'}
+                                onChange={e => handleAuditToggle(site.id, site.audit_enabled, e.target.value)}
+                                style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                              >
+                                <option value="key">Key pages</option>
+                                <option value="all">All pages</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Per-page table */}
+                          {auditPages[site.id] ? (
+                            auditPages[site.id].length > 0 ? (
+                              <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.75rem' }}>
+                                  <thead>
+                                    <tr>
+                                      {['URL', 'Score', 'Top Issue', 'Title', 'H1', 'Schema', 'Canonical'].map((h, i) => (
+                                        <th key={i} style={{ padding: '0.375rem 0.625rem', textAlign: 'left', fontSize: '0.625rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                                          {h}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {auditPages[site.id].slice(0, 15).map((page, i) => (
+                                      <tr key={i}>
+                                        <td style={{ padding: '0.375rem 0.625rem', maxWidth: 280 }}>
+                                          <a href={page.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>
+                                            {page.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
+                                          </a>
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 700, color: (page.score ?? 0) >= 80 ? '#10b981' : (page.score ?? 0) >= 60 ? '#f59e0b' : '#ef4444', whiteSpace: 'nowrap' }}>
+                                          {page.score ?? '—'}
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: 'var(--text-muted)', maxWidth: 280 }}>
+                                          <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>
+                                            {page.issues?.[0]?.msg ?? 'Clean'}
+                                          </span>
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.title ? 'var(--text-primary)' : 'var(--red)', textAlign: 'center' }}>
+                                          {page.title ? '✓' : '✗'}
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.h1_count === 1 ? 'var(--text-primary)' : 'var(--red)', textAlign: 'center' }}>
+                                          {page.h1_count}
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_schema ? '#10b981' : 'var(--text-faint)', textAlign: 'center' }}>
+                                          {page.has_schema ? '✓' : '—'}
+                                        </td>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_canonical ? '#10b981' : 'var(--text-faint)', textAlign: 'center' }}>
+                                          {page.has_canonical ? '✓' : '—'}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                {auditPages[site.id].length > 15 && (
+                                  <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.5rem 0 0', paddingLeft: '0.625rem' }}>
+                                    Showing 15 of {auditPages[site.id].length} pages
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>No pages crawled yet.</p>
+                            )
+                          ) : (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>
+                              {site.audit_enabled ? 'Loading audit data…' : 'Enable weekly audit to start crawling.'}
+                            </p>
+                          )}
+
+                          {/* Footer */}
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.75rem 0 0', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
+                            Cloudflare users: whitelist User-Agent <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border)' }}>AgencyBot/1.0</code> in WAF custom rules.
+                            {site.audit_enabled && ' Runs weekly (Mon 3 AM UTC).'}
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

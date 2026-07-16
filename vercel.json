@@ -59,6 +59,10 @@
     {
       "path": "/api/cron/gsc-weekly-snapshot",
       "schedule": "0 3 * * 0"
+    },
+    {
+      "path": "/api/cron/site-audits",
+      "schedule": "0 3 * * 1"
     }
   ]
 }
