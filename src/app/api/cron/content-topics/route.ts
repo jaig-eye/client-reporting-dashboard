@@ -353,7 +353,7 @@ export async function GET(request: NextRequest) {
       .select('id, topic, target_keyword, target_publish_date, content_type')
       .eq('client_id', client_id)
       .in('status', ['scheduled', 'approved'])
-      .lte('target_publish_date', new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
+      .or(`target_publish_date.is.null,target_publish_date.lte.${new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`)
 
     // Resolve client name once for the post accumulator
     let clientNameForPost = topicAccum.get(client_id)?.clientName ?? ''
@@ -399,7 +399,7 @@ export async function GET(request: NextRequest) {
       } catch (e) {
         console.error(`[content-topics cron] Post generation failed for topic ${t.id}:`, e)
         await db.from('content_topics')
-          .update({ status: 'scheduled', generation_error: String(e) })
+          .update({ status: 'approved', generation_error: String(e) })
           .eq('id', t.id)
       }
     }))

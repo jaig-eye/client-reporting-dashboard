@@ -173,6 +173,14 @@ export async function POST(request: NextRequest) {
     // Seed manually configured link URLs so they aren't stripped as hallucinations
     parseManualLinks((cs.manual_link_urls as string[] | null) ?? [])
       .forEach(l => allowedInternalUrls.add(l.url))
+    // Pull cached sitemap pages from DB as fallback for clients with no live sitemap_url
+    const { data: cachedPages } = await db
+      .from('content_sitemap_pages')
+      .select('url')
+      .eq('client_id', cs.client_id)
+      .eq('is_excluded', false)
+      .limit(100)
+    ;(cachedPages ?? []).forEach((r: { url: string }) => allowedInternalUrls.add(r.url))
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
     const systemPrompt  = buildSystemPrompt(agency, clientContext, avoidList)
@@ -357,8 +365,10 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
       try {
         const parsed = new URL(href)
         const hostname = parsed.hostname.toLowerCase()
+        // When no internal hosts are known we can't tell internal from external — leave all absolute URLs alone
+        if (internalHosts.size === 0) return match
         // Known external hostname — leave untouched
-        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        if (!internalHosts.has(hostname)) return match
         // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
         if (allowed.has(norm(href))) return match
         if (allowed.has(norm(parsed.pathname))) return match

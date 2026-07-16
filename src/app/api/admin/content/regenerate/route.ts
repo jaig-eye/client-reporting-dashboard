@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
   const db = createAdminClient()
 
   const [postRes, settingsRes] = await Promise.all([
-    db.from('content_posts').select('*').eq('id', post_id).single(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, agency_name').single(),
+    db.from('content_posts').select('*').eq('id', post_id).maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, agency_name').maybeSingle(),
   ])
 
   const post = postRes.data as Record<string, string | null> | null
@@ -52,16 +52,43 @@ export async function POST(request: NextRequest) {
 
   const systemPrompt = `You are a professional SEO content writer for ${agency}. Revise or rewrite the blog post as instructed. Return ONLY a JSON object with these fields: { "title": "...", "content": "Full HTML body", "metaDescription": "SEO meta 150-160 chars", "slug": "url-slug" }. Do not include markdown fences.`
 
+  function sanitizeEmDashes(html: string): string {
+    return html.replace(/(<[^>]*>)|([^<]+)/g, (_, tag, text) => {
+      if (tag) return tag
+      return text.replace(/—/g, ' - ').replace(/–/g, '-')
+    })
+  }
+
+  function repairJsonStrings(json: string): string {
+    let out = '', inStr = false, esc = false
+    for (const ch of json) {
+      if (esc)                  { out += ch; esc = false; continue }
+      if (ch === '\\' && inStr) { out += ch; esc = true;  continue }
+      if (ch === '"')           { out += ch; inStr = !inStr; continue }
+      if (inStr && ch === '\n') { out += '\\n'; continue }
+      if (inStr && ch === '\r') { out += '\\r'; continue }
+      if (inStr && ch === '\t') { out += '\\t'; continue }
+      out += ch
+    }
+    return out
+  }
+
   function parseResponse(rawText: string) {
     const stripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
     const match = stripped.match(/\{[\s\S]*\}/)
-    if (!match) return { title: '', content: rawText, metaDescription: '', slug: '' }
-    try {
-      const p = JSON.parse(match[0])
-      return { title: String(p.title || ''), content: String(p.content || rawText), metaDescription: String(p.metaDescription || ''), slug: String(p.slug || '') }
-    } catch {
-      return { title: '', content: rawText, metaDescription: '', slug: '' }
+    if (!match) return { title: '', content: sanitizeEmDashes(rawText), metaDescription: '', slug: '' }
+    for (const attempt of [match[0], repairJsonStrings(match[0])]) {
+      try {
+        const p = JSON.parse(attempt)
+        return {
+          title:           sanitizeEmDashes(String(p.title           || '')),
+          content:         sanitizeEmDashes(String(p.content         || rawText)),
+          metaDescription: sanitizeEmDashes(String(p.metaDescription || '')),
+          slug:            String(p.slug || ''),
+        }
+      } catch { /* try next */ }
     }
+    return { title: '', content: sanitizeEmDashes(rawText), metaDescription: '', slug: '' }
   }
 
   function wordCount(html: string) { return html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length }
@@ -110,7 +137,8 @@ export async function POST(request: NextRequest) {
         try {
           const parsed = new URL(href)
           const hostname = parsed.hostname.toLowerCase()
-          if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+          if (internalHosts.size === 0) return match
+          if (!internalHosts.has(hostname)) return match
           if (allowed.has(norm(href))) return match
           if (allowed.has(norm(parsed.pathname))) return match
           console.warn('[regenerate] stripped hallucinated internal link:', href)

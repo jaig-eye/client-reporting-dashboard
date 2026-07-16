@@ -125,7 +125,8 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
       try {
         const parsed = new URL(href)
         const hostname = parsed.hostname.toLowerCase()
-        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        if (internalHosts.size === 0) return match
+        if (!internalHosts.has(hostname)) return match
         if (allowed.has(norm(href))) return match
         if (allowed.has(norm(parsed.pathname))) return match
         console.warn('[sa-generate] stripped hallucinated internal link:', href)

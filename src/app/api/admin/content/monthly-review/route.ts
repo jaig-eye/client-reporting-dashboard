@@ -17,8 +17,9 @@ export async function GET(request: NextRequest) {
   const db  = createAdminClient()
   const now = new Date()
 
-  // Window: today → end of next calendar month (~60 days of runway)
-  const windowStart = now.toISOString().slice(0, 10)
+  // Window: yesterday → end of next calendar month
+  // Start 1 day back to catch posts generated near UTC midnight on the previous day
+  const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const nextMonth   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0)) // last day of next month
   const windowEnd   = nextMonth.toISOString().slice(0, 10)
 

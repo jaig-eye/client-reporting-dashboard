@@ -299,8 +299,10 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
       try {
         const parsed = new URL(href)
         const hostname = parsed.hostname.toLowerCase()
+        // When no internal hosts are known we can't tell internal from external — leave all absolute URLs alone
+        if (internalHosts.size === 0) return match
         // Known external hostname — leave untouched
-        if (internalHosts.size > 0 && !internalHosts.has(hostname)) return match
+        if (!internalHosts.has(hostname)) return match
         // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
         if (allowed.has(norm(href))) return match
         if (allowed.has(norm(parsed.pathname))) return match
@@ -466,11 +468,11 @@ async function runTopicGeneration({
         .not('status', 'eq', 'rejected')
         .order('generated_at', { ascending: false })
         .limit(100),
-      // Also load approved/pending topics not yet generated so concurrent runs can't cannibalize
+      // Load all non-rejected/non-generating topics so concurrent runs can't cannibalize
       db.from('content_topics')
         .select('topic, target_keyword')
         .eq('client_id', effectiveClientId)
-        .in('status', ['approved', 'pending'])
+        .not('status', 'in', '("rejected","generating")')
         .neq('id', topicData.id),
       db.from('content_sitemap_pages')
         .select('url, is_priority, is_excluded, created_at')
