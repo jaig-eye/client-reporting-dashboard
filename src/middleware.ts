@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeCompare } from '@/lib/auth'
 
+// Constant-time string compare, implemented without Node's `crypto` module.
+// Middleware always runs on the Edge Runtime in Next.js 14 (no nodejs runtime
+// opt-out), where Node's crypto.timingSafeEqual/Buffer are not reliably
+// available — importing it here previously made isAdminSession() always
+// throw internally and fall back to `false`, permanently rejecting every
+// valid admin session.
 function isAdminSession(session: string | undefined): boolean {
-  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
+  const expected = process.env.ADMIN_PASSWORD
+  if (!session || !expected || session.length !== expected.length) return false
+  let diff = 0
+  for (let i = 0; i < session.length; i++) {
+    diff |= session.charCodeAt(i) ^ expected.charCodeAt(i)
+  }
+  return diff === 0
 }
 
 export async function middleware(request: NextRequest) {
@@ -19,15 +30,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
     return NextResponse.redirect(new URL('/access', request.url))
-  }
-
-  // /verify — requires client_token cookie (no IP check — that's the bypass page)
-  if (pathname.startsWith('/verify')) {
-    const clientToken = request.cookies.get('client_token')?.value
-    if (!clientToken) {
-      return NextResponse.redirect(new URL('/access', request.url))
-    }
-    return NextResponse.next()
   }
 
   // /dashboard/* — requires client_token; if admin session present without token, go to /admin
@@ -57,5 +59,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/verify/:path*', '/dashboard/:path*', '/admin/:path*'],
+  matcher: ['/', '/dashboard/:path*', '/admin/:path*'],
 }
