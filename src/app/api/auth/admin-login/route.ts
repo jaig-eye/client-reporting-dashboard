@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { hashPassword } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
-import { sendEmail } from '@/lib/email'
+import { sendEmail, isEmailConfigured } from '@/lib/email'
 import crypto from 'crypto'
 
 const COOKIE_OPTS = {
@@ -47,6 +47,13 @@ function hashOtp(code: string): string {
 
 function generateOtp(): string {
   return String(crypto.randomInt(100000, 999999))
+}
+
+function superAdminSessionResponse(): NextResponse {
+  const res = NextResponse.json({ ok: true, role: 'super_admin' })
+  res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
+  res.cookies.delete('admin_user_id')
+  return res
 }
 
 export async function POST(request: NextRequest) {
@@ -98,10 +105,19 @@ export async function POST(request: NextRequest) {
       })
 
       resetRateLimit(ip)
-      const res = NextResponse.json({ ok: true, role: 'super_admin' })
-      res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
-      res.cookies.delete('admin_user_id')
-      return res
+      return superAdminSessionResponse()
+    }
+
+    // If email isn't configured at all, OTP can never be delivered — skip 2FA
+    // entirely rather than locking the super admin out.
+    if (!isEmailConfigured()) {
+      console.warn('[admin-login] MAILGUN_SMTP_* not configured — bypassing super admin 2FA')
+      logActivity(
+        { isSuperAdmin: true }, 'logged_in_no_2fa', 'user',
+        { meta: { ip, reason: 'email_not_configured' } }
+      )
+      resetRateLimit(ip)
+      return superAdminSessionResponse()
     }
 
     // Step 1 — password correct, generate and email OTP
@@ -134,8 +150,19 @@ export async function POST(request: NextRequest) {
           </div>`,
       })
     } catch (e) {
-      console.error('[admin-login] OTP email failed:', e)
-      return NextResponse.json({ error: 'Failed to send login code — check email config' }, { status: 500 })
+      // Configured but delivery failed (bad creds, unreachable host, etc.) —
+      // don't strand the super admin with no way to ever get a code.
+      console.error('[admin-login] OTP email failed — bypassing 2FA:', e)
+      logActivity(
+        { isSuperAdmin: true }, 'logged_in_no_2fa', 'user',
+        { meta: { ip, reason: 'email_send_failed' } }
+      )
+      await db.from('agency_settings').update({
+        super_admin_otp_hash:       null,
+        super_admin_otp_expires_at: null,
+      })
+      resetRateLimit(ip)
+      return superAdminSessionResponse()
     }
 
     return NextResponse.json({ step: 'code' })

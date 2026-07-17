@@ -11,6 +11,10 @@
 
 import nodemailer from 'nodemailer'
 
+export function isEmailConfigured(): boolean {
+  return Boolean(process.env.MAILGUN_SMTP_USER && process.env.MAILGUN_SMTP_PASS)
+}
+
 function createTransport() {
   return nodemailer.createTransport({
     host: process.env.MAILGUN_SMTP_HOST ?? 'smtp.mailgun.org',

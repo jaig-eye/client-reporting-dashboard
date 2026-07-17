@@ -14,7 +14,8 @@ import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { isAdminAuthed } from '@/lib/auth'
-import { sendEmail } from '@/lib/email'
+import { sendEmail, isEmailConfigured } from '@/lib/email'
+import { logActivity } from '@/lib/activity'
 import crypto from 'crypto'
 import type { Metadata } from 'next'
 
@@ -103,36 +104,63 @@ export default async function DashboardLayout({ children }: { children: React.Re
         // First visit — record IP and continue normally
         void db.from('clients').update({ last_known_ip: currentIp }).eq('id', client.id)
       } else if (currentIp !== row.last_known_ip && row.email) {
-        // IP changed and client has an email — send OTP and redirect to /verify
-        const otp       = generateOtp()
-        const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000).toISOString()
-
-        await db.from('clients').update({
-          client_otp_hash:       hashOtp(otp),
-          client_otp_expires_at: expiresAt,
-        }).eq('id', client.id)
-
-        const agencyName = (settings as unknown as Record<string, unknown> | null)?.agency_name as string | null ?? 'Agency Dashboard'
-
-        try {
-          await sendEmail({
-            to:      row.email,
-            subject: `${agencyName} — New location sign-in code`,
-            html: `
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:400px;margin:0 auto;padding:32px 24px;">
-                <h2 style="font-size:18px;font-weight:700;color:#111827;margin:0 0 8px;">New location detected</h2>
-                <p style="font-size:14px;color:#6b7280;margin:0 0 24px;">We noticed your dashboard is being accessed from a new location. Enter the code below to verify it's you. It expires in ${OTP_TTL_MINUTES} minutes.</p>
-                <div style="background:#f3f4f6;border-radius:8px;padding:20px;text-align:center;letter-spacing:0.2em;font-size:32px;font-weight:700;color:#111827;font-family:monospace;">
-                  ${otp}
-                </div>
-                <p style="font-size:12px;color:#9ca3af;margin:20px 0 0;">If you didn't request this, contact your account manager immediately.</p>
-              </div>`,
+        if (!isEmailConfigured()) {
+          // OTP can never be delivered — skip verification rather than
+          // stranding the client on /verify with no way to get a code.
+          console.warn(`[dashboard-layout] MAILGUN_SMTP_* not configured — skipping IP verification for client ${client.id}`)
+          logActivity(null, 'ip_verify_bypassed', 'client', {
+            clientId: client.id, clientName: client.name,
+            meta: { ip: currentIp, reason: 'email_not_configured' },
           })
-        } catch (e) {
-          console.error('[dashboard-layout] OTP email failed:', e)
-        }
+          await db.from('clients').update({ last_known_ip: currentIp }).eq('id', client.id)
+        } else {
+          // IP changed and client has an email — send OTP and redirect to /verify
+          const otp       = generateOtp()
+          const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000).toISOString()
 
-        redirect('/verify')
+          await db.from('clients').update({
+            client_otp_hash:       hashOtp(otp),
+            client_otp_expires_at: expiresAt,
+          }).eq('id', client.id)
+
+          const agencyName = (settings as unknown as Record<string, unknown> | null)?.agency_name as string | null ?? 'Agency Dashboard'
+
+          let emailSent = false
+          try {
+            await sendEmail({
+              to:      row.email,
+              subject: `${agencyName} — New location sign-in code`,
+              html: `
+                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:400px;margin:0 auto;padding:32px 24px;">
+                  <h2 style="font-size:18px;font-weight:700;color:#111827;margin:0 0 8px;">New location detected</h2>
+                  <p style="font-size:14px;color:#6b7280;margin:0 0 24px;">We noticed your dashboard is being accessed from a new location. Enter the code below to verify it's you. It expires in ${OTP_TTL_MINUTES} minutes.</p>
+                  <div style="background:#f3f4f6;border-radius:8px;padding:20px;text-align:center;letter-spacing:0.2em;font-size:32px;font-weight:700;color:#111827;font-family:monospace;">
+                    ${otp}
+                  </div>
+                  <p style="font-size:12px;color:#9ca3af;margin:20px 0 0;">If you didn't request this, contact your account manager immediately.</p>
+                </div>`,
+            })
+            emailSent = true
+          } catch (e) {
+            console.error('[dashboard-layout] OTP email failed:', e)
+          }
+
+          if (emailSent) {
+            redirect('/verify')
+          }
+
+          // Delivery failed even though configured — don't strand the client
+          // on a /verify page with no way to ever get a code.
+          logActivity(null, 'ip_verify_bypassed', 'client', {
+            clientId: client.id, clientName: client.name,
+            meta: { ip: currentIp, reason: 'email_send_failed' },
+          })
+          await db.from('clients').update({
+            last_known_ip:         currentIp,
+            client_otp_hash:       null,
+            client_otp_expires_at: null,
+          }).eq('id', client.id)
+        }
       }
     }
 
