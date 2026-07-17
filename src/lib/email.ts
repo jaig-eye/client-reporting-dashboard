@@ -20,6 +20,9 @@ function createTransport() {
       user: process.env.MAILGUN_SMTP_USER ?? '',
       pass: process.env.MAILGUN_SMTP_PASS ?? '',
     },
+    connectionTimeout: 8_000,
+    greetingTimeout: 8_000,
+    socketTimeout: 10_000,
   })
 }
 

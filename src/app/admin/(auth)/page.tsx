@@ -40,24 +40,35 @@ function AdminLoginForm() {
     if (email.trim()) body.email = email.trim()
     if (step === 'code') body.code = code
 
-    const res = await fetch('/api/auth/admin-login', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    })
-    const data = await res.json().catch(() => ({}))
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
 
-    if (res.ok && data.step === 'code') {
-      setStep('code')
+    try {
+      const res = await fetch('/api/auth/admin-login', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+        signal:  controller.signal,
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (res.ok && data.step === 'code') {
+        setStep('code')
+        return
+      }
+      if (res.ok) {
+        router.push(returnUrl)
+        return
+      }
+      setError(data.error || 'Invalid credentials')
+    } catch (err) {
+      setError(err instanceof DOMException && err.name === 'AbortError'
+        ? 'Request timed out — please try again.'
+        : 'Network error — please try again.')
+    } finally {
+      clearTimeout(timeout)
       setLoading(false)
-      return
     }
-    if (res.ok) {
-      router.push(returnUrl)
-      return
-    }
-    setError(data.error || 'Invalid credentials')
-    setLoading(false)
   }
 
   return (

@@ -8,6 +8,7 @@ export default function VerifyPage() {
   const [code,   setCode]   = useState('')
   const [error,  setError]  = useState('')
   const [loading, setLoading] = useState(false)
+  const [resending, setResending] = useState(false)
   const [resent,  setResent]  = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -15,29 +16,53 @@ export default function VerifyPage() {
     setLoading(true)
     setError('')
 
-    const res = await fetch('/api/auth/client-verify', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ code }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
 
-    if (res.ok) {
-      router.push('/dashboard')
-    } else {
+    try {
+      const res = await fetch('/api/auth/client-verify', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ code }),
+        signal:  controller.signal,
+      })
+
+      if (res.ok) {
+        router.push('/dashboard')
+        return
+      }
       const data = await res.json().catch(() => ({})) as { error?: string }
       setError(data.error ?? 'Invalid or expired code.')
+    } catch (err) {
+      setError(err instanceof DOMException && err.name === 'AbortError'
+        ? 'Request timed out — please try again.'
+        : 'Network error — please try again.')
+    } finally {
+      clearTimeout(timeout)
       setLoading(false)
     }
   }
 
   async function handleResend() {
+    setResending(true)
     setResent(false)
     setError('')
-    const res = await fetch('/api/auth/client-resend', { method: 'POST' })
-    if (res.ok) {
-      setResent(true)
-    } else {
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
+
+    try {
+      const res = await fetch('/api/auth/client-resend', { method: 'POST', signal: controller.signal })
+      if (res.ok) {
+        setResent(true)
+      } else {
+        setError('Failed to resend code. Please try again.')
+      }
+    } catch {
       setError('Failed to resend code. Please try again.')
+    } finally {
+      clearTimeout(timeout)
+      setResending(false)
     }
   }
 
@@ -127,17 +152,19 @@ export default function VerifyPage() {
 
         <button
           onClick={handleResend}
+          disabled={resending}
           style={{
             background: 'none',
             border: 'none',
             color: '#6b7280',
             fontSize: '0.8125rem',
-            cursor: 'pointer',
+            cursor: resending ? 'not-allowed' : 'pointer',
             marginTop: '1rem',
             textDecoration: 'underline',
+            opacity: resending ? 0.6 : 1,
           }}
         >
-          Resend code
+          {resending ? 'Resending…' : 'Resend code'}
         </button>
       </div>
     </div>
