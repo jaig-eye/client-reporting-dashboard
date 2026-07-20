@@ -19,6 +19,11 @@ function isAdminSession(session: string | undefined): boolean {
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
+  // Old magic-link verify path is gone — redirect to access page
+  if (pathname === '/verify' || pathname.startsWith('/verify/')) {
+    return NextResponse.redirect(new URL('/access', request.url))
+  }
+
   // Site root — smart redirect based on session state
   if (pathname === '/') {
     const adminSession = request.cookies.get('admin_session')?.value
@@ -59,5 +64,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/dashboard/:path*', '/admin/:path*'],
+  matcher: ['/', '/verify', '/verify/:path*', '/dashboard/:path*', '/admin/:path*'],
 }

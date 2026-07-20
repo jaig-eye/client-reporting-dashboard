@@ -52,25 +52,37 @@ export async function GET(request: NextRequest) {
   const startedAt      = Date.now()
   const TIME_BUDGET_MS = 240_000   // stop 60s before Vercel's 300s hard limit
 
+  // Batch-fetch key sitemap pages for all sites upfront to avoid N+1 queries.
+  const typedSites = sites as Array<{ id: string; url: string; client_id: string | null; audit_scope: string }>
+  const keyClientIds = typedSites
+    .filter(s => (s.audit_scope ?? 'key') === 'key' && s.client_id)
+    .map(s => s.client_id!)
+  const sitemapByClient = new Map<string, string[]>()
+  if (keyClientIds.length > 0) {
+    const { data: allSitemapPages } = await db
+      .from('content_sitemap_pages')
+      .select('url, client_id')
+      .in('client_id', keyClientIds)
+      .eq('is_excluded', false)
+      .or('is_priority.eq.true,is_service_page.eq.true')
+    for (const row of (allSitemapPages ?? []) as Array<{ url: string; client_id: string }>) {
+      const arr = sitemapByClient.get(row.client_id) ?? []
+      arr.push(row.url)
+      sitemapByClient.set(row.client_id, arr)
+    }
+  }
+
   const results: Array<{ siteId: string; status: string; pages?: number; score?: number; error?: string }> = []
 
-  for (const site of sites as Array<{ id: string; url: string; client_id: string | null; audit_scope: string }>) {
+  for (const site of typedSites) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) {
       console.log('[cron/site-audits] time budget reached, deferring remaining sites')
       break
     }
-    // Resolve key pages from content_sitemap_pages
-    let keyPages: string[] = []
-    if ((site.audit_scope ?? 'key') === 'key' && site.client_id) {
-      const { data: sitemapPages } = await db
-        .from('content_sitemap_pages')
-        .select('url')
-        .eq('client_id', site.client_id)
-        .eq('is_excluded', false)
-        .or('is_priority.eq.true,is_service_page.eq.true')
-        .limit(50)
-      keyPages = (sitemapPages ?? []).map((r: { url: string }) => r.url)
-    }
+    // Resolve key pages from the pre-fetched map (first 50 per client matches per-site limit)
+    const keyPages = (site.audit_scope ?? 'key') === 'key' && site.client_id
+      ? (sitemapByClient.get(site.client_id) ?? []).slice(0, 50)
+      : []
 
     // Create audit record
     const { data: auditRow, error: insertErr } = await db

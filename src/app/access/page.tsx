@@ -45,10 +45,10 @@ export default async function AccessPage() {
           />
         </div>
         <h1 className="page-title mb-2" style={{ textAlign: 'center' }}>
-          Invalid access link
+          Link expired or invalid
         </h1>
         <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Please use the dashboard link provided by your agency. If you believe this is an error, contact your account manager.
+          Your dashboard link has expired or is no longer valid. Contact your account manager and ask them to send you a new link.
         </p>
         <a
           href="/admin"

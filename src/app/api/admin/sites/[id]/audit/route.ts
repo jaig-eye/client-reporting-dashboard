@@ -13,7 +13,7 @@ import { isAdminAuthed } from '@/lib/auth'
 import { runSiteAudit } from '@/lib/siteAudit'
 
 export const dynamic      = 'force-dynamic'
-export const maxDuration  = 60   // seconds — requires Vercel Pro; on Hobby it's capped at 10s
+export const maxDuration  = 300  // seconds — requires Vercel Pro; worst-case crawl needs > 60s
 
 /* ── GET ──────────────────────────────────────────────────────────── */
 

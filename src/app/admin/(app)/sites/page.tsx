@@ -129,6 +129,7 @@ export default function SitesPage() {
   const [openAuditId,  setOpenAuditId]  = useState<string | null>(null)
   const [auditPages,   setAuditPages]   = useState<Record<string, AuditPageRow[]>>({})
   const [auditLoading, setAuditLoading] = useState<Set<string>>(new Set())
+  const [auditError,   setAuditError]   = useState('')
 
   // Import all unmonitored sites at once
   const [importing, setImporting] = useState(false)
@@ -293,6 +294,7 @@ export default function SitesPage() {
   }
 
   async function handleAuditToggle(siteId: string, enabled: boolean, scope: string) {
+    setAuditError('')
     setAuditLoading(prev => new Set(prev).add(siteId))
     try {
       const res = await fetch(`/api/admin/sites/${siteId}/audit`, {
@@ -300,7 +302,11 @@ export default function SitesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled, scope }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({})) as { error?: string }
+        setAuditError(errData.error ?? 'Audit failed. Please try again.')
+        return
+      }
       const data = await res.json()
       setSites(prev => prev.map(s => s.id === siteId ? {
         ...s,
@@ -313,7 +319,7 @@ export default function SitesPage() {
           last_audit_at:  new Date().toISOString(),
         }),
       } : s))
-      if (data.pages?.length) loadAuditPages(siteId, true)
+      if (!data.disabled) loadAuditPages(siteId, true)
     } finally {
       setAuditLoading(prev => { const n = new Set(prev); n.delete(siteId); return n })
     }
@@ -325,6 +331,16 @@ export default function SitesPage() {
     if (!res.ok) return
     const data = await res.json()
     if (data.pages) setAuditPages(prev => ({ ...prev, [siteId]: data.pages }))
+  }
+
+  async function handleScopeChange(siteId: string, scope: string) {
+    const res = await fetch(`/api/admin/sites/${siteId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audit_scope: scope }),
+    })
+    if (!res.ok) return
+    setSites(prev => prev.map(s => s.id === siteId ? { ...s, audit_scope: scope } : s))
   }
 
   const inputStyle: React.CSSProperties = {
@@ -445,6 +461,14 @@ export default function SitesPage() {
           </select>
         )}
       </div>
+
+      {/* Audit error banner */}
+      {auditError && (
+        <div style={{ padding: '0.625rem 0.875rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <span>{auditError}</span>
+          <button onClick={() => setAuditError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: '1rem', lineHeight: 1, padding: 0, opacity: 0.6 }}>✕</button>
+        </div>
+      )}
 
       {/* Table */}
       {error ? (
@@ -584,7 +608,7 @@ export default function SitesPage() {
                               <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Scope:</span>
                               <select
                                 value={site.audit_scope ?? 'key'}
-                                onChange={e => handleAuditToggle(site.id, site.audit_enabled, e.target.value)}
+                                onChange={e => handleScopeChange(site.id, e.target.value)}
                                 style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
                               >
                                 <option value="key">Key pages</option>

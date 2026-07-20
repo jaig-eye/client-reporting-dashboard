@@ -31,7 +31,7 @@ function googleTypeLabel(t: string | null): string | null {
   return null
 }
 
-export function AdLibraryCard({ ad, token }: { ad: MetaAdRow | GoogleAdRow; token?: string }) {
+export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; clientId?: string }) {
   const [expanded, setExpanded] = useState(false)
   const [lightbox, setLightbox] = useState(false)
 
@@ -39,8 +39,8 @@ export function AdLibraryCard({ ad, token }: { ad: MetaAdRow | GoogleAdRow; toke
 
   // For Meta ads, route through the proxy so expired CDN signatures are refreshed automatically.
   // The proxy fetches a live URL from the Graph API (cached 30 min) and returns a 302 redirect.
-  const proxyUrl = (token && ad.platform === 'meta')
-    ? `/api/proxy/meta-image?ad_id=${encodeURIComponent(ad.ad_id)}&token=${encodeURIComponent(token)}`
+  const proxyUrl = (clientId && ad.platform === 'meta')
+    ? `/api/proxy/meta-image?ad_id=${encodeURIComponent(ad.ad_id)}&client_id=${encodeURIComponent(clientId)}`
     : null
 
   const previewUrl = proxyUrl ?? (ad.platform === 'meta'

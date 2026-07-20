@@ -1063,7 +1063,7 @@ export async function POST(request: NextRequest) {
       ? db.from('content_topics')
           .select('topic, target_keyword')
           .eq('client_id', effectiveClientId)
-          .in('status', ['approved', 'pending'])
+          .not('status', 'eq', 'rejected')
       : Promise.resolve({ data: null }),
     effectiveClientId
       ? db.from('content_sitemap_pages')

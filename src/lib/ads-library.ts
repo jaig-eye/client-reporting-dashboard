@@ -142,7 +142,8 @@ export async function fetchClientAds(
       .eq('client_id', clientId)
       .gte('date', ninetyDaysAgo)
       .not('ad_status', 'in', '("DELETED","REMOVED")')
-      .order('date', { ascending: false }),
+      .order('date', { ascending: false })
+      .limit(200),
     db
       .from('google_ads_ad_metrics')
       .select('ad_id, ad_name, ad_status, ad_type, headlines, descriptions, image_url, ad_group_name, campaign_name, spend, impressions, clicks, conversions, date')
@@ -150,7 +151,8 @@ export async function fetchClientAds(
       .gte('date', ninetyDaysAgo)
       .not('ad_status', 'in', '("DELETED","REMOVED")')
       .in('ad_type', ['RESPONSIVE_DISPLAY_AD', 'DEMAND_GEN_MULTI_ASSET_AD', 'DEMAND_GEN_VIDEO_RESPONSIVE_AD', 'ASSET_GROUP'])
-      .order('date', { ascending: false }),
+      .order('date', { ascending: false })
+      .limit(200),
   ])
 
   if (metaRes.error)   return { meta: [], google: [], error: `meta_ads: ${metaRes.error.message}` }

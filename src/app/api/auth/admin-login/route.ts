@@ -150,19 +150,17 @@ export async function POST(request: NextRequest) {
           </div>`,
       })
     } catch (e) {
-      // Configured but delivery failed (bad creds, unreachable host, etc.) —
-      // don't strand the super admin with no way to ever get a code.
-      console.error('[admin-login] OTP email failed — bypassing 2FA:', e)
-      logActivity(
-        { isSuperAdmin: true }, 'logged_in_no_2fa', 'user',
-        { meta: { ip, reason: 'email_send_failed' } }
-      )
+      // Delivery failed — clear the stored OTP (it can't be delivered) and return
+      // an error. Do NOT bypass 2FA: a misconfigured SMTP is not a valid auth factor.
+      console.error('[admin-login] OTP email failed:', e)
       await db.from('agency_settings').update({
         super_admin_otp_hash:       null,
         super_admin_otp_expires_at: null,
       })
-      resetRateLimit(ip)
-      return superAdminSessionResponse()
+      return NextResponse.json(
+        { error: 'Failed to send verification code. Please try again.' },
+        { status: 503 }
+      )
     }
 
     return NextResponse.json({ step: 'code' })

@@ -49,7 +49,7 @@ export default async function ShareAdsPage({
             Ad Library · Last 30 days · {total} {total === 1 ? 'ad' : 'ads'}
           </p>
         </div>
-        <AdLibraryView meta={meta} google={google} token={token} />
+        <AdLibraryView meta={meta} google={google} clientId={client.id} />
       </div>
     </div>
   )

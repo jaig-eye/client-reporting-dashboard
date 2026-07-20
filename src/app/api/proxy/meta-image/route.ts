@@ -4,7 +4,8 @@
 // Meta CDN signed URLs expire quickly when stored in the DB — this proxy fetches
 // a live URL from the Graph API each time (cached 30 min per ad_id).
 //
-// Auth: requires either admin_session or client_token cookie.
+// Auth: admin_session cookie, client_token cookie, OR a valid client_id UUID
+// (public share page context — clientId is non-secret, unlike dashboard_token).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
@@ -62,23 +63,21 @@ export async function GET(request: NextRequest) {
   const clientToken  = cookieStore.get('client_token')?.value
 
   const { searchParams } = new URL(request.url)
-  const adId          = searchParams.get('ad_id')?.trim()
-  const dashboardToken = searchParams.get('token')?.trim()
-  let clientId        = searchParams.get('client_id')?.trim()
+  const adId     = searchParams.get('ad_id')?.trim()
+  const clientId = searchParams.get('client_id')?.trim()
 
-  // When a dashboard token is provided, always derive client_id from it — even if
-  // the requester is also admin-authed (e.g. admin previewing the public share page).
-  if (dashboardToken) {
+  if (!isAdminAuthed(adminSession) && !clientToken) {
+    // Public share context: no session cookies, so verify the client_id exists in DB.
+    if (!clientId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const db = createAdminClient()
     const { data: client } = await db
       .from('clients')
       .select('id')
-      .eq('dashboard_token', dashboardToken)
+      .eq('id', clientId)
       .maybeSingle()
     if (!client) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    clientId = client.id as string
-  } else if (!isAdminAuthed(adminSession) && !clientToken) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   if (!adId || !clientId) {

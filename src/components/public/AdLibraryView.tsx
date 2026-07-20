@@ -29,11 +29,11 @@ function pill(active: boolean): React.CSSProperties {
 export function AdLibraryView({
   meta,
   google,
-  token,
+  clientId,
 }: {
-  meta:    MetaAdRow[]
-  google:  GoogleAdRow[]
-  token?:  string
+  meta:      MetaAdRow[]
+  google:    GoogleAdRow[]
+  clientId?: string
 }) {
   const [platform, setPlatform] = useState<Platform>('all')
   const [status,   setStatus]   = useState<StatusFilter>('all')
@@ -133,7 +133,7 @@ export function AdLibraryView({
           </p>
           <div className="adlib-grid">
             {ads.map(ad => (
-              <AdLibraryCard key={`${ad.platform}-${ad.ad_id}`} ad={ad} token={token} />
+              <AdLibraryCard key={`${ad.platform}-${ad.ad_id}`} ad={ad} clientId={clientId} />
             ))}
           </div>
         </>
