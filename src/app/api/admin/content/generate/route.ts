@@ -317,6 +317,47 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
   })
 }
 
+// ─── Slug utilities ───────────────────────────────────────────────────────────
+
+function titleToSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+}
+
+// Returns a slug guaranteed to be unique for this client — checks the DB and
+// appends -2, -3, … if the base is already taken. Normalises the raw slug from
+// the AI before checking so "Roof Repair" and "roof-repair" deduplicate correctly.
+async function uniqueSlug(
+  db: ReturnType<typeof createAdminClient>,
+  clientId: string,
+  rawSlug: string
+): Promise<string> {
+  const base = (rawSlug || 'post')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+
+  const { data: existing } = await db
+    .from('content_posts')
+    .select('slug')
+    .eq('client_id', clientId)
+    .like('slug', `${base}%`)
+
+  const taken = new Set((existing ?? []).map((r: { slug: string }) => r.slug))
+  if (!taken.has(base)) return base
+
+  for (let i = 2; i <= 99; i++) {
+    const candidate = `${base}-${i}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return `${base}-${Date.now()}`
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 // Pull the NON-NEGOTIABLE RULES section out of the master prompt so we can
@@ -365,7 +406,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or in progress. You MUST NOT target the same keyword, answer the same core question, or produce content that would compete for the same search ranking as any post listed below. Choose a topic with a clearly different target keyword and distinct search intent:\n${avoidTopics}` : ''}${rulesReminder}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${rulesReminder}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -393,7 +434,7 @@ SEO guidelines:
 - Add descriptive alt text to any <img> tags including the focus keyword
 - External links: target="_blank" rel="noopener noreferrer"
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or in progress. You MUST NOT target the same keyword, answer the same core question, or produce content that would compete for the same search ranking as any post listed below. Choose a topic with a clearly different target keyword and distinct search intent:\n${avoidTopics}` : ''}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -843,12 +884,13 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       connectionId = (fallbackConn as { id: string } | null)?.id ?? null
     }
 
-    const wc       = computeWordCount(parsed.content)
+    const wc        = computeWordCount(parsed.content)
+    const finalSlug = await uniqueSlug(db, effectiveClientId, parsed.slug || titleToSlug(parsed.title))
     const seoScore = scoreSeoPost({
       html:         parsed.content,
       title:        parsed.title,
       metaDesc:     parsed.metaDescription || null,
-      slug:         parsed.slug || null,
+      slug:         finalSlug,
       wordCount:    wc,
       targetLength: (clientSettings?.target_length as number | null) ?? 1500,
       brief,
@@ -862,7 +904,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       seo_title:           parsed.seoTitle || parsed.title,
       content:             parsed.content,
       meta_description:    parsed.metaDescription,
-      slug:                parsed.slug,
+      slug:                finalSlug,
       target_keyword:      parsed.focusKeyword,
       focus_topic:         topicData.topic ?? null,
       topic_rationale:     topicData.rationale ?? null,
@@ -1003,7 +1045,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id')
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
@@ -1219,12 +1261,13 @@ export async function POST(request: NextRequest) {
         .maybeSingle()
       connectionId = (fallbackConn as { id: string } | null)?.id ?? null
     }
-    const wc       = computeWordCount(parsed.content)
+    const wc        = computeWordCount(parsed.content)
+    const finalSlug = await uniqueSlug(db, effectiveClientId, parsed.slug || titleToSlug(parsed.title))
     const seoScore = scoreSeoPost({
       html:         parsed.content,
       title:        parsed.title,
       metaDesc:     parsed.metaDescription || null,
-      slug:         parsed.slug || null,
+      slug:         finalSlug,
       wordCount:    wc,
       targetLength: (clientSettings?.target_length as number | null) ?? 1500,
       brief:        null,
@@ -1237,7 +1280,7 @@ export async function POST(request: NextRequest) {
       seo_title:        parsed.seoTitle || parsed.title,
       content:          parsed.content,
       meta_description: parsed.metaDescription,
-      slug:             parsed.slug,
+      slug:             finalSlug,
       target_keyword:   parsed.focusKeyword,
       focus_topic:      null,
       topic_rationale:  null,

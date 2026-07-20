@@ -244,12 +244,21 @@ export async function generateTopicsForClient(
   }
 
   // ── Avoid list ─────────────────────────────────────────────────────────────
+  // Prioritise target_keyword over topic title — keywords are the canonical
+  // dedup signal. Include both so the model understands what angle is covered.
   const existingTopics = (existingTopicsRes.data ?? []) as { topic: string; target_keyword?: string }[]
   const existingPosts  = (existingPostsRes.data ?? []) as { title?: string; focus_topic?: string; target_keyword?: string }[]
-  const avoidSet       = new Set<string>()
-  existingTopics.forEach(t => { if (t.topic) avoidSet.add(t.topic); if (t.target_keyword) avoidSet.add(t.target_keyword) })
-  existingPosts.forEach(p => { if (p.focus_topic) avoidSet.add(p.focus_topic); if (p.title) avoidSet.add(p.title); if (p.target_keyword) avoidSet.add(p.target_keyword) })
-  const avoidText = Array.from(avoidSet).slice(0, 50).join(', ')
+  const avoidEntries: string[] = []
+  const avoidSeen = new Set<string>()
+  function addAvoid(label: string | null | undefined, kw: string | null | undefined) {
+    const key = (kw || label || '').toLowerCase().trim()
+    if (!key || avoidSeen.has(key)) return
+    avoidSeen.add(key)
+    avoidEntries.push(kw && label ? `${label} [kw: ${kw}]` : (kw || label)!)
+  }
+  existingTopics.forEach(t => addAvoid(t.topic, t.target_keyword))
+  existingPosts.forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
+  const avoidText = avoidEntries.join('\n')
 
   // ── E-E-A-T context ────────────────────────────────────────────────────────
   const eeat = clientSettings?.eeat_data as Record<string, unknown> | null
@@ -396,6 +405,10 @@ ${contentTypeInstructions}
 
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
+ANGLE DIVERSIFICATION RULE: Every topic in your list must use a different content ANGLE. Never suggest variations of the same angle (e.g. "best roofers in Dallas" and "top-rated roofing companies in Dallas" are the same angle). Vary the angle across your full list — draw from these angle types: how-to guide, cost/pricing breakdown, comparison (A vs B), local case study, FAQ, seasonal tip, problem/solution, buyer's guide, checklist, myth-busting, behind-the-scenes. Aim to cover at least 3 distinct angle types in any list of 5 or more topics.
+
+UNIQUENESS CHECK: Before returning any topic, verify its target_keyword and search intent do not overlap with the "Already covered" list. A different city name or plural/singular form is NOT sufficient differentiation — the search intent must be genuinely distinct.
+
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
 
 IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.
@@ -426,7 +439,7 @@ ${gscCtrText}
 ${competitorText}
 ${gscTopText}
 ${sitemapText}
-${avoidText ? `\nAlready covered — DO NOT suggest these again:\n${avoidText}` : ''}
+${avoidText ? `\nAlready covered — DO NOT suggest these again (each line is a covered topic/keyword):\n${avoidText}` : ''}
 ${guidelinesText}
 
 Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
