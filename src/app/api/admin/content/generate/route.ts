@@ -222,10 +222,27 @@ function stripDangerousHtml(html: string): string {
     .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
     .replace(/<embed\b[^>]*\/?>/gi, '')
     .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
-    .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
-    .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
+    // Event handlers — any whitespace separator (space, tab, newline), both quoted and unquoted values
+    .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, '')
+    // javascript: URIs — capture and preserve the quote type to avoid attribute-boundary corruption
+    .replace(/\bhref(\s*=\s*)(["'])\s*javascript:/gi, 'href$1$2javascript_removed:')
+    .replace(/\bsrc(\s*=\s*)(["'])\s*javascript:/gi,  'src$1$2javascript_removed:')
+}
+
+// Returns false for URLs that are XML sitemaps, feeds, PHP scripts, or other non-HTML resources
+// that should never appear in blog post link lists or be suggested to the AI as link targets.
+function isLinkableUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    const path = u.pathname.toLowerCase()
+    if (path.includes('sitemap'))  return false
+    if (path.endsWith('.xml'))     return false
+    if (path.endsWith('.json') || path.endsWith('.csv') || path.endsWith('.pdf')) return false
+    if (path.includes('/feed') || path.includes('/rss') || path.includes('/atom')) return false
+    // PHP scripts with query strings (e.g. xmlsitemap.php?type=products&page=1)
+    if (path.endsWith('.php') && u.search.length > 0) return false
+    return true
+  } catch { return false }
 }
 
 function parseResponse(rawText: string) {
@@ -301,8 +318,11 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
         const hostname = parsed.hostname.toLowerCase()
         // When no internal hosts are known we can't tell internal from external — leave all absolute URLs alone
         if (internalHosts.size === 0) return match
-        // Known external hostname — leave untouched
-        if (!internalHosts.has(hostname)) return match
+        // External hostname — strip the link, keep the anchor text (can't verify external URLs at generation time)
+        if (!internalHosts.has(hostname)) {
+          console.warn('[generate] stripped external link:', href)
+          return text
+        }
         // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
         if (allowed.has(norm(href))) return match
         if (allowed.has(norm(parsed.pathname))) return match
@@ -393,7 +413,9 @@ How to use the client context above — MUST follow every rule:
 - Priority pages: include internal links to at least 2 of the priority pages listed in the context. Anchor text must be descriptive and contextually natural — never generic ("click here").
 - Excluded pages: never link to, cite, or reference any URL listed under excluded pages.
 - Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
-- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.` : ''
+- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.
+- NEVER link to XML files, sitemaps, PHP scripts, feed or RSS URLs, search result pages, or any URL that is not a real HTML content page. Every permitted URL is already pre-filtered in the lists above.
+- EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.` : ''
 
   if (masterPreamble) {
     const rules = extractNonNegotiableRules(masterPreamble)
@@ -430,10 +452,10 @@ SEO guidelines:
 - SEO title: max 60 chars, includes focus keyword
 - URL slug: lowercase, hyphens, no stop words, max 5–6 words
 - End with a clear call-to-action
-- Include at least 1 outbound link to a credible external resource when factually relevant
+- Reference credible sources (government agencies, studies, industry publications) by name in the prose where factually relevant — do NOT insert hyperlinks to external websites
 - Add descriptive alt text to any <img> tags including the focus keyword
-- External links: target="_blank" rel="noopener noreferrer"
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
+- NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
 ${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
 }
 
@@ -543,14 +565,15 @@ async function runTopicGeneration({
     }
 
     const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
-    const priorityUrls = sitemapRows.filter(r => r.is_priority).map(r => r.url)
+    const priorityUrls = sitemapRows.filter(r => r.is_priority && isLinkableUrl(r.url)).map(r => r.url)
     const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
     if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
     if (excludedUrls.length > 0) contextLines.push(`\nExcluded pages — do NOT link to or reference these:\n${excludedUrls.join('\n')}`)
 
-    // Accumulate every URL we hand to the model — used to strip hallucinated links after generation
+    // Accumulate every URL we hand to the model — used to strip hallucinated links after generation.
+    // Only include linkable HTML pages — excludes XML sitemaps, PHP scripts, feeds, etc.
     const allowedInternalUrls = new Set<string>(
-      sitemapRows.filter(r => !r.is_excluded).map(r => r.url)
+      sitemapRows.filter(r => !r.is_excluded && isLinkableUrl(r.url)).map(r => r.url)
     )
 
     const sitemapUrls: string[] = (() => {
@@ -569,7 +592,7 @@ async function runTopicGeneration({
 
     if (cacheIsFresh1) {
       const generalPages = sitemapRows
-        .filter(r => !r.is_priority && !r.is_excluded)
+        .filter(r => !r.is_priority && !r.is_excluded && isLinkableUrl(r.url))
         .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, topicKws) }))
         .sort((a, b) => b.score - a.score)
         .map(r => r.url)
@@ -641,7 +664,7 @@ async function runTopicGeneration({
         .replace(/\[informational \| commercial \| transactional \| navigational\]/g, topicData.search_intent ?? 'informational')
         .replace(/\[URLS_AND_ANCHORS\]/g,   urlsAndAnchors)
         .replace(/\[CTA\]/g,                String(clientSettings.cta_list ?? 'Contact us to learn more'))
-        .replace(/\[SOURCES\]/g,            'Research and cite 2–4 credible external sources (gov, edu, original studies, recognized industry publications) yourself')
+        .replace(/\[SOURCES\]/g,            'Reference 2–4 credible sources (gov, edu, industry publications) by name in the prose where factually relevant — do NOT insert any hyperlinks to external websites')
         .replace(/\[[A-Z_]+\]/g, '')
     }
 
@@ -1136,13 +1159,13 @@ export async function POST(request: NextRequest) {
   }
 
   const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
-  const priorityUrls = sitemapRows.filter(r => r.is_priority).map(r => r.url)
+  const priorityUrls = sitemapRows.filter(r => r.is_priority && isLinkableUrl(r.url)).map(r => r.url)
   const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
   if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
   if (excludedUrls.length > 0) contextLines.push(`\nExcluded pages — do NOT link to or reference these:\n${excludedUrls.join('\n')}`)
 
-  // Seed the allowed set from DB-cached sitemap pages for hallucination validation
-  const manualAllowedUrls = new Set<string>(sitemapRows.filter(r => !r.is_excluded).map(r => r.url))
+  // Seed the allowed set from DB-cached sitemap pages — only linkable HTML pages (excludes sitemaps, XML, feeds)
+  const manualAllowedUrls = new Set<string>(sitemapRows.filter(r => !r.is_excluded && isLinkableUrl(r.url)).map(r => r.url))
 
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -1156,7 +1179,7 @@ export async function POST(request: NextRequest) {
 
   if (cacheIsFresh2) {
     const generalPages = sitemapRows
-      .filter(r => !r.is_priority && !r.is_excluded)
+      .filter(r => !r.is_priority && !r.is_excluded && isLinkableUrl(r.url))
       .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, []) }))
       .sort((a, b) => b.score - a.score)
       .map(r => r.url)
@@ -1221,7 +1244,7 @@ export async function POST(request: NextRequest) {
       .replace(/\[informational \| commercial \| transactional \| navigational\]/g, 'informational')
       .replace(/\[URLS_AND_ANCHORS\]/g,   urlsAndAnchors)
       .replace(/\[CTA\]/g,                String(clientSettings.cta_list ?? 'Contact us to learn more'))
-      .replace(/\[SOURCES\]/g,            'Research and cite 2–4 credible external sources (gov, edu, original studies, recognized industry publications) yourself')
+      .replace(/\[SOURCES\]/g,            'Reference 2–4 credible sources (gov, edu, industry publications) by name in the prose where factually relevant — do NOT insert any hyperlinks to external websites')
       .replace(/\[[A-Z_]+\]/g, '')
   }
 
