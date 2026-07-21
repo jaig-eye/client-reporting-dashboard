@@ -123,7 +123,20 @@ export async function POST(request: NextRequest) {
   }
 
   const urls = Array.from(pageUrls)
-    .filter(u => u.startsWith('http') && !u.match(/\.(xml|pdf|jpg|jpeg|png|gif|svg|mp4|zip|gz)$/i))
+    .filter(u => {
+      if (!u.startsWith('http')) return false
+      // Reject binary/media/archive files by extension
+      if (/\.(xml|pdf|jpg|jpeg|png|gif|svg|webp|mp4|mp3|zip|gz|css|js)$/i.test(u)) return false
+      try {
+        const parsed = new URL(u)
+        const path   = parsed.pathname.toLowerCase()
+        // Reject sitemap scripts, feed URLs, and PHP scripts with query strings
+        if (path.includes('sitemap'))                          return false
+        if (path.includes('/feed') || path.includes('/rss') || path.includes('/atom')) return false
+        if (path.endsWith('.php') && parsed.search.length > 0) return false
+      } catch { return false }
+      return true
+    })
     .slice(0, 500)
 
   if (urls.length === 0) {

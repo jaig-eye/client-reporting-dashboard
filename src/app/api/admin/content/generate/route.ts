@@ -229,6 +229,26 @@ function stripDangerousHtml(html: string): string {
     .replace(/\bsrc(\s*=\s*)(["'])\s*javascript:/gi,  'src$1$2javascript_removed:')
 }
 
+// Strips <h1> tags from post body — the CMS uses the title field as the page H1;
+// a duplicate H1 in content causes SEO errors.
+function stripH1FromContent(html: string): string {
+  return html.replace(/<h1\b[^>]*>[\s\S]*?<\/h1>/gi, '')
+}
+
+// Strips links whose visible text is a generic filler phrase ("click here", "here", "learn more", etc.).
+// The URL is preserved in the preceding or following context as plain text.
+const GENERIC_ANCHOR_RE = /^(click here|here|learn more|read more|this page|this article|this post|more info(?:rmation)?|find out more|check it out|visit|link|page|website|site pages?)\.?$/i
+function stripGenericAnchorText(html: string): string {
+  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, _attrs: string, text: string) => {
+    const visible = text.replace(/<[^>]+>/g, '').trim()
+    if (GENERIC_ANCHOR_RE.test(visible)) {
+      console.warn('[generate] stripped generic anchor text:', visible)
+      return visible
+    }
+    return match
+  })
+}
+
 // Returns false for URLs that are XML sitemaps, feeds, PHP scripts, or other non-HTML resources
 // that should never appear in blog post link lists or be suggested to the AI as link targets.
 function isLinkableUrl(url: string): boolean {
@@ -255,7 +275,7 @@ function parseResponse(rawText: string) {
         return {
           title:           sanitizeEmDashes(String(parsed.title           || '')),
           seoTitle:        sanitizeEmDashes(String(parsed.seoTitle        || parsed.title || '')),
-          content:         sanitizeEmDashes(String(parsed.content         || rawText)),
+          content:         sanitizeEmDashes(String(parsed.content         || '')),
           metaDescription: sanitizeEmDashes(String(parsed.metaDescription || '')),
           slug:            String(parsed.slug            || ''),
           focusKeyword:    String(parsed.focusKeyword    || ''),
@@ -269,7 +289,7 @@ function parseResponse(rawText: string) {
     return m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : ''
   }
   const title   = sanitizeEmDashes(extractStr('title'))
-  const content = sanitizeEmDashes(extractStr('content') || rawText)
+  const content = sanitizeEmDashes(extractStr('content') || '')
   return {
     title,
     seoTitle:        sanitizeEmDashes(extractStr('seoTitle') || title),
@@ -889,9 +909,22 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
 
     // Strip any internal links the model invented that aren't in the provided sitemap
     parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
-
     // Sanitize dangerous tags the model should never generate but occasionally does
     parsed.content = stripDangerousHtml(parsed.content)
+    // Remove duplicate H1 from body (CMS renders title field as the page H1)
+    parsed.content = stripH1FromContent(parsed.content)
+    // Remove links with generic filler anchor text ("click here", "learn more", etc.)
+    parsed.content = stripGenericAnchorText(parsed.content)
+
+    // ── Minimum quality gate ──────────────────────────────────────────────────
+    const wc0 = computeWordCount(parsed.content)
+    if (!parsed.title.trim() || wc0 < 150) {
+      console.error('[generate] generation failed quality gate — title empty or content too short:', { wc: wc0, title: parsed.title, topicId })
+      await db.from('content_topics')
+        .update({ status: 'approved', generation_error: 'AI returned empty or too-short content — please regenerate' })
+        .eq('id', topicId)
+      return
+    }
 
     // ── Save post ──────────────────────────────────────────────────────────────
     let connectionId = (clientSettings?.connection_id as string | null) ?? null
@@ -907,7 +940,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       connectionId = (fallbackConn as { id: string } | null)?.id ?? null
     }
 
-    const wc        = computeWordCount(parsed.content)
+    const wc        = wc0  // already computed by quality gate above
     const finalSlug = await uniqueSlug(db, effectiveClientId, parsed.slug || titleToSlug(parsed.title))
     const seoScore = scoreSeoPost({
       html:         parsed.content,
@@ -1269,6 +1302,17 @@ export async function POST(request: NextRequest) {
   const parsed = parseResponse(rawText)
   parsed.content = stripHallucinatedLinks(parsed.content, manualAllowedUrls)
   parsed.content = stripDangerousHtml(parsed.content)
+  parsed.content = stripH1FromContent(parsed.content)
+  parsed.content = stripGenericAnchorText(parsed.content)
+
+  // ── Minimum quality gate ────────────────────────────────────────────────────
+  const wc0 = computeWordCount(parsed.content)
+  if (!parsed.title.trim() || wc0 < 150) {
+    return NextResponse.json(
+      { error: 'AI returned empty or too-short content — please try again' },
+      { status: 422 }
+    )
+  }
 
   let postId: string | null = null
   if (effectiveClientId) {
