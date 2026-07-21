@@ -108,16 +108,14 @@ export async function POST(request: NextRequest) {
       return superAdminSessionResponse()
     }
 
-    // If email isn't configured at all, OTP can never be delivered — skip 2FA
-    // entirely rather than locking the super admin out.
+    // If email isn't configured, OTP cannot be delivered — block login rather than
+    // downgrading to single-factor auth. Fix MAILGUN_SMTP_* env vars to proceed.
     if (!isEmailConfigured()) {
-      console.warn('[admin-login] MAILGUN_SMTP_* not configured — bypassing super admin 2FA')
-      logActivity(
-        { isSuperAdmin: true }, 'logged_in_no_2fa', 'user',
-        { meta: { ip, reason: 'email_not_configured' } }
+      console.error('[admin-login] MAILGUN_SMTP_* not configured — super admin login blocked')
+      return NextResponse.json(
+        { error: 'Email delivery is not configured. Contact your system administrator.' },
+        { status: 503 }
       )
-      resetRateLimit(ip)
-      return superAdminSessionResponse()
     }
 
     // Step 1 — password correct, generate and email OTP
@@ -177,7 +175,13 @@ export async function POST(request: NextRequest) {
     : await db.from('users').select('id, role, password_hash, is_active, email, name')
         .ilike('username', identifier).eq('is_active', true).maybeSingle()
 
-  if (!user || user.password_hash !== hashPassword(password)) {
+  // Always compute both hashes before comparing — prevents timing-based user enumeration
+  const inputHash  = hashPassword(password)
+  const storedHash = user?.password_hash ?? '0'.repeat(64)
+  const inputBuf   = Buffer.from(inputHash,  'hex')
+  const storedBuf  = Buffer.from(storedHash, 'hex')
+  const hashMatch  = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf)
+  if (!user || !hashMatch) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 

@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       .from('clients')
       .select('dashboard_token')
       .eq('dashboard_token', tokenParam)
-      .single()
+      .maybeSingle()
     dashboardToken = data?.dashboard_token ?? null
 
   } else if (ghlToken) {
@@ -46,8 +46,9 @@ export async function GET(request: NextRequest) {
     if (!dashboardToken) {
       const { data: allGhl } = await db
         .from('client_connections')
-        .select('clients!inner(dashboard_token), connectors!inner(config)')
+        .select('clients!inner(dashboard_token), connectors!inner(type, config)')
         .eq('status', 'active')
+        .eq('connectors.type', 'ghl')
         .limit(200)
 
       const match = (allGhl ?? []).find((row: Record<string, unknown>) => {
@@ -81,8 +82,8 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(`${appUrl}/dashboard`)
   response.cookies.set('client_token', dashboardToken, {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: (process.env.NODE_ENV === 'production' ? 'none' : 'lax') as 'none' | 'lax',
     maxAge: 60 * 60 * 24 * 90,
     path: '/',
   })

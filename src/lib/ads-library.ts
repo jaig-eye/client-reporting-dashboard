@@ -42,10 +42,13 @@ async function enrichMetaImages(db: DbClient, clientId: string, ads: MetaAdRow[]
         relative_url: `${ad.ad_id}?fields=creative%7Bimage_url%2Cthumbnail_url%7D&thumbnail_width=1080&thumbnail_height=1080`,
       }))
       const batchUrl = new URL(`${META_BASE_URL}/`)
-      batchUrl.searchParams.set('access_token', accessToken)
       batchUrl.searchParams.set('batch', JSON.stringify(batchRequests))
 
-      const res = await fetch(batchUrl.toString(), { method: 'POST' })
+      // Use Authorization header — avoids logging the token in server/proxy access logs
+      const res = await fetch(batchUrl.toString(), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
       if (!res.ok) continue
 
       const responses = (await res.json()) as Record<string, unknown>[]
