@@ -4,16 +4,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { syncClient } from '@/lib/sync'
-import { getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 // Allow up to ~13 minutes for large syncs (Vercel Pro: up to 900s)
 export const maxDuration = 800
 
 export async function POST(req: NextRequest) {
-  // Auth check: must have admin_session cookie
-  const session = req.cookies.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) {
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const adminSession = await getAdminSession()

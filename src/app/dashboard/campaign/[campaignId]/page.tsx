@@ -65,8 +65,8 @@ const _getCachedMetaCampaignMetrics = unstable_cache(
   async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean, adsetMetaFrom: string) => {
     const db = createAdminClient()
     const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
-      db.from('meta_ads_metrics')
-        .select('campaign_name,campaign_created_at,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
+      db.from('meta_ads_ad_metrics')
+        .select('campaign_name,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       db.from('meta_ads_ad_metrics')
@@ -74,7 +74,7 @@ const _getCachedMetaCampaignMetrics = unstable_cache(
         .eq('client_id', clientId).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       showCompare
-        ? db.from('meta_ads_metrics')
+        ? db.from('meta_ads_ad_metrics')
             .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
             .eq('client_id', clientId).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
@@ -313,13 +313,12 @@ export default async function CampaignDetailPage({
     )
     if ((campRows ?? []).length > 0) {
       // Sort desc by date so we always use the current name, not an old one from the range
-      const sortedMeta = [...(campRows as (MetaCampRow & { campaign_created_at?: string | null })[])].sort(
+      const sortedMeta = [...(campRows as MetaCampRow[])].sort(
         (a, b) => ((b as { date?: string }).date ?? '').localeCompare((a as { date?: string }).date ?? '')
       )
       const firstMeta = sortedMeta.find(r => r.campaign_name)
       if (firstMeta) {
         campaignName = firstMeta.campaign_name
-        campaignStartDate = firstMeta.campaign_created_at ?? null
       }
     }
     // Campaign-level rows → KPI totals + sparklines

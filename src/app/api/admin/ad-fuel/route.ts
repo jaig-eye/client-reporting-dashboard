@@ -72,13 +72,17 @@ export async function GET(request: NextRequest) {
     db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single(),
     db.from('clients').select('*').order('name'),
     db.from('ad_fuel_ledger')
-      .select('client_id, date_of_payment, amount_af, split_override')
-      .then(r => r.error ? { data: [] } : r),
+      .select('client_id, date_of_payment, amount_af, split_override'),
     db.from('client_connections')
       .select('client_id, connector:connectors(type, external_id), config')
       .eq('status', 'active'),
     db.rpc('latest_campaign_budget_by_client').then(r => r, () => ({ data: [] })),
   ])
+
+  if (ledgerRes.error) {
+    console.error('[ad-fuel admin] ledger query failed:', ledgerRes.error)
+    return NextResponse.json({ error: 'Failed to load ledger data' }, { status: 500 })
+  }
 
   const agencyData = agencyRes.data as AgencyRow | null
   const agencyCut  = agencyData?.ad_fuel_cut ?? 0.20

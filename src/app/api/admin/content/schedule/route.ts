@@ -151,13 +151,17 @@ export async function POST(request: NextRequest) {
     if (cs.geographic_focus)     contextLines.push(`Geographic focus: ${cs.geographic_focus}`)
     if (cs.brand_voice)          contextLines.push(`Brand voice: ${cs.brand_voice}`)
     const phoneNumber = cs.phone_number as string | null
-    if (phoneNumber)             contextLines.push(`Business phone: ${phoneNumber} (when referencing phone in content, format as ${phoneNumber} linked with tel: href, e.g. <a href="tel:${phoneNumber.replace(/\D/g, '')}">`)
+    if (phoneNumber) {
+      const safePhone = phoneNumber.replace(/[\r\n]/g, ' ')
+      contextLines.push(`Business phone: ${safePhone} (when referencing phone in content, format as ${safePhone} linked with tel: href, e.g. <a href="tel:${safePhone.replace(/\D/g, '')}">`)
+    }
     const structureNote = (cs.post_structure as string | null) ?? globalStructure
     if (structureNote)           contextLines.push(`\nPreferred post structure:\n${structureNote}`)
     const blogUrlPrefix = cs.blog_url_prefix as string | null
     if (blogUrlPrefix) {
-      const prefix = blogUrlPrefix.replace(/\/+$/, '')
-      contextLines.push(`Blog URL structure: Blog posts on this site use the path prefix "${prefix}/". All valid blog post URLs are already listed in the "Available site pages" list above — use ONLY those exact URLs. Do NOT construct or infer any blog post URL by combining this prefix with a slug.`)
+      // Sanitize blog_url_prefix to path-safe characters only
+      const safeBlogPrefix = (blogUrlPrefix ?? '').replace(/[^A-Za-z0-9/_-]/g, '').replace(/\/+$/, '')
+      contextLines.push(`Blog URL structure: Blog posts on this site use the path prefix "${safeBlogPrefix}/". All valid blog post URLs are already listed in the "Available site pages" list above — use ONLY those exact URLs. Do NOT construct or infer any blog post URL by combining this prefix with a slug.`)
     }
 
     // Fetch sitemap pages for internal linking context
@@ -227,6 +231,21 @@ export async function POST(request: NextRequest) {
 
         const nowIso  = new Date().toISOString()
         const todayStr = nowIso.slice(0, 10)
+
+        // Guard: ensure no other active content already has this target_publish_date for this client
+        const { data: dateConflict } = await db
+          .from('content_posts')
+          .select('id, title')
+          .eq('client_id', cs.client_id)
+          .eq('target_publish_date', todayStr)
+          .not('status', 'eq', 'rejected')
+          .maybeSingle()
+
+        if (dateConflict) {
+          errors.push(`client ${cs.client_id}: a post is already scheduled for ${todayStr} — skipped`)
+          continue
+        }
+
         const { error: insertErr } = await db.from('content_posts').insert({
           client_id:           cs.client_id,
           connection_id:       cs.connection_id || null,

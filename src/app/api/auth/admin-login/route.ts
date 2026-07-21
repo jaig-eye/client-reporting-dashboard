@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashPassword } from '@/lib/auth'
+import { hashPassword, timingSafeCompare } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
 import crypto from 'crypto'
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
 
   // ── Super admin path ────────────────────────────────────────────────────────
   if (!email || email.trim() === '') {
-    if (password !== process.env.ADMIN_PASSWORD) {
+    if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
 
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
         !storedHash ||
         !expiresAt ||
         new Date(expiresAt) < new Date() ||
-        hashOtp(String(code)) !== storedHash
+        !crypto.timingSafeEqual(Buffer.from(hashOtp(String(code)), 'hex'), Buffer.from(storedHash, 'hex'))
       ) {
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }

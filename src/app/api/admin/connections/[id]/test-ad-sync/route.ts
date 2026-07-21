@@ -6,12 +6,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { fetchGoogleAdMetrics } from '@/lib/connectors/google-ads'
 import { fetchMetaAdMetrics } from '@/lib/connectors/meta-ads'
+import { isAdminAuthed } from '@/lib/auth'
 import type { ClientConnection, Connector } from '@/lib/types'
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
 
 function fmtDate(d: Date) {
   return d.toISOString().split('T')[0]
@@ -21,7 +17,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id: connectionId } = await params
   const days = parseInt(req.nextUrl.searchParams.get('days') ?? '7', 10)

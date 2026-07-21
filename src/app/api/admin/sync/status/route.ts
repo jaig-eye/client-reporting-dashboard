@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isAdminAuthed } from '@/lib/auth'
 
 const SOURCE_LABELS: Record<string, string> = {
   google_ads:            'Google Ads',
@@ -15,8 +16,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export async function GET(req: NextRequest) {
-  const session = req.cookies.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) {
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

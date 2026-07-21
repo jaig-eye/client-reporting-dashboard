@@ -121,7 +121,21 @@ export async function POST(
     keyPages = (sitemapPages ?? []).map((r: { url: string }) => r.url)
   }
 
-  // 5. Run the crawl
+  // 5. Validate site.url is a safe public HTTP/HTTPS URL
+  let parsedUrl: URL
+  try { parsedUrl = new URL(site.url) } catch {
+    return NextResponse.json({ error: 'Invalid site URL' }, { status: 400 })
+  }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return NextResponse.json({ error: 'Site URL must be http or https' }, { status: 400 })
+  }
+  const host = parsedUrl.hostname.toLowerCase()
+  const privateRanges = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|::1|fe80)/
+  if (privateRanges.test(host)) {
+    return NextResponse.json({ error: 'Site URL points to a private network address' }, { status: 400 })
+  }
+
+  // 6. Run the crawl
   try {
     const result = await runSiteAudit({
       baseUrl:  site.url,
@@ -129,7 +143,7 @@ export async function POST(
       keyPages,
     })
 
-    // 6. Store page results
+    // 7. Store page results
     if (result.pages.length > 0) {
       const { error: pagesInsertErr } = await db.from('site_audit_pages').insert(
         result.pages.map(p => ({
@@ -157,7 +171,7 @@ export async function POST(
       if (pagesInsertErr) throw new Error(`Failed to store page results: ${pagesInsertErr.message}`)
     }
 
-    // 7. Mark audit completed + update site summary
+    // 8. Mark audit completed + update site summary
     await Promise.all([
       db.from('site_audits').update({
         status:        'completed',

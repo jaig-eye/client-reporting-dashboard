@@ -20,16 +20,18 @@ export function logActivity(
   const meta: Record<string, unknown> = { ...(opts?.meta ?? {}) }
   if (opts?.ip) meta.ip = opts.ip
 
-  void createAdminClient()
-    .from('activity_log')
-    .insert({
-      user_id:       session?.userId    ?? null,
-      user_name:     userName,
-      action,
-      resource_type: resourceType,
-      resource_id:   opts?.resourceId  ?? null,
-      client_id:     opts?.clientId    ?? null,
-      client_name:   opts?.clientName  ?? null,
-      meta,
-    })
+  void Promise.resolve(
+    createAdminClient()
+      .from('activity_log')
+      .insert({
+        user_id:       session?.userId    ?? null,
+        user_name:     userName,
+        action,
+        resource_type: resourceType,
+        resource_id:   opts?.resourceId  ?? null,
+        client_id:     opts?.clientId    ?? null,
+        client_name:   opts?.clientName  ?? null,
+        meta,
+      })
+  ).catch(() => {})
 }

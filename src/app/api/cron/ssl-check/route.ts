@@ -186,7 +186,7 @@ export async function GET(request: NextRequest) {
 
         const emoji = info.daysLeft <= 0 ? '🔴' : '🟡'
         const msg   = `${emoji} **SSL alert: ${site.name}** — cert ${expiryLabel}\nHost: ${hostname} | Issuer: ${info.issuer ?? 'unknown'}`
-        await sendDiscordMessage(botToken, channelId, msg)
+        if (botToken && channelId) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({

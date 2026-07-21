@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { runSiteAudit } from '@/lib/siteAudit'
 
@@ -16,9 +17,8 @@ export const dynamic     = 'force-dynamic'
 export const maxDuration = 300   // 5 minutes for bulk runs
 
 export async function GET(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET
-  const authHeader  = request.headers.get('authorization')
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  const authHeader = request.headers.get('authorization')
+  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
     .eq('audit_enabled', true)
     .eq('status', 'active')
     .or(`last_audit_at.is.null,last_audit_at.lte.${sixDaysAgo}`)
+    .order('last_audit_at', { ascending: true, nullsFirst: true })
     .limit(20)   // cap per run to stay within the 5-min budget
 
   if (error) {

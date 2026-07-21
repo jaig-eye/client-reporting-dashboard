@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     .eq('connector.type', 'google_ads')
     .or(`external_id.eq.${account_id},external_id.eq.${normalised}`)
     .eq('status', 'active')
-    .single()
+    .maybeSingle()
 
   if (!connection) {
     // No connection configured yet — accept without error so the script doesn't fail

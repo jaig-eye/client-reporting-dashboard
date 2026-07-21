@@ -26,7 +26,7 @@ function fmtShort(dateStr: string | null): string {
   return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function AdFuelModal({ balance, onClose }: { balance: number; onClose: () => void }) {
+export default function AdFuelModal({ balance, onClose }: { balance: number | null; onClose: () => void }) {
   const [tab,         setTab]         = useState<'payments' | 'balance'>('payments')
   const [ledger,      setLedger]      = useState<LedgerEntry[]>([])
   const [dailyDebits, setDailyDebits] = useState<DailyDebit[]>([])
@@ -94,8 +94,9 @@ export default function AdFuelModal({ balance, onClose }: { balance: number; onC
     const dates = Array.from(allDates).sort().reverse()
     if (!dates.length) return []
 
-    // Walk backward from current balance — bal is the end-of-day balance for the current date
-    let bal = balance
+    // Walk backward from current balance — bal is the end-of-day balance for the current date.
+    // Use 0 as fallback when balance is null (RPC failure) — the tab shows no meaningful data.
+    let bal = balance ?? 0
     return dates.map(date => {
       const spend    = spendByDate.get(date) ?? 0
       const payments = payByDate.get(date) ?? 0

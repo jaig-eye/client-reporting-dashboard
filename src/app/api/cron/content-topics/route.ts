@@ -342,6 +342,7 @@ export async function GET(request: NextRequest) {
           headers: { 'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}` },
         })
         if (res.ok) briefsGenerated.push(topic.id)
+        else console.error(`[content-topics cron] brief ${topic.id} returned ${res.status}: ${await res.text().catch(() => '')}`)
       } catch (e) {
         console.error(`[content-topics cron] Brief generation failed for topic ${topic.id}:`, e)
       }
@@ -669,7 +670,7 @@ export async function GET(request: NextRequest) {
         .eq('content_type', 'service_area')
         .eq('status', 'approved')
 
-      await Promise.allSettled((approvedSaTopics ?? []).map(async (topic) => {
+      await Promise.allSettled((approvedSaTopics ?? []).slice(0, saLimit).map(async (topic) => {
         const t = topic as { id: string; city: string | null; state_abbr: string | null; service_name: string | null }
         try {
           const res = await fetch(`${appUrl}/api/admin/content/service-area/generate`, {

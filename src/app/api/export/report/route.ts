@@ -74,7 +74,7 @@ export async function GET(req: Request) {
   const db = createAdminClient()
 
   const [clientResult, settings] = await Promise.all([
-    db.from('clients').select('*').eq('dashboard_token', token).single(),
+    db.from('clients').select('*').eq('dashboard_token', token).maybeSingle(),
     getAgencySettings(),
   ])
 

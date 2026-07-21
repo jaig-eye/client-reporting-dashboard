@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isAdminAuthed } from '@/lib/auth'
 import type { ClientConnection, Connector } from '@/lib/types'
 
 const API_VERSION = 'v21.0'
@@ -56,8 +57,7 @@ function chunkDateRange(from: string, to: string, maxDays: number) {
 }
 
 export async function GET(req: NextRequest) {
-  const session = req.cookies.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) {
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

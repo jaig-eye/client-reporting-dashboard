@@ -6,18 +6,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
-import { getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 export const maxDuration = 300
 
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
-
 export async function POST(req: NextRequest) {
-  if (!requireAdmin(req)) {
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const adminSession = await getAdminSession()

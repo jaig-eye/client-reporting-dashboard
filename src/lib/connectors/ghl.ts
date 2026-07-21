@@ -498,11 +498,12 @@ async function fetchFormsAndSurveys(
       for (;;) {
         const data = await ghlGet('/calendars/events', apiKey, {
           locationId,
-          calendarId: calId,
-          startTime:  String(fromMs),
-          endTime:    String(toMs),
-          limit:      '100',
-          skip:       String(skip),
+          calendarId:  calId,
+          startTime:   String(fromMs),
+          endTime:     String(toMs),
+          filterType:  'created',
+          limit:       '100',
+          skip:        String(skip),
         })
         const events = (data.events as Record<string, unknown>[]) ?? []
 

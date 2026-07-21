@@ -3,15 +3,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
+import { isAdminAuthed } from '@/lib/auth'
 
 // GET — list all categories ordered by sort_order
 export async function GET(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const db = createAdminClient()
   const { data, error } = await db.from('campaign_categories').select('*').order('sort_order').order('created_at')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -20,7 +16,7 @@ export async function GET(req: NextRequest) {
 
 // POST — create a new category
 export async function POST(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
   const { name, color, display_mode, conversion_label, default_conversion_value } = body

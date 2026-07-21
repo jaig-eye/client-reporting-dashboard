@@ -146,6 +146,7 @@ export async function GET(request: NextRequest) {
   const resumed: string[] = []
 
   for (const client of clients) {
+    try {
     const cut   = client.ad_fuel_cut ?? agencyCut
     const split = 1 - cut
 
@@ -305,6 +306,10 @@ export async function GET(request: NextRequest) {
       }
 
       resumed.push(client.name)
+    }
+    } catch (err) {
+      console.error(`[auto-pause-ads] client ${client.id} error:`, err)
+      continue
     }
   }
 

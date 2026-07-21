@@ -4,14 +4,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
+import { isAdminAuthed } from '@/lib/auth'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
 
   const db = createAdminClient()

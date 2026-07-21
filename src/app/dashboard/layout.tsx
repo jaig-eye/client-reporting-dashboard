@@ -68,7 +68,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (token) {
     const [clientResult, agencySettings] = await Promise.all([
-      db.from('clients').select('*').eq('dashboard_token', token).single(),
+      db.from('clients').select('*').eq('dashboard_token', token).maybeSingle(),
       getAgencySettings(),
     ])
     client   = clientResult.data as Client | null

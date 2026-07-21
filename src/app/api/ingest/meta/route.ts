@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     .eq('connector.type', 'meta_ads')
     .or(`external_id.eq.${withPrefix},external_id.eq.${withoutPrefix}`)
     .eq('status', 'active')
-    .single()
+    .maybeSingle()
 
   if (!connection) {
     return NextResponse.json(

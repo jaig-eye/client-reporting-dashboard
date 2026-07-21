@@ -219,6 +219,16 @@ export async function GET(request: NextRequest) {
     db.rpc('daily_meta_spend_by_client',   { floor_date: cycleFloor }),
   ])
 
+  if (gSumRes.error || mSumRes.error || ledgerRes.error) {
+    const errors = {
+      google: gSumRes.error?.message,
+      meta:   mSumRes.error?.message,
+      ledger: ledgerRes.error?.message,
+    }
+    console.error('[ad-fuel-budget-alerts] Critical RPC failed — aborting:', errors)
+    return NextResponse.json({ skipped: true, reason: 'Spend data unavailable — see logs', errors }, { status: 503 })
+  }
+
   const gSumMap: Record<string, number> = {}
   const mSumMap: Record<string, number> = {}
   for (const r of (gSumRes.data ?? []) as SumRow[]) gSumMap[r.client_id] = Number(r.spend ?? 0)

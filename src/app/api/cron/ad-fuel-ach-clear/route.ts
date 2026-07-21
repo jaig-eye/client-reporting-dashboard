@@ -296,7 +296,7 @@ export async function GET(request: NextRequest) {
           console.log(`[ad-fuel-ach-clear] step3 delta $${delta} for invoice ${invoiceId}`)
           deltaCredits++
         }
-      } catch { /* best-effort */ }
+      } catch (e) { console.warn('[ad-fuel-ach-clear] step3 delta credit failed:', e) }
     }
   } catch (err) {
     console.error('[ad-fuel-ach-clear] step3 failed:', err)

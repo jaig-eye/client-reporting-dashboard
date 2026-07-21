@@ -23,7 +23,7 @@ export default function AdFuelBadge({
   pendingAmount,
   onActivityClick,
 }: {
-  balance:            number
+  balance:            number | null
   clientName:         string
   monthlyBudget?:     number
   pendingAmount?:     number  // ACH payment in transit — shown as projected addition
@@ -36,11 +36,11 @@ export default function AdFuelBadge({
     return () => clearTimeout(t)
   }, [])
 
-  const isLow      = balance < 200
-  const isNegative = balance < 0
+  const isLow      = balance !== null && balance < 200
+  const isNegative = balance !== null && balance < 0
 
   const reference   = monthlyBudget && monthlyBudget > 0 ? monthlyBudget : 1500
-  const rawFill     = balance <= 0 ? 3 : Math.min(Math.max((balance / reference) * 100, 3), 95)
+  const rawFill     = balance === null || balance <= 0 ? 3 : Math.min(Math.max((balance / reference) * 100, 3), 95)
   const displayFill = mounted ? rawFill : 0
 
   // Normal: soft blue. Low: amber.
@@ -51,9 +51,10 @@ export default function AdFuelBadge({
   const borderCol  = isLow ? 'rgba(245,158,11,0.3)'    : 'var(--border, #e5e7eb)'
   const refillUrl  = `${FORM_URL}?organization=${encodeURIComponent(clientName)}`
 
-  const absVal    = Math.abs(balance)
-  const formatted = (isNegative ? '-$' : '$') +
-    absVal.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  const formatted = balance === null
+    ? '—'
+    : (isNegative ? '-$' : '$') +
+      Math.abs(balance).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
   return (
     <div style={{

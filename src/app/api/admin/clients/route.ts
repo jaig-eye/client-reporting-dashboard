@@ -16,8 +16,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
-  const session = cookieStore.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) {
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

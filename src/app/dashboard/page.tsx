@@ -270,7 +270,9 @@ export default async function DashboardPage({
   const rawLifetime   = gRawLife + mRawLife
   const afLifetime    = balanceSplit > 0 ? rawLifetime / balanceSplit : rawLifetime
   const afPurchased   = ((ledgerBalRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
-  const adFuelBalance = afPurchased - afLifetime
+  // When spend RPCs failed, lifetime spend is 0 which makes the balance equal to the full
+  // purchased amount — a falsely inflated figure. Return null so the badge shows "—" instead.
+  const adFuelBalance: number | null = spendRpcFailed ? null : (afPurchased - afLifetime)
   const pendingAch    = ((achPendingRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
 
 

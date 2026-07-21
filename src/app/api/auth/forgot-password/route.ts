@@ -7,6 +7,23 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email'
 import { createHash, randomInt } from 'crypto'
 
+// In-memory rate limit: 3 attempts per IP per 15 minutes
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+const RATE_LIMIT_MAX = 3
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
+
+function checkRateLimit(ip: string): boolean {
+  const now   = Date.now()
+  const entry = rateLimitMap.get(ip)
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+    return true
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false
+  entry.count++
+  return true
+}
+
 function generateCode(): string {
   return String(randomInt(100000, 999999))
 }
@@ -16,6 +33,14 @@ function hashCode(code: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  if (!checkRateLimit(ip)) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Try again in 15 minutes.' },
+      { status: 429 }
+    )
+  }
+
   const { email } = await request.json() as { email?: string }
 
   if (!email?.trim()) return NextResponse.json({ ok: true })

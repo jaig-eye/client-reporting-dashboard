@@ -166,6 +166,7 @@ export async function GET(request: NextRequest) {
   const WEEKLY_METRICS: MetricKey[] = ((agency?.weekly_alert_metrics as MetricKey[] | null) ?? ['spend', 'conversions', 'cpa', 'roas', 'ctr']).filter(m => ['spend','conversions','cpa','roas','ctr'].includes(m))
 
   for (const client of clients) {
+    try {
     const isEcom         = client.layout_type === 'ecom'
     const primaryAction  = isEcom
       ? (client.purchase_action          ?? defaultPurchasePrimary)
@@ -346,6 +347,10 @@ export async function GET(request: NextRequest) {
 
         newAlerts.push({ clientId: client.id, clientName: client.name, metric: key, currentVal: cv, priorVal: pv, pctChange: pct * 100, direction, alertType: 'weekly', platform })
       }
+    }
+    } catch (err) {
+      console.error(`[metric-alerts] client ${client.id} error:`, err)
+      continue
     }
   }
 

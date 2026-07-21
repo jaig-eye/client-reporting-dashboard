@@ -65,7 +65,7 @@ export async function getAdminSession(): Promise<AdminSession | null> {
     .select('id, name, email, role, avatar_url')
     .eq('id', userId)
     .eq('is_active', true)
-    .single()
+    .maybeSingle()
 
   if (!data) return null
 

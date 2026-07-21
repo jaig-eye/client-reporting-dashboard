@@ -10,7 +10,7 @@ export default function AdFuelBadgeWithModal({
   monthlyBudget,
   pendingAmount,
 }: {
-  balance:        number
+  balance:        number | null
   clientName:     string
   monthlyBudget?: number
   pendingAmount?: number

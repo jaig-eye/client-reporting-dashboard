@@ -5,9 +5,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 
+export const maxDuration = 60
+
 export async function GET(request: NextRequest) {
-  const secret = request.headers.get('x-cron-secret') ?? new URL(request.url).searchParams.get('secret')
-  if (!timingSafeCompare(secret, process.env.CRON_SECRET)) {
+  const authHeader = request.headers.get('authorization')
+  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

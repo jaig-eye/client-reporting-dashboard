@@ -326,8 +326,13 @@ export async function generateTopicsForClient(
       .from('content_silos')
       .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type')
       .eq('id', opts.siloId)
+      .eq('client_id', clientId)
       .maybeSingle()
     if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
+    if (!silo) {
+      console.warn('[generateTopics] silo not found or does not belong to client:', opts.siloId)
+      return { topics: [], clientName, count: 0, error: 'Silo not found or access denied' }
+    }
 
     if (silo) {
       siloName        = silo.name as string

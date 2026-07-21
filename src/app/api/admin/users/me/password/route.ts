@@ -2,6 +2,7 @@
 // Requires current_password for verification. Super admin cannot use this.
 
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
@@ -34,8 +35,13 @@ export async function POST(req: NextRequest) {
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-  if (user.password_hash && user.password_hash !== hashPassword(current_password)) {
-    return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
+  const inputHash  = hashPassword(current_password)
+  const storedHash = user.password_hash ?? '0'.repeat(64)
+  const inputBuf   = Buffer.from(inputHash,  'hex')
+  const storedBuf  = Buffer.from(storedHash, 'hex')
+  const hashMatch  = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf)
+  if (!hashMatch) {
+    return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 })
   }
 
   const { error } = await db

@@ -23,7 +23,7 @@ import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
-import { fetchSearchAnalytics } from './connectors/google-search-console'
+import { fetchSearchAnalytics, fetchDailyTotals } from './connectors/google-search-console'
 import type { GSCRawRow, GSCDailyTotalRow, GSCQueryTotalRow, GSCPageTotalRow, GSCPageFilter } from './connectors/google-search-console'
 
 interface AhrefsRow {
@@ -427,27 +427,14 @@ async function syncGSCInChunks(
         const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)
         const needs3D = chunkTo >= thirtyDaysAgo
 
-        const [qFetch, pFetch, rawRows] = await Promise.all([
+        const [qFetch, pFetch, rawRows, dailyRows] = await Promise.all([
           fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'query']),
           fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, ['date', 'page'], pageFilter),
           needs3D
             ? fetchSearchAnalytics(siteUrl, accessToken, chunkFrom, chunkTo, dataState, undefined, pageFilter)
             : Promise.resolve([] as GSCRawRow[]),
+          fetchDailyTotals(siteUrl, accessToken, chunkFrom, chunkTo, dataState),
         ])
-
-        // Daily totals — aggregate query rows by date
-        type DailyAcc = { date: string; clicks: number; impressions: number; posSum: number }
-        const dailyMap = new Map<string, DailyAcc>()
-        for (const r of qFetch) {
-          const d = dailyMap.get(r.date) ?? { date: r.date, clicks: 0, impressions: 0, posSum: 0 }
-          d.clicks += r.clicks; d.impressions += r.impressions; d.posSum += r.position * r.impressions
-          dailyMap.set(r.date, d)
-        }
-        const dailyRows: GSCDailyTotalRow[] = Array.from(dailyMap.values()).map(d => ({
-          date: d.date, clicks: d.clicks, impressions: d.impressions,
-          ctr:      d.impressions > 0 ? d.clicks / d.impressions : 0,
-          position: d.impressions > 0 ? d.posSum / d.impressions : 0,
-        }))
 
         // Query totals — qFetch rows ARE the date+query aggregates
         const queryRows: GSCQueryTotalRow[] = qFetch.map(r => ({
@@ -548,12 +535,13 @@ export async function upsertGoogleAdsMetrics(
 
   // Batch upsert in groups of 200 to avoid request size limits
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('google_ads_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,campaign_id,date',
         ignoreDuplicates: false,
       })
+    if (error) throw new Error(`[sync] google_ads_metrics upsert failed (batch ${i}): ${error.message}`)
   }
 
   // Auto-discover campaigns for client_campaign_assignments
@@ -1142,7 +1130,10 @@ export async function upsertGA4Metrics(
     .eq('connection_id', connectionId)
     .gte('date', minDate)
     .lte('date', maxDate)
-  if (delErr) console.error('[sync] ga4_metrics pre-delete error:', delErr)
+  if (delErr) {
+    console.error('[sync] ga4_metrics pre-delete error:', delErr)
+    throw new Error(`[sync] ga4_metrics pre-delete failed: ${delErr.message}`)
+  }
 
   for (let i = 0; i < mapped.length; i += 200) {
     const { error } = await db
@@ -1151,7 +1142,7 @@ export async function upsertGA4Metrics(
         onConflict: 'connection_id,date,channel_group',
         ignoreDuplicates: false,
       })
-    if (error) console.error(`[sync] ga4_metrics upsert error (batch ${i}):`, error)
+    if (error) throw new Error(`[sync] ga4_metrics upsert failed (batch ${i}): ${error.message}`)
   }
   return mapped.length
 }
@@ -1391,12 +1382,13 @@ export async function upsertAhrefsMetrics(
     synced_at:              new Date().toISOString(),
   }))
   for (let i = 0; i < mapped.length; i += 200) {
-    await db
+    const { error } = await db
       .from('ahrefs_metrics')
       .upsert(mapped.slice(i, i + 200), {
         onConflict: 'connection_id,date',
         ignoreDuplicates: false,
       })
+    if (error) console.error(`[sync] ahrefs_metrics upsert error (batch ${i}):`, error)
   }
   return mapped.length
 }

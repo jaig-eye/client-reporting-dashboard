@@ -99,7 +99,27 @@ async function fetchPage(url: string): Promise<{ status: number; html: string }>
       headers: { 'User-Agent': AGENT_UA, 'Accept': 'text/html,application/xhtml+xml' },
       redirect: 'follow',
     })
-    const html = await res.text()
+    // Check content-length header before reading body
+    const contentLength = parseInt(res.headers.get('content-length') ?? '0', 10)
+    if (contentLength > 5 * 1024 * 1024) {
+      clearTimeout(timer)
+      return { status: res.status, html: '' }
+    }
+    // Read with a size cap
+    const reader = res.body?.getReader()
+    if (!reader) { clearTimeout(timer); return { status: res.status, html: '' } }
+    const chunks: Uint8Array[] = []
+    let totalBytes = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        totalBytes += value.length
+        if (totalBytes > 5 * 1024 * 1024) { reader.cancel(); clearTimeout(timer); return { status: res.status, html: '' } }
+        chunks.push(value)
+      }
+    }
+    const html = new TextDecoder().decode(Buffer.concat(chunks))
     clearTimeout(timer)
     return { status: res.status, html }
   } catch {
@@ -238,7 +258,13 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
   const { html: xml } = await fetchPage(sitemapUrl)
   if (!xml) return []
   const locs = Array.from(xml.matchAll(/<loc[^>]*>([\s\S]*?)<\/loc>/gi))
-  return locs.map(m => m[1].trim()).filter(u => u.startsWith('http'))
+    .map(m => m[1].trim())
+    .filter(u => u.startsWith('http'))
+  const baseHostname = new URL(baseUrl).hostname
+  const scopedLocs = locs.filter(loc => {
+    try { return new URL(loc).hostname === baseHostname } catch { return false }
+  })
+  return scopedLocs
 }
 
 /* ── Batch runner ────────────────────────────────────────────────── */

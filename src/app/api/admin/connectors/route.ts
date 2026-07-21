@@ -4,17 +4,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
-import { getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
 
 // GET — list all connectors
 export async function GET(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const db = createAdminClient()
   const { data, error } = await db.from('connectors').select('id, type, label, status, config, last_checked_at, created_at').order('created_at')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -24,7 +19,7 @@ export async function GET(req: NextRequest) {
 
 // POST — create a new connector
 export async function POST(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await req.json()
   const { type, label, auth, config } = body
 

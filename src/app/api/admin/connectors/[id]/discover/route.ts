@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isAdminAuthed } from '@/lib/auth'
 import { googleAdsConnector } from '@/lib/connectors/google-ads'
 import { metaAdsConnector } from '@/lib/connectors/meta-ads'
 import { googleAnalyticsConnector }       from '@/lib/connectors/google-analytics'
@@ -10,13 +11,8 @@ import { googleSearchConsoleConnector }   from '@/lib/connectors/google-search-c
 import { googleBusinessProfileConnector } from '@/lib/connectors/google-business-profile'
 import type { Connector } from '@/lib/types'
 
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
-
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
   const db = createAdminClient()

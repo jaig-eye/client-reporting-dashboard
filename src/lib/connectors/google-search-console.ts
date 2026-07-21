@@ -193,7 +193,8 @@ export async function fetchDailyTotals(
   siteUrl: string,
   accessToken: string,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  dataState: 'all' | 'final' = 'final'
 ): Promise<GSCDailyTotalRow[]> {
   const encodedSite = encodeURIComponent(siteUrl)
   const endpoint    = `${GSC_BASE}/sites/${encodedSite}/searchAnalytics/query`
@@ -203,7 +204,7 @@ export async function fetchDailyTotals(
     endDate:    dateTo,
     dimensions: ['date'],
     rowLimit:   100, // max 31 rows for a 30-day chunk; 100 is a safe upper bound
-    dataState:  'final',
+    dataState,
   }
 
   const controller = new AbortController()

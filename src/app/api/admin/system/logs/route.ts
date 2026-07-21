@@ -3,13 +3,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isAdminAuthed } from '@/lib/auth'
 
 const PER_PAGE = 50
-
-function requireAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  return !!session && session === process.env.ADMIN_PASSWORD
-}
 
 async function cleanupStuckJobs(db: ReturnType<typeof createAdminClient>): Promise<number> {
   // 8 minutes — just above Vercel's 300s function limit. Jobs still running
@@ -36,7 +32,7 @@ async function cleanupStuckJobs(db: ReturnType<typeof createAdminClient>): Promi
 }
 
 export async function GET(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const db       = createAdminClient()
   const url      = req.nextUrl
@@ -95,7 +91,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!requireAdmin(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const db    = createAdminClient()
   const count = await cleanupStuckJobs(db)
   return NextResponse.json({ cleaned: count })
