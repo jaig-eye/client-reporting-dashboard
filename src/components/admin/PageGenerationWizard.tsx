@@ -35,14 +35,14 @@ function slugify(text: string): string {
     .replace(/^-|-$/g, '')
 }
 
-function parseLines(raw: string, slugPrefix: string): PageEntry[] {
-  const prefix = slugPrefix.replace(/\/+$/, '')
+// Returns bare slug segments only (no prefix). Prefix is for display only.
+function parseLines(raw: string): PageEntry[] {
   return raw
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean)
     .map(line => {
-      // URL input → extract last path segment as title
+      // URL input → extract last path segment as title + slug
       if (/^https?:\/\//i.test(line)) {
         try {
           const u        = new URL(line)
@@ -50,13 +50,12 @@ function parseLines(raw: string, slugPrefix: string): PageEntry[] {
           const last     = segments[segments.length - 1] ?? ''
           const title    = last.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
           const slug     = last || slugify(title)
-          return { title, slug: `${prefix}/${slug}`.replace(/\/+/, '/') }
+          return { title, slug }
         } catch {
           // fall through to plain text
         }
       }
-      const slug = slugify(line)
-      return { title: line, slug: `${prefix}/${slug}`.replace(/\/+/, '/') }
+      return { title: line, slug: slugify(line) }
     })
     .filter(p => p.slug && p.title)
 }
@@ -109,7 +108,7 @@ export default function PageGenerationWizard({
   const [submitting, setSubmitting] = useState(false)
   const [error,      setError]      = useState<string | null>(null)
 
-  const pages = useMemo(() => parseLines(rawPages, slugPrefix), [rawPages, slugPrefix])
+  const pages = useMemo(() => parseLines(rawPages), [rawPages])
   const dates  = useMemo(
     () => delivery === 'spaced' ? previewDates(pages.length, spaceStartDate, spaceInterval) : [],
     [delivery, pages.length, spaceStartDate, spaceInterval],
@@ -294,7 +293,9 @@ export default function PageGenerationWizard({
             {pages.map((p, i) => (
               <div key={i} style={{ display: 'contents' }}>
                 <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
-                <span style={{ color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{p.slug}</span>
+                <span style={{ color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                  {slugPrefix.replace(/\/+$/, '')}/{p.slug}
+                </span>
               </div>
             ))}
           </div>
@@ -410,8 +411,8 @@ export default function PageGenerationWizard({
               <span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>
               <span style={{ flex: 1, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
               <span style={{ color: 'var(--text-faint)', fontFamily: 'monospace', fontSize: '0.75rem', flexShrink: 0 }}>
-                {delivery === 'spaced' && dates[i] ? fmtDate(dates[i]!) : ''}
-                {p.slug}
+                {delivery === 'spaced' && dates[i] ? `${fmtDate(dates[i]!)} · ` : ''}
+                {slugPrefix.replace(/\/+$/, '')}/{p.slug}
               </span>
             </div>
           ))}

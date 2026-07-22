@@ -3,13 +3,16 @@
 // and optionally fires generation immediately.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { isAdminAuthed } from '@/lib/auth'
-import { createAdminClient } from '@/lib/supabase/server'
-import { logActivity } from '@/lib/activity'
+import { waitUntil }                 from '@vercel/functions'
+import { isAdminAuthed }             from '@/lib/auth'
+import { createAdminClient }         from '@/lib/supabase/server'
+import { logActivity }               from '@/lib/activity'
+
+const MAX_PAGES = 25
 
 interface PageEntry {
   title: string
-  slug:  string  // just the slug segment, e.g. "drain-cleaning"
+  slug:  string  // bare slug segment only, e.g. "drain-cleaning"
 }
 
 interface Body {
@@ -58,11 +61,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'content_type must be service_page or regular_page' }, { status: 400 })
   }
 
+  if (pages.length > MAX_PAGES) {
+    return NextResponse.json({ error: `Maximum ${MAX_PAGES} pages per submission` }, { status: 400 })
+  }
+
   if (delivery === 'spaced' && !space_start_date) {
     return NextResponse.json({ error: 'space_start_date is required for spaced delivery' }, { status: 400 })
   }
 
-  const db      = createAdminClient()
+  const db       = createAdminClient()
   const todayStr = new Date().toISOString().slice(0, 10)
 
   const rows = pages.map((page, i) => {
@@ -73,12 +80,12 @@ export async function POST(request: NextRequest) {
     return {
       client_id,
       content_type,
-      topic:              page.title,
-      target_keyword:     page.title,
-      custom_slug:        page.slug || null,
-      status:             'approved',
+      topic:               page.title,
+      target_keyword:      page.title,
+      custom_slug:         page.slug || null,
+      status:              'approved',
       target_publish_date: publishDate,
-      rationale:          'Queued via Page Generation Wizard',
+      rationale:           'Queued via Page Generation Wizard',
     }
   })
 
@@ -97,33 +104,34 @@ export async function POST(request: NextRequest) {
     meta: { count: inserted.length, content_type, delivery },
   })
 
-  // For immediate delivery: fire generation for each topic in background.
-  // Errors per-topic are caught — a single failure won't block the rest.
+  // For immediate delivery: fire generation for each topic.
+  // waitUntil keeps the Vercel function alive until all fetches complete.
   if (delivery === 'immediate') {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-    void Promise.allSettled(
-      (inserted as { id: string }[]).map(async (topic) => {
-        try {
-          await db.from('content_topics').update({ status: 'generating' }).eq('id', topic.id)
-          const res = await fetch(`${appUrl}/api/admin/content/generate`, {
-            method:  'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
-            },
-            body: JSON.stringify({ topic_id: topic.id, suppress_email: true }),
-          })
-          if (!res.ok) {
-            const text = await res.text().catch(() => '')
-            console.error('[pages/queue] generation failed for topic', topic.id, res.status, text)
-            // Reset so cron can retry
+    waitUntil(
+      Promise.allSettled(
+        (inserted as { id: string }[]).map(async (topic) => {
+          try {
+            await Promise.resolve(db.from('content_topics').update({ status: 'generating' }).eq('id', topic.id))
+            const res = await fetch(`${appUrl}/api/admin/content/generate`, {
+              method:  'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+              },
+              body: JSON.stringify({ topic_id: topic.id, suppress_email: true }),
+            })
+            if (!res.ok) {
+              const text = await res.text().catch(() => '')
+              console.error('[pages/queue] generation failed for topic', topic.id, res.status, text)
+              await Promise.resolve(db.from('content_topics').update({ status: 'approved' }).eq('id', topic.id)).catch(() => {})
+            }
+          } catch (e) {
+            console.error('[pages/queue] generation error for topic', topic.id, e)
             await Promise.resolve(db.from('content_topics').update({ status: 'approved' }).eq('id', topic.id)).catch(() => {})
           }
-        } catch (e) {
-          console.error('[pages/queue] generation error for topic', topic.id, e)
-          await Promise.resolve(db.from('content_topics').update({ status: 'approved' }).eq('id', topic.id)).catch(() => {})
-        }
-      })
+        })
+      )
     )
   }
 

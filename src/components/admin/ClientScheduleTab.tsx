@@ -336,6 +336,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       setSaCalendarModalOpen(false)
       setReviewPost(null)
       setReviewSaPost(null)
+      setShowSpWizard(false)
+      setShowRpWizard(false)
     }
   }, [isActive])
 
@@ -1113,12 +1115,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             )}
             {id === 'service' && (!!saSettings.auto_generate) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
-            )}
-            {id === 'service_page' && generateServicePages && (
-              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>On</span>
-            )}
-            {id === 'regular_page' && generateRegularPages && (
-              <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>On</span>
             )}
           </button>
         ))}

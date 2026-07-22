@@ -209,26 +209,33 @@ export default function DashboardClientShell({
 }: Props) {
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [metricsData,    setMetricsData]    = useState<MetricsApiResponse | null>(null)
+  const [metricsError,   setMetricsError]   = useState(false)
 
   useEffect(() => {
     setMetricsLoading(true)
     setMetricsData(null)
+    setMetricsError(false)
 
+    const controller = new AbortController()
     const params = new URLSearchParams({ from: dateFrom, to: dateTo })
     if (compare !== 'none' && compareDateFrom && compareDateTo) {
       params.set('compare_from', compareDateFrom)
       params.set('compare_to',   compareDateTo)
     }
 
-    fetch(`/api/admin/dashboard/metrics?${params}`)
-      .then(r => r.json())
+    fetch(`/api/admin/dashboard/metrics?${params}`, { signal: controller.signal })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then((data: MetricsApiResponse) => {
         setMetricsData(data)
         setMetricsLoading(false)
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === 'AbortError') return
+        setMetricsError(true)
         setMetricsLoading(false)
       })
+
+    return () => controller.abort()
   }, [dateFrom, dateTo, compare, compareDateFrom, compareDateTo])
 
   // ── build lookup maps from fast server data ──────────────────────────────
@@ -347,6 +354,26 @@ export default function DashboardClientShell({
     <div>
       {/* Pulse keyframe — defined once here to avoid a separate CSS file */}
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
+
+      {/* Metrics error banner */}
+      {metricsError && (
+        <div style={{
+          marginBottom: '1rem', padding: '0.625rem 1rem', borderRadius: 8,
+          background: 'var(--red-subtle)', border: '1px solid var(--red)',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.8125rem',
+        }}>
+          <span style={{ color: 'var(--red)', fontWeight: 600 }}>⚠</span>
+          <span style={{ color: 'var(--red)' }}>
+            Metric data failed to load. Spend and ROAS figures may be unavailable.
+          </span>
+          <button
+            style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--red)', background: 'none', border: '1px solid var(--red)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}
+            onClick={() => { setMetricsError(false); setMetricsLoading(true); setMetricsData(null) }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
