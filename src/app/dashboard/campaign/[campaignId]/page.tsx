@@ -35,11 +35,11 @@ const _getCachedGoogleCampaignMetrics = unstable_cache(
     const db = createAdminClient()
     const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
       db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_group_id,ad_group_name,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
+        .select('ad_id,ad_group_id,ad_group_name,ad_status,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       db.from('google_ads_metrics')
-        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date')
+        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date,spend')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       showCompare
@@ -193,7 +193,7 @@ export default async function CampaignDetailPage({
 
   // ── Fetch ad-level metrics ─────────────────────────────────────────────────
   type GoogleAdRow = {
-    ad_id: string; ad_group_id: string; ad_group_name: string; date: string
+    ad_id: string; ad_group_id: string; ad_group_name: string; ad_status?: string | null; date: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number; all_conversions_value?: number | null
   }
@@ -262,11 +262,15 @@ export default async function CampaignDetailPage({
     }
   }
 
+  // Campaign-level raw spend for Google Ads (sourced from google_ads_metrics, no impressions
+  // filter). Populated inside the isGoogleAds block and used for KPI totals + sparklines.
+  let googleCampRawSpend: number | null = null
+
   if (isGoogleAds) {
     const { rows, campRow, priorRows, priorIsRows } = await _getCachedGoogleCampaignMetrics(
       client.id, campaignId, dateFrom, dateTo, priorFrom, priorTo, showCompare
     )
-    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null; date?: string }[] | null) ?? []
+    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null; spend?: number | null; date?: string }[] | null) ?? []
     // Sort desc by date so the most-recent row's name/type is used — not the oldest
     const sortedRows = [...campRows].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
     const firstCamp  = sortedRows[0] ?? null
@@ -287,9 +291,25 @@ export default async function CampaignDetailPage({
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
       const cv = Number(r.conversions_value) || 0
-      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, null, r.date, sp, im, cl, co, cv)
+      upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
+    // Build campaign-level spend by date from google_ads_metrics (no impressions filter).
+    // Override the spend values written to dailyMap by ad-level rows so that sparklines
+    // and KPI totals reflect the same number the Google Ads UI shows.
+    const campSpendByDate = new Map<string, number>()
+    for (const r of campRows) {
+      const d = r.date ?? ''
+      if (!d) continue
+      campSpendByDate.set(d, (campSpendByDate.get(d) ?? 0) + (Number(r.spend) || 0))
+    }
+    for (const [date, campSp] of Array.from(campSpendByDate)) {
+      const ex = dailyMap.get(date)
+      if (ex) { ex.spend = campSp }
+      else { dailyMap.set(date, { spend: campSp, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 }) }
+    }
+    googleCampRawSpend = Array.from(campSpendByDate.values()).reduce((t, s) => t + s, 0)
+
     for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[]) {
       priorTotals.spend           += Number(r.spend)            || 0
       priorTotals.impressions     += Number(r.impressions)      || 0
@@ -548,11 +568,17 @@ export default async function CampaignDetailPage({
     .filter((g: AdGroupRow) => !/^\d+$/.test(g.setName))
     .sort((a, b) => b.spend - a.spend)
 
-  // KPI totals: prefer ad-level data (adGroups) as the source of truth — it matches
-  // the ad set breakdown table. Fall back to dailyMap only when no ad-level data exists.
+  // KPI totals: for Google Ads, use campaign-level spend (google_ads_metrics) for totSpend
+  // so the header matches the Google Ads UI — the ad-level table filters out rows with
+  // impressions = 0 which causes under-counting. All other totals (impressions, clicks,
+  // conversions) and the ad group breakdown table still use ad-level data. For Meta, ad-level
+  // data (adGroups) is the source of truth for all metrics. Fall back to dailyMap when no
+  // ad-level data exists.
   let totSpend = 0, totImpressions = 0, totClicks = 0, totConversions = 0, totConversionValue = 0
   if (adGroups.length > 0) {
-    totSpend           = adGroups.reduce((t, s) => t + s.spend, 0)
+    totSpend = (isGoogleAds && googleCampRawSpend !== null)
+      ? (effectiveAdFuelCut > 0 ? applyAdFuel(googleCampRawSpend, effectiveAdFuelCut) : googleCampRawSpend)
+      : adGroups.reduce((t, s) => t + s.spend, 0)
     totImpressions     = adGroups.reduce((t, s) => t + s.impressions, 0)
     totClicks          = adGroups.reduce((t, s) => t + s.clicks, 0)
     totConversions     = adGroups.reduce((t, s) => t + s.conversions, 0)
