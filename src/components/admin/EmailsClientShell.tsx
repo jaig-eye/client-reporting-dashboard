@@ -114,7 +114,7 @@ export default function EmailsClientShell({ clients }: Props) {
   const pendingCount = emails.filter(e => e.status === 'pending_review').length
 
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div>
       {/* Header */}
       <div className="page-header" style={{ marginBottom: '1.25rem' }}>
         <div style={{ flex: 1 }}>

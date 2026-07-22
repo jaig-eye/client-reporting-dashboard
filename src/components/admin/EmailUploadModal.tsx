@@ -196,8 +196,8 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
                         flex: 1, padding: '0.4rem', fontSize: '0.75rem', fontWeight: 600,
                         borderRadius: 6, border: '1px solid',
                         borderColor: status === s ? 'var(--blue)' : 'var(--border)',
-                        background:  status === s ? 'var(--blue)' : 'transparent',
-                        color:       status === s ? '#fff' : 'var(--text-muted)',
+                        background:  status === s ? 'var(--blue)' : 'var(--bg-subtle)',
+                        color:       status === s ? '#fff' : 'var(--text)',
                         cursor: 'pointer',
                       }}
                     >
@@ -220,8 +220,8 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
                       padding: '0.3rem 0.75rem', fontSize: '0.72rem', fontWeight: 600, borderRadius: 6,
                       border: '1px solid',
                       borderColor: contentTab === t ? 'var(--blue)' : 'var(--border)',
-                      background:  contentTab === t ? 'var(--blue)' : 'transparent',
-                      color:       contentTab === t ? '#fff' : 'var(--text-muted)',
+                      background:  contentTab === t ? 'var(--blue)' : 'var(--bg-subtle)',
+                      color:       contentTab === t ? '#fff' : 'var(--text)',
                       cursor: 'pointer',
                     }}>
                     {t === 'image' ? 'Upload Image' : t === 'html' ? 'Paste HTML' : 'Preview URL'}
@@ -340,9 +340,9 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
               onClick={() => step > 1 ? setStep((step - 1) as Step) : onClose()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '0.45rem 0.9rem', background: 'transparent',
+                padding: '0.45rem 0.9rem', background: 'var(--bg-subtle)',
                 border: '1px solid var(--border)', borderRadius: 6,
-                fontSize: '0.78rem', cursor: 'pointer', color: 'var(--text-muted)',
+                fontSize: '0.78rem', cursor: 'pointer', color: 'var(--text)',
               }}
             >
               <ArrowLeft size={14} aria-hidden />
