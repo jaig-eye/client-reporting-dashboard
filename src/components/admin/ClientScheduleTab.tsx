@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
+import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
 import { useSiloSounds } from '@/lib/useSiloSounds'
@@ -389,6 +390,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Signals used to tell PipelineCalendar instances to reload after silo-based generation
   const [spRefreshSignal,  setSpRefreshSignal]   = useState(0)
   const [rpRefreshSignal,  setRpRefreshSignal]   = useState(0)
+  const [showSpWizard,     setShowSpWizard]      = useState(false)
+  const [showRpWizard,     setShowRpWizard]      = useState(false)
 
   // ── Load schedule settings ─────────────────────────────────────────────────
   useEffect(() => {
@@ -715,13 +718,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_id: clientId,
-        generate_service_pages: generateServicePages,
         service_page_topic_guidelines: spGuidelines ?? null,
-        service_page_auto_generate: spAutoGenerate,
       }),
     })
     setGuidelinesSaving(false)
-    if (res.ok) showToast('Service Pages config saved')
+    if (res.ok) { showToast('Guidelines saved'); setSpGuidelinesOpen(false) }
     else showToast((await res.json() as { error?: string }).error || 'Failed to save', 'error')
   }
 
@@ -732,13 +733,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_id: clientId,
-        generate_regular_pages: generateRegularPages,
         regular_page_topic_guidelines: rpGuidelines ?? null,
-        regular_page_auto_generate: rpAutoGenerate,
       }),
     })
     setGuidelinesSaving(false)
-    if (res.ok) showToast('Regular Pages config saved')
+    if (res.ok) { showToast('Guidelines saved'); setRpGuidelinesOpen(false) }
     else showToast((await res.json() as { error?: string }).error || 'Failed to save', 'error')
   }
 
@@ -1825,52 +1824,47 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'service_page' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Config panel */}
+          {/* Header bar */}
+          <div className="card p-4" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Pages</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                On-demand generation — define the pages you need, set a slug structure, and generate them all at once or spaced over time.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowSpWizard(true)}
+              disabled={!aiConfigured}
+              title={!aiConfigured ? 'Configure an AI provider in Agency Settings first' : undefined}
+              style={{ flexShrink: 0 }}
+            >
+              Generate Service Pages →
+            </button>
+          </div>
+
+          {/* Collapsible guidelines */}
           <div
             className="card p-4 cursor-pointer select-none"
             onClick={() => setSpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
             <span style={{ fontSize: '0.9rem' }}>⚙</span>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Service Pages Configuration</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
-            {spAutoGenerate && <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>}
-            {generateServicePages
-              ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓ Enabled</span>
-              : <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Disabled</span>}
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{spGuidelinesOpen ? '▲' : '▼'}</span>
           </div>
           {spGuidelinesOpen && (
             <div className="card p-5" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, marginTop: -8 }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-                Service pages share the same WordPress connection, schedule frequency, author, and category settings as Blog Posts.
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Enable Service Pages</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Generate AI service landing pages for this client.</p>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{generateServicePages ? 'Enabled' : 'Disabled'}</span>
-                  <input type="checkbox" checked={generateServicePages} onChange={e => setGenerateServicePages(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                </label>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Auto Generate</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Automatically generate topics when the cron runs.</p>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{spAutoGenerate ? 'On' : 'Off'}</span>
-                  <input type="checkbox" checked={spAutoGenerate} onChange={e => setSpAutoGenerate(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                </label>
-              </div>
               <div style={{ marginBottom: '0.875rem' }}>
                 <Label>Topic Guidelines</Label>
+                <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
+                  Additional instructions injected into the AI prompt when generating service page content.
+                </p>
                 <textarea
                   className="input"
                   rows={3}
-                  placeholder="Additional instructions for generating service page topics…"
+                  placeholder="e.g. Focus on local service area keywords, emphasize certifications and years of experience…"
                   value={spGuidelines ?? ''}
                   onChange={e => setSpGuidelines(e.target.value || null)}
                   style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem' }}
@@ -1879,11 +1873,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button className="btn btn-secondary" onClick={() => setSpGuidelinesOpen(false)}>Cancel</button>
                 <button className="btn btn-primary" onClick={saveSpConfig} disabled={guidelinesSaving}>
-                  {guidelinesSaving ? 'Saving…' : 'Save'}
+                  {guidelinesSaving ? 'Saving…' : 'Save Guidelines'}
                 </button>
               </div>
             </div>
           )}
+
           <SiloManager
             contentType="service_page"
             contentTypeLabel="Service Page"
@@ -2541,52 +2536,47 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
       ═══════════════════════════════════════════════════════════════════ */}
       {activePill === 'regular_page' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Config panel */}
+          {/* Header bar */}
+          <div className="card p-4" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem' }}>Regular Pages</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                On-demand generation — define evergreen pages (About, FAQ, Resources, etc.) and generate them all at once or spaced over time.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowRpWizard(true)}
+              disabled={!aiConfigured}
+              title={!aiConfigured ? 'Configure an AI provider in Agency Settings first' : undefined}
+              style={{ flexShrink: 0 }}
+            >
+              Generate Regular Pages →
+            </button>
+          </div>
+
+          {/* Collapsible guidelines */}
           <div
             className="card p-4 cursor-pointer select-none"
             onClick={() => setRpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
             <span style={{ fontSize: '0.9rem' }}>⚙</span>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Regular Pages Configuration</span>
+            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
-            {rpAutoGenerate && <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>}
-            {generateRegularPages
-              ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓ Enabled</span>
-              : <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Disabled</span>}
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{rpGuidelinesOpen ? '▲' : '▼'}</span>
           </div>
           {rpGuidelinesOpen && (
             <div className="card p-5" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, marginTop: -8 }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-                Regular pages share the same WordPress connection, schedule frequency, author, and category settings as Blog Posts.
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Enable Regular Pages</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Generate evergreen pages (About, FAQ, Resources, etc.) for this client.</p>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{generateRegularPages ? 'Enabled' : 'Disabled'}</span>
-                  <input type="checkbox" checked={generateRegularPages} onChange={e => setGenerateRegularPages(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                </label>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.15rem' }}>Auto Generate</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Automatically generate topics when the cron runs.</p>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{rpAutoGenerate ? 'On' : 'Off'}</span>
-                  <input type="checkbox" checked={rpAutoGenerate} onChange={e => setRpAutoGenerate(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                </label>
-              </div>
               <div style={{ marginBottom: '0.875rem' }}>
                 <Label>Topic Guidelines</Label>
+                <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
+                  Additional instructions injected into the AI prompt when generating regular page content.
+                </p>
                 <textarea
                   className="input"
                   rows={3}
-                  placeholder="Additional instructions for generating regular page topics…"
+                  placeholder="e.g. Write in a friendly, informative tone. These pages are evergreen — avoid time-sensitive references…"
                   value={rpGuidelines ?? ''}
                   onChange={e => setRpGuidelines(e.target.value || null)}
                   style={{ width: '100%', resize: 'vertical', fontSize: '0.8125rem' }}
@@ -2595,11 +2585,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button className="btn btn-secondary" onClick={() => setRpGuidelinesOpen(false)}>Cancel</button>
                 <button className="btn btn-primary" onClick={saveRpConfig} disabled={guidelinesSaving}>
-                  {guidelinesSaving ? 'Saving…' : 'Save'}
+                  {guidelinesSaving ? 'Saving…' : 'Save Guidelines'}
                 </button>
               </div>
             </div>
           )}
+
           <SiloManager
             contentType="regular_page"
             contentTypeLabel="Regular Page"
@@ -2693,6 +2684,34 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           onMoveClusterKw={handleMoveClusterKw}
           onSave={handleSaveSilo}
           onClose={() => setSiloModalOpen(false)}
+        />
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          PAGE GENERATION WIZARDS
+      ═══════════════════════════════════════════════════════════════════ */}
+      {showSpWizard && (
+        <PageGenerationWizard
+          clientId={clientId}
+          contentType="service_page"
+          onClose={() => setShowSpWizard(false)}
+          onSuccess={() => {
+            setShowSpWizard(false)
+            setSpRefreshSignal(s => s + 1)
+            showToast('Service pages queued for generation.', 'success')
+          }}
+        />
+      )}
+      {showRpWizard && (
+        <PageGenerationWizard
+          clientId={clientId}
+          contentType="regular_page"
+          onClose={() => setShowRpWizard(false)}
+          onSuccess={() => {
+            setShowRpWizard(false)
+            setRpRefreshSignal(s => s + 1)
+            showToast('Regular pages queued for generation.', 'success')
+          }}
         />
       )}
     </div>

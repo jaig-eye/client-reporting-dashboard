@@ -179,9 +179,12 @@ export async function GET(request: NextRequest) {
     let autoSiloTargetExists: boolean | undefined
     let autoSiloTargetKeyword: string | undefined
     {
+      // service_page and regular_page are now generated on-demand via the
+      // Page Generation Wizard — they no longer participate in automated silo discovery.
+      // The post-generation loop still processes any wizard-queued approved topics of those types.
+      void generate_service_pages  // suppress unused-var lint without removing the destructure
+      void generate_regular_pages
       const activeContentTypes: string[] = ['blog']
-      if (generate_service_pages) activeContentTypes.push('service_page')
-      if (generate_regular_pages) activeContentTypes.push('regular_page')
 
       const { data: activeSilos } = await db
         .from('content_silos')

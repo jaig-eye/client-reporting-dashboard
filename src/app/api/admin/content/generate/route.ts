@@ -43,6 +43,7 @@ type TopicData = {
   silo_id:                string | null
   content_type:           string | null
   custom_focus:           string | null
+  custom_slug:            string | null
 }
 
 type AgencySettings = {
@@ -941,7 +942,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     }
 
     const wc        = wc0  // already computed by quality gate above
-    const finalSlug = await uniqueSlug(db, effectiveClientId, parsed.slug || titleToSlug(parsed.title))
+    // custom_slug from wizard takes precedence; otherwise use AI-generated slug → title fallback
+    const finalSlug = await uniqueSlug(db, effectiveClientId, topicData.custom_slug || parsed.slug || titleToSlug(parsed.title))
     const seoScore = scoreSeoPost({
       html:         parsed.content,
       title:        parsed.title,
@@ -1101,7 +1103,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id')
+      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id, custom_slug')
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
