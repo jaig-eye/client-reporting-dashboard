@@ -1883,7 +1883,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             </div>
           )}
 
-          <SiloManager
+          {/* SiloManager and PipelineCalendar sunset for service pages — wizard-based flow replaces them */}
+          {false && <SiloManager
             contentType="service_page"
             contentTypeLabel="Service Page"
             silos={silos}
@@ -1896,8 +1897,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onArchiveSilo={handleDeleteSilo}
             onGenerateFromSilo={handleGenerateFromSilo}
             onMarkHubUpdated={handleMarkHubUpdated}
-          />
-          <PipelineCalendar
+          />}
+          {false && <PipelineCalendar
             clientId={clientId}
             contentType="service_page"
             connectionId={schedule.connection_id ?? null}
@@ -1906,7 +1907,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             aiConfigured={aiConfigured}
             isActive={isActive && activePill === 'service_page'}
             refreshSignal={spRefreshSignal}
-          />
+          />}
         </div>
       )}
 
@@ -2595,7 +2596,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             </div>
           )}
 
-          <SiloManager
+          {/* SiloManager and PipelineCalendar sunset for regular pages — wizard-based flow replaces them */}
+          {false && <SiloManager
             contentType="regular_page"
             contentTypeLabel="Regular Page"
             silos={silos}
@@ -2608,8 +2610,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onArchiveSilo={handleDeleteSilo}
             onGenerateFromSilo={handleGenerateFromSilo}
             onMarkHubUpdated={handleMarkHubUpdated}
-          />
-          <PipelineCalendar
+          />}
+          {false && <PipelineCalendar
             clientId={clientId}
             contentType="regular_page"
             connectionId={schedule.connection_id ?? null}
@@ -2618,7 +2620,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             aiConfigured={aiConfigured}
             isActive={isActive && activePill === 'regular_page'}
             refreshSignal={rpRefreshSignal}
-          />
+          />}
         </div>
       )}
 

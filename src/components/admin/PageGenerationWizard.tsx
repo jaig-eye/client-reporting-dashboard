@@ -157,7 +157,7 @@ export default function PageGenerationWizard({
       padding:         '1rem',
     },
     modal: {
-      background:      'var(--bg-card)',
+      background:      'var(--bg-surface)',
       border:          '1px solid var(--border)',
       borderRadius:    12,
       width:           '100%',
