@@ -326,7 +326,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
           onClick={e => { if (e.target === e.currentTarget) { setExpanded(null); setEditing(false) } }}
         >
           <div style={{
-            background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
             width: '100%', maxWidth: 520, maxHeight: '80vh',
             display: 'flex', flexDirection: 'column',
             boxShadow: '0 20px 60px rgba(0,0,0,0.3)',

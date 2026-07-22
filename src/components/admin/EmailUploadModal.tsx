@@ -10,7 +10,7 @@ interface Props {
   onCreated: (email: unknown) => void
 }
 
-type Step = 1 | 2 | 3
+type Step = 1 | 2
 
 export default function EmailUploadModal({ clients, onClose, onCreated }: Props) {
   const [step, setStep] = useState<Step>(1)
@@ -21,6 +21,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
   const [subject,     setSubject]     = useState('')
   const [goal,        setGoal]        = useState('')
   const [sentAt,      setSentAt]      = useState('')
+  const [utmCampaign, setUtmCampaign] = useState('')
   const [status,      setStatus]      = useState<'pending_review' | 'draft'>('pending_review')
 
   // Step 2 fields
@@ -29,13 +30,6 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
   const [previewUrl,  setPreviewUrl]  = useState('')
   const [htmlContent, setHtmlContent] = useState('')
   const [contentTab,  setContentTab]  = useState<'image' | 'html' | 'url'>('image')
-
-  // Step 3 fields
-  const [utmCampaign, setUtmCampaign] = useState('')
-  const [openRate,    setOpenRate]    = useState('')
-  const [clickRate,   setClickRate]   = useState('')
-  const [conversions, setConversions] = useState('')
-  const [revenue,     setRevenue]     = useState('')
 
   const [saving,  setSaving]  = useState(false)
   const [error,   setError]   = useState<string | null>(null)
@@ -91,10 +85,6 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
         preview_url:       previewUrl.trim() || undefined,
         html_content:      htmlContent.trim() || undefined,
         utm_campaign:      utmCampaign.trim() || undefined,
-        open_rate:         openRate   ? parseFloat(openRate)   : undefined,
-        click_rate:        clickRate  ? parseFloat(clickRate)  : undefined,
-        conversions:       conversions ? parseInt(conversions)  : undefined,
-        revenue:           revenue    ? parseFloat(revenue)    : undefined,
       }
 
       const res = await fetch('/api/admin/emails', {
@@ -132,7 +122,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
       background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
     }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{
-        background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12,
+        background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12,
         width: '100%', maxWidth: 560, maxHeight: '90vh', overflow: 'auto',
         boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
       }}>
@@ -140,7 +130,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Add Email</h2>
-            <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-faint)' }}>Step {step} of 3</p>
+            <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-faint)' }}>Step {step} of 2</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
             <X size={18} aria-hidden />
@@ -149,7 +139,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
 
         {/* Step progress */}
         <div style={{ display: 'flex', padding: '0.75rem 1.25rem 0', gap: 6 }}>
-          {([1,2,3] as Step[]).map(s => (
+          {([1,2] as Step[]).map(s => (
             <div key={s} style={{
               flex: 1, height: 3, borderRadius: 2,
               background: s <= step ? 'var(--blue)' : 'var(--border)',
@@ -184,6 +174,10 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
               <div>
                 <label style={labelStyle}>Sent / Scheduled Date</label>
                 <input type="date" value={sentAt} onChange={e => setSentAt(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>UTM Campaign</label>
+                <input value={utmCampaign} onChange={e => setUtmCampaign(e.target.value)} placeholder="e.g. nov-newsletter-2024" style={inputStyle} />
               </div>
               <div>
                 <label style={labelStyle}>Submit as</label>
@@ -299,37 +293,6 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
             </div>
           )}
 
-          {/* ── Step 3: Tracking / Performance ── */}
-          {step === 3 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-faint)' }}>
-                These fields are optional and can be filled in after the email sends.
-              </p>
-              <div>
-                <label style={labelStyle}>UTM Campaign</label>
-                <input value={utmCampaign} onChange={e => setUtmCampaign(e.target.value)} placeholder="e.g. nov-newsletter-2024" style={inputStyle} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={labelStyle}>Open Rate (%)</label>
-                  <input type="number" min="0" max="100" step="0.1" value={openRate} onChange={e => setOpenRate(e.target.value)} placeholder="22.5" style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Click Rate (%)</label>
-                  <input type="number" min="0" max="100" step="0.1" value={clickRate} onChange={e => setClickRate(e.target.value)} placeholder="3.4" style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Conversions</label>
-                  <input type="number" min="0" value={conversions} onChange={e => setConversions(e.target.value)} placeholder="12" style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Revenue ($)</label>
-                  <input type="number" min="0" step="0.01" value={revenue} onChange={e => setRevenue(e.target.value)} placeholder="1500.00" style={inputStyle} />
-                </div>
-              </div>
-            </div>
-          )}
-
           {error && (
             <p style={{ marginTop: 10, fontSize: '0.78rem', color: 'var(--red)' }}>{error}</p>
           )}
@@ -349,7 +312,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
               {step === 1 ? 'Cancel' : 'Back'}
             </button>
 
-            {step < 3 ? (
+            {step < 2 ? (
               <button
                 onClick={() => canProceed() && setStep((step + 1) as Step)}
                 disabled={!canProceed()}
