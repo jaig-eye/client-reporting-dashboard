@@ -757,6 +757,7 @@ export default function AgencySettingsPage() {
               <FormField label="Frequency">
                 <select className="input" value={form.ads_sync_frequency} onChange={e => field('ads_sync_frequency', e.target.value)}>
                   <option value="hourly">Hourly</option>
+                  <option value="every2h">Every 2 hours</option>
                   <option value="every6h">Every 6 hours</option>
                   <option value="every12h">Every 12 hours</option>
                   <option value="daily">Daily</option>

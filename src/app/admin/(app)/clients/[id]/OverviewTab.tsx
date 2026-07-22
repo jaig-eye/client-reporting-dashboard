@@ -508,11 +508,6 @@ export default function OverviewTab({
       {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
-        {/* Notes stream */}
-        <div className="card p-5">
-          <ClientNotesStream clientId={clientId} />
-        </div>
-
         {/* Key stats */}
         <div className="card p-5">
           <h2 className="section-title mb-3">At a Glance</h2>
@@ -588,6 +583,11 @@ export default function OverviewTab({
             </span>
             <CopyButton text={dashUrl} />
           </div>
+        </div>
+
+        {/* Notes stream — at the bottom so it can grow without pushing key info off screen */}
+        <div className="card p-5">
+          <ClientNotesStream clientId={clientId} />
         </div>
       </div>
     </div>

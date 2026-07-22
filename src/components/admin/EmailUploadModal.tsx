@@ -122,7 +122,7 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
     borderRadius: 6, fontSize: '0.8rem', color: 'var(--text)', fontFamily: 'inherit',
   }
   const labelStyle: React.CSSProperties = {
-    fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)',
+    fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)',
     display: 'block', marginBottom: 4,
   }
 

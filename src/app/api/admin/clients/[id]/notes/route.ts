@@ -16,11 +16,11 @@ export async function GET(
 
   const { data, error } = await db
     .from('client_notes')
-    .select('id, content, pinned, created_at, user_id, users(name, avatar_url)')
+    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users(name, avatar_url), editor:users!updated_by(name, avatar_url)')
     .eq('client_id', clientId)
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(50)
+    .limit(100)
 
   if (error) {
     console.error('[client notes GET]', error)
@@ -42,9 +42,9 @@ export async function POST(
   const { id: clientId } = await params
   const userId = request.cookies.get('admin_user_id')?.value ?? null
 
-  let body: { content?: string; pinned?: boolean }
+  let body: { content?: string; title?: string; pinned?: boolean }
   try {
-    body = await request.json() as { content?: string; pinned?: boolean }
+    body = await request.json() as { content?: string; title?: string; pinned?: boolean }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
@@ -58,8 +58,14 @@ export async function POST(
 
   const { data, error } = await db
     .from('client_notes')
-    .insert({ client_id: clientId, user_id: userId, content, pinned: body.pinned ?? false })
-    .select('id, content, pinned, created_at, user_id, users(name, avatar_url)')
+    .insert({
+      client_id: clientId,
+      user_id:   userId,
+      content,
+      title:     body.title?.trim() || null,
+      pinned:    body.pinned ?? false,
+    })
+    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users(name, avatar_url), editor:users!updated_by(name, avatar_url)')
     .single()
 
   if (error || !data) {

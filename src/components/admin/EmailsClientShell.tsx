@@ -114,15 +114,13 @@ export default function EmailsClientShell({ clients }: Props) {
   const pendingCount = emails.filter(e => e.status === 'pending_review').length
 
   return (
-    <div style={{ padding: '1.5rem 2rem', maxWidth: 1100 }}>
+    <div style={{ maxWidth: 1100 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
+      <div className="page-header" style={{ marginBottom: '1.25rem' }}>
+        <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <EnvelopeSimple size={22} style={{ color: 'var(--blue)' }} aria-hidden />
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-              Emails
-            </h1>
+            <EnvelopeSimple size={20} style={{ color: 'var(--blue)' }} aria-hidden />
+            <h1 className="page-title" style={{ margin: 0 }}>Emails</h1>
             <span style={{
               fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
               background: 'var(--blue)', color: '#fff',
@@ -137,17 +135,12 @@ export default function EmailsClientShell({ clients }: Props) {
               </span>
             )}
           </div>
-          <p style={{ fontSize: '0.78rem', color: 'var(--text-faint)', margin: '4px 0 0' }}>
-            Upload, review, and approve client email campaigns.
-          </p>
+          <p className="page-subtitle">Upload, review, and approve client email campaigns.</p>
         </div>
         <button
           onClick={() => setShowUpload(true)}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '0.5rem 1rem', background: 'var(--blue)', color: '#fff',
-            border: 'none', borderRadius: 7, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
-          }}
+          className="btn btn-primary"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
         >
           <Plus size={15} aria-hidden /> Add Email
         </button>
