@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
 import { sendEmail } from '@/lib/email'
 
-export const maxDuration = 300
+export const maxDuration = 600
 
 const ADS_TYPES    = ['google_ads', 'meta_ads']
 const OTHER_TYPES  = ['google_analytics', 'google_business_profile', 'ghl', 'ahrefs', 'wordpress']

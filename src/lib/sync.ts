@@ -53,7 +53,7 @@ export const BACKFILL_DAYS = 730
  * Google Ads and Meta both update conversions retroactively (up to 30 days back),
  * so we re-pull recent days to capture late-arriving conversion data.
  */
-export const INCREMENTAL_DAYS = 7
+export const INCREMENTAL_DAYS = 30
 
 /**
  * Days re-synced for GSC on incremental runs.
