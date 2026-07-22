@@ -3,7 +3,7 @@
 import { useState, useEffect }  from 'react'
 import Link                      from 'next/link'
 import { ConnectorLogo }         from '@/components/ConnectorLogo'
-import { GearSix }               from '@phosphor-icons/react/dist/ssr'
+import { GearSix, BookOpen, Check } from '@phosphor-icons/react/dist/ssr'
 import type { ConnectorType }    from '@/lib/types'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
@@ -24,6 +24,7 @@ export type ShellClientRow = {
   purchase_action_fallback?: string | null
   ad_fuel_cut?: number | null
   historic_bill_day?: number | null
+  dashboard_token?: string | null
 }
 
 export type ShellConnRow = {
@@ -177,6 +178,7 @@ type BuiltRow = {
   id: string
   name: string
   logoUrl: string | null
+  dashboard_token: string | null
   connectors: { type: ConnectorType; label: string }[]
   syncStatus: 'success' | 'error' | 'none'
   syncErrCount: number
@@ -210,6 +212,7 @@ export default function DashboardClientShell({
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [metricsData,    setMetricsData]    = useState<MetricsApiResponse | null>(null)
   const [metricsError,   setMetricsError]   = useState(false)
+  const [copiedId,       setCopiedId]       = useState<string | null>(null)
 
   useEffect(() => {
     setMetricsLoading(true)
@@ -277,9 +280,10 @@ export default function DashboardClientShell({
     const metrics = metricsData?.clientMetrics[client.id]
 
     return {
-      id:       client.id,
-      name:     client.name,
-      logoUrl:  client.logo_url ?? null,
+      id:              client.id,
+      name:            client.name,
+      logoUrl:         client.logo_url ?? null,
+      dashboard_token: client.dashboard_token ?? null,
       connectors: conns.map(c => ({
         type:  c.connector.type as ConnectorType,
         label: c.connector.label,
@@ -625,8 +629,29 @@ export default function DashboardClientShell({
                         return null
                       })}
 
-                      {/* Actions — gear icon */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
+                      {/* Actions — ad library copy + gear icon */}
+                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>
+                        {row.dashboard_token && (
+                          <button
+                            title="Copy Ad Library link"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(`${window.location.origin}/share/ads?token=${row.dashboard_token}`)
+                              setCopiedId(row.id)
+                              setTimeout(() => setCopiedId(c => c === row.id ? null : c), 1500)
+                            }}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center',
+                              padding: '0.3rem', borderRadius: 6,
+                              border: 'none', background: 'none',
+                              color: copiedId === row.id ? 'var(--green)' : 'var(--text-muted)',
+                              cursor: 'pointer', transition: 'color 0.15s',
+                            }}
+                          >
+                            {copiedId === row.id
+                              ? <Check size={16} aria-hidden />
+                              : <BookOpen size={16} aria-hidden />}
+                          </button>
+                        )}
                         <Link
                           href={`/admin/clients/${row.id}`}
                           title="Client Settings"

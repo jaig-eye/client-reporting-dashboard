@@ -34,6 +34,7 @@ import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
 import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
+import EmailSchedulePanel from '@/components/admin/EmailSchedulePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -623,6 +624,12 @@ export default async function ClientDetailPage({
               campaignsPausedAt={(client as unknown as Record<string, unknown>).campaigns_paused_at as string | null ?? null}
               pauseLog={pauseLog}
             />
+          </div>
+
+          {/* Email Schedule */}
+          <div className="card p-5">
+            <p className="section-desc mb-3">Set a weekly email cadence for this client. The assigned team member will receive a Discord reminder if no email is submitted by Monday each week.</p>
+            <EmailSchedulePanel clientId={id} />
           </div>
 
           {/* Client logo */}

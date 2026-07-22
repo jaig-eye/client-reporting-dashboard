@@ -15,6 +15,7 @@ import {
   RocketLaunch,
   Bell,
   GlobeSimple,
+  EnvelopeSimple,
 } from '@phosphor-icons/react'
 import SoundToggle from './SoundToggle'
 
@@ -24,12 +25,14 @@ interface NavItem {
   icon: React.ReactNode
   matchPrefix?: boolean
   alertsKey?: boolean
+  beta?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/admin/dashboard',   label: 'Clients',          icon: <Buildings size={16} aria-hidden />,     matchPrefix: true  },
   { href: '/admin/connections', label: 'Integrations',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
-  { href: '/admin/content',     label: 'Content',          icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true  },
+  { href: '/admin/content',     label: 'Content',          icon: <NotePencil size={16} aria-hidden />,     matchPrefix: true  },
+  { href: '/admin/emails',      label: 'Emails',           icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
   { href: '/admin/ad-fuel',     label: 'Ad Fuel',          icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true  },
   { href: '/admin/sites',       label: 'Sites',            icon: <GlobeSimple size={16} aria-hidden />,   matchPrefix: true  },
   { href: '/admin/alerts',      label: 'Alerts',           icon: <Bell size={16} aria-hidden />,          matchPrefix: true, alertsKey: true },
@@ -127,6 +130,16 @@ export default function Sidebar({
                 {item.icon}
               </span>
               {item.label}
+              {item.beta && (
+                <span style={{
+                  fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+                  background: 'var(--blue)', color: '#fff',
+                  padding: '1px 4px', borderRadius: 3,
+                  marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+                }}>
+                  BETA
+                </span>
+              )}
               {item.alertsKey && unreadAlertCount > 0 && (
                 <span
                   style={{

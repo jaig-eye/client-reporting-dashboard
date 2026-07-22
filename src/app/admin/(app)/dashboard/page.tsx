@@ -62,7 +62,7 @@ export default async function AdminOverviewPage({
   // Fast queries only — no metric data here
   const [clientsRes, connectionsRes, syncJobsRes, settingsRes] = await Promise.all([
     db.from('clients')
-      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut, historic_bill_day')
+      .select('id, name, logo_url, benchmark_roas, benchmark_ctr, benchmark_cpc, benchmark_conv_rate, enabled_benchmarks, lead_action, lead_action_fallback, purchase_action, purchase_action_fallback, ad_fuel_cut, historic_bill_day, dashboard_token')
       .order('name'),
 
     db.from('client_connections')

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
+import ClientNotesStream from '@/components/admin/ClientNotesStream'
 
 interface AdminUser {
   id:         string
@@ -506,6 +507,11 @@ export default function OverviewTab({
 
       {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+        {/* Notes stream */}
+        <div className="card p-5">
+          <ClientNotesStream clientId={clientId} />
+        </div>
 
         {/* Key stats */}
         <div className="card p-5">

@@ -1,3 +1,4 @@
+// GET  /api/admin/users — list active users (any admin)
 // POST /api/admin/users — create a new admin user (super admin only)
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -6,6 +7,23 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { parseBody }   from '@/lib/apiError'
+
+export async function GET(req: NextRequest) {
+  const session = req.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const db = createAdminClient()
+  const { data, error } = await db
+    .from('users')
+    .select('id, name, avatar_url')
+    .eq('is_active', true)
+    .order('name')
+
+  if (error) return NextResponse.json({ error: 'Failed to load users' }, { status: 500 })
+  return NextResponse.json({ users: data ?? [] })
+}
 
 function isSuperAdmin(req: NextRequest): boolean {
   // Super admin = authenticated but no admin_user_id cookie

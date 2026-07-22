@@ -63,6 +63,10 @@
     {
       "path": "/api/cron/site-audits",
       "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/cron/email-reminders",
+      "schedule": "0 9 * * 1"
     }
   ]
 }
