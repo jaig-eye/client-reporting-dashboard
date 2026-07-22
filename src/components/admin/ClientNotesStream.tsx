@@ -105,8 +105,17 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
   }
 
   async function deleteNote(id: string) {
+    const snapshot = notes.find(n => n.id === id)
     setNotes(prev => prev.filter(n => n.id !== id))
-    await fetch(`/api/admin/clients/${clientId}/notes/${id}`, { method: 'DELETE' }).catch(() => {})
+    const res = await fetch(`/api/admin/clients/${clientId}/notes/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (snapshot && (!res || !res.ok)) {
+      setNotes(prev =>
+        [snapshot, ...prev].sort((a, b) => {
+          if (a.pinned !== b.pinned) return b.pinned ? 1 : -1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        })
+      )
+    }
   }
 
   async function togglePin(note: Note) {

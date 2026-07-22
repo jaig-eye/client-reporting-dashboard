@@ -50,16 +50,25 @@ export async function PUT(
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
+  const epw = body.emails_per_week ?? 1
+  const rdb = body.reminder_days_before ?? 2
+  if (!Number.isInteger(epw) || epw < 1 || epw > 7) {
+    return NextResponse.json({ error: 'emails_per_week must be between 1 and 7' }, { status: 400 })
+  }
+  if (!Number.isInteger(rdb) || rdb < 0 || rdb > 14) {
+    return NextResponse.json({ error: 'reminder_days_before must be between 0 and 14' }, { status: 400 })
+  }
+
   const db = createAdminClient()
 
   const { data, error } = await db
     .from('email_schedules')
     .upsert({
       client_id:            clientId,
-      is_active:            body.is_active            ?? true,
-      emails_per_week:      body.emails_per_week      ?? 1,
-      assigned_user_id:     body.assigned_user_id     ?? null,
-      reminder_days_before: body.reminder_days_before ?? 2,
+      is_active:            body.is_active        ?? true,
+      emails_per_week:      epw,
+      assigned_user_id:     body.assigned_user_id ?? null,
+      reminder_days_before: rdb,
       updated_at:           new Date().toISOString(),
     }, { onConflict: 'client_id' })
     .select(SELECT)

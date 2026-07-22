@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       .select('discord_bot_token, discord_ops_channel_id')
       .maybeSingle(),
     db.from('email_schedules')
-      .select('client_id, emails_per_week, assigned_user_id, clients(name), users(name)')
+      .select('client_id, emails_per_week, assigned_user_id, clients(name, discord_channel_id), users(name)')
       .eq('is_active', true),
   ])
 
@@ -48,13 +48,16 @@ export async function GET(request: NextRequest) {
         .from('email_campaigns')
         .select('id', { count: 'exact', head: true })
         .eq('client_id', sched.client_id)
+        .in('status', ['pending_review', 'approved'])
         .gte('created_at', sevenDaysAgo)
 
       const submitted = count ?? 0
       if (submitted >= sched.emails_per_week) return { clientId: sched.client_id, reminded: false }
 
-      const clientName   = (sched.clients as unknown as { name: string } | null)?.name ?? 'Unknown client'
-      const assignedName = (sched.users  as unknown as { name: string } | null)?.name
+      type ClientJoin = { name: string; discord_channel_id: string | null }
+      const clientRow    = sched.clients as unknown as ClientJoin | null
+      const clientName   = clientRow?.name ?? 'Unknown client'
+      const assignedName = (sched.users as unknown as { name: string } | null)?.name
 
       const msg =
         `⏰ **Email reminder:** _${clientName}_ needs **${sched.emails_per_week} email${sched.emails_per_week > 1 ? 's' : ''}** this week.\n` +
@@ -65,13 +68,8 @@ export async function GET(request: NextRequest) {
       await sendDiscordMessage(botToken, opsChannel, msg)
 
       // Also ping the client's own Discord channel if configured
-      const { data: client } = await db
-        .from('clients')
-        .select('discord_channel_id')
-        .eq('id', sched.client_id)
-        .maybeSingle()
-      if (client?.discord_channel_id) {
-        await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
+      if (clientRow?.discord_channel_id) {
+        await sendDiscordMessage(botToken, clientRow.discord_channel_id, msg)
       }
 
       return { clientId: sched.client_id, reminded: true }

@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       preview_url:       body.preview_url || null,
       sent_at:           body.sent_at || null,
       utm_campaign:      body.utm_campaign?.trim() || null,
-      status:            body.status ?? 'pending_review',
+      status:            body.status === 'draft' ? 'draft' : 'pending_review',
       submitted_by:      userId,
     })
     .select('id, title, client_id, status, submitted_by, clients(name)')

@@ -61,7 +61,7 @@ export async function PATCH(
     'preview_image_url', 'html_content', 'preview_url',
     'sent_at', 'utm_campaign',
     'open_rate', 'click_rate', 'conversions', 'revenue',
-    'status',
+    // 'status' intentionally omitted — status changes go through /review
   ]
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -97,6 +97,13 @@ export async function DELETE(
 
   const { id } = await params
   const db = createAdminClient()
+
+  const { data: existing } = await db
+    .from('email_campaigns')
+    .select('id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { error } = await db.from('email_campaigns').delete().eq('id', id)
   if (error) return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })

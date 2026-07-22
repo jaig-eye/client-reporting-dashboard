@@ -1116,6 +1116,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             {id === 'service' && (!!saSettings.auto_generate) && (
               <span className="badge badge-green" style={{ fontSize: '0.55rem', marginLeft: 5, verticalAlign: 'middle' }}>Auto</span>
             )}
+            {(id === 'service_page' || id === 'regular_page') && (
+              <span style={{
+                fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+                background: 'var(--blue)', color: '#fff',
+                padding: '1px 4px', borderRadius: 3,
+                marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+              }}>BETA</span>
+            )}
           </button>
         ))}
       </div>

@@ -30,6 +30,17 @@ export async function POST(
 
   const db = createAdminClient()
 
+  const { data: existing } = await db
+    .from('email_campaigns')
+    .select('status')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (existing.status !== 'pending_review') {
+    return NextResponse.json({ error: 'Email has already been reviewed' }, { status: 409 })
+  }
+
   const { data, error } = await db
     .from('email_campaigns')
     .update({

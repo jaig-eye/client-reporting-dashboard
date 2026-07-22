@@ -60,6 +60,7 @@ export async function PATCH(
     console.error('[client note PATCH]', error)
     return NextResponse.json({ error: 'Failed to update note' }, { status: 500 })
   }
+  if (!data) return NextResponse.json({ error: 'Note not found' }, { status: 404 })
 
   return NextResponse.json({ note: data })
 }
