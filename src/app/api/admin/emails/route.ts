@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
         const submitterName = submitter?.name ?? 'Admin'
         const botToken      = settings?.discord_bot_token as string | null
         const opsChannel    = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
-        const baseUrl       = process.env.NEXT_PUBLIC_SITE_URL ?? ''
+        const baseUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
         const reviewUrl     = `${baseUrl}/admin/emails?open=${campaign.id}`
 
         const msg =

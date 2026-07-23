@@ -863,14 +863,25 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const url = kind === 'topic'
       ? `/api/admin/content/topics/${id}`
       : `/api/admin/content/posts/${id}`
-    const res = await fetch(url, { method: 'DELETE' })
-    setPurgeLoading(p => ({ ...p, [id]: false }))
-    if (res.ok) {
-      if (kind === 'topic') setTopics(p => p.filter(t => t.id !== id))
-      else setPosts(p => p.filter(post => post.id !== id))
-      showToast('Deleted')
-    } else {
+    try {
+      const res = await fetch(url, { method: 'DELETE' })
+      if (res.ok) {
+        if (kind === 'topic') {
+          // Also remove the linked post to prevent it resurfacing as an orphan
+          const linkedPost = topicIdToPost.get(id)
+          if (linkedPost) setPosts(p => p.filter(post => post.id !== linkedPost.id))
+          setTopics(p => p.filter(t => t.id !== id))
+        } else {
+          setPosts(p => p.filter(post => post.id !== id))
+        }
+        showToast('Deleted')
+      } else {
+        showToast('Delete failed', 'error')
+      }
+    } catch {
       showToast('Delete failed', 'error')
+    } finally {
+      setPurgeLoading(p => ({ ...p, [id]: false }))
     }
   }
 
@@ -1110,7 +1121,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const twoMonthsAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const archivedKeys = dateKeys.filter(k => k !== 'unscheduled' && k < twoMonthsAgo)
   const recentKeys   = dateKeys.filter(k => k === 'unscheduled' || k >= twoMonthsAgo)
-  const archivedCount = archivedKeys.reduce((sum, k) => sum + (groups.get(k)?.length ?? 0), 0)
+
+  // Shared filter predicate for both recentKeys and archivedKeys maps
+  const filterGroupItems = (items: RowItem[]) => items.filter(item => {
+    if (!showRejected) {
+      if (item.kind === 'topic' && item.data.status === 'rejected') return false
+      if (item.kind === 'post'  && item.data.status === 'rejected')  return false
+      if (item.kind === 'post'  && rejectedTopicPostIds.has(item.data.id)) return false
+    }
+    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
+    return true
+  })
+
+  const archivedCount = archivedKeys.reduce((sum, k) => sum + filterGroupItems(groups.get(k) ?? []).length, 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1430,16 +1453,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               </thead>
               <tbody>
                 {recentKeys.map(dateKey => {
-                  const group = (groups.get(dateKey) ?? []).filter(item => {
-                    if (!showRejected) {
-                      if (item.kind === 'topic' && item.data.status === 'rejected') return false
-                      if (item.kind === 'post'  && item.data.status === 'rejected')  return false
-                      if (item.kind === 'post'  && rejectedTopicPostIds.has(item.data.id)) return false
-                    }
-                    // Hide terminal published/draft_saved posts from date groups (shown in Published section)
-                    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
-                    return true
-                  })
+                  const group = filterGroupItems(groups.get(dateKey) ?? [])
 
                   if (group.length === 0) return null
 
@@ -1808,15 +1822,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </tr>
                 )}
                 {showArchived && archivedKeys.map(dateKey => {
-                  const group = (groups.get(dateKey) ?? []).filter(item => {
-                    if (!showRejected) {
-                      if (item.kind === 'topic' && item.data.status === 'rejected') return false
-                      if (item.kind === 'post'  && item.data.status === 'rejected')  return false
-                      if (item.kind === 'post'  && rejectedTopicPostIds.has(item.data.id)) return false
-                    }
-                    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
-                    return true
-                  })
+                  const group = filterGroupItems(groups.get(dateKey) ?? [])
                   if (group.length === 0) return null
                   return [
                     <tr key={`hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)', opacity: 0.75 }}>
@@ -1829,6 +1835,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     ...group.map(item => {
                       if (item.kind === 'topic') {
                         const t = item.data as Topic
+                        const linkedPost = topicIdToPost.get(t.id)
+                        const hasReview  = linkedPost && ['for_review', 'generated', 'draft_saved'].includes(linkedPost.status)
                         return (
                           <tr key={`arch-topic-${t.id}`} style={{ opacity: 0.7 }}>
                             <td style={{ padding: '7px 8px 7px 0', verticalAlign: 'middle' }}>
@@ -1842,13 +1850,36 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               {fmtDate(t.target_publish_date)}
                             </td>
                             <td style={{ padding: '7px 0 7px 8px', textAlign: 'right' }}>
-                              <button
-                                className="btn btn-secondary"
-                                style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
-                                onClick={() => void purgeItem('topic', t.id)}
-                                disabled={purgeLoading[t.id]}
-                                title="Permanently delete"
-                              ><Trash size={12} /></button>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                {hasReview && (
+                                  <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                                    onClick={() => setReviewPost(linkedPost!)}>
+                                    → Review
+                                  </button>
+                                )}
+                                {t.status === 'approved' && !hasReview && (
+                                  <button className="btn btn-secondary"
+                                    style={{ padding: '2px 6px', color: 'var(--blue)', display: 'inline-flex', alignItems: 'center' }}
+                                    onClick={() => generatePost(t.id)} title="Generate post">
+                                    <Play size={12} weight="fill" />
+                                  </button>
+                                )}
+                                {!['approved', 'generating', 'generated'].includes(t.status) && (
+                                  <button className="btn btn-secondary"
+                                    style={{ padding: '2px 6px', color: 'var(--green)', display: 'inline-flex', alignItems: 'center' }}
+                                    onClick={() => topicAction(t.id, 'approved')}
+                                    disabled={topicLoading[t.id]} title="Approve topic">
+                                    <Check size={12} weight="bold" />
+                                  </button>
+                                )}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
+                                  onClick={() => void purgeItem('topic', t.id)}
+                                  disabled={purgeLoading[t.id]}
+                                  title="Permanently delete"
+                                ><Trash size={12} /></button>
+                              </div>
                             </td>
                           </tr>
                         )
