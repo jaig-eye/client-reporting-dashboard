@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { EnvelopeSimple, Plus, FunnelSimple, CheckCircle, XCircle, Clock, Warning } from '@phosphor-icons/react'
 import EmailUploadModal  from './EmailUploadModal'
 import EmailDetailModal  from './EmailDetailModal'
@@ -30,11 +30,13 @@ interface EmailCampaign {
   reviewed_at:       string | null
   submitted_by:      string | null
   reviewed_by:       string | null
+  assigned_to:       string | null
   created_at:        string
   updated_at:        string
   clients:           { name: string } | null
   submitter:         { name: string; avatar_url: string | null } | null
   reviewer:          { name: string } | null
+  assignee:          { name: string; avatar_url: string | null } | null
 }
 
 const STATUS_FILTERS = [
@@ -80,6 +82,19 @@ export default function EmailsClientShell({ clients }: Props) {
   const [clientFilter, setClientFilter] = useState('all')
   const [showUpload,   setShowUpload]   = useState(false)
   const [detailEmail,  setDetailEmail]  = useState<EmailCampaign | null>(null)
+
+  // Auto-open email from ?open= magic link (e.g. from Discord notification)
+  const openHandled = useRef(false)
+  useEffect(() => {
+    if (openHandled.current) return
+    const openId = new URLSearchParams(window.location.search).get('open')
+    if (!openId) return
+    openHandled.current = true
+    fetch(`/api/admin/emails/${openId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { email: EmailCampaign } | null) => { if (d?.email) setDetailEmail(d.email) })
+      .catch(() => {})
+  }, [])
 
   const loadEmails = useCallback(() => {
     setLoading(true)

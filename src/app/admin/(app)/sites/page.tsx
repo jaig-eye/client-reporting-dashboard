@@ -485,9 +485,14 @@ export default function SitesPage() {
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
             <thead>
               <tr>
-                {['', 'Name', 'Client', '7d Uptime', 'SSL', 'Audit', 'Score', ''].map((h, i) => (
+                {(['', 'Name', 'Client', '7d Uptime', 'SSL', 'AUDIT_COL', 'Score', ''] as const).map((h, i) => (
                   <th key={i} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)' }}>
-                    {h}
+                    {h === 'AUDIT_COL' ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        Audit
+                        <span style={{ fontSize: '0.45rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--blue)', color: '#fff', padding: '1px 4px', borderRadius: 3, textTransform: 'uppercase' }}>BETA</span>
+                      </span>
+                    ) : h}
                   </th>
                 ))}
               </tr>

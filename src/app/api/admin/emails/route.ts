@@ -22,10 +22,11 @@ export async function GET(request: NextRequest) {
       sent_at, utm_campaign,
       open_rate, click_rate, conversions, revenue,
       status, reviewer_notes, reviewed_at,
-      submitted_by, reviewed_by, created_at, updated_at,
+      submitted_by, reviewed_by, assigned_to, created_at, updated_at,
       clients(name),
       submitter:users!submitted_by(name, avatar_url),
-      reviewer:users!reviewed_by(name)
+      reviewer:users!reviewed_by(name),
+      assignee:users!assigned_to(name, avatar_url)
     `)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -88,8 +89,9 @@ export async function POST(request: NextRequest) {
       utm_campaign:      body.utm_campaign?.trim() || null,
       status:            body.status === 'draft' ? 'draft' : 'pending_review',
       submitted_by:      userId,
+      assigned_to:       userId,
     })
-    .select('id, title, client_id, status, submitted_by, clients(name)')
+    .select('id, title, client_id, status, submitted_by, assigned_to, clients(name)')
     .single()
 
   if (error || !campaign) {
@@ -97,43 +99,48 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to create email' }, { status: 500 })
   }
 
-  // Discord notification — non-blocking
-  void (async () => {
-    try {
-      const { data: settings } = await db
-        .from('agency_settings')
-        .select('discord_bot_token, discord_ops_channel_id')
-        .maybeSingle()
+  // Discord notification — non-blocking, only for submitted (not draft) emails
+  if (campaign.status !== 'draft') {
+    void (async () => {
+      try {
+        const { data: settings } = await db
+          .from('agency_settings')
+          .select('discord_bot_token, discord_ops_channel_id')
+          .maybeSingle()
 
-      const { data: submitter } = userId
-        ? await db.from('users').select('name').eq('id', userId).maybeSingle()
-        : { data: null }
+        const { data: submitter } = userId
+          ? await db.from('users').select('name').eq('id', userId).maybeSingle()
+          : { data: null }
 
-      const clientName = (campaign.clients as unknown as { name: string } | null)?.name ?? 'Unknown client'
-      const submitterName = submitter?.name ?? 'Admin'
-      const botToken  = settings?.discord_bot_token as string | null
-      const opsChannel = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+        const clientName    = (campaign.clients as unknown as { name: string } | null)?.name ?? 'Unknown client'
+        const submitterName = submitter?.name ?? 'Admin'
+        const botToken      = settings?.discord_bot_token as string | null
+        const opsChannel    = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+        const baseUrl       = process.env.NEXT_PUBLIC_SITE_URL ?? ''
+        const reviewUrl     = `${baseUrl}/admin/emails?open=${campaign.id}`
 
-      const msg =
-        `📧 **New email submitted** for **${clientName}**\n` +
-        `📌 _${campaign.title}_${body.goal ? ` — Goal: ${body.goal}` : ''}\n` +
-        `👤 Submitted by ${submitterName} · Review at /admin/emails`
+        const msg =
+          `📧 **New email submitted** for **${clientName}**\n` +
+          `📌 _${campaign.title}_${body.goal ? ` — Goal: ${body.goal}` : ''}\n` +
+          `👤 Submitted by ${submitterName}\n` +
+          `🔗 [Review now](${reviewUrl})`
 
-      await sendDiscordMessage(botToken, opsChannel, msg)
+        await sendDiscordMessage(botToken, opsChannel, msg)
 
-      // Also ping per-client Discord channel
-      const { data: client } = await db
-        .from('clients')
-        .select('discord_channel_id')
-        .eq('id', body.client_id)
-        .maybeSingle()
-      if (client?.discord_channel_id) {
-        await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
+        // Also ping per-client Discord channel
+        const { data: client } = await db
+          .from('clients')
+          .select('discord_channel_id')
+          .eq('id', body.client_id)
+          .maybeSingle()
+        if (client?.discord_channel_id) {
+          await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
+        }
+      } catch (e) {
+        console.error('[emails POST discord]', e)
       }
-    } catch (e) {
-      console.error('[emails POST discord]', e)
-    }
-  })()
+    })()
+  }
 
   return NextResponse.json({ email: campaign }, { status: 201 })
 }

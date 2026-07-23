@@ -5,7 +5,7 @@ import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
-import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight } from '@phosphor-icons/react'
+import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
 import { useSiloSounds } from '@/lib/useSiloSounds'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -347,8 +347,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [editTitle,      setEditTitle]      = useState('')
   const [editNotes,      setEditNotes]      = useState('')
   const [showRejected,   setShowRejected]   = useState(false)
+  const [showArchived,   setShowArchived]   = useState(false)
   const [topicLoading,   setTopicLoading]   = useState<Record<string, boolean>>({})
   const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
+  const [purgeLoading,   setPurgeLoading]   = useState<Record<string, boolean>>({})
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -856,6 +858,22 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     }
   }
 
+  async function purgeItem(kind: 'topic' | 'post', id: string) {
+    setPurgeLoading(p => ({ ...p, [id]: true }))
+    const url = kind === 'topic'
+      ? `/api/admin/content/topics/${id}`
+      : `/api/admin/content/posts/${id}`
+    const res = await fetch(url, { method: 'DELETE' })
+    setPurgeLoading(p => ({ ...p, [id]: false }))
+    if (res.ok) {
+      if (kind === 'topic') setTopics(p => p.filter(t => t.id !== id))
+      else setPosts(p => p.filter(post => post.id !== id))
+      showToast('Deleted')
+    } else {
+      showToast('Delete failed', 'error')
+    }
+  }
+
   // ── Service Area helpers ───────────────────────────────────────────────────
   function setSa<K extends keyof SaSettings>(key: K, val: SaSettings[K]) {
     setSaSettings(p => ({ ...p, [key]: val }))
@@ -1046,6 +1064,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     allItems.push({ kind: 'topic', data: t })
   })
 
+  // Posts linked to rejected topics — used to suppress them from the active view
+  const rejectedTopicPostIds = new Set<string>()
+  topics.filter(t => t.status === 'rejected').forEach(t => {
+    const p = topicIdToPost.get(t.id)
+    if (p) rejectedTopicPostIds.add(p.id)
+  })
+
   // Orphan posts (not matched to any topic)
   posts.forEach(p => {
     if (!seenPostIds.has(p.id) && (p.status === 'draft_saved' || p.status === 'published' || p.status === 'for_review')) {
@@ -1080,6 +1105,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Rejected count
   const rejectedCount = topics.filter(t => t.status === 'rejected').length
     + posts.filter(p => p.status === 'rejected').length
+
+  // Archived: date groups older than 2 months (at the front of ascending-sorted dateKeys)
+  const twoMonthsAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const archivedKeys = dateKeys.filter(k => k !== 'unscheduled' && k < twoMonthsAgo)
+  const recentKeys   = dateKeys.filter(k => k === 'unscheduled' || k >= twoMonthsAgo)
+  const archivedCount = archivedKeys.reduce((sum, k) => sum + (groups.get(k)?.length ?? 0), 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1398,11 +1429,12 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 </tr>
               </thead>
               <tbody>
-                {dateKeys.map(dateKey => {
+                {recentKeys.map(dateKey => {
                   const group = (groups.get(dateKey) ?? []).filter(item => {
                     if (!showRejected) {
                       if (item.kind === 'topic' && item.data.status === 'rejected') return false
                       if (item.kind === 'post'  && item.data.status === 'rejected')  return false
+                      if (item.kind === 'post'  && rejectedTopicPostIds.has(item.data.id)) return false
                     }
                     // Hide terminal published/draft_saved posts from date groups (shown in Published section)
                     if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
@@ -1590,6 +1622,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                     title="Reject topic"
                                   ><X size={12} weight="bold" /></button>
                                 )}
+                                {/* Purge */}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '2px 6px', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center' }}
+                                  onClick={() => void purgeItem('topic', t.id)}
+                                  disabled={purgeLoading[t.id]}
+                                  title="Permanently delete"
+                                ><Trash size={12} /></button>
                               </div>
                             </td>
                           </tr>,
@@ -1738,11 +1778,106 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                   {p.status === 'draft_saved' && p.wp_post_id ? '↗ Edit Draft' : p.bc_post_id ? '↗ BC Admin' : '↗ View'}
                                 </a>
                               )}
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '2px 6px', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center' }}
+                                onClick={() => void purgeItem('post', p.id)}
+                                disabled={purgeLoading[p.id]}
+                                title="Permanently delete"
+                              ><Trash size={12} /></button>
                             </div>
                           </td>
                         </tr>
                       )
                     }).flat(),
+                  ]
+                }).filter(Boolean)}
+
+                {/* Archived date groups toggle (2+ months old) */}
+                {archivedKeys.length > 0 && (
+                  <tr key="archived-toggle">
+                    <td colSpan={4} style={{ padding: '5px 8px', background: 'var(--bg-subtle)' }}>
+                      <button
+                        style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                        onClick={() => setShowArchived(r => !r)}
+                      >
+                        <span style={{ fontSize: '0.6rem' }}>{showArchived ? '▼' : '▶'}</span>
+                        {showArchived ? 'Hide' : 'Show'} Archived ({archivedCount} items — older than 2 months)
+                      </button>
+                    </td>
+                  </tr>
+                )}
+                {showArchived && archivedKeys.map(dateKey => {
+                  const group = (groups.get(dateKey) ?? []).filter(item => {
+                    if (!showRejected) {
+                      if (item.kind === 'topic' && item.data.status === 'rejected') return false
+                      if (item.kind === 'post'  && item.data.status === 'rejected')  return false
+                      if (item.kind === 'post'  && rejectedTopicPostIds.has(item.data.id)) return false
+                    }
+                    if (item.kind === 'post' && (item.data.status === 'draft_saved' || item.data.status === 'published')) return false
+                    return true
+                  })
+                  if (group.length === 0) return null
+                  return [
+                    <tr key={`hdr-${dateKey}`} style={{ background: 'var(--bg-subtle)', opacity: 0.75 }}>
+                      <td colSpan={4} style={{ padding: '5px 8px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {fmtDate(dateKey)}
+                        </span>
+                      </td>
+                    </tr>,
+                    ...group.map(item => {
+                      if (item.kind === 'topic') {
+                        const t = item.data as Topic
+                        return (
+                          <tr key={`arch-topic-${t.id}`} style={{ opacity: 0.7 }}>
+                            <td style={{ padding: '7px 8px 7px 0', verticalAlign: 'middle' }}>
+                              <StatusPill status={getTopicDisplayStatus(t)} />
+                            </td>
+                            <td style={{ padding: '7px 8px', verticalAlign: 'middle' }}>
+                              <div style={{ fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</div>
+                              {t.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{t.target_keyword}</div>}
+                            </td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {fmtDate(t.target_publish_date)}
+                            </td>
+                            <td style={{ padding: '7px 0 7px 8px', textAlign: 'right' }}>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
+                                onClick={() => void purgeItem('topic', t.id)}
+                                disabled={purgeLoading[t.id]}
+                                title="Permanently delete"
+                              ><Trash size={12} /></button>
+                            </td>
+                          </tr>
+                        )
+                      }
+                      const p = item.data as Post
+                      return (
+                        <tr key={`arch-post-${p.id}`} style={{ opacity: 0.7 }}>
+                          <td style={{ padding: '7px 8px 7px 0', verticalAlign: 'middle' }}>
+                            <StatusPill status={getPostDisplayStatus(p)} />
+                          </td>
+                          <td style={{ padding: '7px 8px', verticalAlign: 'middle' }}>
+                            <div style={{ fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title ?? '(untitled)'}</div>
+                            {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
+                          </td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {fmtDate(p.target_publish_date)}
+                          </td>
+                          <td style={{ padding: '7px 0 7px 8px', textAlign: 'right' }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '2px 6px', color: 'var(--red)', display: 'inline-flex', alignItems: 'center' }}
+                              onClick={() => void purgeItem('post', p.id)}
+                              disabled={purgeLoading[p.id]}
+                              title="Permanently delete"
+                            ><Trash size={12} /></button>
+                          </td>
+                        </tr>
+                      )
+                    }),
                   ]
                 }).filter(Boolean)}
 

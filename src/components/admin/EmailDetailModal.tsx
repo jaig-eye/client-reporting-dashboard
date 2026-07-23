@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { X, CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, FloppyDisk } from '@phosphor-icons/react'
+import { useState, useEffect } from 'react'
+import { X, CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, FloppyDisk, UserCircle } from '@phosphor-icons/react'
 
 interface EmailCampaign {
   id:                string
@@ -23,11 +23,13 @@ interface EmailCampaign {
   reviewed_at:       string | null
   submitted_by:      string | null
   reviewed_by:       string | null
+  assigned_to:       string | null
   created_at:        string
   updated_at:        string
   clients:           { name: string } | null
   submitter:         { name: string; avatar_url: string | null } | null
   reviewer:          { name: string } | null
+  assignee:          { name: string; avatar_url: string | null } | null
 }
 
 interface Props {
@@ -60,6 +62,36 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
   const [deleting,      setDeleting]      = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error,         setError]         = useState<string | null>(null)
+
+  // Assignee
+  const [users,          setUsers]          = useState<{ id: string; name: string }[]>([])
+  const [assignSaving,   setAssignSaving]   = useState(false)
+
+  useEffect(() => {
+    fetch('/api/admin/users')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { users: { id: string; name: string }[] } | null) => { if (d?.users) setUsers(d.users) })
+      .catch(() => {})
+  }, [])
+
+  async function reassign(assignedTo: string | null) {
+    setAssignSaving(true)
+    try {
+      const res = await fetch(`/api/admin/emails/${email.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assigned_to: assignedTo }),
+      })
+      if (!res.ok) throw new Error()
+      const { email: updated } = await res.json() as { email: EmailCampaign }
+      setEmail(updated)
+      onUpdated(updated)
+    } catch {
+      setError('Failed to reassign.')
+    } finally {
+      setAssignSaving(false)
+    }
+  }
 
   // Inline stats editing
   const [editingStats, setEditingStats]   = useState(false)
@@ -138,7 +170,7 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
     }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{
         marginLeft: 'auto', width: '100%', maxWidth: 900,
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
+        background: 'var(--bg-surface)', borderLeft: '1px solid var(--border)',
         display: 'flex', flexDirection: 'column', overflowY: 'auto',
       }}>
         {/* Header */}
@@ -231,6 +263,24 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
                     <p style={{ margin: 0, fontSize: '0.78rem', fontFamily: 'monospace' }}>{email.utm_campaign}</p>
                   </div>
                 )}
+                <div>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <UserCircle size={11} aria-hidden /> Assigned to
+                  </span>
+                  <select
+                    value={email.assigned_to ?? ''}
+                    onChange={e => void reassign(e.target.value || null)}
+                    disabled={assignSaving}
+                    style={{
+                      width: '100%', padding: '0.3rem 0.5rem', borderRadius: 5,
+                      border: '1px solid var(--border)', background: 'var(--bg-subtle)',
+                      fontSize: '0.78rem', color: 'var(--text)', fontFamily: 'inherit',
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
 

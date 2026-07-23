@@ -8,10 +8,11 @@ const SELECT = `
   sent_at, utm_campaign,
   open_rate, click_rate, conversions, revenue,
   status, reviewer_notes, reviewed_at,
-  submitted_by, reviewed_by, created_at, updated_at,
+  submitted_by, reviewed_by, assigned_to, created_at, updated_at,
   clients(name),
   submitter:users!submitted_by(name, avatar_url),
-  reviewer:users!reviewed_by(name)
+  reviewer:users!reviewed_by(name),
+  assignee:users!assigned_to(name, avatar_url)
 `
 
 export async function GET(
@@ -61,6 +62,7 @@ export async function PATCH(
     'preview_image_url', 'html_content', 'preview_url',
     'sent_at', 'utm_campaign',
     'open_rate', 'click_rate', 'conversions', 'revenue',
+    'assigned_to',
     // 'status' intentionally omitted — status changes go through /review
   ]
 

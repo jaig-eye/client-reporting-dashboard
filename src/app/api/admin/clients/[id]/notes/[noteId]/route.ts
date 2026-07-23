@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 
-const NOTE_SELECT = 'id, title, content, pinned, created_at, updated_at, updated_by, user_id, users(name, avatar_url), editor:users!updated_by(name, avatar_url)'
+const NOTE_SELECT = 'id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)'
 
 export async function DELETE(
   request: NextRequest,

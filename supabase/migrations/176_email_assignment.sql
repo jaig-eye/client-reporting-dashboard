@@ -1,0 +1,2 @@
+ALTER TABLE email_campaigns
+  ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id) ON DELETE SET NULL;

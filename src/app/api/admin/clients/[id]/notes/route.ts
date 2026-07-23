@@ -16,7 +16,7 @@ export async function GET(
 
   const { data, error } = await db
     .from('client_notes')
-    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users(name, avatar_url), editor:users!updated_by(name, avatar_url)')
+    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)')
     .eq('client_id', clientId)
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
@@ -65,7 +65,7 @@ export async function POST(
       title:     body.title?.trim() || null,
       pinned:    body.pinned ?? false,
     })
-    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users(name, avatar_url), editor:users!updated_by(name, avatar_url)')
+    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url)')
     .single()
 
   if (error || !data) {
@@ -73,5 +73,6 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to save note' }, { status: 500 })
   }
 
-  return NextResponse.json({ note: data }, { status: 201 })
+  // editor is always null on a fresh insert (updated_by is unset)
+  return NextResponse.json({ note: { ...data, editor: null } }, { status: 201 })
 }
