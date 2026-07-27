@@ -2396,7 +2396,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
           const pagesPerSlot = saSettings.pages_per_run ?? 1
           const saRejectedCount = saTopics.filter(t => t.status === 'rejected').length
-          const saPublishedCount = saPosts.filter(p => seenSaPostIds.has(p.id) && (p.status === 'published' || p.status === 'draft_saved')).length
+          const saPublishedCount = saPosts.filter(p => p.status === 'published' || p.status === 'draft_saved').length
 
           const statusItems = [
             { label: 'Pending',    dot: '#f59e0b', count: saTopics.filter(t => t.status === 'pending').length    },
