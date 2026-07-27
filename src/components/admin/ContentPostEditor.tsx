@@ -222,12 +222,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         const autoSite = sites.find(s => s.connectorType === 'bigcommerce') ?? sites[0]
         setConnectionId(data.postConnectionId ?? defaultConnectionId ?? autoSite?.connectionId ?? '')
 
-        // Default publish status: use target date if set, otherwise fall back to schedule config
-        if (data.targetPublishDate) {
+        // Default publish status: draft_only mode always overrides; otherwise use target date
+        if (data.schedulePublishMode === 'draft_only') {
+          setWpStatus('draft')
+        } else if (data.targetPublishDate) {
           const publishDate = new Date(data.targetPublishDate + 'T00:00:00')
           setWpStatus(publishDate > new Date() ? 'future' : 'publish')
         } else if (data.schedulePublishMode) {
-          setWpStatus(data.schedulePublishMode === 'draft_only' ? 'draft' : 'future')
+          setWpStatus('future')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load')

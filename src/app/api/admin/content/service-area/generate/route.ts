@@ -186,15 +186,21 @@ async function generatePage(topicId: string) {
   // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
   const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').single(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').limit(1).maybeSingle(),
     db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls').eq('client_id', clientId).maybeSingle(),
     db.from('content_sitemap_pages').select('url').eq('client_id', clientId).eq('is_service_page', true).ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`).maybeSingle(),
   ])
 
   const saSettings     = (saRes.data    ?? {}) as Record<string, unknown>
-  const agency         = agencyRes.data
   const cs             = (csRes.data    ?? {}) as Record<string, unknown>
   const servicePageUrl = (servicePageRes.data as { url: string } | null)?.url ?? null
+
+  if (agencyRes.error) {
+    console.error('[sa-generate] agency_settings load failed:', agencyRes.error)
+    await db.from('content_topics').update({ status: 'approved', generation_error: 'Settings load error — please retry' }).eq('id', topicId)
+    return { error: 'Settings load error' }
+  }
+  const agency         = agencyRes.data
 
   const provider  = (agency?.ai_provider  as string | null) || 'anthropic'
   const model     = (agency?.ai_model     as string | null) || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')

@@ -286,6 +286,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // Image generation — separate state (new columns not in ClientScheduleSettings type)
   const [imageGen,    setImageGen]    = useState(false)
   const [imagePrompt, setImagePrompt] = useState('')
+  // BigCommerce author name — text input, not a WP user dropdown
+  const [bcAuthor,    setBcAuthor]    = useState('')
 
   // Pill: Blog Posts / Service Pages / Service Area Pages / Regular Pages
   const [activePill, setActivePill] = useState<'blog' | 'service_page' | 'service' | 'regular_page'>('blog')
@@ -426,6 +428,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         setScheduleOpen(false)
         setImageGen(!!(d.content_image_generation as boolean | null))
         setImagePrompt(String(d.content_image_prompt ?? ''))
+        setBcAuthor(String(d.bc_author ?? ''))
         setGenerateServicePages(!!(d.generate_service_pages as boolean | null))
         setGenerateRegularPages(!!(d.generate_regular_pages as boolean | null))
         setSpGuidelines((d.service_page_topic_guidelines as string | null) ?? null)
@@ -696,7 +699,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, ...schedule, content_image_generation: imageGen, content_image_prompt: imagePrompt || null }),
+      body: JSON.stringify({ client_id: clientId, ...schedule, content_image_generation: imageGen, content_image_prompt: imagePrompt || null, bc_author: bcAuthor || null }),
     })
     setSchedSaving(false)
     if (res.ok) { setSchedSaved(true); setTimeout(() => setSchedSaved(false), 2500) }
@@ -1251,13 +1254,27 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                 <Label>Publish Time</Label>
                 <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
               </div>
-              <div>
-                <Label>Default Author</Label>
-                <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">— Default —</option>
-                  {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
+              {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType !== 'bigcommerce' && (
+                <div>
+                  <Label>Default Author</Label>
+                  <select className="input" value={schedule.default_author_id ?? ''} onChange={e => setSched('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">— Default —</option>
+                    {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType === 'bigcommerce' && (
+                <div>
+                  <Label hint="shown as author on BigCommerce blog posts">Author Name</Label>
+                  <input
+                    className="input"
+                    type="text"
+                    value={bcAuthor}
+                    onChange={e => setBcAuthor(e.target.value)}
+                    placeholder="e.g. Admin"
+                  />
+                </div>
+              )}
               {categories.length > 0 && (
                 <div>
                   <Label>Default Categories</Label>
@@ -1281,17 +1298,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </div>
                 </div>
               )}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <Label>WordPress Publish Mode</Label>
-                <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.375rem' }}>
-                  {(['scheduled_draft', 'draft_only'] as const).map(mode => (
-                    <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.8125rem' }}>
-                      <input type="radio" name="wp_publish_mode" value={mode} checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode} onChange={() => setSched('wp_publish_mode', mode)} />
-                      {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
-                    </label>
-                  ))}
+              {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType !== 'bigcommerce' && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Label>WordPress Publish Mode</Label>
+                  <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.375rem' }}>
+                    {(['scheduled_draft', 'draft_only'] as const).map(mode => (
+                      <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                        <input type="radio" name="wp_publish_mode" value={mode} checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode} onChange={() => setSched('wp_publish_mode', mode)} />
+                        {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             <div style={{ marginBottom: '0.75rem' }}>
@@ -2128,6 +2147,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     <option value="service_slash_city_state">/tree-service/palm-bay-fl/</option>
                     <option value="service_dash_city_state">/tree-service-palm-bay-fl/</option>
                     <option value="service_slash_city">/tree-service/palm-bay/</option>
+                    <option value="silo_slash_service_city_state">/services/tree-service/palm-bay-fl/</option>
                   </select>
                 </div>
                 <div>

@@ -21,13 +21,15 @@ interface Props {
   posts:    MonthlyReviewPost[]
   allSites: Site[]
   month:    string
+  prevUrl?: string | null
+  nextUrl?: string | null
 }
 
 function getMonth(): string {
   return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-export default function MonthlyReviewSession({ posts: initialPosts, allSites, month }: Props) {
+export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
   const [approvedIds,    setApprovedIds]    = useState<Set<string>>(() => {
     // Pre-populate from admin_approved_at so page survives a refresh
     const pre = new Set<string>()
@@ -174,10 +176,25 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         />
       ) : (
         <div style={{ maxWidth: 860, margin: '0 auto', padding: '24px 20px 60px' }}>
+          {/* Month navigation */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 24 }}>
+            {prevUrl ? (
+              <a href={prevUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>← Prev Month</a>
+            ) : (
+              <span style={{ display: 'inline-block', width: 100 }} />
+            )}
+            <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>{displayMonth}</span>
+            {nextUrl ? (
+              <a href={nextUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>Next Month →</a>
+            ) : (
+              <span style={{ display: 'inline-block', width: 100 }} />
+            )}
+          </div>
+
           {totalPosts === 0 ? (
             <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--text-muted)' }}>
               <div style={{ fontSize: 40, marginBottom: 16 }}>🎉</div>
-              <p style={{ fontSize: 16 }}>No posts need review right now.</p>
+              <p style={{ fontSize: 16 }}>No posts need review for {displayMonth}.</p>
               <p style={{ fontSize: 14, marginTop: 8 }}>
                 Posts will appear here once topics auto-approve (~35 days ahead).
               </p>

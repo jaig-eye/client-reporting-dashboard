@@ -373,21 +373,27 @@ export async function GET(request: NextRequest) {
         await db.from('content_topics').update({ status: 'generating' }).eq('id', t.id)
         // Route service-area topics to the SA generate endpoint; blog topics to the blog endpoint
         const isSA = t.content_type === 'service_area'
-        const res = await fetch(
-          isSA
-            ? `${appUrl}/api/admin/content/service-area/generate`
-            : `${appUrl}/api/admin/content/generate`,
-          {
-            method:  'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
-            },
-            body: isSA
-              ? JSON.stringify({ topic_id: t.id })
-              : JSON.stringify({ topic_id: t.id, suppress_email: true }),
-          },
-        )
+        const generateUrl = isSA
+          ? `${appUrl}/api/admin/content/service-area/generate`
+          : `${appUrl}/api/admin/content/generate`
+        const generateBody = isSA
+          ? JSON.stringify({ topic_id: t.id })
+          : JSON.stringify({ topic_id: t.id, suppress_email: true })
+        const generateHeaders = {
+          'Content-Type': 'application/json',
+          'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+        }
+
+        let res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
+
+        // Retry once on transient server errors (5xx) or settings-load failures —
+        // connection pool exhaustion during long cron runs can cause spurious failures.
+        if (!res.ok && res.status >= 500) {
+          console.warn(`[content-topics cron] Generate ${t.id} returned ${res.status} — retrying once`)
+          await new Promise(r => setTimeout(r, 2000))
+          res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
+        }
+
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json() as { title?: string; focusKeyword?: string }
         postsTriggered.push(t.id)

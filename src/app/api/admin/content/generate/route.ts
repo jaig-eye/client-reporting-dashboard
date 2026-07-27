@@ -358,6 +358,31 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
   })
 }
 
+// ─── FAQ JSON-LD schema injection ─────────────────────────────────────────────
+
+function injectFaqSchema(html: string): string {
+  // Extract question/answer pairs from h2/h3 + following p elements
+  const faqPattern = /<h[23][^>]*>([^<]*\?[^<]*)<\/h[23]>\s*<p[^>]*>([\s\S]*?)<\/p>/gi
+  const items: { question: string; answer: string }[] = []
+  let m: RegExpExecArray | null
+  while ((m = faqPattern.exec(html)) !== null && items.length < 10) {
+    const question = m[1].trim()
+    const answer   = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400)
+    if (question && answer) items.push({ question, answer })
+  }
+  if (!items.length) return html
+  const schema = {
+    '@context': 'https://schema.org',
+    '@type':    'FAQPage',
+    mainEntity: items.map(i => ({
+      '@type':        'Question',
+      name:           i.question,
+      acceptedAnswer: { '@type': 'Answer', text: i.answer },
+    })),
+  }
+  return html + `\n<script type="application/ld+json">${JSON.stringify(schema)}</script>`
+}
+
 // ─── Slug utilities ───────────────────────────────────────────────────────────
 
 function titleToSlug(title: string): string {
@@ -916,6 +941,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     parsed.content = stripH1FromContent(parsed.content)
     // Remove links with generic filler anchor text ("click here", "learn more", etc.)
     parsed.content = stripGenericAnchorText(parsed.content)
+    // Inject FAQ JSON-LD schema for any question/answer headings present
+    parsed.content = injectFaqSchema(parsed.content)
 
     // ── Minimum quality gate ──────────────────────────────────────────────────
     const wc0 = computeWordCount(parsed.content)
@@ -1090,11 +1117,16 @@ export async function POST(request: NextRequest) {
   const db = createAdminClient()
 
   // ── Load agency settings ─────────────────────────────────────────────────
-  const { data: agencySettings } = await db
+  const { data: agencySettings, error: agErr } = await db
     .from('agency_settings')
     .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token')
+    .limit(1)
     .maybeSingle()
 
+  if (agErr) {
+    console.error('[generate] agency_settings load failed:', agErr)
+    return NextResponse.json({ error: 'Settings load error — please retry in a moment' }, { status: 500 })
+  }
   if (!agencySettings?.ai_api_key) {
     return NextResponse.json({ error: 'AI not configured. Add an API key in Agency Settings.' }, { status: 400 })
   }
@@ -1143,7 +1175,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, pendingTopicsRes2, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix, content_image_generation, content_image_prompt')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -1306,6 +1338,7 @@ export async function POST(request: NextRequest) {
   parsed.content = stripDangerousHtml(parsed.content)
   parsed.content = stripH1FromContent(parsed.content)
   parsed.content = stripGenericAnchorText(parsed.content)
+  parsed.content = injectFaqSchema(parsed.content)
 
   // ── Minimum quality gate ────────────────────────────────────────────────────
   const wc0 = computeWordCount(parsed.content)
@@ -1370,9 +1403,11 @@ export async function POST(request: NextRequest) {
     postId = savedPost?.id ?? null
 
     // Auto-generate featured image in background
-    if (postId && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
+    const manualImageEnabled       = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
+    const manualImagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
+    if (manualImageEnabled && postId && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
       waitUntil(
-        generatePostImage(db, postId, agencySettings.openai_api_key).catch(() => {})
+        generatePostImage(db, postId, agencySettings.openai_api_key, manualImagePromptOverride).catch(() => {})
       )
     }
   }

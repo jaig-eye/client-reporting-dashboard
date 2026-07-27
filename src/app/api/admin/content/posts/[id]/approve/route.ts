@@ -150,10 +150,11 @@ export async function POST(
 
     const { data: csRowBc } = await db
       .from('content_settings')
-      .select('publish_time')
+      .select('publish_time, bc_author')
       .eq('client_id', String(p.client_id))
       .maybeSingle()
-    const bcPublishTime = (csRowBc as { publish_time?: string | null } | null)?.publish_time ?? '09:00'
+    const bcPublishTime = (csRowBc as { publish_time?: string | null; bc_author?: string | null } | null)?.publish_time ?? '09:00'
+    const bcAuthor      = (csRowBc as { publish_time?: string | null; bc_author?: string | null } | null)?.bc_author ?? 'Admin'
 
     const publishedDate = p.target_publish_date
       ? new Date(`${String(p.target_publish_date)}T${bcPublishTime}:00`).toUTCString()
@@ -226,7 +227,7 @@ export async function POST(
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
         body:             String((p as Record<string, unknown>).content ?? ''),
-        author:           'Admin',
+        author:           bcAuthor,
         url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
         is_published:     false,
         published_date:   publishedDate,
@@ -354,16 +355,49 @@ export async function POST(
       let wpSlug: string | undefined = rawSlug || undefined
       let wpParent: number | undefined
 
-      const isHierarchical = (saSlugStruct === 'service_slash_city_state' || saSlugStruct === 'service_slash_city') && rawSlug.includes('/')
+      const isHierarchical = (
+        saSlugStruct === 'service_slash_city_state' ||
+        saSlugStruct === 'service_slash_city' ||
+        saSlugStruct === 'silo_slash_service_city_state'
+      ) && rawSlug.includes('/')
       if (isHierarchical) {
-        const parts      = rawSlug.split('/').filter(Boolean)
-        const parentSlug = parts[0]
-        const childSlug  = parts[1]
-        if (childSlug) {
+        const parts = rawSlug.split('/').filter(Boolean)
+        const creds = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
+
+        if (parts.length >= 3) {
+          // 3-level silo: silo/service/city → leaf = city, parent = service page nested under silo
+          const siloSlug    = parts[0]
+          const serviceSlug = parts[1]
+          const citySlug    = parts[2]
+          wpSlug = citySlug
+          try {
+            // Find the silo page first so we can look up the service page under it
+            const siloRes = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(siloSlug)}&per_page=1`, {
+              headers: { Authorization: `Basic ${creds}` },
+            })
+            if (siloRes.ok) {
+              const siloPages = (await siloRes.json()) as { id: number }[]
+              const siloId    = siloPages[0]?.id
+              // Look up the service page (optionally scoped to the silo parent)
+              const svcQuery  = siloId
+                ? `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&parent=${siloId}&per_page=1`
+                : `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&per_page=1`
+              const svcRes  = await fetch(svcQuery, { headers: { Authorization: `Basic ${creds}` } })
+              if (svcRes.ok) {
+                const svcPages = (await svcRes.json()) as { id: number }[]
+                if (svcPages.length > 0) wpParent = svcPages[0].id
+              }
+            }
+          } catch {
+            // non-fatal — publish without parent if lookup fails
+          }
+        } else if (parts.length === 2) {
+          // 2-level: service/city → leaf = city, parent = service page
+          const parentSlug = parts[0]
+          const childSlug  = parts[1]
           wpSlug = childSlug
           try {
-            const creds = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-            const res   = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(parentSlug)}&per_page=1`, {
+            const res = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(parentSlug)}&per_page=1`, {
               headers: { Authorization: `Basic ${creds}` },
             })
             if (res.ok) {
@@ -371,7 +405,7 @@ export async function POST(
               if (pages.length > 0) wpParent = pages[0].id
             }
           } catch {
-            // non-fatal — publish without parent if lookup fails
+            // non-fatal
           }
         }
       }

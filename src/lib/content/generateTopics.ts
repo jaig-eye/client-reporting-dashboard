@@ -412,7 +412,9 @@ CLUSTERING RULE: Before finalising your list, check if any two topics target the
 
 ANGLE DIVERSIFICATION RULE: Every topic in your list must use a different content ANGLE. Never suggest variations of the same angle (e.g. "best roofers in Dallas" and "top-rated roofing companies in Dallas" are the same angle). Vary the angle across your full list — draw from these angle types: how-to guide, cost/pricing breakdown, comparison (A vs B), local case study, FAQ, seasonal tip, problem/solution, buyer's guide, checklist, myth-busting, behind-the-scenes. Aim to cover at least 3 distinct angle types in any list of 5 or more topics.
 
-UNIQUENESS CHECK: Before returning any topic, verify its target_keyword and search intent do not overlap with the "Already covered" list. A different city name or plural/singular form is NOT sufficient differentiation — the search intent must be genuinely distinct.
+UNIQUENESS CHECK (HARD RULE): Every topic you return MUST have a target_keyword and search intent that does NOT appear in the "Already covered" list. This applies to topics already published AND to topics scheduled but not yet published — they are all listed. A different city name, plural/singular form, or minor reword is NOT sufficient — the underlying search intent must be genuinely different. If you cannot find ${count} unique topics without overlapping covered intent, reduce the list rather than add near-duplicates.
+
+NICHE DISCOVERY RULE: At least 1 of your ${count} topics MUST be a genuinely new angle the client has never covered — a long-tail, question-based, hyper-local, or underserved subtopic where the client has a realistic path to rank #1 because competition is thin. Do not pick topics where established domains dominate positions 1–5 and the client would realistically land 6–10. Justify in the "ranking_strategy" field exactly why this specific niche topic is winnable from scratch.
 
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
 
@@ -444,7 +446,7 @@ ${gscCtrText}
 ${competitorText}
 ${gscTopText}
 ${sitemapText}
-${avoidText ? `\nAlready covered — DO NOT suggest these again (each line is a covered topic/keyword):\n${avoidText}` : ''}
+${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
 
 Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`

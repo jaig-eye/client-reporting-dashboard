@@ -1,6 +1,10 @@
 // /admin/content/monthly-review
 // Server component — fetches all posts in the monthly review window and
 // renders the client-side MonthlyReviewSession orchestrator.
+//
+// Optional query param: ?month=YYYY-MM  → review a specific calendar month.
+// When omitted, defaults to the current calendar month.
+// Navigation is capped: can go back to last month, forward up to 2 months ahead.
 
 import { cookies }           from 'next/headers'
 import { redirect }          from 'next/navigation'
@@ -11,17 +15,61 @@ import type { MonthlyReviewPost } from '@/components/admin/MonthlyReviewPostCard
 
 export const dynamic = 'force-dynamic'
 
-export default async function MonthlyReviewPage() {
+function monthParam(year: number, month: number): string {
+  return `${year}-${String(month + 1).padStart(2, '0')}`
+}
+
+export default async function MonthlyReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const cookieStore = await cookies()
   const session     = cookieStore.get('admin_session')?.value
   if (!isAdminAuthed(session)) redirect('/admin/login')
 
-  const db  = createAdminClient()
+  const sp  = await searchParams
   const now = new Date()
 
-  const windowStart = now.toISOString().slice(0, 10)
-  const nextMonth   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0))
-  const windowEnd   = nextMonth.toISOString().slice(0, 10)
+  // Parse ?month=YYYY-MM; default to current month
+  let targetYear  = now.getUTCFullYear()
+  let targetMonth = now.getUTCMonth() // 0-based
+
+  const monthStr = typeof sp.month === 'string' ? sp.month : null
+  if (monthStr && /^\d{4}-\d{2}$/.test(monthStr)) {
+    const [y, m] = monthStr.split('-').map(Number)
+    targetYear  = y
+    targetMonth = m - 1 // convert to 0-based
+  }
+
+  // Clamp: no further back than last month, no more than 2 months ahead
+  const minYear  = now.getUTCMonth() === 0 ? now.getUTCFullYear() - 1 : now.getUTCFullYear()
+  const minMonth = now.getUTCMonth() === 0 ? 11 : now.getUTCMonth() - 1
+  const maxYear  = now.getUTCMonth() >= 10 ? now.getUTCFullYear() + 1 : now.getUTCFullYear()
+  const maxMonth = (now.getUTCMonth() + 2) % 12
+
+  const targetOrd = targetYear * 12 + targetMonth
+  const minOrd    = minYear   * 12 + minMonth
+  const maxOrd    = maxYear   * 12 + maxMonth
+
+  if (targetOrd < minOrd) { targetYear = minYear; targetMonth = minMonth }
+  if (targetOrd > maxOrd) { targetYear = maxYear; targetMonth = maxMonth }
+
+  const windowStart = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-01`
+  const lastDay     = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate()
+  const windowEnd   = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+
+  // Prev / next params for navigation links
+  const prevYear  = targetMonth === 0  ? targetYear - 1 : targetYear
+  const prevMon   = targetMonth === 0  ? 11 : targetMonth - 1
+  const nextYear  = targetMonth === 11 ? targetYear + 1 : targetYear
+  const nextMon   = targetMonth === 11 ? 0  : targetMonth + 1
+
+  const currentOrd = targetYear * 12 + targetMonth
+  const prevUrl  = currentOrd > minOrd ? `/admin/content/monthly-review?month=${monthParam(prevYear, prevMon)}` : null
+  const nextUrl  = currentOrd < maxOrd ? `/admin/content/monthly-review?month=${monthParam(nextYear, nextMon)}` : null
+
+  const db = createAdminClient()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: postsRaw } = await (db as any)
@@ -30,6 +78,7 @@ export default async function MonthlyReviewPage() {
     .in('status', ['for_review', 'pending', 'approved'])
     .is('wp_post_id', null)
     .is('bc_post_id', null)
+    .is('archived_at', null)
     .gte('target_publish_date', windowStart)
     .lte('target_publish_date', windowEnd)
     .not('target_publish_date', 'is', null)
@@ -101,13 +150,16 @@ export default async function MonthlyReviewPage() {
       connectorType:  c.connectors?.type,
     }))
 
-  const month = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const month = new Date(Date.UTC(targetYear, targetMonth, 1))
+    .toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 
   return (
     <MonthlyReviewSession
       posts={posts}
       allSites={allSites}
       month={month}
+      prevUrl={prevUrl}
+      nextUrl={nextUrl}
     />
   )
 }
