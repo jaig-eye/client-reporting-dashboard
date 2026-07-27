@@ -47,9 +47,10 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Keep content_settings.phone_number in sync with clients.phone
-  if ('phone' in body && body.phone) {
-    await db.from('content_settings')
-      .upsert({ client_id: id, phone_number: body.phone }, { onConflict: 'client_id', ignoreDuplicates: false })
+  if ('phone' in body) {
+    const { error: phoneErr } = await db.from('content_settings')
+      .upsert({ client_id: id, phone_number: body.phone ?? null }, { onConflict: 'client_id', ignoreDuplicates: false })
+    if (phoneErr) console.error('[clients] phone sync to content_settings failed:', phoneErr.message)
   }
 
   revalidatePath(`/admin/clients/${id}`)

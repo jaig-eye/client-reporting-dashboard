@@ -32,7 +32,9 @@ export async function GET(request: NextRequest) {
   ])
 
   const result: Record<string, unknown> = { ...(data ?? {}) }
-  if (!result.phone_number && clientRow?.phone) result.phone_number = clientRow.phone
+  if ((result.phone_number == null || result.phone_number === '') && clientRow?.phone) {
+    result.phone_number = clientRow.phone
+  }
 
   return NextResponse.json(result)
 }
@@ -88,8 +90,11 @@ export async function PUT(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Keep clients.phone in sync with content_settings.phone_number
-  if (Object.prototype.hasOwnProperty.call(body, 'phone_number') && body.phone_number) {
-    await db.from('clients').update({ phone: body.phone_number }).eq('id', String(client_id))
+  if (Object.prototype.hasOwnProperty.call(body, 'phone_number')) {
+    const { error: phoneErr } = await db.from('clients')
+      .update({ phone: body.phone_number ?? null })
+      .eq('id', String(client_id))
+    if (phoneErr) console.error('[client-settings] phone sync to clients failed:', phoneErr.message)
   }
 
   const adminSession = await getAdminSession()

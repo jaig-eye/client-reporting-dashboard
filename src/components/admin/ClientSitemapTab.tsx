@@ -47,6 +47,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   async function loadConfig() {
     try {
       const res = await fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
+      if (!res.ok) return
       const d = await res.json() as Record<string, unknown>
       const urls: string[] = Array.isArray(d.sitemap_urls) && (d.sitemap_urls as string[]).length > 0
         ? d.sitemap_urls as string[]
