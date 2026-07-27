@@ -73,9 +73,9 @@ export default function ClientContentTabPanel({
 
   const initial = validSubTab(initialSubTab)
 
-  const [activeTab,  setActiveTab]  = useState<SubTab>(initial)
-  const [visited,    setVisited]    = useState<Set<SubTab>>(() => new Set([initial]))
-  const [tabKey,     setTabKey]     = useState(0)
+  const [activeTab,    setActiveTab]    = useState<SubTab>(initial)
+  const [visited,      setVisited]      = useState<Set<SubTab>>(() => new Set([initial]))
+  const [animatingTab, setAnimatingTab] = useState<SubTab | null>(initial)
   const [showWizard, setShowWizard] = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
     const alreadySetUp = s?.wizard_completed || s?.business_background || s?.services
@@ -83,9 +83,14 @@ export default function ClientContentTabPanel({
     return !alreadySetUp && !alreadyHasContent
   })
 
+  useEffect(() => {
+    setAnimatingTab(activeTab)
+    const t = setTimeout(() => setAnimatingTab(null), 220)
+    return () => clearTimeout(t)
+  }, [activeTab])
+
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
-    setTabKey(k => k + 1)
     setVisited(prev => new Set([...Array.from(prev), id]))
     const params = new URLSearchParams(window.location.search)
     params.set('subtab', id)
@@ -183,27 +188,31 @@ export default function ClientContentTabPanel({
         </button>
       </div>
 
-      {/* Tab content — fade in on switch */}
-      <div key={tabKey} className="cc-tab-content">
-        {activeTab === 'overview' && <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} onNavigate={handleTabChange} />}
+      {/* Tab content — each active tab fades in without unmounting keep-alive tabs */}
+      <div>
+        {activeTab === 'overview' && (
+          <div className={animatingTab === 'overview' ? 'cc-tab-content' : ''}>
+            <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} onNavigate={handleTabChange} />
+          </div>
+        )}
 
         {visited.has('brand-dna') && (
-          <div style={{ display: activeTab === 'brand-dna' ? 'block' : 'none' }}>
+          <div style={{ display: activeTab === 'brand-dna' ? 'block' : 'none' }} className={animatingTab === 'brand-dna' ? 'cc-tab-content' : ''}>
             <ClientContentSettingsForm clientId={clientId} sites={sites} />
           </div>
         )}
         {visited.has('sitemap') && (
-          <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }}>
+          <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }} className={animatingTab === 'sitemap' ? 'cc-tab-content' : ''}>
             <ClientSitemapTab clientId={clientId} />
           </div>
         )}
         {visited.has('gsc') && (
-          <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }}>
+          <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }} className={animatingTab === 'gsc' ? 'cc-tab-content' : ''}>
             <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />
           </div>
         )}
         {visited.has('schedule') && (
-          <div style={{ display: activeTab === 'schedule' ? 'block' : 'none' }}>
+          <div style={{ display: activeTab === 'schedule' ? 'block' : 'none' }} className={animatingTab === 'schedule' ? 'cc-tab-content' : ''}>
             <ClientScheduleTab
               clientId={clientId}
               clientName={clientName}

@@ -5,6 +5,7 @@ import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
 import MonthlyReviewComplete   from './MonthlyReviewComplete'
 import ContentPostEditor       from './ContentPostEditor'
+import { useMonthlyReviewSounds } from '@/lib/useMonthlyReviewSounds'
 import type { MonthlyReviewPost } from './MonthlyReviewPostCard'
 
 interface Site {
@@ -40,6 +41,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [rejectedIds,    setRejectedIds]    = useState<Set<string>>(new Set())
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
+  const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
+  const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
+
   // Group posts by client
   const clientIds   = Array.from(new Set(initialPosts.map(p => p.client_id)))
   const postsByClient = new Map<string, MonthlyReviewPost[]>()
@@ -72,6 +76,20 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       })
       if (!res.ok) throw new Error(await res.text())
 
+      const post = initialPosts.find(p => p.id === postId)
+      if (post) {
+        const clientPosts  = postsByClient.get(post.client_id) ?? []
+        const nextApproved = new Set(approvedIds)
+        nextApproved.add(postId)
+        const allDone    = clientPosts.every(p => nextApproved.has(p.id) || rejectedIds.has(p.id))
+        const wasAllDone = clientPosts.every(p => approvedIds.has(p.id)  || rejectedIds.has(p.id))
+        if (nextApproved.size + rejectedIds.size >= totalPosts) playMonthDone()
+        else if (allDone && !wasAllDone) playClientDone()
+        else playApprove()
+      } else {
+        playApprove()
+      }
+
       setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     } catch (e) {
       console.error('Approve failed:', e)
@@ -79,7 +97,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } finally {
       setLoadingId(null)
     }
-  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts])
+  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
 
   const handleReject = useCallback(async (postId: string, discard?: boolean) => {
     setLoadingId(postId)
