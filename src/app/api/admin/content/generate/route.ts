@@ -1135,7 +1135,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Settings load error — please retry in a moment' }, { status: 500 })
   }
   if (!agencySettings?.ai_api_key) {
-    return NextResponse.json({ error: 'AI not configured. Add an API key in Agency Settings.' }, { status: 400 })
+    const provider = (agencySettings as Record<string, unknown> | null)?.ai_provider ?? 'anthropic'
+    console.error('[generate] ai_api_key is null/empty. Row exists:', !!agencySettings, 'provider:', provider, 'openai_key_set:', !!agencySettings?.openai_api_key)
+    return NextResponse.json({
+      error: `AI not configured. The "${provider}" API key (ai_api_key) is missing in Agency Settings. Note: the image key (openai_api_key) is separate and does not power content generation.`,
+    }, { status: 400 })
   }
 
   // ── Topic-based path — fire-and-forget with waitUntil ─────────────────────

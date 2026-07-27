@@ -349,7 +349,10 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [editTitle,      setEditTitle]      = useState('')
   const [editNotes,      setEditNotes]      = useState('')
   const [showRejected,   setShowRejected]   = useState(false)
+  const [showPublished,  setShowPublished]  = useState(false)
   const [showArchived,   setShowArchived]   = useState(false)
+  const [showSaPublished, setShowSaPublished] = useState(false)
+  const [showSaRejected,  setShowSaRejected]  = useState(false)
   const [topicLoading,   setTopicLoading]   = useState<Record<string, boolean>>({})
   const [slotGenerating, setSlotGenerating] = useState<Record<string, boolean>>({})
   const [purgeLoading,   setPurgeLoading]   = useState<Record<string, boolean>>({})
@@ -1931,61 +1934,64 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   ]
                 }).filter(Boolean)}
 
-                {/* Published section */}
-                {publishedItems.length > 0 && [
-                  <tr key="hdr-published" style={{ background: 'var(--bg-subtle)' }}>
-                    <td colSpan={4} style={{ padding: '5px 8px' }}>
-                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Published</span>
-                    </td>
-                  </tr>,
-                  ...publishedItems.map(item => {
-                    const p = item.data as Post
-                    const siteUrl = p.published_url
-                      ?? (p.wp_post_id && p.wp_site_url ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}` : null)
-                    return (
-                      <tr key={`pub-${p.id}`}>
-                        <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
-                          <StatusPill status="published" />
-                        </td>
-                        <td style={{ padding: '8px', verticalAlign: 'middle' }}>
-                          <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.title ?? '(untitled)'}
-                          </div>
-                          {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
-                        </td>
-                        <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {fmtDate(p.target_publish_date)}
-                        </td>
-                        <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
-                          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                            <button
-                              className="btn btn-primary"
-                              style={{ fontSize: '0.65rem', padding: '2px 7px' }}
-                              onClick={() => setReviewPost(p)}
-                            >→ Edit</button>
-                            {siteUrl && (
-                              <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
-                                ↗ Live
-                              </a>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  }),
-                ]}
+                {/* Published section — collapsed by default */}
+                {showPublished && publishedItems.map(item => {
+                  const p = item.data as Post
+                  const siteUrl = p.published_url
+                    ?? (p.wp_post_id && p.wp_site_url ? `${p.wp_site_url.replace(/\/$/, '')}/?p=${p.wp_post_id}` : null)
+                  return (
+                    <tr key={`pub-${p.id}`}>
+                      <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
+                        <StatusPill status="published" />
+                      </td>
+                      <td style={{ padding: '8px', verticalAlign: 'middle' }}>
+                        <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {p.title ?? '(untitled)'}
+                        </div>
+                        {p.target_keyword && <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{p.target_keyword}</div>}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {fmtDate(p.target_publish_date)}
+                      </td>
+                      <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          <button
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.65rem', padding: '2px 7px' }}
+                            onClick={() => setReviewPost(p)}
+                          >→ Edit</button>
+                          {siteUrl && (
+                            <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>
+                              ↗ Live
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
 
-            {/* Rejected toggle */}
-            {rejectedCount > 0 && (
-              <button
-                style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
-                onClick={() => setShowRejected(r => !r)}
-              >
-                {showRejected ? 'Hide' : 'Show'} Rejected ({rejectedCount})
-              </button>
-            )}
+            {/* Published / Rejected toggles */}
+            <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+              {publishedItems.length > 0 && (
+                <button
+                  style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                  onClick={() => setShowPublished(v => !v)}
+                >
+                  {showPublished ? 'Hide' : 'Show'} Published ({publishedItems.length})
+                </button>
+              )}
+              {rejectedCount > 0 && (
+                <button
+                  style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                  onClick={() => setShowRejected(r => !r)}
+                >
+                  {showRejected ? 'Hide' : 'Show'} Rejected ({rejectedCount})
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -2373,7 +2379,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
           type SARowItem = { kind: 'topic'; data: SaTopic } | { kind: 'post'; data: SaPost }
           const saAllItems: SARowItem[] = [
-            ...saTopics.filter(t => t.status !== 'rejected').map(t => ({ kind: 'topic' as const, data: t })),
+            ...saTopics.filter(t => showSaRejected || t.status !== 'rejected').map(t => ({ kind: 'topic' as const, data: t })),
             ...saPosts.filter(p => !seenSaPostIds.has(p.id) && (p.status === 'for_review' || p.status === 'draft_saved' || p.status === 'published')).map(p => ({ kind: 'post' as const, data: p })),
           ]
           const saGroups = new Map<string, SARowItem[]>()
@@ -2390,7 +2396,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
 
           const pagesPerSlot = saSettings.pages_per_run ?? 1
           const saRejectedCount = saTopics.filter(t => t.status === 'rejected').length
-          const [showSaRejected, setShowSaRejected_] = [false, () => {}] // rejected toggle placeholder
+          const saPublishedCount = saPosts.filter(p => seenSaPostIds.has(p.id) && (p.status === 'published' || p.status === 'draft_saved')).length
 
           const statusItems = [
             { label: 'Pending',    dot: '#f59e0b', count: saTopics.filter(t => t.status === 'pending').length    },
@@ -2588,8 +2594,8 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                         ]
                       })}
 
-                      {/* Published section (orphan posts) */}
-                      {saPosts.filter(p => seenSaPostIds.has(p.id) && (p.status === 'published' || p.status === 'draft_saved')).map(p => {
+                      {/* Published section (orphan posts) — collapsed by default */}
+                      {showSaPublished && saPosts.filter(p => seenSaPostIds.has(p.id) && (p.status === 'published' || p.status === 'draft_saved')).map(p => {
                         const pageLabel = p.title ?? [p.service_name, p.city, p.state_abbr].filter(Boolean).join(' — ') ?? '—'
                         return (
                           <tr key={`sa-pub-${p.id}`}>
@@ -2619,11 +2625,20 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     </tbody>
                   </table>
 
-                  {saRejectedCount > 0 && (
-                    <button style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>
-                      Show Rejected ({saRejectedCount})
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+                    {saPublishedCount > 0 && (
+                      <button style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                        onClick={() => setShowSaPublished(v => !v)}>
+                        {showSaPublished ? 'Hide' : 'Show'} Published ({saPublishedCount})
+                      </button>
+                    )}
+                    {saRejectedCount > 0 && (
+                      <button style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}
+                        onClick={() => setShowSaRejected(v => !v)}>
+                        {showSaRejected ? 'Hide' : 'Show'} Rejected ({saRejectedCount})
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

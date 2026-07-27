@@ -4,6 +4,7 @@ import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
 import { sendEmail } from '@/lib/email'
+import { sendDiscordMessage } from '@/lib/discord'
 
 export const maxDuration = 600
 
@@ -19,6 +20,7 @@ function shouldRunSync(
   const h = now.getUTCHours()
   const d = now.getUTCDay()
   if (freq === 'hourly')   return true
+  if (freq === 'every2h')  return h % 2 === 0
   if (freq === 'every6h')  return h % 6 === 0
   if (freq === 'every12h') return h % 12 === 0
   if (freq === 'daily')    return h === hourUtc
@@ -26,7 +28,7 @@ function shouldRunSync(
   return h === hourUtc
 }
 
-// Called hourly by Vercel Cron (vercel.json). Applies shouldRunSync gating per schedule.
+// Called every 2 hours by Vercel Cron (vercel.json). Applies shouldRunSync gating per schedule.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
@@ -37,7 +39,7 @@ export async function GET(request: NextRequest) {
 
   const { data: settings } = await db
     .from('agency_settings')
-    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc, notify_connector_errors, notification_email, agency_name')
+    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc, notify_connector_errors, notification_email, agency_name, discord_bot_token, discord_ops_channel_id')
     .single()
 
   if (settings?.cron_enabled === false) {
@@ -63,7 +65,10 @@ export async function GET(request: NextRequest) {
 
   const { data: clients } = await db.from('clients').select('id, name')
 
-  const agencyName = (settings as Record<string, unknown>).agency_name as string | undefined
+  const agencyName     = (settings as Record<string, unknown>).agency_name as string | undefined
+  const discordToken   = (settings as Record<string, unknown>).discord_bot_token as string | null | undefined
+  const opsChannelId   = (settings as Record<string, unknown>).discord_ops_channel_id as string | null | undefined
+  const connectionsUrl = `${process.env.NEXT_PUBLIC_APP_URL}/admin/connections`
 
   const settled = await Promise.allSettled(
     (clients ?? []).map(async (client) => {
@@ -84,19 +89,55 @@ export async function GET(request: NextRequest) {
       const client = (clients ?? [])[i]
       const errStr = String(r.reason)
       const isAuthError = /OAuthException|access.?token|session.?(expired|invalidat)|code[: ]*190/i.test(errStr)
-      if (isAuthError && settings?.notify_connector_errors && settings?.notification_email) {
-        try {
-          await sendEmail({
-            to:      String(settings.notification_email),
-            subject: `[${agencyName ?? 'Agency'}] Connector auth error — ${client.name}`,
-            html:    `<p>A sync for <strong>${client.name}</strong> failed due to an authentication error.</p>
-                      <p style="font-family:monospace;background:#f1f5f9;padding:8px;border-radius:4px;font-size:13px">${errStr.slice(0, 600)}</p>
-                      <p><a href="${process.env.NEXT_PUBLIC_APP_URL}/admin/connections">Reconnect the expired integration →</a></p>`,
-          })
-        } catch (emailErr) {
-          console.warn('[sync cron] Failed to send connector error email:', emailErr)
+
+      if (isAuthError) {
+        console.warn(`[sync cron] Auth error for ${client.name}:`, errStr.slice(0, 300))
+
+        // Dedup: only alert once per client per 24 hours
+        const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+        const { data: existingAlert } = await db
+          .from('admin_alerts')
+          .select('id')
+          .eq('type', 'integration')
+          .eq('client_id', client.id)
+          .gte('created_at', since24h)
+          .limit(1)
+          .maybeSingle()
+
+        if (!existingAlert) {
+          // Record the alert so we don't spam
+          await db.from('admin_alerts').insert({
+            type:        'integration',
+            severity:    'critical',
+            client_id:   client.id,
+            title:       `Connector auth error — ${client.name}`,
+            body:        errStr.slice(0, 500),
+            link_url:    connectionsUrl,
+          }).then(null, () => {})
+
+          // Discord alert
+          if (discordToken && opsChannelId) {
+            const msg = `🔑 **Connector auth error — ${client.name}**\nAn integration token has expired or been revoked. Syncing is paused until reconnected.\n→ ${connectionsUrl}`
+            void sendDiscordMessage(discordToken, opsChannelId, msg).catch(() => {})
+          }
+
+          // Email alert
+          if (settings?.notify_connector_errors && settings?.notification_email) {
+            try {
+              await sendEmail({
+                to:      String(settings.notification_email),
+                subject: `[${agencyName ?? 'Agency'}] Connector auth error — ${client.name}`,
+                html:    `<p>A sync for <strong>${client.name}</strong> failed due to an authentication error.</p>
+                          <p style="font-family:monospace;background:#f1f5f9;padding:8px;border-radius:4px;font-size:13px">${errStr.slice(0, 600)}</p>
+                          <p><a href="${connectionsUrl}">Reconnect the expired integration →</a></p>`,
+              })
+            } catch (emailErr) {
+              console.warn('[sync cron] Failed to send connector error email:', emailErr)
+            }
+          }
         }
       }
+
       return { client: client.name, status: 'error' as const, error: errStr }
     })
   )
