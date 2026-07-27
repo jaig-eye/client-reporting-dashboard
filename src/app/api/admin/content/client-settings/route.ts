@@ -23,13 +23,18 @@ export async function GET(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
   const db = createAdminClient()
-  const { data } = await db
-    .from('content_settings')
-    .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author')
-    .eq('client_id', clientId)
-    .maybeSingle()
+  const [{ data }, { data: clientRow }] = await Promise.all([
+    db.from('content_settings')
+      .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author')
+      .eq('client_id', clientId)
+      .maybeSingle(),
+    db.from('clients').select('phone').eq('id', clientId).maybeSingle(),
+  ])
 
-  return NextResponse.json(data ?? {})
+  const result: Record<string, unknown> = { ...(data ?? {}) }
+  if (!result.phone_number && clientRow?.phone) result.phone_number = clientRow.phone
+
+  return NextResponse.json(result)
 }
 
 const CONTENT_FIELDS = [
@@ -81,6 +86,11 @@ export async function PUT(request: NextRequest) {
     .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Keep clients.phone in sync with content_settings.phone_number
+  if (Object.prototype.hasOwnProperty.call(body, 'phone_number') && body.phone_number) {
+    await db.from('clients').update({ phone: body.phone_number }).eq('id', String(client_id))
+  }
 
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'updated', 'content_settings', {

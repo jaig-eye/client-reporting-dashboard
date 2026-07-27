@@ -10,11 +10,6 @@ interface SiteOption {
   clientId:     string
 }
 
-interface ManualLink {
-  url:   string
-  label: string
-}
-
 interface BrandDnaForm {
   business_background: string
   services:            string
@@ -79,9 +74,6 @@ export default function ClientContentSettingsForm({
 }) {
   const [form,        setForm]        = useState<BrandDnaForm>({ business_background: '', services: '', target_audience: '', geographic_focus: '', brand_voice: '', phone_number: '', cta_list: '' })
   const [eeat,        setEeat]        = useState<EeatData>(EMPTY_EEAT)
-  const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
-  const [blogUrlPrefix, setBlogUrlPrefix] = useState('')
-  const [manualLinks,   setManualLinks]   = useState<ManualLink[]>([])
   const [saving,      setSaving]      = useState(false)
   const [saved,       setSaved]       = useState(false)
   const [error,       setError]       = useState('')
@@ -113,17 +105,6 @@ export default function ClientContentSettingsForm({
         if (d.eeat_data && typeof d.eeat_data === 'object') {
           setEeat({ ...EMPTY_EEAT, ...(d.eeat_data as Partial<EeatData>) })
         }
-        const urls: string[] = Array.isArray(d.sitemap_urls) && (d.sitemap_urls as string[]).length > 0
-          ? d.sitemap_urls as string[]
-          : (d.sitemap_url ? [String(d.sitemap_url)] : [])
-        setSitemapUrls(urls)
-        setBlogUrlPrefix(String(d.blog_url_prefix ?? ''))
-        const links: ManualLink[] = ((d.manual_link_urls ?? []) as string[]).map(s => {
-          try { const p = JSON.parse(s); if (p?.url) return { url: String(p.url), label: String(p.label ?? '') } } catch { /* skip */ }
-          if (typeof s === 'string' && s.startsWith('http')) return { url: s, label: '' }
-          return null
-        }).filter(Boolean) as ManualLink[]
-        setManualLinks(links)
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -135,15 +116,6 @@ export default function ClientContentSettingsForm({
   function setEeatField<K extends keyof EeatData>(key: K, val: EeatData[K]) {
     setEeat(p => ({ ...p, [key]: val }))
   }
-
-  function addSitemap()                            { setSitemapUrls(p => [...p, '']) }
-  function updateSitemap(i: number, val: string)   { setSitemapUrls(p => p.map((u, idx) => idx === i ? val : u)) }
-  function removeSitemap(i: number)                { setSitemapUrls(p => p.filter((_, idx) => idx !== i)) }
-  function addManualLink()                         { setManualLinks(p => [...p, { url: '', label: '' }]) }
-  function updateManualLink(i: number, field: 'url' | 'label', val: string) {
-    setManualLinks(p => p.map((l, idx) => idx === i ? { ...l, [field]: val } : l))
-  }
-  function removeManualLink(i: number)             { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
   async function autoFill(siteUrl?: string, siteText?: string) {
     setAiLoading(true); setAiError(''); setAiSuggested(false); setAiBlocked(false)
@@ -227,10 +199,7 @@ export default function ClientContentSettingsForm({
       body: JSON.stringify({
         client_id: clientId,
         ...form,
-        eeat_data:        eeat,
-        sitemap_urls:     sitemapUrls.filter(u => u.trim()),
-        blog_url_prefix:  blogUrlPrefix.trim() || null,
-        manual_link_urls: manualLinks.filter(l => l.url.trim()).map(l => JSON.stringify({ url: l.url.trim(), label: l.label.trim() })),
+        eeat_data: eeat,
       }),
     })
     setSaving(false)
@@ -368,6 +337,7 @@ export default function ClientContentSettingsForm({
         <div>
           <Label hint="used when referencing phone in content">Phone Number</Label>
           <input className="input" type="tel" style={{ width: '50%' }} value={form.phone_number} onChange={e => setField('phone_number', e.target.value)} placeholder="(321) 555-5555" />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Saving also updates the business phone number in Business Info.</p>
         </div>
 
         <div>
@@ -383,55 +353,6 @@ export default function ClientContentSettingsForm({
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
             The AI maps each CTA to the post&rsquo;s funnel stage and intent automatically.
           </p>
-        </div>
-      </div>
-
-      {/* ── Sitemaps & Internal Links ─────────────────────────────────────── */}
-      <div className="card p-6 space-y-4">
-        <h3 className="section-title">Sitemaps &amp; Internal Links</h3>
-        <p className="section-desc">
-          Sitemaps give the AI page context for internal linking. Always-include links are injected into every generated post.
-        </p>
-
-        <div>
-          <Label hint="for internal link suggestions">Sitemap URLs</Label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {sitemapUrls.map((url, i) => (
-              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input className="input" type="url" style={{ flex: 1 }} value={url} onChange={e => updateSitemap(i, e.target.value)} placeholder="https://example.com/sitemap.xml" />
-                <button type="button" onClick={() => removeSitemap(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
-              </div>
-            ))}
-            <button type="button" onClick={addSitemap} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Sitemap</button>
-          </div>
-        </div>
-
-        <div>
-          <Label hint="e.g. /blog — prefix applied to blog post URLs in AI context">Blog URL Prefix</Label>
-          <input
-            className="input"
-            type="text"
-            value={blogUrlPrefix}
-            onChange={e => setBlogUrlPrefix(e.target.value)}
-            placeholder="/blog  (leave blank if posts live at the site root)"
-          />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            Set this if blog posts are published under a sub-path (e.g. <code>/blog</code> or <code>/articles</code>). The AI uses this to understand the site&rsquo;s URL structure when generating internal links.
-          </p>
-        </div>
-
-        <div>
-          <Label hint="included as internal links in every generated post">Always-Include Links</Label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {manualLinks.map((link, i) => (
-              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input className="input" type="url" style={{ flex: 2 }} value={link.url} onChange={e => updateManualLink(i, 'url', e.target.value)} placeholder="https://example.com/services" />
-                <input className="input" style={{ flex: 1 }} value={link.label} onChange={e => updateManualLink(i, 'label', e.target.value)} placeholder="Label" />
-                <button type="button" onClick={() => removeManualLink(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
-              </div>
-            ))}
-            <button type="button" onClick={addManualLink} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Link</button>
-          </div>
         </div>
       </div>
 

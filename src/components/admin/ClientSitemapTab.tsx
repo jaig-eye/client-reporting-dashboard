@@ -11,6 +11,17 @@ type SitemapPage = {
   isServicePage: boolean
 }
 
+type ManualLink = { url: string; label: string }
+
+function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+  return (
+    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+      {children}
+      {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
+    </label>
+  )
+}
+
 export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [pages,   setPages]   = useState<SitemapPage[]>([])
   const [loading, setLoading] = useState(false)
@@ -19,10 +30,64 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
 
+  // Sitemap config state
+  const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
+  const [blogUrlPrefix, setBlogUrlPrefix] = useState('')
+  const [manualLinks,   setManualLinks]   = useState<ManualLink[]>([])
+  const [configSaving,  setConfigSaving]  = useState(false)
+  const [configSaved,   setConfigSaved]   = useState(false)
+  const [configError,   setConfigError]   = useState('')
+
   useEffect(() => {
     loadPages()
+    loadConfig()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId])
+
+  async function loadConfig() {
+    try {
+      const res = await fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
+      const d = await res.json() as Record<string, unknown>
+      const urls: string[] = Array.isArray(d.sitemap_urls) && (d.sitemap_urls as string[]).length > 0
+        ? d.sitemap_urls as string[]
+        : (d.sitemap_url ? [String(d.sitemap_url)] : [])
+      setSitemapUrls(urls)
+      setBlogUrlPrefix(String(d.blog_url_prefix ?? ''))
+      const links: ManualLink[] = ((d.manual_link_urls ?? []) as string[]).map(s => {
+        try { const p = JSON.parse(s); if (p?.url) return { url: String(p.url), label: String(p.label ?? '') } } catch { /* skip */ }
+        if (typeof s === 'string' && s.startsWith('http')) return { url: s, label: '' }
+        return null
+      }).filter(Boolean) as ManualLink[]
+      setManualLinks(links)
+    } catch { /* non-fatal */ }
+  }
+
+  async function saveConfig() {
+    setConfigSaving(true); setConfigError(''); setConfigSaved(false)
+    try {
+      const res = await fetch('/api/admin/content/client-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id:        clientId,
+          sitemap_urls:     sitemapUrls.filter(u => u.trim()),
+          blog_url_prefix:  blogUrlPrefix.trim() || null,
+          manual_link_urls: manualLinks.filter(l => l.url.trim()).map(l => JSON.stringify({ url: l.url.trim(), label: l.label.trim() })),
+        }),
+      })
+      if (!res.ok) { const d = await res.json(); setConfigError(d.error || 'Failed to save'); return }
+      setConfigSaved(true); setTimeout(() => setConfigSaved(false), 2500)
+    } catch { setConfigError('Failed to save') } finally { setConfigSaving(false) }
+  }
+
+  function addSitemap()                                        { setSitemapUrls(p => [...p, '']) }
+  function updateSitemap(i: number, val: string)               { setSitemapUrls(p => p.map((u, idx) => idx === i ? val : u)) }
+  function removeSitemap(i: number)                            { setSitemapUrls(p => p.filter((_, idx) => idx !== i)) }
+  function addManualLink()                                     { setManualLinks(p => [...p, { url: '', label: '' }]) }
+  function updateManualLink(i: number, f: 'url' | 'label', v: string) {
+    setManualLinks(p => p.map((l, idx) => idx === i ? { ...l, [f]: v } : l))
+  }
+  function removeManualLink(i: number)                         { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
   async function loadPages() {
     setLoading(true)
@@ -110,7 +175,72 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const servicePageCount = pages.filter(p => p.isServicePage).length
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+      {/* ── Sitemaps & Internal Links ─────────────────────────────────────── */}
+      <div className="card p-6 space-y-4">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <h3 className="section-title" style={{ marginBottom: 2 }}>Sitemaps &amp; Internal Links</h3>
+            <p className="section-desc" style={{ margin: 0 }}>Sitemaps give the AI page context for internal linking. Always-include links are injected into every generated post.</p>
+          </div>
+          <button
+            type="button"
+            onClick={saveConfig}
+            disabled={configSaving}
+            className="btn btn-primary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem', flexShrink: 0 }}
+          >
+            {configSaving ? 'Saving…' : configSaved ? 'Saved ✓' : 'Save'}
+          </button>
+        </div>
+
+        {configError && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', margin: 0 }}>{configError}</p>}
+
+        <div>
+          <Label hint="for internal link suggestions">Sitemap URLs</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {sitemapUrls.map((url, i) => (
+              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input className="input" type="url" style={{ flex: 1 }} value={url} onChange={e => updateSitemap(i, e.target.value)} placeholder="https://example.com/sitemap.xml" />
+                <button type="button" onClick={() => removeSitemap(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+              </div>
+            ))}
+            <button type="button" onClick={addSitemap} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Sitemap</button>
+          </div>
+        </div>
+
+        <div>
+          <Label hint="e.g. /blog — prefix applied to blog post URLs in AI context">Blog URL Prefix</Label>
+          <input
+            className="input"
+            type="text"
+            value={blogUrlPrefix}
+            onChange={e => setBlogUrlPrefix(e.target.value)}
+            placeholder="/blog  (leave blank if posts live at the site root)"
+          />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            Set this if blog posts are published under a sub-path (e.g. <code>/blog</code> or <code>/articles</code>). The AI uses this to understand the site&rsquo;s URL structure when generating internal links.
+          </p>
+        </div>
+
+        <div>
+          <Label hint="included as internal links in every generated post">Always-Include Links</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {manualLinks.map((link, i) => (
+              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input className="input" type="url" style={{ flex: 2 }} value={link.url} onChange={e => updateManualLink(i, 'url', e.target.value)} placeholder="https://example.com/services" />
+                <input className="input" style={{ flex: 1 }} value={link.label} onChange={e => updateManualLink(i, 'label', e.target.value)} placeholder="Label" />
+                <button type="button" onClick={() => removeManualLink(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+              </div>
+            ))}
+            <button type="button" onClick={addManualLink} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Link</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Sitemap Pages ───────────────────────────────────────────────────── */}
+      <div>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
         <div>
@@ -247,6 +377,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
           </table>
         </div>
       )}
+      </div>
     </div>
   )
 }

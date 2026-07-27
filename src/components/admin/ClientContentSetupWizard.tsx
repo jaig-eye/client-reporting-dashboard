@@ -30,10 +30,7 @@ interface Schedule {
   frequency: string
   dayOfWeek: number
   publishTime: string
-  weeksAhead: number
   autoGenerate: boolean
-  autoApprove: boolean
-  autoPush: boolean
 }
 
 interface KeywordResult {
@@ -97,8 +94,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // Step 5 state
   const [schedule, setSchedule] = useState<Schedule>({
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
-    weeksAhead: 6, autoGenerate: true,
-    autoApprove: false, autoPush: false,
+    autoGenerate: true,
   })
 
   // Step 6 state — additional content types
@@ -284,11 +280,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         schedule_day_of_week: schedule.dayOfWeek,
         schedule_start_date:  new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
-        topics_per_run:       1,
-        weeks_ahead:          schedule.weeksAhead,
-        auto_generate:                  schedule.autoGenerate,
-        auto_approve_topics:            schedule.autoApprove,
-        auto_push_posts:                schedule.autoPush,
+        topics_per_run:  1,
+        auto_generate:   schedule.autoGenerate,
         generate_service_pages:         enableServicePages,
         service_page_topic_guidelines:  spGuidelinesWiz || null,
         generate_regular_pages:         enableRegularPages,
@@ -326,9 +319,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          client_id:   clientId,
-          start_date:  new Date().toISOString().slice(0, 10),
-          weeks_ahead: schedule.weeksAhead,
+          client_id:  clientId,
+          start_date: new Date().toISOString().slice(0, 10),
         }),
       })
       if (!res.ok) {
@@ -839,19 +831,11 @@ function StepSchedule({ schedule, setSchedule }: { schedule: Schedule; setSchedu
         <Field label="Publish Time">
           <input type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
         </Field>
-        <Field label="Weeks Ahead">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input type="range" min={2} max={12} value={schedule.weeksAhead} onChange={e => setSchedule({ ...schedule, weeksAhead: Number(e.target.value) })} style={{ flex: 1 }} />
-            <span style={{ minWidth: 20, fontWeight: 700, color: 'var(--text-primary)' }}>{schedule.weeksAhead}</span>
-          </div>
-        </Field>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
         {([
           { key: 'autoGenerate', label: 'Auto-generate posts', sub: 'Automatically generate posts from approved topics' },
-          { key: 'autoApprove',  label: 'Auto-approve topics', sub: 'Skip manual topic review and start generating immediately' },
-          { key: 'autoPush',     label: 'Auto-push to WordPress', sub: 'Publish posts to WordPress without manual review' },
         ] as const).map(t => (
           <label key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.625rem 0.875rem', borderRadius: 8, background: 'var(--bg-subtle)', cursor: 'pointer' }}>
             <input
@@ -1058,10 +1042,9 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
   const freqLabel = FREQ_OPTIONS.find(f => f.id === schedule.frequency)?.label ?? schedule.frequency
 
   const summaryRows = [
-    { label: 'Frequency',         value: freqLabel },
-    { label: 'Weeks ahead',       value: String(schedule.weeksAhead) },
-    { label: 'Publish time',      value: schedule.publishTime },
-    { label: 'Sitemap pages',     value: pagesCount > 0 ? String(pagesCount) : '—' },
+    { label: 'Frequency',     value: freqLabel },
+    { label: 'Publish time',  value: schedule.publishTime },
+    { label: 'Sitemap pages', value: pagesCount > 0 ? String(pagesCount) : '—' },
   ]
 
   const statusChecks = [
