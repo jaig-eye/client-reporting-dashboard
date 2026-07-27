@@ -7,8 +7,8 @@ import { waitUntil }                 from '@vercel/functions'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
-import { buildServiceAreaSlug }      from '@/lib/content/buildServiceAreaSlug'
-import type { SlugStructure }        from '@/lib/content/buildServiceAreaSlug'
+import { buildServiceAreaSlug, buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
+import type { SlugStructure }                          from '@/lib/content/buildServiceAreaSlug'
 
 export const maxDuration = 300
 
@@ -476,7 +476,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   const parsed = parseResponse(rawText)
   parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
   parsed.content = stripDangerousHtml(parsed.content)
-  const slug   = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
+  const basePath = (saSettings.base_page_path as string | null)?.trim() ?? ''
+  const cityFmt  = (saSettings.city_slug_format as string | null) === 'city' ? 'city' : 'city_state'
+  const slug     = basePath
+    ? buildSlugFromBasePage(basePath, city, stateAbbr, cityFmt)
+    : buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
 
   // Find connection_id from SA settings
   const connectionId = (saSettings.connection_id as string | null) ?? null
@@ -581,6 +585,18 @@ export async function POST(request: NextRequest) {
   if (!claimed) {
     return NextResponse.json({ error: 'Topic not available for generation' }, { status: 409 })
   }
-  waitUntil(generatePage(topic_id))
+  waitUntil((async () => {
+    try {
+      await generatePage(topic_id)
+    } catch (err) {
+      console.error('[sa-generate] uncaught error for topic', topic_id, err)
+      try {
+        await db.from('content_topics')
+          .update({ status: 'approved', generation_error: String(err) })
+          .eq('id', topic_id)
+          .throwOnError()
+      } catch { /* ignore reset failure */ }
+    }
+  })())
   return NextResponse.json({ ok: true, queued: true })
 }

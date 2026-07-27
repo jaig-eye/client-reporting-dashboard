@@ -11,21 +11,23 @@ import { useSiloSounds } from '@/lib/useSiloSounds'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SaSettings {
-  connection_id?:      string | null
-  slug_structure?:     string
-  wp_publish_mode?:    string
-  target_length?:      number
-  location_notes?:     string
-  pages_per_run?:      number
-  schedule_frequency?: string | null
+  connection_id?:       string | null
+  slug_structure?:      string
+  base_page_path?:      string | null
+  city_slug_format?:    string | null
+  wp_publish_mode?:     string
+  target_length?:       number
+  location_notes?:      string
+  pages_per_run?:       number
+  schedule_frequency?:  string | null
   schedule_day_of_week?: number | null
-  default_author_id?:  number | null
-  auto_generate?:      boolean
-  auto_approve_pages?: boolean
-  auto_push_pages?:    boolean
-  service_pages?:      { url: string; name: string; wp_page_id?: number }[]
-  service_areas?:      { city: string; state: string; priority?: string; skip?: boolean }[]
-  primary_service?:    string
+  default_author_id?:   number | null
+  auto_generate?:       boolean
+  auto_approve_pages?:  boolean
+  auto_push_pages?:     boolean
+  service_pages?:       { url: string; name: string; wp_page_id?: number }[]
+  service_areas?:       { city: string; state: string; priority?: string; skip?: boolean }[]
+  primary_service?:     string
 }
 
 interface SaTopic {
@@ -290,7 +292,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const [bcAuthor,    setBcAuthor]    = useState('')
 
   // Pill: Blog Posts / Service Pages / Service Area Pages / Regular Pages
-  const [activePill, setActivePill] = useState<'blog' | 'service_page' | 'service' | 'regular_page'>('blog')
+  const [activePill, setActivePill] = useState<'blog' | 'service_page' | 'service' | 'regular_page' | 'silos'>('blog')
 
   // Per-type enable flags (service_page / regular_page — blog always on, service_area has its own toggle)
   const [generateServicePages,  setGenerateServicePages]  = useState(false)
@@ -1151,6 +1153,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           { id: 'service_page', label: 'Service Pages' },
           { id: 'service',      label: 'SA Pages' },
           { id: 'regular_page', label: 'Regular Pages' },
+          { id: 'silos',        label: 'Silos' },
         ] as const).map(({ id, label }) => (
           <button
             key={id}
@@ -1218,44 +1221,39 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         {/* Expanded form */}
         {scheduleOpen && (
           <div className="card p-5 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
-            <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <Label>Site Connection</Label>
-                <select className="input" value={schedule.connection_id ?? ''} onChange={e => setSched('connection_id', e.target.value || null)}>
-                  <option value="">— Select site —</option>
-                  {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName || s.siteUrl}</option>)}
-                </select>
-              </div>
-              <div>
-                <Label>Start Date</Label>
-                <input className="input" type="date" style={{ width: '100%' }} value={schedule.schedule_start_date ?? ''} onChange={e => setSched('schedule_start_date', e.target.value || null)} />
-              </div>
-              <div>
-                <Label>Frequency</Label>
-                <select className="input" value={schedule.schedule_frequency ?? ''} onChange={e => setSched('schedule_frequency', e.target.value || null)}>
+            {/* Connection */}
+            <div style={{ marginBottom: '0.75rem' }}>
+              <Label>Site Connection</Label>
+              <select className="input" value={schedule.connection_id ?? ''} onChange={e => setSched('connection_id', e.target.value || null)}>
+                <option value="">— Select site —</option>
+                {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName || s.siteUrl}</option>)}
+              </select>
+            </div>
+
+            {/* Schedule row */}
+            <div style={{ marginBottom: '0.75rem' }}>
+              <Label>Schedule</Label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <select className="input" style={{ flex: '0 0 auto', width: 160 }} value={schedule.schedule_frequency ?? ''} onChange={e => setSched('schedule_frequency', e.target.value || null)}>
                   <option value="">Use global default</option>
                   {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
-              </div>
-              {showDayPicker && (
-                <div>
-                  <Label>Day of Week</Label>
-                  <select className="input" value={schedule.schedule_day_of_week ?? 1} onChange={e => setSched('schedule_day_of_week', Number(e.target.value))}>
+                {showDayPicker && (<>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
+                  <select className="input" style={{ flex: '0 0 auto', width: 140 }} value={schedule.schedule_day_of_week ?? 1} onChange={e => setSched('schedule_day_of_week', Number(e.target.value))}>
                     {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
                   </select>
-                </div>
-              )}
-              <div>
-                <Label>Weeks Ahead</Label>
-                <input className="input" type="number" min={1} max={24} value={schedule.weeks_ahead ?? 6} onChange={e => setSched('weeks_ahead', Number(e.target.value))} />
+                </>)}
+                <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>at</span>
+                <input className="input" type="time" style={{ flex: '0 0 auto', width: 120 }} value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
               </div>
+            </div>
+
+            {/* Target word count + Author + BC fields */}
+            <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
               <div>
                 <Label>Target Word Count</Label>
                 <input className="input" type="number" min={300} max={5000} step={100} value={schedule.target_length ?? 1500} onChange={e => setSched('target_length', Number(e.target.value))} />
-              </div>
-              <div>
-                <Label>Publish Time</Label>
-                <input className="input" type="time" value={schedule.publish_time ?? '09:00'} onChange={e => setSched('publish_time', e.target.value || null)} />
               </div>
               {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType !== 'bigcommerce' && (
                 <div>
@@ -1266,78 +1264,51 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </select>
                 </div>
               )}
-              {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType === 'bigcommerce' && (
+              {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType === 'bigcommerce' && (<>
                 <div>
-                  <Label hint="shown as author on BigCommerce blog posts">Author Name</Label>
-                  <input
-                    className="input"
-                    type="text"
-                    value={bcAuthor}
-                    onChange={e => setBcAuthor(e.target.value)}
-                    placeholder="e.g. Admin"
-                  />
+                  <Label hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
+                  <input className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
                 </div>
-              )}
-              {categories.length > 0 && (
                 <div>
-                  <Label>Default Categories</Label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '9rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
-                    {categories.map(c => {
-                      const selected = (schedule.default_category_ids ?? []).includes(c.id)
-                      return (
-                        <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() => {
-                              const cur = schedule.default_category_ids ?? []
-                              setSched('default_category_ids', selected ? cur.filter(id => id !== c.id) : [...cur, c.id])
-                            }}
-                          />
-                          {c.name}
-                        </label>
-                      )
-                    })}
-                  </div>
+                  <Label hint="prefix prepended to BC blog post URLs, e.g. /blog/">Blog URL Prefix</Label>
+                  <input className="input" type="text" value={(schedule as Record<string, unknown>).blog_url_prefix as string ?? ''} onChange={e => setSched('blog_url_prefix' as keyof typeof schedule, e.target.value || null)} placeholder="/blog/" />
                 </div>
-              )}
+              </>)}
               {clientSites.find(s => s.connectionId === schedule.connection_id)?.connectorType !== 'bigcommerce' && (
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <Label>WordPress Publish Mode</Label>
-                  <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.375rem' }}>
-                    {(['scheduled_draft', 'draft_only'] as const).map(mode => (
-                      <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.8125rem' }}>
-                        <input type="radio" name="wp_publish_mode" value={mode} checked={(schedule.wp_publish_mode ?? 'scheduled_draft') === mode} onChange={() => setSched('wp_publish_mode', mode)} />
-                        {mode === 'scheduled_draft' ? 'Scheduled Draft' : 'Draft Only'}
-                      </label>
-                    ))}
-                  </div>
+                <div>
+                  <Label>WP Publish Mode</Label>
+                  <select className="input" value={schedule.wp_publish_mode ?? 'scheduled_draft'} onChange={e => setSched('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
+                    <option value="scheduled_draft">Scheduled Draft</option>
+                    <option value="draft_only">Draft Only</option>
+                  </select>
                 </div>
               )}
             </div>
 
-            <div style={{ marginBottom: '0.75rem' }}>
-              <Label>Custom Post Structure</Label>
-              <textarea
-                className="input"
-                rows={3}
-                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
-                value={schedule.post_structure ?? ''}
-                onChange={e => setSched('post_structure', e.target.value)}
-                placeholder={`e.g.\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite years of experience, named staff expertise.`}
-              />
-            </div>
-
-            <div style={{ marginBottom: '0.75rem' }}>
-              <Label>Topic Guidelines & Restrictions</Label>
-              <textarea
-                className="input"
-                rows={2}
-                style={{ width: '100%', resize: 'vertical' }}
-                value={schedule.topic_guidelines ?? ''}
-                onChange={e => setSched('topic_guidelines', e.target.value || null)}
-                placeholder="e.g. Avoid bad credit financing, payday loans, or any topics with negative brand associations."
-              />
+            {/* Writing Instructions + Topic Restrictions side by side */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div>
+                <Label>Writing Instructions</Label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+                  value={schedule.post_structure ?? ''}
+                  onChange={e => setSched('post_structure', e.target.value)}
+                  placeholder={`e.g.\nAlways link to at least 2 priority pages.\nInclude E-E-A-T signals: cite years of experience, named staff expertise.`}
+                />
+              </div>
+              <div>
+                <Label>Topic Restrictions</Label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  value={schedule.topic_guidelines ?? ''}
+                  onChange={e => setSched('topic_guidelines', e.target.value || null)}
+                  placeholder="e.g. Avoid bad credit financing, payday loans, or any topics with negative brand associations."
+                />
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '0.75rem' }}>
@@ -1398,22 +1369,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           AI not configured — add a provider in Settings to generate content plans
         </div>
       )}
-
-      {/* ── Content Silos — Blog ─────────────────────────────────────────── */}
-      <SiloManager
-        contentType="blog"
-        contentTypeLabel="Blog"
-        silos={silos}
-        silosLoading={silosLoading}
-        expandedSiloId={expandedSiloId}
-        setExpandedSiloId={setExpandedSiloId}
-        siloGenerating={siloGenerating}
-        onCreateSilo={() => openCreateSiloModal('blog')}
-        onEditSilo={openEditSiloModal}
-        onArchiveSilo={handleDeleteSilo}
-        onGenerateFromSilo={handleGenerateFromSilo}
-        onMarkHubUpdated={handleMarkHubUpdated}
-      />
 
       {/* ── Publish to sites row ─────────────────────────────────────────── */}
       {clientSites.length > 0 && (
@@ -1508,18 +1463,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
                             {approvedInGroup >= 1 ? '✓' : '0/1'}
                           </span>
-                          {slotReady && (
-                            <button
-                              className="btn btn-secondary"
-                              style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--blue)', marginLeft: 4 }}
-                              onClick={() => generateForSlot(dateKey, topicsInGroup)}
-                              disabled={slotGenerating[dateKey]}
-                            >
-                              {slotGenerating[dateKey]
-                              ? '…'
-                              : <><Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot</>}
-                            </button>
-                          )}
                           {showCleanup && (
                             <button
                               className="btn btn-secondary"
@@ -2148,15 +2091,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   </select>
                 </div>
                 <div>
-                  <Label>Slug Structure</Label>
-                  <select className="input" value={saSettings.slug_structure ?? 'service_slash_city_state'} onChange={e => setSa('slug_structure', e.target.value)}>
-                    <option value="service_slash_city_state">/tree-service/palm-bay-fl/</option>
-                    <option value="service_dash_city_state">/tree-service-palm-bay-fl/</option>
-                    <option value="service_slash_city">/tree-service/palm-bay/</option>
-                    <option value="silo_slash_service_city_state">/services/tree-service/palm-bay-fl/</option>
-                  </select>
-                </div>
-                <div>
                   <Label>WP Publish Mode</Label>
                   <select className="input" value={saSettings.wp_publish_mode ?? 'draft_only'} onChange={e => setSa('wp_publish_mode', e.target.value)}>
                     <option value="draft_only">Draft Only</option>
@@ -2174,24 +2108,40 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <Label>Target Length</Label>
                   <input className="input" type="number" min={600} max={3000} step={100} value={saSettings.target_length ?? 1200} onChange={e => setSa('target_length', Number(e.target.value))} />
                 </div>
-                <div>
-                  <Label>Pages per Run</Label>
-                  <input className="input" type="number" min={1} max={10} value={saSettings.pages_per_run ?? 1} onChange={e => setSa('pages_per_run', Number(e.target.value))} />
+                {/* Base page path + city slug format */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Label hint="WP parent page your SA pages nest under, e.g. /services/rv-detailing">Base Page Path</Label>
+                  <input
+                    className="input"
+                    type="text"
+                    style={{ width: '100%' }}
+                    value={saSettings.base_page_path ?? ''}
+                    onChange={e => setSa('base_page_path', e.target.value || null)}
+                    placeholder="/services/rv-detailing"
+                  />
                 </div>
                 <div>
-                  <Label>Frequency</Label>
-                  <select className="input" value={saSettings.schedule_frequency ?? 'monthly'} onChange={e => setSa('schedule_frequency', e.target.value || null)}>
-                    {FREQ_OPTS.slice(0, 4).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  <Label>City Slug Format</Label>
+                  <select className="input" value={saSettings.city_slug_format ?? 'city_state'} onChange={e => setSa('city_slug_format', e.target.value)}>
+                    <option value="city_state">City + State (melbourne-fl)</option>
+                    <option value="city">City only (melbourne)</option>
                   </select>
                 </div>
-                {(saSettings.schedule_frequency === 'weekly' || saSettings.schedule_frequency === 'biweekly') && (
-                  <div>
-                    <Label>Day of Week</Label>
-                    <select className="input" value={saSettings.schedule_day_of_week ?? 1} onChange={e => setSa('schedule_day_of_week', Number(e.target.value))}>
-                      {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                {/* Frequency + Day inline */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Label>Schedule</Label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <select className="input" style={{ flex: '0 0 auto', width: 160 }} value={saSettings.schedule_frequency ?? 'monthly'} onChange={e => setSa('schedule_frequency', e.target.value || null)}>
+                      {FREQ_OPTS.slice(0, 4).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                    {(saSettings.schedule_frequency === 'weekly' || saSettings.schedule_frequency === 'biweekly') && (<>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
+                      <select className="input" style={{ flex: '0 0 auto', width: 140 }} value={saSettings.schedule_day_of_week ?? 1} onChange={e => setSa('schedule_day_of_week', Number(e.target.value))}>
+                        {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                      </select>
+                    </>)}
                   </div>
-                )}
+                </div>
                 <div>
                   <Label>Primary Service</Label>
                   <input
@@ -2476,15 +2426,6 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                 <span style={{ fontSize: '0.68rem', color: slotReady ? 'var(--green)' : 'var(--text-faint)' }}>
                                   {approvedInGroup}/{pagesPerSlot}{slotReady ? ' ✓' : ''}
                                 </span>
-                                {slotReady && (
-                                  <button
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: '0.65rem', padding: '1px 7px', color: 'var(--blue)', marginLeft: 4 }}
-                                    onClick={() => topicsInGroup.filter(t => t.status === 'approved' && !t.post?.id).forEach(t => generateSaPost(t.id))}
-                                  >
-                                    <Play size={10} weight="fill" style={{ marginRight: 3 }} />Generate Slot
-                                  </button>
-                                )}
                               </div>
                             </td>
                           </tr>,
@@ -2822,6 +2763,43 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             isActive={isActive && activePill === 'regular_page'}
             refreshSignal={rpRefreshSignal}
           />}
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION — SILOS (pill: silos)
+      ═══════════════════════════════════════════════════════════════════ */}
+      {activePill === 'silos' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="card p-4" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', margin: 0 }}>Content Silos</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 2, marginBottom: 0 }}>
+                Organise blog content into topical clusters with hub pages and internal linking.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => openCreateSiloModal('blog')}
+              style={{ flexShrink: 0 }}
+            >
+              + New Silo
+            </button>
+          </div>
+          <SiloManager
+            contentType="blog"
+            contentTypeLabel="Blog"
+            silos={silos}
+            silosLoading={silosLoading}
+            expandedSiloId={expandedSiloId}
+            setExpandedSiloId={setExpandedSiloId}
+            siloGenerating={siloGenerating}
+            onCreateSilo={() => openCreateSiloModal('blog')}
+            onEditSilo={openEditSiloModal}
+            onArchiveSilo={handleDeleteSilo}
+            onGenerateFromSilo={handleGenerateFromSilo}
+            onMarkHubUpdated={handleMarkHubUpdated}
+          />
         </div>
       )}
 

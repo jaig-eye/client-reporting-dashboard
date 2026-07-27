@@ -150,11 +150,19 @@ export async function POST(
 
     const { data: csRowBc } = await db
       .from('content_settings')
-      .select('publish_time, bc_author')
+      .select('publish_time, bc_author, blog_url_prefix')
       .eq('client_id', String(p.client_id))
       .maybeSingle()
-    const bcPublishTime = (csRowBc as { publish_time?: string | null; bc_author?: string | null } | null)?.publish_time ?? '09:00'
-    const bcAuthor      = (csRowBc as { publish_time?: string | null; bc_author?: string | null } | null)?.bc_author ?? 'Admin'
+    type CsRowBc = { publish_time?: string | null; bc_author?: string | null; blog_url_prefix?: string | null }
+    const csRowBcTyped  = csRowBc as CsRowBc | null
+    const bcPublishTime = csRowBcTyped?.publish_time ?? '09:00'
+    const bcAuthor      = csRowBcTyped?.bc_author ?? 'Admin'
+    const bcBlogPrefix  = (() => {
+      const raw = csRowBcTyped?.blog_url_prefix?.trim()
+      if (!raw) return '/blog/'
+      const s = raw.startsWith('/') ? raw : `/${raw}`
+      return s.endsWith('/') ? s : `${s}/`
+    })()
 
     const publishedDate = p.target_publish_date
       ? new Date(`${String(p.target_publish_date)}T${bcPublishTime}:00`).toUTCString()
@@ -224,11 +232,16 @@ export async function POST(
         return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
       }
 
+      const blogUrl = (() => {
+        const raw = postSlug.replace(/^\/|\/$/g, '')
+        const prefix = bcBlogPrefix.replace(/^\/|\/$/g, '')  // e.g. 'blog'
+        return raw.startsWith(`${prefix}/`) || raw === prefix ? `/${raw}/` : `/${prefix}/${raw}/`
+      })()
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
         body:             String((p as Record<string, unknown>).content ?? ''),
         author:           bcAuthor,
-        url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
+        url:              blogUrl,
         is_published:     false,
         published_date:   publishedDate,
         meta_description: String((p as Record<string, unknown>).meta_description ?? ''),
@@ -333,11 +346,10 @@ export async function POST(
 
     if (isServiceArea) {
       // Service area pages go to WP Pages, not Posts
-      const saSettingsRes = await db.from('service_area_settings').select('wp_publish_mode, publish_time, slug_structure').eq('client_id', String(p.client_id)).maybeSingle()
+      const saSettingsRes = await db.from('service_area_settings').select('wp_publish_mode, publish_time').eq('client_id', String(p.client_id)).maybeSingle()
       const saSettings    = (saSettingsRes.data ?? {}) as Record<string, unknown>
       const saPublishMode = (saSettings.wp_publish_mode as string | null) ?? 'draft_only'
       const saPublishTime = (saSettings.publish_time    as string | null) ?? '09:00'
-      const saSlugStruct  = (saSettings.slug_structure  as string | null) ?? ''
 
       let saStatus: 'draft' | 'future' | 'publish' = 'draft'
       let saDate: string | undefined
@@ -349,70 +361,32 @@ export async function POST(
         saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
       }
 
-      // For hierarchical slug structures (service/city), look up the parent WP page
-      // and use only the child slug so WordPress stores it under the correct parent.
+      // Hierarchical slug detection by segment count — handles any depth (2-level, 3-level, base_page).
+      // The slug stored on content_posts always reflects the full path (e.g. services/rv-detailing/melbourne-fl/).
+      // Walk from root to leaf, scoping each WP pages lookup by the previous parent ID.
       const rawSlug = p.slug ? String(p.slug) : ''
       let wpSlug: string | undefined = rawSlug || undefined
       let wpParent: number | undefined
 
-      const isHierarchical = (
-        saSlugStruct === 'service_slash_city_state' ||
-        saSlugStruct === 'service_slash_city' ||
-        saSlugStruct === 'silo_slash_service_city_state'
-      ) && rawSlug.includes('/')
-      if (isHierarchical) {
-        const parts = rawSlug.split('/').filter(Boolean)
+      const segments = rawSlug.replace(/\/$/, '').split('/').filter(Boolean)
+      if (segments.length >= 2) {
         const creds = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-
-        if (parts.length >= 3) {
-          // 3-level silo: silo/service/city → leaf = city, parent = service page nested under silo
-          const siloSlug    = parts[0]
-          const serviceSlug = parts[1]
-          const citySlug    = parts[2]
-          wpSlug = citySlug
+        wpSlug = segments[segments.length - 1]
+        let parentId: number | undefined
+        for (let i = 0; i < segments.length - 1; i++) {
           try {
-            // Find the silo page first so we can look up the service page under it
-            const siloRes = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(siloSlug)}&per_page=1`, {
-              headers: { Authorization: `Basic ${creds}` },
-            })
-            if (siloRes.ok) {
-              const siloPages = (await siloRes.json()) as { id: number }[]
-              const siloId    = siloPages[0]?.id
-              // Only look up the service page when the silo page is confirmed in WP.
-              // Without a siloId we cannot safely scope the query — skipping avoids
-              // accidentally binding the city page to a same-slug service page in a
-              // different silo hierarchy.
-              if (siloId) {
-                const svcRes = await fetch(
-                  `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&parent=${siloId}&per_page=1`,
-                  { headers: { Authorization: `Basic ${creds}` } }
-                )
-                if (svcRes.ok) {
-                  const svcPages = (await svcRes.json()) as { id: number }[]
-                  if (svcPages.length > 0) wpParent = svcPages[0].id
-                }
-              }
-            }
-          } catch {
-            // non-fatal — publish without parent if lookup fails
-          }
-        } else if (parts.length === 2) {
-          // 2-level: service/city → leaf = city, parent = service page
-          const parentSlug = parts[0]
-          const childSlug  = parts[1]
-          wpSlug = childSlug
-          try {
-            const res = await fetch(`${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(parentSlug)}&per_page=1`, {
-              headers: { Authorization: `Basic ${creds}` },
-            })
+            const url = `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(segments[i])}&per_page=1${parentId ? `&parent=${parentId}` : ''}`
+            const res = await fetch(url, { headers: { Authorization: `Basic ${creds}` } })
             if (res.ok) {
               const pages = (await res.json()) as { id: number }[]
-              if (pages.length > 0) wpParent = pages[0].id
+              parentId = pages[0]?.id
+              if (!parentId) break  // ancestor not found — stop; publish without parent
             }
           } catch {
-            // non-fatal
+            break  // non-fatal — publish without parent if lookup fails
           }
         }
+        wpParent = parentId
       }
 
       result = await publishPage(siteUrl, auth, {
@@ -433,11 +407,29 @@ export async function POST(
         ? Number(p.wp_author_id)
         : (cs?.default_author_id ? Number(cs.default_author_id) : undefined)
 
-      const postCategoryIds = Array.isArray(p.wp_category_ids) && (p.wp_category_ids as number[]).length > 0
-        ? (p.wp_category_ids as number[])
-        : (Array.isArray(cs?.default_category_ids) && (cs!.default_category_ids as number[]).length > 0
-            ? (cs!.default_category_ids as number[])
-            : undefined)
+      // Prefer per-post category IDs, then fall back to keyword-matched WP categories
+      let postCategoryIds: number[] | undefined
+      if (Array.isArray(p.wp_category_ids) && (p.wp_category_ids as number[]).length > 0) {
+        postCategoryIds = p.wp_category_ids as number[]
+      } else if (Array.isArray(cs?.default_category_ids) && (cs!.default_category_ids as number[]).length > 0) {
+        postCategoryIds = cs!.default_category_ids as number[]
+      } else {
+        // Auto-categorize: fetch the site's WP categories and match by keyword
+        try {
+          const creds   = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
+          const catRes  = await fetch(`${siteUrl}/wp-json/wp/v2/categories?per_page=100`, { headers: { Authorization: `Basic ${creds}` } })
+          if (catRes.ok) {
+            const allCats = (await catRes.json()) as { id: number; name: string; slug: string }[]
+            const keywords = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
+              .filter(Boolean).join(' ').toLowerCase()
+            const matched = allCats.find(cat =>
+              keywords.includes(cat.name.toLowerCase()) ||
+              keywords.includes(cat.slug.replace(/-/g, ' '))
+            )
+            if (matched) postCategoryIds = [matched.id]
+          }
+        } catch { /* non-fatal — WP will assign Uncategorized */ }
+      }
 
       result = await publishPost(siteUrl, auth, {
         title:          String(p.title ?? ''),

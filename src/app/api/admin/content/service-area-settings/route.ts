@@ -15,6 +15,7 @@ const ALLOWED = [
   'target_length', 'page_structure', 'location_notes', 'tone_notes',
   'use_gsc_discovery', 'min_gsc_impressions', 'check_sitemap_overlap',
   'default_author_id',
+  'base_page_path', 'city_slug_format',
 ]
 
 export async function GET(request: NextRequest) {

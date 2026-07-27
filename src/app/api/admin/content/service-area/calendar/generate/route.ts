@@ -48,9 +48,23 @@ interface ParsedPage { service: string; city: string; state: string }
 
 /**
  * Parse a sitemap URL into service + city + state using the configured slug structure.
+ * When base_page_path is set, match URLs that start with that path and extract the child slug as city.
  * Returns null if the URL doesn't match the expected pattern.
  */
-function parseSitemapUrl(rawUrl: string, slugStructure: string): ParsedPage | null {
+function parseSitemapUrl(rawUrl: string, slugStructure: string, basePath?: string | null): ParsedPage | null {
+  if (basePath) {
+    let pathname: string
+    try { pathname = new URL(rawUrl).pathname.replace(/\/$/, '') } catch { return null }
+    const base = basePath.replace(/^\/|\/$/g, '')
+    if (!pathname.startsWith(`/${base}/`) && pathname !== `/${base}`) return null
+    const child = pathname.slice(`/${base}/`.length)
+    if (!child) return null
+    // child is either city-state or city
+    const parsed = parseCityState(child)
+    const service = base.split('/').pop() ?? 'Service'
+    if (parsed) return { service: slugToTitle(service), city: parsed.city, state: parsed.state }
+    return { service: slugToTitle(service), city: slugToTitle(child), state: '' }
+  }
   let pathname: string
   try {
     pathname = new URL(rawUrl).pathname.replace(/\/$/, '')
@@ -117,7 +131,7 @@ export async function POST(request: NextRequest) {
   // ── Load everything in one round-trip ──────────────────────────────────────
   const [saRes, agencyRes, contentRes, sitemapRes, existingTopicsRes, gscRes] = await Promise.all([
     db.from('service_area_settings')
-      .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service, slug_structure, location_notes, service_pages')
+      .select('schedule_frequency, schedule_day_of_week, pages_per_run, service_areas, primary_service, slug_structure, location_notes, service_pages, base_page_path, city_slug_format')
       .eq('client_id', client_id)
       .maybeSingle(),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
@@ -137,8 +151,9 @@ export async function POST(request: NextRequest) {
       .limit(200),
   ])
 
-  const sa           = saRes.data
-  const slugStructure = (sa?.slug_structure as string | null) ?? 'service_slash_city_state'
+  const sa            = saRes.data
+  const slugStructure = (sa?.slug_structure   as string | null) ?? 'service_slash_city_state'
+  const basePath      = (sa?.base_page_path   as string | null)?.trim() ?? null
   const frequency    = (sa?.schedule_frequency  as string | null) ?? 'monthly'
   const dayOfWeek    = (sa?.schedule_day_of_week as number | null) ?? 1
   const pagesPerRun  = (sa?.pages_per_run        as number | null) ?? 1
@@ -149,9 +164,9 @@ export async function POST(request: NextRequest) {
   // These are pages that already exist live — we must not duplicate them.
   const allSitemapPages = (sitemapRes.data ?? []) as { url: string; is_service_page: boolean }[]
 
-  // Parse every sitemap page against the slug structure
+  // Parse every sitemap page against the slug structure (or base_page_path if set)
   const sitemapParsed: ParsedPage[] = allSitemapPages
-    .map(p => parseSitemapUrl(p.url, slugStructure))
+    .map(p => parseSitemapUrl(p.url, slugStructure, basePath))
     .filter((p): p is ParsedPage => p !== null)
 
   // Build ordered list of services to cycle through:
