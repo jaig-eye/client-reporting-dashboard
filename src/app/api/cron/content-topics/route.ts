@@ -1048,15 +1048,31 @@ export async function GET(request: NextRequest) {
         .order('target_publish_date', { ascending: true })
 
       if (skippedPosts && skippedPosts.length > 0) {
-        const clientIds = Array.from(new Set((skippedPosts as PostRow[]).map(p => p.client_id)))
-        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
-        const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-        const lines = (skippedPosts as PostRow[]).map(p =>
-          `• ${clientNameMap.get(p.client_id) ?? p.client_id} — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
-        )
-        void sendDiscordMessage(discordBotToken, opsChannelId,
-          `⚠️ **Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved**\n${lines.join('\n')}\nManual push or approval required → ${contentReviewUrl}`
-        ).catch(() => {})
+        // Dedup: fire at most once per 22 hours so it doesn't spam twice-daily cron runs
+        const { data: recentSkipAlert } = await db.from('admin_alerts')
+          .select('id').eq('type', 'content')
+          .filter('meta->>content_type', 'eq', 'skip_reminder')
+          .gte('created_at', new Date(Date.now() - 22 * 3_600_000).toISOString())
+          .limit(1)
+
+        if (!recentSkipAlert || recentSkipAlert.length === 0) {
+          const clientIds = Array.from(new Set((skippedPosts as PostRow[]).map(p => p.client_id)))
+          const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
+          const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+          const lines = (skippedPosts as PostRow[]).map(p =>
+            `• ${clientNameMap.get(p.client_id) ?? p.client_id} — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
+          )
+          void sendDiscordMessage(discordBotToken, opsChannelId,
+            `⚠️ **Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved**\n${lines.join('\n')}\nManual push or approval required → ${contentReviewUrl}`
+          ).catch(() => {})
+          db.from('admin_alerts').insert({
+            type: 'content', severity: 'warning',
+            title: `Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved`,
+            body: lines.join('\n'),
+            meta: { content_type: 'skip_reminder', count: skippedPosts.length },
+            link_url: contentReviewUrl,
+          }).then(null, () => {})
+        }
       }
     }
   }
