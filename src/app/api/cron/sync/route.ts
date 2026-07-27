@@ -28,7 +28,7 @@ function shouldRunSync(
   return h === hourUtc
 }
 
-// Called every 2 hours by Vercel Cron (vercel.json). Applies shouldRunSync gating per schedule.
+// Called hourly by Vercel Cron (vercel.json). shouldRunSync gates each connector type per agency settings.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
