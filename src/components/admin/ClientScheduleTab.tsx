@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
+import { buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
@@ -59,6 +60,7 @@ interface SaPost {
   city:                string | null
   state_abbr:          string | null
   service_name:        string | null
+  slug:                string | null
 }
 
 interface Author {
@@ -2079,8 +2081,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           </div>
 
           {saSettingsOpen && (
-            <div className="card p-5 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
-              <div className="grid grid-cols-3 gap-3" style={{ marginBottom: '0.75rem' }}>
+            <div className="card p-4 mt-1" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '0.75rem' }}>
+                {/* Connection */}
                 <div>
                   <Label>Connection</Label>
                   <select className="input" value={saSettings.connection_id ?? ''} onChange={e => setSa('connection_id', e.target.value || null)}>
@@ -2090,69 +2093,63 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                     ))}
                   </select>
                 </div>
-                <div>
-                  <Label>WP Publish Mode</Label>
-                  <select className="input" value={saSettings.wp_publish_mode ?? 'draft_only'} onChange={e => setSa('wp_publish_mode', e.target.value)}>
-                    <option value="draft_only">Draft Only</option>
-                    <option value="scheduled_draft">Scheduled Draft</option>
-                  </select>
-                </div>
-                <div>
-                  <Label>Default Author</Label>
-                  <select className="input" value={saSettings.default_author_id ?? ''} onChange={e => setSa('default_author_id', e.target.value ? Number(e.target.value) : null)}>
-                    <option value="">— Default —</option>
-                    {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label>Target Length</Label>
-                  <input className="input" type="number" min={600} max={3000} step={100} value={saSettings.target_length ?? 1200} onChange={e => setSa('target_length', Number(e.target.value))} />
-                </div>
-                {/* Base page path + city slug format */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <Label hint="WP parent page your SA pages nest under, e.g. /services/rv-detailing">Base Page Path</Label>
-                  <input
-                    className="input"
-                    type="text"
-                    style={{ width: '100%' }}
-                    value={saSettings.base_page_path ?? ''}
-                    onChange={e => setSa('base_page_path', e.target.value || null)}
-                    placeholder="/services/rv-detailing"
-                  />
-                </div>
-                <div>
-                  <Label>City Slug Format</Label>
-                  <select className="input" value={saSettings.city_slug_format ?? 'city_state'} onChange={e => setSa('city_slug_format', e.target.value)}>
-                    <option value="city_state">City + State (melbourne-fl)</option>
-                    <option value="city">City only (melbourne)</option>
-                  </select>
-                </div>
-                {/* Frequency + Day inline */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <Label>Schedule</Label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <select className="input" style={{ flex: '0 0 auto', width: 160 }} value={saSettings.schedule_frequency ?? 'monthly'} onChange={e => setSa('schedule_frequency', e.target.value || null)}>
-                      {FREQ_OPTS.slice(0, 4).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {/* 4-col row: WP Publish | Author | Target Length | City Slug Format */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.625rem' }}>
+                  <div>
+                    <Label>WP Publish Mode</Label>
+                    <select className="input" value={saSettings.wp_publish_mode ?? 'draft_only'} onChange={e => setSa('wp_publish_mode', e.target.value)}>
+                      <option value="draft_only">Draft Only</option>
+                      <option value="scheduled_draft">Scheduled Draft</option>
                     </select>
-                    {(saSettings.schedule_frequency === 'weekly' || saSettings.schedule_frequency === 'biweekly') && (<>
-                      <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
-                      <select className="input" style={{ flex: '0 0 auto', width: 140 }} value={saSettings.schedule_day_of_week ?? 1} onChange={e => setSa('schedule_day_of_week', Number(e.target.value))}>
-                        {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                      </select>
-                    </>)}
+                  </div>
+                  <div>
+                    <Label>Default Author</Label>
+                    <select className="input" value={saSettings.default_author_id ?? ''} onChange={e => setSa('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                      <option value="">— Default —</option>
+                      {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Target Length</Label>
+                    <input className="input" type="number" min={600} max={3000} step={100} value={saSettings.target_length ?? 1200} onChange={e => setSa('target_length', Number(e.target.value))} />
+                  </div>
+                  <div>
+                    <Label>City Slug Format</Label>
+                    <select className="input" value={saSettings.city_slug_format ?? 'city_state'} onChange={e => setSa('city_slug_format', e.target.value)}>
+                      <option value="city_state">City + State (melbourne-fl)</option>
+                      <option value="city">City only (melbourne)</option>
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <Label>Primary Service</Label>
-                  <input
-                    className="input"
-                    value={saSettings.primary_service ?? ''}
-                    onChange={e => setSa('primary_service', e.target.value || undefined)}
-                    placeholder="e.g. Tree Service"
-                    style={{ width: '100%' }}
-                  />
+                {/* 2-col: Primary Service + Schedule inline */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: '0.625rem', alignItems: 'end' }}>
+                  <div>
+                    <Label>Primary Service</Label>
+                    <input
+                      className="input"
+                      value={saSettings.primary_service ?? ''}
+                      onChange={e => setSa('primary_service', e.target.value || undefined)}
+                      placeholder="e.g. Tree Service"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <Label>Schedule</Label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <select className="input" style={{ flex: '0 0 auto', width: 150 }} value={saSettings.schedule_frequency ?? 'monthly'} onChange={e => setSa('schedule_frequency', e.target.value || null)}>
+                        {FREQ_OPTS.slice(0, 4).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      {(saSettings.schedule_frequency === 'weekly' || saSettings.schedule_frequency === 'biweekly') && (<>
+                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>on</span>
+                        <select className="input" style={{ flex: '0 0 auto', width: 120 }} value={saSettings.schedule_day_of_week ?? 1} onChange={e => setSa('schedule_day_of_week', Number(e.target.value))}>
+                          {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                        </select>
+                      </>)}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ gridColumn: '1 / -1' }}>
+                {/* Location Notes */}
+                <div>
                   <Label>Location Notes</Label>
                   <textarea
                     className="input"
@@ -2164,7 +2161,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   />
                 </div>
                 {/* Service Areas list — used by Generate Plan to cycle through locations */}
-                <div style={{ gridColumn: '1 / -1' }}>
+                <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                       Service Areas <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — used by Generate Plan (optional — AI will infer from GSC if empty)</span>
@@ -2436,6 +2433,17 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                               const pageLabel = [t.service_name ?? saSettings.primary_service, t.city, t.state_abbr].filter(Boolean).join(' — ')
                               const hasPost   = !!(t.post && (t.post.status === 'for_review' || t.post.status === 'draft_saved'))
                               const hasError  = !!t.generation_error && t.status === 'approved'
+                              // Compute slug preview from service page URL in service_pages config
+                              const cityFmtSa = (saSettings.city_slug_format ?? 'city_state') === 'city' ? 'city' as const : 'city_state' as const
+                              const svcEntry  = (saSettings.service_pages ?? []).find(sp => sp.name?.toLowerCase() === (t.service_name ?? '').toLowerCase())
+                              const svcUrl    = svcEntry?.url ?? ''
+                              let saSlugPreview: string | null = null
+                              if (svcUrl && t.city) {
+                                try {
+                                  const pn = svcUrl.startsWith('http') ? new URL(svcUrl).pathname : svcUrl
+                                  saSlugPreview = buildSlugFromBasePage(pn, t.city, t.state_abbr ?? '', cityFmtSa)
+                                } catch { /* non-fatal */ }
+                              }
 
                               return (
                                 <tr key={`sa-t-${t.id}`} style={{ borderLeft: hasError ? '2px solid #f59e0b' : undefined }}>
@@ -2447,8 +2455,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                       )}
                                     </div>
                                   </td>
-                                  <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {pageLabel || '—'}
+                                  <td style={{ padding: '8px', verticalAlign: 'middle', overflow: 'hidden' }}>
+                                    <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pageLabel || '—'}</div>
+                                    {saSlugPreview && (
+                                      <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{saSlugPreview}</div>
+                                    )}
                                   </td>
                                   <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                                     {fmtDate(t.target_publish_date ?? null)}
@@ -2501,8 +2512,13 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                                 <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
                                   <StatusPill status={p.status === 'draft_saved' || p.status === 'published' ? 'published' : 'generated'} />
                                 </td>
-                                <td style={{ padding: '8px', verticalAlign: 'middle', fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {pageLabel}
+                                <td style={{ padding: '8px', verticalAlign: 'middle', overflow: 'hidden' }}>
+                                  <div style={{ fontWeight: 500, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pageLabel}</div>
+                                  {p.slug && (
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+                                      /{p.slug.replace(/^\//, '')}
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                                   {fmtDate(p.target_publish_date)}

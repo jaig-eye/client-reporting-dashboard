@@ -476,11 +476,18 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   const parsed = parseResponse(rawText)
   parsed.content = stripHallucinatedLinks(parsed.content, allowedInternalUrls)
   parsed.content = stripDangerousHtml(parsed.content)
-  const basePath = (saSettings.base_page_path as string | null)?.trim() ?? ''
-  const cityFmt  = (saSettings.city_slug_format as string | null) === 'city' ? 'city' : 'city_state'
-  const slug     = basePath
-    ? buildSlugFromBasePage(basePath, city, stateAbbr, cityFmt)
-    : buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
+  const cityFmt = (saSettings.city_slug_format as string | null) === 'city' ? 'city' : 'city_state'
+  let slug: string
+  if (servicePageUrl) {
+    try {
+      const pathname = new URL(servicePageUrl).pathname
+      slug = buildSlugFromBasePage(pathname, city, stateAbbr, cityFmt)
+    } catch {
+      slug = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
+    }
+  } else {
+    slug = buildServiceAreaSlug(slugStructure, serviceName, city, stateAbbr)
+  }
 
   // Find connection_id from SA settings
   const connectionId = (saSettings.connection_id as string | null) ?? null
