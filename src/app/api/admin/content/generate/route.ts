@@ -1150,6 +1150,7 @@ export async function POST(request: NextRequest) {
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
+      console.error('[generate] topic lookup failed:', topicErr ?? 'no row', 'topic_id:', topic_id)
       return NextResponse.json({ error: 'Topic not found' }, { status: 404 })
     }
 
