@@ -286,6 +286,7 @@ export default async function ClientDetailPage({
           contacts={contacts}
           stats={overviewStats}
           dashUrl={dashUrl}
+          adsLibraryUrl={adsLibraryUrl}
         />
       )}
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect }                        from 'react'
 import { useRouter, usePathname }                      from 'next/navigation'
+import { Eye, Atom, TreeStructure, MagnifyingGlass, CalendarBlank } from '@phosphor-icons/react'
 import ClientContentSettingsForm                      from './ClientContentSettingsForm'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientScheduleTab                              from './ClientScheduleTab'
@@ -54,16 +55,9 @@ interface Props {
   initialSubTab?: string
 }
 
-type SubTab = 'overview' | 'brand-dna' | 'sitemap' | 'priority' | 'gsc' | 'schedule'
+type SubTab = 'overview' | 'brand-dna' | 'sitemap' | 'gsc' | 'schedule'
 
-const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'overview',  label: 'Overview'          },
-  { id: 'brand-dna', label: 'Brand DNA'         },
-  { id: 'sitemap',   label: 'Sitemap'           },
-  { id: 'priority',  label: 'Priority Pages'    },
-  { id: 'gsc',       label: 'GSC Insights'      },
-  { id: 'schedule',  label: 'Schedule'           },
-]
+interface TabDef { id: SubTab; label: string; icon: React.ReactNode; badge?: number }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -73,15 +67,16 @@ export default function ClientContentTabPanel({
   const router       = useRouter()
   const pathname     = usePathname()
 
+  const VALID_TABS: SubTab[] = ['overview', 'brand-dna', 'sitemap', 'gsc', 'schedule']
   const validSubTab = (s: string | undefined | null): SubTab =>
-    SUB_TABS.some(t => t.id === s) ? (s as SubTab) : 'overview'
+    VALID_TABS.includes(s as SubTab) ? (s as SubTab) : 'overview'
 
   const initial = validSubTab(initialSubTab)
 
-  const [activeTab,    setActiveTab]    = useState<SubTab>(initial)
-  // Track which tabs have ever been visited so we can lazy-mount once and keep alive
-  const [visited,      setVisited]      = useState<Set<SubTab>>(() => new Set([initial]))
-  const [showWizard,   setShowWizard]   = useState(() => {
+  const [activeTab,  setActiveTab]  = useState<SubTab>(initial)
+  const [visited,    setVisited]    = useState<Set<SubTab>>(() => new Set([initial]))
+  const [tabKey,     setTabKey]     = useState(0)
+  const [showWizard, setShowWizard] = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
     const alreadySetUp = s?.wizard_completed || s?.business_background || s?.services
     const alreadyHasContent = overviewStats.recentPostsCount > 0 || overviewStats.upcomingTopicsCount > 0
@@ -90,29 +85,39 @@ export default function ClientContentTabPanel({
 
   function handleTabChange(id: SubTab) {
     setActiveTab(id)
+    setTabKey(k => k + 1)
     setVisited(prev => new Set([...Array.from(prev), id]))
-    // Write subtab to URL so refreshes/back-button preserve the active tab
     const params = new URLSearchParams(window.location.search)
     params.set('subtab', id)
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
-  const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '0.375rem 0.875rem',
-    fontSize: '0.8125rem',
-    fontWeight: active ? 600 : 400,
-    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-    textDecoration: 'none',
-    background: 'none',
-    border: 'none',
-    borderBottom: `2px solid ${active ? 'var(--accent, var(--blue))' : 'transparent'}`,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    marginBottom: -1,
-  })
+  const reviewBadge = overviewStats.forReviewPostsCount + overviewStats.saForReviewPostsCount
+
+  const TABS: TabDef[] = [
+    { id: 'overview',  label: 'Overview',     icon: <Eye size={22} weight="duotone" /> },
+    { id: 'brand-dna', label: 'Brand DNA',    icon: <Atom size={22} weight="duotone" /> },
+    { id: 'sitemap',   label: 'Sitemap',      icon: <TreeStructure size={22} weight="duotone" /> },
+    { id: 'gsc',       label: 'GSC Insights', icon: <MagnifyingGlass size={22} weight="duotone" /> },
+    { id: 'schedule',  label: 'Schedule',     icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
+  ]
 
   return (
     <div>
+      <style>{`
+        @keyframes ccTabFadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .cc-tab-content { animation: ccTabFadeIn 0.18s ease; }
+        .cc-nav-card { transition: box-shadow 0.15s, transform 0.15s, background 0.15s; cursor: pointer; }
+        .cc-nav-card:hover:not(.cc-nav-card--active) { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,0.08); }
+        @media (prefers-reduced-motion: reduce) {
+          .cc-tab-content { animation: none; }
+          .cc-nav-card { transition: none; }
+        }
+      `}</style>
+
       {/* Setup wizard overlay */}
       {showWizard && (
         <ClientContentSetupWizard
@@ -122,62 +127,93 @@ export default function ClientContentTabPanel({
         />
       )}
 
-      {/* Sub-tab nav */}
-      <div className="no-scrollbar" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: '1.5rem', overflowX: 'auto', alignItems: 'flex-end' }}>
-        {SUB_TABS.map(tab => (
-          <button key={tab.id} style={tabStyle(activeTab === tab.id)} onClick={() => handleTabChange(tab.id)}>
-            {tab.label}
-          </button>
-        ))}
-        <div style={{ marginLeft: 'auto', paddingBottom: 6, flexShrink: 0 }}>
-          <button
-            className="btn btn-secondary btn-sm"
-            style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', whiteSpace: 'nowrap' }}
-            onClick={() => setShowWizard(true)}
-            title="Re-open the content setup wizard"
-          >
-            ⚡ Setup Wizard
-          </button>
-        </div>
+      {/* Card nav */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: '1.5rem' }}>
+        {TABS.map(tab => {
+          const active = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              className={`cc-nav-card${active ? ' cc-nav-card--active' : ''}`}
+              onClick={() => handleTabChange(tab.id)}
+              style={{
+                position: 'relative',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                gap: 8, padding: '16px 8px',
+                borderRadius: 12,
+                border: active ? 'none' : '1px solid var(--border)',
+                background: active ? 'var(--accent, #2563eb)' : 'var(--bg-surface)',
+                color: active ? '#fff' : 'var(--text-muted)',
+                fontWeight: active ? 600 : 500,
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                boxShadow: active ? '0 4px 18px rgba(37,99,235,0.25)' : '0 1px 3px rgba(0,0,0,0.04)',
+                userSelect: 'none',
+              }}
+            >
+              {/* Badge */}
+              {tab.badge && (
+                <span style={{
+                  position: 'absolute', top: 8, right: 10,
+                  background: '#ef4444', color: '#fff',
+                  fontSize: '0.6rem', fontWeight: 700,
+                  borderRadius: 99, padding: '1px 5px',
+                  minWidth: 16, textAlign: 'center',
+                  lineHeight: '14px',
+                  boxShadow: '0 0 0 2px var(--bg-surface)',
+                }}>
+                  {tab.badge > 99 ? '99+' : tab.badge}
+                </span>
+              )}
+              <span style={{ opacity: active ? 1 : 0.7 }}>{tab.icon}</span>
+              {tab.label}
+            </button>
+          )
+        })}
       </div>
 
-      {/* Overview is lightweight — always conditional (no keep-alive needed) */}
-      {activeTab === 'overview' && <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} onNavigate={handleTabChange} />}
+      {/* Setup Wizard link */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem', marginTop: '-0.75rem' }}>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}
+          onClick={() => setShowWizard(true)}
+        >
+          ⚡ Setup Wizard
+        </button>
+      </div>
 
-      {/* Heavy tabs: lazy-mount on first visit, then keep alive with CSS to avoid re-fetch on every switch */}
-      {visited.has('brand-dna') && (
-        <div style={{ display: activeTab === 'brand-dna' ? 'block' : 'none' }}>
-          <ClientContentSettingsForm clientId={clientId} sites={sites} />
-        </div>
-      )}
-      {visited.has('sitemap') && (
-        <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }}>
-          <ClientSitemapTab clientId={clientId} />
-        </div>
-      )}
-      {visited.has('priority') && (
-        <div style={{ display: activeTab === 'priority' ? 'block' : 'none' }}>
-          <PriorityTab clientId={clientId} />
-        </div>
-      )}
-      {visited.has('gsc') && (
-        <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }}>
-          <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />
-        </div>
-      )}
-      {/* Schedule: keep-alive + pass isActive so its modals close when hidden
-          (position:fixed modals escape display:none containment — must be explicitly closed) */}
-      {visited.has('schedule') && (
-        <div style={{ display: activeTab === 'schedule' ? 'block' : 'none' }}>
-          <ClientScheduleTab
-            clientId={clientId}
-            clientName={clientName}
-            sites={sites}
-            aiConfigured={aiConfigured}
-            isActive={activeTab === 'schedule'}
-          />
-        </div>
-      )}
+      {/* Tab content — fade in on switch */}
+      <div key={tabKey} className="cc-tab-content">
+        {activeTab === 'overview' && <OverviewTab clientId={clientId} settings={contentSettings} stats={overviewStats} onNavigate={handleTabChange} />}
+
+        {visited.has('brand-dna') && (
+          <div style={{ display: activeTab === 'brand-dna' ? 'block' : 'none' }}>
+            <ClientContentSettingsForm clientId={clientId} sites={sites} />
+          </div>
+        )}
+        {visited.has('sitemap') && (
+          <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }}>
+            <ClientSitemapTab clientId={clientId} />
+          </div>
+        )}
+        {visited.has('gsc') && (
+          <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }}>
+            <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />
+          </div>
+        )}
+        {visited.has('schedule') && (
+          <div style={{ display: activeTab === 'schedule' ? 'block' : 'none' }}>
+            <ClientScheduleTab
+              clientId={clientId}
+              clientName={clientName}
+              sites={sites}
+              aiConfigured={aiConfigured}
+              isActive={activeTab === 'schedule'}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -300,77 +336,6 @@ function OverviewTab({ clientId: _clientId, settings, stats, onNavigate }: {
           Open Schedule →
         </button>
       </div>
-    </div>
-  )
-}
-
-// ─── Priority Pages sub-tab ───────────────────────────────────────────────────
-
-type PriorityPage = { url: string; title: string | null }
-
-function PriorityTab({ clientId }: { clientId: string }) {
-  const [pages,   setPages]   = useState<PriorityPage[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState('')
-
-  useEffect(() => {
-    fetch(`/api/admin/content/sitemap-pages?client_id=${clientId}`)
-      .then(r => r.json())
-      .then((data: { url: string; title: string | null; isPriority: boolean }[]) => {
-        setPages(data.filter(p => p.isPriority))
-        setLoading(false)
-      })
-      .catch(() => { setError('Failed to load pages'); setLoading(false) })
-  }, [clientId])
-
-  if (loading) return <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Loading…</p>
-  if (error)   return <p style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>{error}</p>
-
-  return (
-    <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-          Priority Pages
-        </h3>
-        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          These pages are preferred when generating internal links — not always included, but chosen first when contextually relevant.
-          Star pages in the Sitemap tab to add them here.
-        </p>
-      </div>
-
-      {pages.length === 0 ? (
-        <div className="card p-6" style={{ textAlign: 'center' }}>
-          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            No priority pages yet. Open the Sitemap tab and star pages to prioritize them.
-          </p>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>URL</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 220 }}>Title</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pages.map((page, i) => (
-                <tr key={page.url} style={{ borderBottom: i < pages.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                  <td style={{ padding: '7px 10px', maxWidth: 0 }}>
-                    <a href={page.url} target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--blue)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                      {page.url}
-                    </a>
-                  </td>
-                  <td style={{ padding: '7px 10px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
-                    {page.title ?? '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }

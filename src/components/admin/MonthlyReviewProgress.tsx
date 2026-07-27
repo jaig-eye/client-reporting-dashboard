@@ -5,8 +5,6 @@ interface Props {
   totalPosts:     number
   clientsTotal:   number
   clientsDone:    number
-  soundEnabled:   boolean
-  onToggleSound:  () => void
   onExit:         () => void
   month:          string
 }
@@ -16,8 +14,6 @@ export default function MonthlyReviewProgress({
   totalPosts,
   clientsTotal,
   clientsDone,
-  soundEnabled,
-  onToggleSound,
   onExit,
   month,
 }: Props) {
@@ -40,14 +36,6 @@ export default function MonthlyReviewProgress({
         <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)', flex: 1 }}>
           Monthly Review — {month}
         </div>
-        <button
-          onClick={onToggleSound}
-          className="btn btn-ghost btn-sm"
-          title={soundEnabled ? 'Mute sounds' : 'Enable sounds'}
-          style={{ fontSize: 16, padding: '4px 8px' }}
-        >
-          {soundEnabled ? '♪' : '♩'}
-        </button>
         <button onClick={onExit} className="btn btn-secondary btn-sm">
           Exit Review
         </button>

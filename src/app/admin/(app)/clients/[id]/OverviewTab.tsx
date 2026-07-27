@@ -60,6 +60,7 @@ interface Props {
   contacts:         Contact[]
   stats:            Stats
   dashUrl:          string
+  adsLibraryUrl:    string | null
 }
 
 function fmt$(n: number | null): string {
@@ -92,7 +93,7 @@ function normalizeUrl(url: string): string {
 export default function OverviewTab({
   clientId, name, address, phone, website, logoUrl,
   accountManagerId, adminUsers, contacts: initialContacts,
-  stats, dashUrl,
+  stats, dashUrl, adsLibraryUrl,
 }: Props) {
   const router = useRouter()
 
@@ -584,6 +585,23 @@ export default function OverviewTab({
             <CopyButton text={dashUrl} />
           </div>
         </div>
+
+        {/* Ad Library link */}
+        {adsLibraryUrl && (
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Ad Library Link</h2>
+            <p className="section-desc mb-3">Direct link to this client&apos;s ad creative library.</p>
+            <div
+              className="flex items-center gap-2 rounded-lg px-3 py-2.5"
+              style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
+            >
+              <span className="text-xs font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>
+                {adsLibraryUrl}
+              </span>
+              <CopyButton text={adsLibraryUrl} />
+            </div>
+          </div>
+        )}
 
         {/* Notes stream — at the bottom so it can grow without pushing key info off screen */}
         <div className="card p-5">
