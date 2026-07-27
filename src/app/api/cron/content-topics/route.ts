@@ -1006,11 +1006,11 @@ export async function GET(request: NextRequest) {
         .order('target_publish_date', { ascending: true })
 
       if (reviewPosts && reviewPosts.length > 0) {
-        // Dedup: skip if review_reminder already sent in last 20 hours
+        // Dedup: skip if review_reminder already sent in last 72 hours (3 days)
         const { data: recentReminder } = await db.from('admin_alerts')
           .select('id').eq('type', 'content')
           .filter('meta->>content_type', 'eq', 'review_reminder')
-          .gte('created_at', new Date(Date.now() - 20 * 3_600_000).toISOString())
+          .gte('created_at', new Date(Date.now() - 72 * 3_600_000).toISOString())
           .limit(1)
 
         if (!recentReminder || recentReminder.length === 0) {
@@ -1052,7 +1052,7 @@ export async function GET(request: NextRequest) {
         const { data: recentSkipAlert } = await db.from('admin_alerts')
           .select('id').eq('type', 'content')
           .filter('meta->>content_type', 'eq', 'skip_reminder')
-          .gte('created_at', new Date(Date.now() - 22 * 3_600_000).toISOString())
+          .gte('created_at', new Date(Date.now() - 72 * 3_600_000).toISOString())
           .limit(1)
 
         if (!recentSkipAlert || recentSkipAlert.length === 0) {
