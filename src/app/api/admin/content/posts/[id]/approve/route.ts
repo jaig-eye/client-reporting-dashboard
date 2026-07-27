@@ -378,14 +378,19 @@ export async function POST(
             if (siloRes.ok) {
               const siloPages = (await siloRes.json()) as { id: number }[]
               const siloId    = siloPages[0]?.id
-              // Look up the service page (optionally scoped to the silo parent)
-              const svcQuery  = siloId
-                ? `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&parent=${siloId}&per_page=1`
-                : `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&per_page=1`
-              const svcRes  = await fetch(svcQuery, { headers: { Authorization: `Basic ${creds}` } })
-              if (svcRes.ok) {
-                const svcPages = (await svcRes.json()) as { id: number }[]
-                if (svcPages.length > 0) wpParent = svcPages[0].id
+              // Only look up the service page when the silo page is confirmed in WP.
+              // Without a siloId we cannot safely scope the query — skipping avoids
+              // accidentally binding the city page to a same-slug service page in a
+              // different silo hierarchy.
+              if (siloId) {
+                const svcRes = await fetch(
+                  `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(serviceSlug)}&parent=${siloId}&per_page=1`,
+                  { headers: { Authorization: `Basic ${creds}` } }
+                )
+                if (svcRes.ok) {
+                  const svcPages = (await svcRes.json()) as { id: number }[]
+                  if (svcPages.length > 0) wpParent = svcPages[0].id
+                }
               }
             }
           } catch {

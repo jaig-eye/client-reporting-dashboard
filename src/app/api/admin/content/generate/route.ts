@@ -361,14 +361,16 @@ function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string 
 // ─── FAQ JSON-LD schema injection ─────────────────────────────────────────────
 
 function injectFaqSchema(html: string): string {
-  // Extract question/answer pairs from h2/h3 + following p elements
-  const faqPattern = /<h[23][^>]*>([^<]*\?[^<]*)<\/h[23]>\s*<p[^>]*>([\s\S]*?)<\/p>/gi
+  // Match h2/h3 headings (with optional inline tags) whose text ends with '?',
+  // followed by a <p> answer block. Strip tags from both to get plain text.
+  const faqPattern = /<h[23][^>]*>([\s\S]*?)<\/h[23]>\s*<p[^>]*>([\s\S]*?)<\/p>/gi
   const items: { question: string; answer: string }[] = []
   let m: RegExpExecArray | null
   while ((m = faqPattern.exec(html)) !== null && items.length < 10) {
-    const question = m[1].trim()
+    const question = m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
     const answer   = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400)
-    if (question && answer) items.push({ question, answer })
+    // Only treat as FAQ if the heading clearly ends with a question mark
+    if (question.endsWith('?') && answer) items.push({ question, answer })
   }
   if (!items.length) return html
   const schema = {
@@ -380,7 +382,9 @@ function injectFaqSchema(html: string): string {
       acceptedAnswer: { '@type': 'Answer', text: i.answer },
     })),
   }
-  return html + `\n<script type="application/ld+json">${JSON.stringify(schema)}</script>`
+  // Escape </script> sequences inside JSON to prevent premature script-tag termination
+  const safeJson = JSON.stringify(schema).replace(/<\//g, '<\\/')
+  return html + `\n<script type="application/ld+json">${safeJson}</script>`
 }
 
 // ─── Slug utilities ───────────────────────────────────────────────────────────
@@ -941,10 +945,10 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     parsed.content = stripH1FromContent(parsed.content)
     // Remove links with generic filler anchor text ("click here", "learn more", etc.)
     parsed.content = stripGenericAnchorText(parsed.content)
-    // Inject FAQ JSON-LD schema for any question/answer headings present
-    parsed.content = injectFaqSchema(parsed.content)
 
     // ── Minimum quality gate ──────────────────────────────────────────────────
+    // Word count must be computed BEFORE FAQ schema injection so the JSON
+    // text inside the script block doesn't inflate the count.
     const wc0 = computeWordCount(parsed.content)
     if (!parsed.title.trim() || wc0 < 150) {
       console.error('[generate] generation failed quality gate — title empty or content too short:', { wc: wc0, title: parsed.title, topicId })
@@ -953,6 +957,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
         .eq('id', topicId)
       return
     }
+
+    // Inject FAQ JSON-LD schema after quality gate so script text doesn't inflate wc0
+    parsed.content = injectFaqSchema(parsed.content)
 
     // ── Save post ──────────────────────────────────────────────────────────────
     let connectionId = (clientSettings?.connection_id as string | null) ?? null
@@ -1338,9 +1345,9 @@ export async function POST(request: NextRequest) {
   parsed.content = stripDangerousHtml(parsed.content)
   parsed.content = stripH1FromContent(parsed.content)
   parsed.content = stripGenericAnchorText(parsed.content)
-  parsed.content = injectFaqSchema(parsed.content)
 
   // ── Minimum quality gate ────────────────────────────────────────────────────
+  // Word count before FAQ schema injection to avoid counting JSON text as words.
   const wc0 = computeWordCount(parsed.content)
   if (!parsed.title.trim() || wc0 < 150) {
     return NextResponse.json(
@@ -1348,6 +1355,9 @@ export async function POST(request: NextRequest) {
       { status: 422 }
     )
   }
+
+  // Inject FAQ JSON-LD schema after quality gate
+  parsed.content = injectFaqSchema(parsed.content)
 
   let postId: string | null = null
   if (effectiveClientId) {
@@ -1403,7 +1413,8 @@ export async function POST(request: NextRequest) {
     postId = savedPost?.id ?? null
 
     // Auto-generate featured image in background
-    const manualImageEnabled       = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
+    // Match old behavior: generate unless explicitly disabled (null = not set = generate)
+    const manualImageEnabled        = (clientSettings as Record<string, unknown> | null)?.content_image_generation !== false
     const manualImagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
     if (manualImageEnabled && postId && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
       waitUntil(

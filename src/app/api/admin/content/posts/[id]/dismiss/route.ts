@@ -40,6 +40,17 @@ export async function POST(
       .update({ archived_at: new Date().toISOString() })
       .eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Mark the parent topic as published so it reaches a terminal state
+    // (if discard=true, kill the topic permanently instead)
+    await db
+      .from('content_topics')
+      .update(discard
+        ? { status: 'rejected' }
+        : { status: 'published' }
+      )
+      .eq('post_id', id)
+
     return NextResponse.json({ ok: true })
   }
 
