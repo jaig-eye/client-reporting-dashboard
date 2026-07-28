@@ -496,7 +496,8 @@ export async function POST(
           const clusterTitle = String(p.title ?? '')
           const entity       = silo.central_entity || silo.name
           const safeTitle    = clusterTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-          const linkHtml     = `<li><a href="${clusterUrl}">${safeTitle}</a></li>`
+          const safeUrl      = encodeURI(clusterUrl).replace(/"/g, '%22')
+          const linkHtml     = `<li><a href="${safeUrl}">${safeTitle}</a></li>`
           const updatedContent = current.includes('<!-- silo-cluster-links -->')
             ? current.replace(/<\/ul>\s*<!-- \/silo-cluster-links -->/, `${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`)
             : `${current}\n<!-- silo-cluster-links -->\n<h3>Related ${entity} Resources</h3>\n<ul>\n${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`

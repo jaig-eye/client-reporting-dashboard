@@ -7,6 +7,26 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { buildOptimizationBrief } from '@/lib/content/siloEngine'
 
+function isPublicUrl(rawUrl: string): boolean {
+  let u: URL
+  try { u = new URL(rawUrl) } catch { return false }
+  if (!['http:', 'https:'].includes(u.protocol)) return false
+  const host = u.hostname.toLowerCase()
+  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false
+  if (host === 'metadata.google.internal' || host === 'metadata.goog') return false
+  const oct = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (oct) {
+    const [a, b] = [Number(oct[1]), Number(oct[2])]
+    if (a === 10 || a === 127 || a === 0) return false
+    if (a === 172 && b >= 16 && b <= 31)  return false
+    if (a === 192 && b === 168)            return false
+    if (a === 169 && b === 254)            return false
+    if (a === 100 && b >= 64 && b <= 127) return false
+  }
+  if (host === '::1' || host === '[::1]' || host.startsWith('fe80')) return false
+  return true
+}
+
 export const maxDuration = 120
 
 export async function POST(request: NextRequest) {
@@ -41,9 +61,9 @@ export async function POST(request: NextRequest) {
   const provider = ag.ai_provider || 'anthropic'
   const model    = ag.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
 
-  // Sanitize competitor URLs
+  // Sanitize competitor URLs — reject private IPs / non-public hosts
   const competitorUrls = (body.competitor_urls ?? [])
-    .filter(u => typeof u === 'string' && u.startsWith('http'))
+    .filter(u => typeof u === 'string' && isPublicUrl(u))
     .slice(0, 5)
 
   try {
