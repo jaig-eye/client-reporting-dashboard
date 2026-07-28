@@ -7,7 +7,7 @@ import { sendEmail } from '@/lib/email'
 export const maxDuration = 300
 
 const TIMEOUT_MS = 15_000
-const FLAP_THRESHOLD = 1
+const FLAP_THRESHOLD = 2
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
