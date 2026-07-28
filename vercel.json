@@ -50,7 +50,7 @@
     },
     {
       "path": "/api/cron/uptime-check",
-      "schedule": "*/5 * * * *"
+      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/ssl-check",
