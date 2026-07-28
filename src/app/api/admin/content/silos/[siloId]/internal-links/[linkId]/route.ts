@@ -14,7 +14,7 @@ export async function PATCH(
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { linkId } = params
+  const { siloId, linkId } = params
   const body = await request.json() as Partial<{
     status:      string
     anchor_text: string
@@ -32,7 +32,7 @@ export async function PATCH(
   }
 
   const db = createAdminClient()
-  const { error } = await db.from('content_silo_internal_links').update(update).eq('id', linkId)
+  const { error } = await db.from('content_silo_internal_links').update(update).eq('id', linkId).eq('silo_id', siloId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

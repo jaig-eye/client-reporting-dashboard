@@ -54,7 +54,7 @@ export async function POST(
       .from('client_connections')
       .select('id, connector:connectors!inner(auth, config)')
       .eq('id', String(p.connection_id))
-      .single()
+      .maybeSingle()
     connData = data as ConnRow | null
   }
 
@@ -169,17 +169,12 @@ export async function POST(
       injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
         .catch(() => {})
 
-      // Log cluster link to silo pending_links (fire-and-forget)
+      // Log cluster link to silo pending_links — atomic append to prevent race conditions
       if (p.silo_id) {
-        ;(async () => {
-          try {
-            const { data } = await db.from('content_silos').select('pending_links').eq('id', String(p.silo_id)).single()
-            const prev = Array.isArray(data?.pending_links) ? data.pending_links as unknown[] : []
-            await db.from('content_silos').update({
-              pending_links: [...prev, { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() }],
-            }).eq('id', String(p.silo_id))
-          } catch { /* non-fatal */ }
-        })()
+        Promise.resolve(db.rpc('append_silo_pending_link', {
+          silo_id: String(p.silo_id),
+          link: { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
+        })).catch(() => {})
       }
 
       return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
@@ -226,17 +221,12 @@ export async function POST(
       meta: { title: p.title, bc_post_id: Number(bcPost.id) },
     })
 
-    // Log cluster link to silo pending_links (fire-and-forget)
+    // Log cluster link to silo pending_links — atomic append to prevent race conditions
     if (p.silo_id) {
-      ;(async () => {
-        try {
-          const { data } = await db.from('content_silos').select('pending_links').eq('id', String(p.silo_id)).single()
-          const prev = Array.isArray(data?.pending_links) ? data.pending_links as unknown[] : []
-          await db.from('content_silos').update({
-            pending_links: [...prev, { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() }],
-          }).eq('id', String(p.silo_id))
-        } catch { /* non-fatal */ }
-      })()
+      Promise.resolve(db.rpc('append_silo_pending_link', {
+        silo_id: String(p.silo_id),
+        link: { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
+      })).catch(() => {})
     }
 
     return NextResponse.json({

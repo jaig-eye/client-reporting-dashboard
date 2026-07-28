@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed }     from '@/lib/auth'
 
@@ -124,7 +124,12 @@ export async function PATCH(request: NextRequest) {
   if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId
   if (body.wpAuthorId        !== undefined) updates.wp_author_id       = body.wpAuthorId
   if (body.featuredImageUrl  !== undefined) updates.featured_image_url = body.featuredImageUrl
-  if (body.status            !== undefined) updates.status             = body.status
+  if (body.status !== undefined) {
+    const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'draft_saved', 'published', 'rejected', 'generating', 'error']
+    if (!ALLOWED_STATUSES.includes(body.status))
+      return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    updates.status = body.status
+  }
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: true })
@@ -135,3 +140,4 @@ export async function PATCH(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
+

@@ -21,7 +21,8 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json() as { client_id: string; count?: number; target_publish_date?: string; silo_id?: string }
-  const { client_id, count = 5, target_publish_date, silo_id } = body
+  const { client_id, count: rawCount = 5, target_publish_date, silo_id } = body
+  const count = Math.min(Math.max(1, Number(rawCount) || 5), 25)
 
   if (!client_id) {
     return NextResponse.json({ error: 'client_id required' }, { status: 400 })

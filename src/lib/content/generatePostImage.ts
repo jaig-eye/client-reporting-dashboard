@@ -54,16 +54,10 @@ export async function generatePostImage(
   openaiKey: string | null | undefined,
   promptOverride?: string,
 ): Promise<ImageGenResult> {
-  const [postRes, settingsRes] = await Promise.all([
-    db.from('content_posts')
-      .select('id, client_id, image_concept, seo_title, title, target_keyword')
-      .eq('id', postId)
-      .single(),
-    db.from('content_posts')
-      .select('client_id')
-      .eq('id', postId)
-      .single(),
-  ])
+  const postRes = await db.from('content_posts')
+    .select('id, client_id, image_concept, seo_title, title, target_keyword')
+    .eq('id', postId)
+    .single()
 
   if (postRes.error || !postRes.data)
     return { ok: false, error: 'Post not found' }

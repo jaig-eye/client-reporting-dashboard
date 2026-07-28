@@ -106,7 +106,8 @@ export async function generateTopicsForClient(
       .eq('client_id', clientId)
       .gte('date', windowStart)
       .not('page', 'ilike', '%?%')
-      .not('query', 'eq', ''),
+      .not('query', 'eq', '')
+      .limit(2000),
   ])
 
   if (!settingsRes.data?.ai_api_key) {

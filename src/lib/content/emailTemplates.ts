@@ -1,6 +1,11 @@
 // Styled HTML email builders for content automation notifications.
 // All styles are inline — required for broad email client compatibility.
 
+function esc(s: string | null | undefined): string {
+  if (!s) return ''
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', {
@@ -17,8 +22,8 @@ function wrapper(agencyName: string, clientName: string, body: string): string {
 
     <!-- Header -->
     <div style="background:#1e3a8a;padding:22px 28px;">
-      <p style="margin:0 0 4px;color:#93c5fd;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">${agencyName} &middot; Content</p>
-      <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.3;">${clientName}</h1>
+      <p style="margin:0 0 4px;color:#93c5fd;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">${esc(agencyName)} &middot; Content</p>
+      <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.3;">${esc(clientName)}</h1>
     </div>
 
     <!-- Body -->
@@ -28,7 +33,7 @@ function wrapper(agencyName: string, clientName: string, body: string): string {
 
     <!-- Footer -->
     <div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;">
-      <p style="margin:0;color:#9ca3af;font-size:11px;">${agencyName} &middot; Content Automation</p>
+      <p style="margin:0;color:#9ca3af;font-size:11px;">${esc(agencyName)} &middot; Content Automation</p>
     </div>
 
   </div>
@@ -75,12 +80,12 @@ export function buildTopicsEmail(opts: {
 
   const tableRows = topics.map((t, i) => {
     const oppHint = t.keyword_opportunity
-      ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px;">${t.keyword_opportunity}</div>`
+      ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px;">${esc(t.keyword_opportunity)}</div>`
       : ''
     return tableRow([
-      `<strong style="color:#111827;font-size:13px;">${t.topic}</strong>${oppHint}`,
+      `<strong style="color:#111827;font-size:13px;">${esc(t.topic)}</strong>${oppHint}`,
       t.target_keyword
-        ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${t.target_keyword}</span>`
+        ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${esc(t.target_keyword)}</span>`
         : '<span style="color:#9ca3af;">—</span>',
       `<span style="color:#6b7280;">${fmtDate(t.target_publish_date)}</span>`,
     ], i % 2 === 1)
@@ -121,9 +126,9 @@ export function buildPostsEmail(opts: {
   const count = posts.length
 
   const tableRows = posts.map((p, i) => tableRow([
-    `<strong style="color:#111827;">${p.title ?? '(untitled)'}</strong>`,
+    `<strong style="color:#111827;">${esc(p.title) || '(untitled)'}</strong>`,
     p.targetKeyword
-      ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${p.targetKeyword}</span>`
+      ? `<span style="background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:12px;font-weight:500;">${esc(p.targetKeyword)}</span>`
       : '<span style="color:#9ca3af;">—</span>',
     `<span style="color:#6b7280;">${fmtDate(p.targetPublishDate)}</span>`,
   ], i % 2 === 1)).join('')

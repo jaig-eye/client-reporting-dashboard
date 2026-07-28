@@ -14,7 +14,7 @@ export async function PATCH(
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { keywordId } = params
+  const { siloId, keywordId } = params
   const body = await request.json() as Partial<{
     keyword: string
     keyword_type: string
@@ -43,7 +43,7 @@ export async function PATCH(
   }
 
   const db = createAdminClient()
-  const { error } = await db.from('content_silo_keywords').update(update).eq('id', keywordId)
+  const { error } = await db.from('content_silo_keywords').update(update).eq('id', keywordId).eq('silo_id', siloId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
@@ -56,9 +56,9 @@ export async function DELETE(
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { keywordId } = params
+  const { siloId, keywordId } = params
   const db = createAdminClient()
-  const { error } = await db.from('content_silo_keywords').delete().eq('id', keywordId)
+  const { error } = await db.from('content_silo_keywords').delete().eq('id', keywordId).eq('silo_id', siloId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
