@@ -407,6 +407,7 @@ export interface AuditInput {
   contentPostId?: string | null
   brief:          OptimizationBrief
   pageText:       string
+  rawHtml?:       string | null
   targetUrl?:     string | null
 }
 
@@ -415,7 +416,7 @@ export interface AuditInput {
  * All scoring is deterministic — no AI call needed for scoring.
  */
 export async function auditContent(input: AuditInput): Promise<string> {
-  const { clientId, siloId, siloPageId, contentPostId, brief, pageText, targetUrl } = input
+  const { clientId, siloId, siloPageId, contentPostId, brief, pageText, rawHtml, targetUrl } = input
 
   const text  = pageText.toLowerCase()
   const words = pageText.split(/\s+/).filter(Boolean).length
@@ -549,7 +550,8 @@ export async function auditContent(input: AuditInput): Promise<string> {
   let internalLinkScore = 100
   if (linkRecs.length > 0) {
     const hubLink = linkRecs.find(l => l.link_type === 'supporting_to_hub')
-    if (hubLink && !text.includes(hubLink.target_url)) {
+    const linkSource = rawHtml ?? pageText
+    if (hubLink && !linkSource.includes(hubLink.target_url)) {
       internalLinkScore -= 40
       findings.push({ category: 'internal_links', severity: 'high', message: 'Hub page link is missing from content.', recommendation: `Link to hub page: ${hubLink.target_url}` })
     }

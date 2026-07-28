@@ -46,7 +46,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 function formatDate(iso: string | null) {
   if (!iso) return ''
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(iso.includes('T') ? iso : iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export default function ContentTopics({ clients }: { clients: ClientOption[] }) {

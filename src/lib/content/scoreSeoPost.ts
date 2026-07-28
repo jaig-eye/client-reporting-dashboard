@@ -76,7 +76,7 @@ export function scoreSeoPost(params: {
   // ── FAQ present ────────────────────────────────────────────────────────────
   const hasFaqOpportunities = (brief?.faq_opportunities?.length ?? 0) > 0
   const faqPresent = hasFaqOpportunities
-    ? html.toLowerCase().includes('frequently asked') || html.toLowerCase().includes('<h2') && textLower.includes('faq')
+    ? textLower.includes('frequently asked') || (html.toLowerCase().includes('<h2') && textLower.includes('faq'))
     : true
 
   if (hasFaqOpportunities && !faqPresent) warnings.push('FAQ section expected but not found')

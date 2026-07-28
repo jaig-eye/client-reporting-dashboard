@@ -114,10 +114,9 @@ export async function POST(request: NextRequest) {
       .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
       .replace(/<embed\b[^>]*\/?>/gi, '')
       .replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, '')
-      .replace(/ on\w+\s*=\s*"[^"]*"/gi, '')
-      .replace(/ on\w+\s*=\s*'[^']*'/gi, '')
-      .replace(/\bhref\s*=\s*["']\s*javascript:/gi, 'href="javascript_removed:')
-      .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
+      .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, '')
+      .replace(/\bhref(\s*=\s*)(["'])\s*javascript:/gi, 'href$1$2javascript_removed:')
+      .replace(/\bsrc(\s*=\s*)(["'])\s*javascript:/gi,  'src$1$2javascript_removed:')
   }
 
   function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {

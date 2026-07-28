@@ -62,7 +62,7 @@ export async function injectNearbyLinks(
     .single()
 
   const allPosts = [...(siblings as NearbyLinkPost[]), { ...(currentPost as NearbyLinkPost), id: currentPostId }]
-    .filter(p => p.published_url || p.wp_post_id || p.bc_post_id)
+    .filter(p => p.published_url)
 
   // Resolve connection auth for WP
   const wpSiteUrl = (currentPost as NearbyLinkPost | null)?.wp_site_url
@@ -105,9 +105,9 @@ export async function injectNearbyLinks(
 
   // For each post (including the current one), build a links list of all other posts
   for (const post of allPosts as NearbyLinkPost[]) {
-    const postId = post === (currentPost as NearbyLinkPost | null) ? currentPostId : post.id
+    const postId = post.id === currentPostId ? currentPostId : post.id
     const others = allPosts.filter(p => {
-      const pid = p === (currentPost as NearbyLinkPost | null) ? currentPostId : p.id
+      const pid = p.id === currentPostId ? currentPostId : p.id
       return pid !== postId && p.city && p.published_url
     })
 
@@ -116,7 +116,7 @@ export async function injectNearbyLinks(
     const links = others.map(o => ({
       city:  o.city!,
       state: o.state_abbr ?? '',
-      url:   o.published_url ?? '#',
+      url:   o.published_url!,
     }))
 
     const existingContent = post.content ?? ''

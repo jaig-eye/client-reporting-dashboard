@@ -40,11 +40,12 @@ interface QueueItem {
 }
 
 interface Site {
-  connectionId: string
-  siteUrl:      string
-  siteName:     string
-  clientId:     string
-  clientName:   string
+  connectionId:   string
+  siteUrl:        string
+  siteName:       string
+  clientId:       string
+  clientName:     string
+  connectorType?: string
 }
 
 interface Props {
@@ -356,24 +357,30 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
     setApproveProgress(5)
     setError('')
 
-    // Simulate progress while WP upload runs (tag creation + post creation can take 10-30s)
+    const site = sites.find(s => s.clientId === item.clientId)
+    const isBc = site?.connectorType === 'bigcommerce'
+    const endpoint = isBc
+      ? `/api/admin/content/posts/${item.id}/publish-bigcommerce`
+      : `/api/admin/content/posts/${item.id}/approve`
+
+    // Simulate progress while CMS upload runs (tag creation + post creation can take 10-30s)
     const tick = setInterval(() => {
       setApproveProgress(p => p < 80 ? p + 8 : p)
     }, 1500)
 
     try {
-      const res = await fetch(`/api/admin/content/posts/${item.id}/approve`, {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
       clearInterval(tick)
       if (!res.ok) throw new Error((await res.json()).error || 'Upload failed')
-      const data = await res.json() as { wp_post_id: number; wp_edit_url: string }
+      const data = await res.json() as { wp_post_id?: number; bc_post_id?: number; wp_edit_url?: string }
 
       setApproveProgress(100)
       // Optimistically update item so it moves to the Uploaded tab immediately
       setItems(prev => prev.map(i =>
-        i.id === item.id ? { ...i, wpPostId: data.wp_post_id, status: 'draft_saved' } : i
+        i.id === item.id ? { ...i, wpPostId: data.wp_post_id ?? null, status: 'draft_saved' } : i
       ))
       setTimeout(() => {
         setApproving(null)
@@ -807,7 +814,7 @@ export default function ContentQueue({ posts: initialItems, sites, highlightId }
                                   className="btn btn-secondary"
                                   style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', whiteSpace: 'nowrap' }}
                                 >
-                                  Upload to WP
+                                  {sites.find(s => s.clientId === item.clientId)?.connectorType === 'bigcommerce' ? 'Upload to BC' : 'Upload to WP'}
                                 </button>
                               )
                             )}

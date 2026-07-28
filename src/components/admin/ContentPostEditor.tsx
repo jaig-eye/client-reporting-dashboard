@@ -95,7 +95,7 @@ function countHeadings(html: string): number {
 }
 
 function countInternalLinks(html: string): number {
-  return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http')).length
+  return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.match(/href=["']https?:\/\//i)).length
 }
 
 function countExternalLinks(html: string): number {
@@ -293,7 +293,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const densityOk          = densityPct >= 0.5 && densityPct <= 2.0
   const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
-  const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 65
+  const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
 
   // ── Tag helpers ─────────────────────────────────────────────────────────────
   function addTag(name: string) {
@@ -723,7 +723,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div className="mb-4">
                 <label style={labelStyle}>
                   SEO Title
-                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 65 ? 'var(--amber, #f59e0b)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 60 ? 'var(--amber, #f59e0b)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
                     {seoTitle.length}/60
                   </span>
                 </label>

@@ -37,14 +37,16 @@ export async function POST(request: NextRequest) {
   const db = createAdminClient()
 
   // Fetch SA settings, agency AI config, and GSC connection in parallel
+  // Note: join-table filters (connectors.type) silently return null in PostgREST.
+  // Query client_connections with a join so we can filter by type directly on the row.
   const [saSettingsRes, agencyRes, gscConnRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', client_id).maybeSingle(),
     db.from('agency_settings').select('ai_provider, ai_model, ai_api_key').single(),
     db.from('client_connections')
-      .select('id')
+      .select('id, connector:connectors!inner(type)')
       .eq('client_id', client_id)
       .eq('status', 'active')
-      .eq('connectors.type', 'google_search_console')
+      .eq('connector.type', 'google_search_console')
       .maybeSingle(),
   ])
 

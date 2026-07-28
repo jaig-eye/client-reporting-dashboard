@@ -161,13 +161,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     loadInit()
   }, [clientId])
 
-  // ── ESC to close ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') handleSkip() }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  })
-
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function handleAnalyze() {
@@ -335,14 +328,21 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     }
   }
 
-  async function handleSkip() {
+  const handleSkip = useCallback(async () => {
     await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: clientId, wizard_completed: true }),
     }).catch(() => {})
     onComplete()
-  }
+  }, [clientId, onComplete])
+
+  // ── ESC to close ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') handleSkip() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handleSkip])
 
   function next() { setStep(s => Math.min(s + 1, TOTAL_STEPS)) }
   function back() { setStep(s => Math.max(s - 1, 1)) }
