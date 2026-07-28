@@ -930,30 +930,35 @@ export async function GET(request: NextRequest) {
   // ── Discord notifications — ONE consolidated ops-channel message ─────────────
   const discordBotToken = (agencySettings?.discord_bot_token as string | null) ?? null
   const contentUrl      = `${appUrl}/admin/content`
+  const nowTs           = new Date()
 
   if (discordBotToken && opsChannelId) {
-    // ONE message for all topics generated this run
-    const totalTopicsReady = Array.from(topicAccum.values()).reduce((s, { items }) => s + items.length, 0)
-    if (totalTopicsReady > 0) {
-      const topicLines = Array.from(topicAccum.entries()).map(([, { clientName, items }]) =>
-        `• **${clientName}** — ${items.length} topic${items.length === 1 ? '' : 's'}`
-      )
-      void sendDiscordMessage(
-        discordBotToken, opsChannelId,
-        `📋 **${totalTopicsReady} topic${totalTopicsReady === 1 ? '' : 's'} generated** — auto-approves in ~24h\n${topicLines.join('\n')}\nReview: ${contentUrl}`
-      ).catch(() => {})
-    }
-
-    // ONE message for all posts generated this run
+    // Monthly-once message when posts are generated — fires the first time any month, never again that month
     const totalPostsReady = Array.from(postAccum.values()).reduce((s, { items }) => s + items.length, 0)
     if (totalPostsReady > 0) {
-      const postLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
-        `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
-      )
-      void sendDiscordMessage(
-        discordBotToken, opsChannelId,
-        `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
-      ).catch(() => {})
+      const monthStart = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
+      const { data: existingMonthlyAlert } = await db.from('admin_alerts')
+        .select('id').eq('type', 'content')
+        .filter('meta->>content_type', 'eq', 'monthly_review_ready')
+        .gte('created_at', monthStart)
+        .limit(1)
+
+      if (!existingMonthlyAlert || existingMonthlyAlert.length === 0) {
+        const postLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
+          `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
+        )
+        void sendDiscordMessage(
+          discordBotToken, opsChannelId,
+          `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+        ).catch(() => {})
+        db.from('admin_alerts').insert({
+          type: 'content', severity: 'info',
+          title: `${totalPostsReady} post(s) ready for monthly review`,
+          body: postLines.join('\n'),
+          meta: { content_type: 'monthly_review_ready', month: monthStart },
+          link_url: contentUrl,
+        }).then(null, () => {})
+      }
     }
   }
 
@@ -984,95 +989,47 @@ export async function GET(request: NextRequest) {
     }).then(null, () => {})
   }
 
-  // ── Consolidated content review alerts (ONE Discord message each) ────────────
-  // These query across ALL clients so there's never per-client Discord noise.
-  {
+  // ── Mid-month pending check — ONE Discord message per calendar month after the 10th ──
+  // Fires once if posts are still unapproved after the team has had time to review.
+  if (discordBotToken && opsChannelId && nowTs.getUTCDate() >= 10) {
     const contentReviewUrl = contentUrl
+    type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
 
-    if (discordBotToken && opsChannelId) {
-      type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
+    const { data: pendingPosts } = await db
+      .from('content_posts')
+      .select('id, title, target_publish_date, client_id')
+      .in('status', ['for_review', 'pending'])
+      .not('target_publish_date', 'is', null)
+      .is('wp_post_id', null).is('bc_post_id', null)
+      .order('target_publish_date', { ascending: true })
 
-      // Review reminder: posts needing approval in 3–7 days (not yet in the critical window)
-      const reminderFrom = new Date(); reminderFrom.setUTCDate(reminderFrom.getUTCDate() + 3)
-      const reminderTo   = new Date(); reminderTo.setUTCDate(reminderTo.getUTCDate() + 7)
-      const { data: reviewPosts } = await db
-        .from('content_posts')
-        .select('id, title, target_publish_date, client_id')
-        .in('status', ['for_review', 'pending'])
-        .gte('target_publish_date', reminderFrom.toISOString().slice(0, 10))
-        .lte('target_publish_date', reminderTo.toISOString().slice(0, 10))
-        .not('target_publish_date', 'is', null)
-        .is('wp_post_id', null).is('bc_post_id', null)
-        .order('target_publish_date', { ascending: true })
+    if (pendingPosts && pendingPosts.length > 0) {
+      const monthStart = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
+      const { data: existingMidCheck } = await db.from('admin_alerts')
+        .select('id').eq('type', 'content')
+        .filter('meta->>content_type', 'eq', 'monthly_mid_check')
+        .gte('created_at', monthStart)
+        .limit(1)
 
-      if (reviewPosts && reviewPosts.length > 0) {
-        // Dedup: skip if review_reminder already sent in last 72 hours (3 days)
-        const { data: recentReminder } = await db.from('admin_alerts')
-          .select('id').eq('type', 'content')
-          .filter('meta->>content_type', 'eq', 'review_reminder')
-          .gte('created_at', new Date(Date.now() - 72 * 3_600_000).toISOString())
-          .limit(1)
-
-        if (!recentReminder || recentReminder.length === 0) {
-          const clientIds = Array.from(new Set((reviewPosts as PostRow[]).map(p => p.client_id)))
-          const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
-          const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-          const earliest = (reviewPosts as PostRow[])[0].target_publish_date
-          const displayPosts = (reviewPosts as PostRow[]).slice(0, 8)
-          const lines = displayPosts.map(p =>
-            `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
-          )
-          if (reviewPosts.length > 8) lines.push(`…and ${reviewPosts.length - 8} more`)
-          void sendDiscordMessage(discordBotToken, opsChannelId,
-            `📋 **${reviewPosts.length} post${reviewPosts.length === 1 ? '' : 's'} awaiting approval**${earliest ? ` — earliest deadline: ${earliest}` : ''}\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
-          ).catch(() => {})
-          db.from('admin_alerts').insert({
-            type: 'content', severity: 'info',
-            title: `${reviewPosts.length} post${reviewPosts.length === 1 ? '' : 's'} awaiting approval`,
-            body: lines.join('\n'),
-            meta: { content_type: 'review_reminder', count: reviewPosts.length, earliest_deadline: earliest },
-            link_url: contentReviewUrl,
-          }).then(null, () => {})
-        }
-      }
-
-      // Missed-approval alert: posts due within 2 days still not approved (critical)
-      const missedDeadline = new Date(); missedDeadline.setUTCDate(missedDeadline.getUTCDate() + 2)
-      const { data: skippedPosts } = await db
-        .from('content_posts')
-        .select('id, title, target_publish_date, client_id')
-        .in('status', ['for_review', 'pending'])
-        .lte('target_publish_date', missedDeadline.toISOString().slice(0, 10))
-        .not('target_publish_date', 'is', null)
-        .is('wp_post_id', null).is('bc_post_id', null)
-        .order('target_publish_date', { ascending: true })
-
-      if (skippedPosts && skippedPosts.length > 0) {
-        // Dedup: fire at most once per 22 hours so it doesn't spam twice-daily cron runs
-        const { data: recentSkipAlert } = await db.from('admin_alerts')
-          .select('id').eq('type', 'content')
-          .filter('meta->>content_type', 'eq', 'skip_reminder')
-          .gte('created_at', new Date(Date.now() - 72 * 3_600_000).toISOString())
-          .limit(1)
-
-        if (!recentSkipAlert || recentSkipAlert.length === 0) {
-          const clientIds = Array.from(new Set((skippedPosts as PostRow[]).map(p => p.client_id)))
-          const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
-          const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-          const lines = (skippedPosts as PostRow[]).map(p =>
-            `• ${clientNameMap.get(p.client_id) ?? p.client_id} — ${p.title ?? '(untitled)'} (${p.target_publish_date})`
-          )
-          void sendDiscordMessage(discordBotToken, opsChannelId,
-            `⚠️ **Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved**\n${lines.join('\n')}\nManual push or approval required → ${contentReviewUrl}`
-          ).catch(() => {})
-          db.from('admin_alerts').insert({
-            type: 'content', severity: 'warning',
-            title: `Auto-publish skipped — ${skippedPosts.length} post${skippedPosts.length === 1 ? '' : 's'} not approved`,
-            body: lines.join('\n'),
-            meta: { content_type: 'skip_reminder', count: skippedPosts.length },
-            link_url: contentReviewUrl,
-          }).then(null, () => {})
-        }
+      if (!existingMidCheck || existingMidCheck.length === 0) {
+        const clientIds = Array.from(new Set((pendingPosts as PostRow[]).map(p => p.client_id)))
+        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
+        const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+        const displayPosts = (pendingPosts as PostRow[]).slice(0, 8)
+        const lines = displayPosts.map(p =>
+          `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'}${p.target_publish_date ? ` (${p.target_publish_date})` : ''}`
+        )
+        if (pendingPosts.length > 8) lines.push(`…and ${pendingPosts.length - 8} more`)
+        void sendDiscordMessage(discordBotToken, opsChannelId,
+          `📋 **${pendingPosts.length} post${pendingPosts.length === 1 ? '' : 's'} still awaiting approval** — manual review needed\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
+        ).catch(() => {})
+        db.from('admin_alerts').insert({
+          type: 'content', severity: 'warning',
+          title: `${pendingPosts.length} post(s) still awaiting approval`,
+          body: lines.join('\n'),
+          meta: { content_type: 'monthly_mid_check', count: pendingPosts.length, month: monthStart },
+          link_url: contentReviewUrl,
+        }).then(null, () => {})
       }
     }
   }
