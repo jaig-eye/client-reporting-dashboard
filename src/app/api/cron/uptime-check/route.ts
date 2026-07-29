@@ -200,13 +200,16 @@ export async function GET(request: NextRequest) {
         downtimeAlerts++
       }
     } else {
-      // Site is up
+      // Site is up.
+      // Only reset consecutive_failures on actual recovery from a DOWN state — preserving
+      // sub-threshold failure counts means a site alternating fail/pass still accumulates
+      // toward the threshold instead of resetting to 0 on every passing check.
       await db.from('sites').update({
         is_up:                true,
         last_checked_at:      checkedAt,
         last_status_code:     statusCode,
         last_response_ms:     responseMs,
-        consecutive_failures: 0,
+        consecutive_failures: wasDown ? 0 : (site.consecutive_failures ?? 0),
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
