@@ -351,13 +351,16 @@ export async function GET(request: NextRequest) {
       }
     }))
 
-    // ── Post generation: fire for the single approved/scheduled topic per slot ──
+    // ── Post generation: cover all approved slots within the lead window ────────
+    // Use leadWindow (not a hardcoded 14 days) so posts generate as far ahead as
+    // topics — enabling all of next month's posts to be ready before the month starts.
     const { data: approvedTopics } = await db
       .from('content_topics')
       .select('id, topic, target_keyword, target_publish_date, content_type')
       .eq('client_id', client_id)
       .in('status', ['scheduled', 'approved'])
-      .or(`target_publish_date.is.null,target_publish_date.lte.${new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`)
+      .or(`target_publish_date.is.null,target_publish_date.lte.${new Date(Date.now() + leadWindow * 86_400_000).toISOString().slice(0, 10)}`)
+      .order('target_publish_date', { ascending: true })
 
     // Resolve client name once for the post accumulator
     let clientNameForPost = topicAccum.get(client_id)?.clientName ?? ''
@@ -366,7 +369,9 @@ export async function GET(request: NextRequest) {
       clientNameForPost = (cl as { name?: string } | null)?.name ?? client_id
     }
 
-    const topicsToGenerate = (approvedTopics ?? []).slice(0, 1)
+    // Generate up to 3 posts per client per run — enough to cover a full month of
+    // weekly slots in a single cron invocation without risking the 300s timeout.
+    const topicsToGenerate = (approvedTopics ?? []).slice(0, 3)
     await Promise.allSettled(topicsToGenerate.map(async (topic) => {
       const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
       try {
