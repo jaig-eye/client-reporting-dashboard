@@ -6,8 +6,9 @@ import { sendEmail } from '@/lib/email'
 
 export const maxDuration = 300
 
-const TIMEOUT_MS = 15_000
-const FLAP_THRESHOLD = 2
+const TIMEOUT_MS          = 15_000
+const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site already has a failure
+const FLAP_THRESHOLD      = 2
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
@@ -35,11 +36,11 @@ interface CheckResult {
   error:        string | null
 }
 
-async function pingUrl(url: string): Promise<Omit<CheckResult, 'siteId'>> {
+async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckResult, 'siteId'>> {
   const start = Date.now()
   try {
     const res = await fetch(url, {
-      signal:   AbortSignal.timeout(TIMEOUT_MS),
+      signal:   AbortSignal.timeout(timeoutMs),
       redirect: 'follow',
       headers:  {
         'User-Agent':      MONITOR_UA,
@@ -94,7 +95,12 @@ export async function GET(request: NextRequest) {
   }
 
   const results = await Promise.allSettled(
-    sites.map(site => pingUrl(site.url).then(r => ({ ...r, siteId: site.id } as CheckResult)))
+    sites.map(site => {
+      // Sites already in a warning state (one failure recorded) get a longer timeout
+      // so a genuinely slow homepage doesn't get falsely declared down.
+      const timeoutMs = (site.consecutive_failures ?? 0) >= 1 ? EXTENDED_TIMEOUT_MS : TIMEOUT_MS
+      return pingUrl(site.url, timeoutMs).then(r => ({ ...r, siteId: site.id } as CheckResult))
+    })
   )
 
   // Pre-load all open incidents in ONE query — eliminates N+1 SELECT per down/recovering site.
