@@ -944,13 +944,35 @@ export async function GET(request: NextRequest) {
         .limit(1)
 
       if (!existingMonthlyAlert || existingMonthlyAlert.length === 0) {
-        const postLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
-          `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
+        // Query all current-month posts so the message is comprehensive even if
+        // posts were generated across multiple cron runs this month (postAccum only covers THIS run)
+        const { data: monthPosts } = await db
+          .from('content_posts')
+          .select('client_id')
+          .in('status', ['for_review', 'pending'])
+          .gte('created_at', monthStart)
+          .is('wp_post_id', null).is('bc_post_id', null)
+
+        const clientCountMap = new Map<string, number>()
+        for (const p of (monthPosts ?? [])) {
+          clientCountMap.set(p.client_id, (clientCountMap.get(p.client_id) ?? 0) + 1)
+        }
+        // Fall back to current-run accumulator if DB returned nothing
+        if (clientCountMap.size === 0) {
+          Array.from(postAccum.entries()).forEach(([cid, { items }]) => clientCountMap.set(cid, items.length))
+        }
+
+        const { data: cRows } = await db.from('clients').select('id, name').in('id', Array.from(clientCountMap.keys()))
+        const nameMap = new Map((cRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+        const postLines = Array.from(clientCountMap.entries()).map(([cid, count]) =>
+          `• **${nameMap.get(cid) ?? cid}** — ${count} post${count === 1 ? '' : 's'}`
         )
+        const totalCount = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
+
         // Insert dedup row first — if Discord fires but insert fails, we'd re-notify all month.
         const { error: insertErr } = await db.from('admin_alerts').insert({
           type: 'content', severity: 'info',
-          title: `${totalPostsReady} post(s) ready for monthly review`,
+          title: `${totalCount} post(s) ready for monthly review`,
           body: postLines.join('\n'),
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
@@ -958,7 +980,7 @@ export async function GET(request: NextRequest) {
         if (!insertErr) {
           void sendDiscordMessage(
             discordBotToken, opsChannelId,
-            `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+            `✍️ **${totalCount} post${totalCount === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
           ).catch(() => {})
         }
       }
