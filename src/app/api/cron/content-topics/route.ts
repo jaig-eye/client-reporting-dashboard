@@ -136,6 +136,16 @@ export async function GET(request: NextRequest) {
   const topicAccum = new Map<string, { clientName: string; items: TopicSummary[] }>()
   const postAccum  = new Map<string, { clientName: string; items: PostSummary[] }>()
 
+  // Blog post jobs collected during the per-client loop, executed in parallel after
+  // all clients are processed. Decouples AI generation from the sequential client loop
+  // so 10+ clients don't serially stack AI calls and blow the 300s cron timeout.
+  type PendingPostJob = {
+    topicId: string; topic: string; targetKeyword: string | null
+    targetPublishDate: string | null; contentType: string | null
+    clientId: string; clientName: string
+  }
+  const pendingBlogJobs: PendingPostJob[] = []
+
   const topicsGenerated: string[] = []
   const briefsGenerated: string[] = []
   const postsTriggered:  string[] = []
@@ -369,55 +379,20 @@ export async function GET(request: NextRequest) {
       clientNameForPost = (cl as { name?: string } | null)?.name ?? client_id
     }
 
-    // Generate up to 3 posts per client per run — enough to cover a full month of
-    // weekly slots in a single cron invocation without risking the 300s timeout.
-    const topicsToGenerate = (approvedTopics ?? []).slice(0, 3)
-    await Promise.allSettled(topicsToGenerate.map(async (topic) => {
+    // Collect up to 3 approved topics per client — Phase 2 (after all clients) runs
+    // them concurrently so AI calls span clients rather than stacking per client.
+    for (const topic of (approvedTopics ?? []).slice(0, 3)) {
       const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
-      try {
-        await db.from('content_topics').update({ status: 'generating' }).eq('id', t.id)
-        // Route service-area topics to the SA generate endpoint; blog topics to the blog endpoint
-        const isSA = t.content_type === 'service_area'
-        const generateUrl = isSA
-          ? `${appUrl}/api/admin/content/service-area/generate`
-          : `${appUrl}/api/admin/content/generate`
-        const generateBody = isSA
-          ? JSON.stringify({ topic_id: t.id })
-          : JSON.stringify({ topic_id: t.id, suppress_email: true })
-        const generateHeaders = {
-          'Content-Type': 'application/json',
-          'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
-        }
-
-        let res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
-
-        // Retry once on transient server errors (5xx) or settings-load failures —
-        // connection pool exhaustion during long cron runs can cause spurious failures.
-        if (!res.ok && res.status >= 500) {
-          console.warn(`[content-topics cron] Generate ${t.id} returned ${res.status} — retrying once`)
-          await new Promise(r => setTimeout(r, 2000))
-          res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
-        }
-
-        if (!res.ok) throw new Error(await res.text())
-        const data = await res.json() as { title?: string; focusKeyword?: string }
-        postsTriggered.push(t.id)
-
-        // Accumulate for batch email
-        const entry = postAccum.get(client_id) ?? { clientName: clientNameForPost, items: [] }
-        entry.items.push({
-          title:             data.title ?? t.topic,
-          targetKeyword:     data.focusKeyword ?? t.target_keyword,
-          targetPublishDate: t.target_publish_date,
-        })
-        postAccum.set(client_id, entry)
-      } catch (e) {
-        console.error(`[content-topics cron] Post generation failed for topic ${t.id}:`, e)
-        await db.from('content_topics')
-          .update({ status: 'approved', generation_error: String(e) })
-          .eq('id', t.id)
-      }
-    }))
+      pendingBlogJobs.push({
+        topicId:           t.id,
+        topic:             t.topic,
+        targetKeyword:     t.target_keyword,
+        targetPublishDate: t.target_publish_date,
+        contentType:       t.content_type,
+        clientId:          client_id,
+        clientName:        clientNameForPost,
+      })
+    }
 
     // ── Auto-push: admin-approved posts with publish date approaching ─────────
     // Requires explicit admin approval (status = 'approved') — prevents unreviewed posts
@@ -848,6 +823,71 @@ export async function GET(request: NextRequest) {
       }
 
       console.log(`[content-topics cron] SA client ${saClientId}: ${saGenerated.length} generated, ${saPushed.length} pushed`)
+    }
+  }
+
+  // ── Phase 2: run all collected blog post generation jobs concurrently ─────────
+  // All per-client loops are done. Firing here means up to GLOBAL_POST_CAP AI calls
+  // run in parallel across all clients. Wall clock ≈ slowest single call (~90s),
+  // regardless of how many clients there are — scales to 10+ clients within 300s.
+  {
+    const GLOBAL_POST_CAP = 15
+    type PostResult = { clientId: string; clientName: string; title: string; targetKeyword: string | null; targetPublishDate: string | null } | null
+
+    const results = await Promise.allSettled(
+      pendingBlogJobs.slice(0, GLOBAL_POST_CAP).map(async (job): Promise<PostResult> => {
+        try {
+          await db.from('content_topics').update({ status: 'generating' }).eq('id', job.topicId)
+          const isSA = job.contentType === 'service_area'
+          const generateUrl = isSA
+            ? `${appUrl}/api/admin/content/service-area/generate`
+            : `${appUrl}/api/admin/content/generate`
+          const generateBody = isSA
+            ? JSON.stringify({ topic_id: job.topicId })
+            : JSON.stringify({ topic_id: job.topicId, suppress_email: true })
+          const generateHeaders = {
+            'Content-Type': 'application/json',
+            'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+          }
+
+          let res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
+
+          // Retry once on transient 5xx — connection pool exhaustion during long cron runs
+          if (!res.ok && res.status >= 500) {
+            console.warn(`[content-topics cron] Generate ${job.topicId} returned ${res.status} — retrying once`)
+            await new Promise(r => setTimeout(r, 2000))
+            res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })
+          }
+
+          if (!res.ok) throw new Error(await res.text())
+          const data = await res.json() as { title?: string; focusKeyword?: string }
+          postsTriggered.push(job.topicId)
+          return {
+            clientId:          job.clientId,
+            clientName:        job.clientName,
+            title:             data.title ?? job.topic,
+            targetKeyword:     data.focusKeyword ?? job.targetKeyword,
+            targetPublishDate: job.targetPublishDate,
+          }
+        } catch (e) {
+          console.error(`[content-topics cron] Post generation failed for topic ${job.topicId}:`, e)
+          await db.from('content_topics')
+            .update({ status: 'approved', generation_error: String(e) })
+            .eq('id', job.topicId)
+          return null
+        }
+      })
+    )
+
+    // Update postAccum sequentially after all promises settle to avoid the race where
+    // two callbacks for the same clientId both read an empty entry and overwrite each other.
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) {
+        const { clientId, clientName, title, targetKeyword, targetPublishDate } = r.value
+        const entry = postAccum.get(clientId) ?? { clientName, items: [] }
+        entry.items.push({ title, targetKeyword, targetPublishDate })
+        postAccum.set(clientId, entry)
+      }
     }
   }
 
