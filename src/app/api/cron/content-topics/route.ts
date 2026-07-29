@@ -947,17 +947,20 @@ export async function GET(request: NextRequest) {
         const postLines = Array.from(postAccum.entries()).map(([, { clientName, items }]) =>
           `• **${clientName}** — ${items.length} post${items.length === 1 ? '' : 's'}`
         )
-        void sendDiscordMessage(
-          discordBotToken, opsChannelId,
-          `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
-        ).catch(() => {})
-        db.from('admin_alerts').insert({
+        // Insert dedup row first — if Discord fires but insert fails, we'd re-notify all month.
+        const { error: insertErr } = await db.from('admin_alerts').insert({
           type: 'content', severity: 'info',
           title: `${totalPostsReady} post(s) ready for monthly review`,
           body: postLines.join('\n'),
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
-        }).then(null, () => {})
+        })
+        if (!insertErr) {
+          void sendDiscordMessage(
+            discordBotToken, opsChannelId,
+            `✍️ **${totalPostsReady} post${totalPostsReady === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+          ).catch(() => {})
+        }
       }
     }
   }
@@ -995,11 +998,13 @@ export async function GET(request: NextRequest) {
     const contentReviewUrl = contentUrl
     type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
 
+    const monthStartDate = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString().slice(0, 10)
     const { data: pendingPosts } = await db
       .from('content_posts')
       .select('id, title, target_publish_date, client_id')
       .in('status', ['for_review', 'pending'])
       .not('target_publish_date', 'is', null)
+      .gte('target_publish_date', monthStartDate)
       .is('wp_post_id', null).is('bc_post_id', null)
       .order('target_publish_date', { ascending: true })
 
@@ -1020,16 +1025,19 @@ export async function GET(request: NextRequest) {
           `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'}${p.target_publish_date ? ` (${p.target_publish_date})` : ''}`
         )
         if (pendingPosts.length > 8) lines.push(`…and ${pendingPosts.length - 8} more`)
-        void sendDiscordMessage(discordBotToken, opsChannelId,
-          `📋 **${pendingPosts.length} post${pendingPosts.length === 1 ? '' : 's'} still awaiting approval** — manual review needed\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
-        ).catch(() => {})
-        db.from('admin_alerts').insert({
+        // Insert dedup row first so a Discord failure doesn't re-alert next run
+        const { error: midInsertErr } = await db.from('admin_alerts').insert({
           type: 'content', severity: 'warning',
           title: `${pendingPosts.length} post(s) still awaiting approval`,
           body: lines.join('\n'),
           meta: { content_type: 'monthly_mid_check', count: pendingPosts.length, month: monthStart },
           link_url: contentReviewUrl,
-        }).then(null, () => {})
+        })
+        if (!midInsertErr) {
+          void sendDiscordMessage(discordBotToken, opsChannelId,
+            `📋 **${pendingPosts.length} post${pendingPosts.length === 1 ? '' : 's'} still awaiting approval** — manual review needed\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
+          ).catch(() => {})
+        }
       }
     }
   }
