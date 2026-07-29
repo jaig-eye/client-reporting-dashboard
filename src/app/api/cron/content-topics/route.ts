@@ -381,8 +381,11 @@ export async function GET(request: NextRequest) {
 
     // Collect up to 3 approved topics per client — Phase 2 (after all clients) runs
     // them concurrently so AI calls span clients rather than stacking per client.
+    // Skip service_area topics: they are handled exclusively by the SA loop below.
+    // Including them here would cause duplicate generation once Phase 2 fires.
     for (const topic of (approvedTopics ?? []).slice(0, 3)) {
       const t = topic as { id: string; topic: string; target_keyword: string | null; target_publish_date: string | null; content_type: string | null }
+      if (t.content_type === 'service_area') continue
       pendingBlogJobs.push({
         topicId:           t.id,
         topic:             t.topic,
