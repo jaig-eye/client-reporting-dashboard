@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
 import { publishBCPage } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
@@ -407,28 +407,66 @@ export async function POST(
         ? Number(p.wp_author_id)
         : (cs?.default_author_id ? Number(cs.default_author_id) : undefined)
 
-      // Prefer per-post category IDs, then fall back to keyword-matched WP categories
+      // Prefer per-post category IDs, then client default, then auto-resolve
       let postCategoryIds: number[] | undefined
       if (Array.isArray(p.wp_category_ids) && (p.wp_category_ids as number[]).length > 0) {
         postCategoryIds = p.wp_category_ids as number[]
       } else if (Array.isArray(cs?.default_category_ids) && (cs!.default_category_ids as number[]).length > 0) {
         postCategoryIds = cs!.default_category_ids as number[]
       } else {
-        // Auto-categorize: fetch the site's WP categories and match by keyword
+        // Auto-categorize: broad-match against existing WP categories; create one if none fit.
         try {
-          const creds   = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-          const catRes  = await fetch(`${siteUrl}/wp-json/wp/v2/categories?per_page=100`, { headers: { Authorization: `Basic ${creds}` } })
-          if (catRes.ok) {
-            const allCats = (await catRes.json()) as { id: number; name: string; slug: string }[]
-            const keywords = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
-              .filter(Boolean).join(' ').toLowerCase()
-            const matched = allCats.find(cat =>
-              keywords.includes(cat.name.toLowerCase()) ||
-              keywords.includes(cat.slug.replace(/-/g, ' '))
-            )
-            if (matched) postCategoryIds = [matched.id]
+          const allCats = await getCategories(siteUrl, auth)
+
+          // Score each category by how many of its words appear in the post's keyword/title
+          const kwText = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
+            .filter(Boolean).join(' ').toLowerCase()
+          const kwWords = kwText.split(/\s+/).filter(w => w.length > 2)
+
+          type ScoredCat = { id: number; name: string; slug: string; score: number }
+          const scored: ScoredCat[] = allCats
+            .filter(c => c.name.toLowerCase() !== 'uncategorized')
+            .map(c => {
+              const catWords = (c.name + ' ' + c.slug.replace(/-/g, ' ')).toLowerCase().split(/\s+/).filter(w => w.length > 2)
+              const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
+              return { ...c, score }
+            })
+            .filter(c => c.score > 0)
+            .sort((a, b) => b.score - a.score)
+
+          if (scored.length > 0) {
+            postCategoryIds = [scored[0].id]
+            console.log(`[approve] Auto-categorized "${p.title}" → existing "${scored[0].name}" (score ${scored[0].score})`)
+          } else {
+            // No existing category matches — derive a name and create it in WP
+            const rawKw   = (p.target_keyword || p.title || '').toString()
+            // Strip trailing location / filler phrases and keep the first 3 meaningful words
+            const stripped = rawKw
+              .replace(/\b(in|near|for|the|a|an|and|or|of|from|to|at|by|with|about|how|what|why|when|where|fl|florida)\b.*/i, '')
+              .trim()
+            const newCatName = stripped.split(/\s+/).slice(0, 3)
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join(' ') || 'Blog'
+
+            const created = await createCategory(siteUrl, auth, newCatName)
+            if (created) {
+              postCategoryIds = [created.id]
+              console.log(`[approve] Auto-categorized "${p.title}" → NEW category "${created.name}" (id ${created.id})`)
+            } else {
+              // 409: category name exists but wasn't in the initial fetch (pagination edge-case) — refetch
+              const refreshed = await getCategories(siteUrl, auth)
+              const found = refreshed.find(c => c.name.toLowerCase() === newCatName.toLowerCase())
+              if (found) postCategoryIds = [found.id]
+            }
           }
-        } catch { /* non-fatal — WP will assign Uncategorized */ }
+
+          // Persist the resolved category so it shows correctly in review UI
+          if (postCategoryIds) {
+            await db.from('content_posts').update({ wp_category_ids: postCategoryIds }).eq('id', id)
+          }
+        } catch (e) {
+          console.warn('[approve] Auto-categorize failed (non-fatal):', e)
+        }
       }
 
       result = await publishPost(siteUrl, auth, {

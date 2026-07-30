@@ -197,6 +197,29 @@ export async function updatePage(
 }
 
 /**
+ * Create a new category in WordPress and return its ID.
+ * Returns null if the category already exists (409) — callers should retry getCategories() in that case.
+ */
+export async function createCategory(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  name: string
+): Promise<{ id: number; name: string; slug: string } | null> {
+  try {
+    const result = (await wpPost(siteUrl, '/categories', auth, { name })) as Record<string, unknown>
+    return {
+      id:   Number(result.id),
+      name: String(result.name || name),
+      slug: String(result.slug || ''),
+    }
+  } catch (err) {
+    // 409 = term already exists — non-fatal; caller falls back to existing match
+    if (err instanceof Error && err.message.includes('409')) return null
+    throw err
+  }
+}
+
+/**
  * Get existing categories from the WordPress site.
  */
 export async function getCategories(

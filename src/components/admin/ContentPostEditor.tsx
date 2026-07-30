@@ -77,6 +77,12 @@ interface WpCategory {
   name: string
 }
 
+interface CategorySuggestion {
+  id:    number | null  // null = doesn't exist yet in WP, will be created at publish
+  name:  string
+  isNew: boolean
+}
+
 type WpPublishStatus = 'draft' | 'publish' | 'future'
 
 // ─── SEO check helpers ────────────────────────────────────────────────────────
@@ -185,8 +191,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [authorsLoading, setAuthorsLoading] = useState(false)
   const [defaultAuthorId, setDefaultAuthorId] = useState<number | null>(null)
   const [wpTags,         setWpTags]         = useState<WpTag[]>([])
-  const [categories,     setCategories]     = useState<WpCategory[]>([])
-  const [categoryIds,    setCategoryIds]    = useState<number[]>([])
+  const [categories,        setCategories]        = useState<WpCategory[]>([])
+  const [categoryIds,       setCategoryIds]       = useState<number[]>([])
+  const [categorySuggestion, setCategorySuggestion] = useState<CategorySuggestion | null>(null)
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
@@ -255,7 +262,38 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       ])
       if (authRes.ok) setAuthors((await authRes.json()).authors ?? [])
       if (tagRes.ok)  setWpTags((await tagRes.json()).tags ?? [])
-      if (catRes.ok)  setCategories((await catRes.json()).categories ?? [])
+      if (catRes.ok) {
+        const fetchedCats: WpCategory[] = (await catRes.json()).categories ?? []
+        setCategories(fetchedCats)
+        // Only suggest if the post has no explicit category selected yet
+        if (!post?.wpCategoryIds || post.wpCategoryIds.length === 0) {
+          const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
+          const kwWords = kwText.split(/\s+/).filter(w => w.length > 2)
+          const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
+          const scored = nonDefault
+            .map(c => {
+              const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+              const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
+              return { ...c, score }
+            })
+            .filter(c => c.score > 0)
+            .sort((a, b) => b.score - a.score)
+
+          if (scored.length > 0) {
+            setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
+          } else {
+            // Derive a new category name using same heuristic as server-side approve route
+            const rawKw = (post?.targetKeyword || post?.title || '')
+            const stripped = rawKw
+              .replace(/\b(in|near|for|the|a|an|and|or|of|from|to|at|by|with|about|how|what|why|when|where|fl|florida)\b.*/i, '')
+              .trim()
+            const newName = stripped.split(/\s+/).slice(0, 3)
+              .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join(' ') || 'Blog'
+            setCategorySuggestion({ id: null, name: newName, isNew: true })
+          }
+        }
+      }
       if (settingsRes?.ok) {
         const s = await settingsRes.json()
         const defId = s?.default_author_id ?? null
@@ -849,6 +887,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {categories.length > 0 && (
                 <div className="mb-4">
                   <label style={labelStyle}>WP Categories</label>
+                  {/* Auto-category suggestion — shown when no category is explicitly selected */}
+                  {categorySuggestion && categoryIds.length === 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${categorySuggestion.isNew ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Auto:</span>
+                      <strong>{categorySuggestion.name}</strong>
+                      <span style={{ color: categorySuggestion.isNew ? '#f59e0b' : '#10b981' }}>
+                        {categorySuggestion.isNew ? '(will create)' : '(existing)'}
+                      </span>
+                      {!categorySuggestion.isNew && categorySuggestion.id && (
+                        <button
+                          type="button"
+                          onClick={() => { setCategoryIds([categorySuggestion.id!]); markDirty() }}
+                          style={{ marginLeft: 'auto', fontSize: '0.6875rem', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                        >
+                          Apply
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '8rem', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.375rem 0.5rem' }}>
                     {categories.map(c => {
                       const selected = categoryIds.includes(c.id)
