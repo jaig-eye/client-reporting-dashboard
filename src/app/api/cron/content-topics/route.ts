@@ -996,7 +996,7 @@ export async function GET(request: NextRequest) {
         // posts were generated across multiple cron runs this month (postAccum only covers THIS run)
         const { data: monthPosts } = await db
           .from('content_posts')
-          .select('client_id')
+          .select('client_id, target_publish_date')
           .in('status', ['for_review', 'pending'])
           .gte('created_at', monthStart)
           .is('wp_post_id', null).is('bc_post_id', null)
@@ -1010,25 +1010,28 @@ export async function GET(request: NextRequest) {
           Array.from(postAccum.entries()).forEach(([cid, { items }]) => clientCountMap.set(cid, items.length))
         }
 
-        const { data: cRows } = await db.from('clients').select('id, name').in('id', Array.from(clientCountMap.keys()))
-        const nameMap = new Map((cRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-        const postLines = Array.from(clientCountMap.entries()).map(([cid, count]) =>
-          `• **${nameMap.get(cid) ?? cid}** — ${count} post${count === 1 ? '' : 's'}`
+        const totalCount  = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
+        const clientCount = clientCountMap.size
+        // Distinct calendar weeks covered by the batch
+        const weekNums = new Set(
+          (monthPosts ?? [])
+            .filter((p): p is typeof p & { target_publish_date: string } => !!p.target_publish_date)
+            .map(p => Math.floor(new Date(p.target_publish_date + 'T00:00:00Z').getTime() / (7 * 86_400_000)))
         )
-        const totalCount = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
+        const weekCount = weekNums.size || Math.ceil(totalCount / Math.max(clientCount, 1))
 
         // Insert dedup row first — if Discord fires but insert fails, we'd re-notify all month.
         const { error: insertErr } = await db.from('admin_alerts').insert({
           type: 'content', severity: 'info',
-          title: `${totalCount} post(s) ready for monthly review`,
-          body: postLines.join('\n'),
+          title: `Monthly review ready — ${totalCount} post(s) across ${clientCount} client(s)`,
+          body: `${totalCount} posts · ${clientCount} clients · ${weekCount} weeks`,
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
         })
         if (!insertErr) {
           void sendDiscordMessage(
             discordBotToken, opsChannelId,
-            `✍️ **${totalCount} post${totalCount === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+            `✍️ **Monthly review ready** — ${totalCount} post${totalCount === 1 ? '' : 's'} · ${clientCount} client${clientCount === 1 ? '' : 's'} · ${weekCount} week${weekCount === 1 ? '' : 's'}\nReview: ${contentUrl}`
           ).catch(() => {})
         }
       }
@@ -1063,50 +1066,55 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Mid-month pending check — ONE Discord message per calendar month after the 10th ──
-  // Fires once if posts are still unapproved after the team has had time to review.
+  // Only fires if at least 7 days have passed since the monthly_review_ready alert so we
+  // don't double-notify on the same run that just generated posts.
   if (discordBotToken && opsChannelId && nowTs.getUTCDate() >= 10) {
     const contentReviewUrl = contentUrl
     type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
 
-    const monthStartDate = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString().slice(0, 10)
-    const { data: pendingPosts } = await db
-      .from('content_posts')
-      .select('id, title, target_publish_date, client_id')
-      .in('status', ['for_review', 'pending'])
-      .not('target_publish_date', 'is', null)
-      .gte('target_publish_date', monthStartDate)
-      .is('wp_post_id', null).is('bc_post_id', null)
-      .order('target_publish_date', { ascending: true })
+    const monthStart     = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
+    const sevenDaysAgo   = new Date(Date.now() - 7 * 86_400_000).toISOString()
+    const monthStartDate = monthStart.slice(0, 10)
 
-    if (pendingPosts && pendingPosts.length > 0) {
-      const monthStart = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
-      const { data: existingMidCheck } = await db.from('admin_alerts')
-        .select('id').eq('type', 'content')
-        .filter('meta->>content_type', 'eq', 'monthly_mid_check')
-        .gte('created_at', monthStart)
-        .limit(1)
+    // Skip mid-check if review-ready was sent within the last 7 days — posts were just generated
+    const { data: recentReviewReady } = await db.from('admin_alerts')
+      .select('id').eq('type', 'content')
+      .filter('meta->>content_type', 'eq', 'monthly_review_ready')
+      .gte('created_at', sevenDaysAgo)
+      .limit(1)
 
-      if (!existingMidCheck || existingMidCheck.length === 0) {
-        const clientIds = Array.from(new Set((pendingPosts as PostRow[]).map(p => p.client_id)))
-        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
-        const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-        const displayPosts = (pendingPosts as PostRow[]).slice(0, 8)
-        const lines = displayPosts.map(p =>
-          `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'}${p.target_publish_date ? ` (${p.target_publish_date})` : ''}`
-        )
-        if (pendingPosts.length > 8) lines.push(`…and ${pendingPosts.length - 8} more`)
-        // Insert dedup row first so a Discord failure doesn't re-alert next run
-        const { error: midInsertErr } = await db.from('admin_alerts').insert({
-          type: 'content', severity: 'warning',
-          title: `${pendingPosts.length} post(s) still awaiting approval`,
-          body: lines.join('\n'),
-          meta: { content_type: 'monthly_mid_check', count: pendingPosts.length, month: monthStart },
-          link_url: contentReviewUrl,
-        })
-        if (!midInsertErr) {
-          void sendDiscordMessage(discordBotToken, opsChannelId,
-            `📋 **${pendingPosts.length} post${pendingPosts.length === 1 ? '' : 's'} still awaiting approval** — manual review needed\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
-          ).catch(() => {})
+    if (!recentReviewReady || recentReviewReady.length === 0) {
+      const { data: pendingPosts } = await db
+        .from('content_posts')
+        .select('id, client_id')
+        .in('status', ['for_review', 'pending'])
+        .not('target_publish_date', 'is', null)
+        .gte('target_publish_date', monthStartDate)
+        .is('wp_post_id', null).is('bc_post_id', null)
+
+      if (pendingPosts && pendingPosts.length > 0) {
+        const { data: existingMidCheck } = await db.from('admin_alerts')
+          .select('id').eq('type', 'content')
+          .filter('meta->>content_type', 'eq', 'monthly_mid_check')
+          .gte('created_at', monthStart)
+          .limit(1)
+
+        if (!existingMidCheck || existingMidCheck.length === 0) {
+          const pendingCount  = pendingPosts.length
+          const pendingClients = new Set((pendingPosts as PostRow[]).map(p => p.client_id)).size
+          // Insert dedup row first so a Discord failure doesn't re-alert next run
+          const { error: midInsertErr } = await db.from('admin_alerts').insert({
+            type: 'content', severity: 'warning',
+            title: `${pendingCount} post(s) still awaiting approval`,
+            body: `${pendingCount} posts across ${pendingClients} clients`,
+            meta: { content_type: 'monthly_mid_check', count: pendingCount, month: monthStart },
+            link_url: contentReviewUrl,
+          })
+          if (!midInsertErr) {
+            void sendDiscordMessage(discordBotToken, opsChannelId,
+              `📋 **${pendingCount} post${pendingCount === 1 ? '' : 's'} still awaiting approval** — ${pendingClients} client${pendingClients === 1 ? '' : 's'} need review\nReview: ${contentReviewUrl}`
+            ).catch(() => {})
+          }
         }
       }
     }

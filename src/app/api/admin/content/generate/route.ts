@@ -465,7 +465,8 @@ How to use the client context above — MUST follow every rule:
 - Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
 - INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.
 - NEVER link to XML files, sitemaps, PHP scripts, feed or RSS URLs, search result pages, or any URL that is not a real HTML content page. Every permitted URL is already pre-filtered in the lists above.
-- EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.` : ''
+- EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.
+- AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.` : ''
 
   if (masterPreamble) {
     const rules = extractNonNegotiableRules(masterPreamble)
@@ -506,6 +507,7 @@ SEO guidelines:
 - Add descriptive alt text to any <img> tags including the focus keyword
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
+- AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
 ${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
 }
 
