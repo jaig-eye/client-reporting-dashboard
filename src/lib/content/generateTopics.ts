@@ -21,22 +21,52 @@ interface TopicIdea {
   cluster_group?:      string
 }
 
-async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+function extractSitemapLocs(xml: string): string[] {
+  return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
+}
+
+async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; blogPosts: string[] }> {
+  const empty = { pages: [], blogPosts: [] }
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
     })
-    if (!res.ok) return []
+    if (!res.ok) return empty
     const xml = await res.text()
-    const matches = Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi))
-    return matches
-      .map(m => m[1].trim())
-      .filter(url => !url.endsWith('.xml'))
-      .slice(0, 40)
+    const locs = extractSitemapLocs(xml)
+
+    if (xml.includes('<sitemapindex')) {
+      const subUrls = locs.filter(u => u.endsWith('.xml')).slice(0, 10)
+      const pages: string[]     = []
+      const blogPosts: string[] = []
+      await Promise.all(subUrls.map(async subUrl => {
+        try {
+          const sub = await fetch(subUrl, {
+            signal: AbortSignal.timeout(4000),
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+          })
+          if (!sub.ok) return
+          const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
+          if (/post|blog|article|news/i.test(subUrl)) {
+            blogPosts.push(...subLocs)
+          } else {
+            pages.push(...subLocs)
+          }
+        } catch { /* non-fatal */ }
+      }))
+      return { pages: pages.slice(0, 40), blogPosts: blogPosts.slice(0, 150) }
+    }
+
+    return { pages: locs.filter(u => !u.endsWith('.xml')).slice(0, 40), blogPosts: [] }
   } catch {
-    return []
+    return empty
   }
+}
+
+async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+  const { pages, blogPosts } = await fetchSitemapData(sitemapUrl)
+  return [...pages, ...blogPosts]
 }
 
 function scoreUrlRelevance(url: string, keywords: string[]): number {
@@ -218,30 +248,46 @@ export async function generateTopicsForClient(
   const halfMonthAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
   const { data: storedPages } = await db
     .from('content_sitemap_pages')
-    .select('url, is_priority, is_excluded, created_at')
+    .select('url, is_priority, is_excluded, created_at, source_sitemap')
     .eq('client_id', clientId)
 
   const cacheIsFresh = storedPages && storedPages.length > 0 &&
     (storedPages as { created_at: string }[]).some(r => r.created_at >= halfMonthAgo)
 
   let sitemapPages: string[] = []
+  const sitemapBlogPostUrls: string[] = []
   const sitemapKeywords = growthTargets.map(t => t.query)
 
   if (cacheIsFresh) {
-    const priority   = (storedPages as { url: string; is_priority: boolean; is_excluded: boolean }[]).filter(r => r.is_priority).map(r => r.url)
-    const candidates = (storedPages as { url: string; is_priority: boolean; is_excluded: boolean }[])
+    const storedTyped = storedPages as { url: string; is_priority: boolean; is_excluded: boolean; source_sitemap: string | null }[]
+    const priority   = storedTyped.filter(r => r.is_priority).map(r => r.url)
+    const candidates = storedTyped
       .filter(r => !r.is_priority && !r.is_excluded)
       .map(r => ({ url: r.url, score: scoreUrlRelevance(r.url, sitemapKeywords) }))
       .sort((a, b) => b.score - a.score)
       .map(r => r.url)
     sitemapPages = [...priority, ...candidates].slice(0, 60)
+
+    // Blog posts from cached sitemap — identified by source_sitemap pattern or URL path
+    const cachedBlogPostUrls = storedTyped
+      .filter(r => !r.is_excluded && (
+        /post|blog|article|news/i.test(r.source_sitemap ?? '') ||
+        /\/(blog|news|articles?|posts?)\//.test(r.url)
+      ))
+      .map(r => r.url)
+    // Collected here; added to avoidEntries below after addAvoid is defined
+    sitemapBlogPostUrls.push(...cachedBlogPostUrls)
   } else if (sitemapUrls.length > 0) {
-    const allPages = Array.from(new Set((await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()))
+    const sitemapDataArr = await Promise.all(sitemapUrls.map(fetchSitemapData))
+    const allPages = Array.from(new Set(sitemapDataArr.flatMap(d => d.pages)))
     sitemapPages = allPages
       .map(url => ({ url, score: scoreUrlRelevance(url, sitemapKeywords) }))
       .sort((a, b) => b.score - a.score)
       .map(r => r.url)
       .slice(0, 60)
+
+    // Blog posts from post-specific sub-sitemaps (live fetch)
+    sitemapBlogPostUrls.push(...sitemapDataArr.flatMap(d => d.blogPosts))
   }
 
   // ── Avoid list ─────────────────────────────────────────────────────────────
@@ -259,6 +305,13 @@ export async function generateTopicsForClient(
   }
   existingTopics.forEach(t => addAvoid(t.topic, t.target_keyword))
   existingPosts.forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
+  // Existing blog posts on the client's site (pre-system) — prevent topic overlap
+  sitemapBlogPostUrls.slice(0, 80).forEach(url => {
+    try {
+      const slug = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
+      if (slug.length >= 4) addAvoid(slug.replace(/-/g, ' '), null)
+    } catch { /* ignore */ }
+  })
   const avoidText = avoidEntries.join('\n')
 
   // ── E-E-A-T context ────────────────────────────────────────────────────────

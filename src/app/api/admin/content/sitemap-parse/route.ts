@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const pageUrls   = new Set<string>()
+  // url → source sub-sitemap URL (or top-level sitemap URL for flat sitemaps)
+  const pageMap    = new Map<string, string>()
   const fetchErrors: string[] = []
   const headers = {
     'User-Agent':                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -109,20 +110,26 @@ export async function POST(request: NextRequest) {
               fetchErrors.push(`${subUrl} → ${hint}`)
               continue
             }
-            for (const loc of extractLocs(await subRes.text())) pageUrls.add(loc)
+            // Record source sub-sitemap so callers can identify blog-post sitemaps later
+            for (const loc of extractLocs(await subRes.text())) {
+              if (!pageMap.has(loc)) pageMap.set(loc, subUrl)
+            }
           } catch (e) {
             fetchErrors.push(`${subUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
           }
         }
       } else {
-        for (const loc of locs) pageUrls.add(loc)
+        for (const loc of locs) {
+          if (!pageMap.has(loc)) pageMap.set(loc, sitemapUrl)
+        }
       }
     } catch (e) {
       fetchErrors.push(`${sitemapUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
     }
   }
 
-  const urls = Array.from(pageUrls)
+  const pageUrls = Array.from(pageMap.keys())
+  const urls = pageUrls
     .filter(u => {
       if (!u.startsWith('http')) return false
       // Reject binary/media/archive files by extension
@@ -144,10 +151,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `No pages found in sitemap.${detail}` }, { status: 400 })
   }
 
-  // Upsert URLs — preserve existing title/flags, only insert new rows
+  // Upsert URLs — insert new rows and update source_sitemap for existing ones.
+  // Only client_id, url, source_sitemap are in the payload so is_priority / is_excluded / title are NOT overwritten.
   await db.from('content_sitemap_pages').upsert(
-    urls.map(url => ({ client_id: clientId, url })),
-    { onConflict: 'client_id,url', ignoreDuplicates: true }
+    urls.map(url => ({ client_id: clientId, url, source_sitemap: pageMap.get(url) ?? null })),
+    { onConflict: 'client_id,url', ignoreDuplicates: false }
   )
 
   const { data: allPages } = await db

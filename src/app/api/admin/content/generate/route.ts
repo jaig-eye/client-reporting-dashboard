@@ -63,22 +63,58 @@ type AgencySettings = {
 
 // ─── Sitemap fetching ─────────────────────────────────────────────────────────
 
-async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+function extractSitemapLocs(xml: string): string[] {
+  return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
+}
+
+// Returns { pages: URLs for internal linking, blogPosts: URLs from post/blog sub-sitemaps }
+// Handles both flat sitemaps and sitemap indexes (one level deep).
+async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; blogPosts: string[] }> {
+  const empty = { pages: [], blogPosts: [] }
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
     })
-    if (!res.ok) return []
+    if (!res.ok) return empty
     const xml = await res.text()
-    const matches = Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi))
-    return matches
-      .map(m => m[1].trim())
-      .filter(url => !url.endsWith('.xml'))
-      .slice(0, 40)
+    const locs = extractSitemapLocs(xml)
+
+    if (xml.includes('<sitemapindex')) {
+      // Sitemap index — follow sub-sitemaps in parallel (capped at 10)
+      const subUrls = locs.filter(u => u.endsWith('.xml')).slice(0, 10)
+      const pages: string[]     = []
+      const blogPosts: string[] = []
+      await Promise.all(subUrls.map(async subUrl => {
+        try {
+          const sub = await fetch(subUrl, {
+            signal: AbortSignal.timeout(4000),
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+          })
+          if (!sub.ok) return
+          const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
+          // Categorise by sub-sitemap URL — "post", "blog", "article", "news" → blog posts
+          if (/post|blog|article|news/i.test(subUrl)) {
+            blogPosts.push(...subLocs)
+          } else {
+            pages.push(...subLocs)
+          }
+        } catch { /* non-fatal */ }
+      }))
+      return { pages: pages.slice(0, 40), blogPosts: blogPosts.slice(0, 150) }
+    }
+
+    // Flat sitemap — all locs are pages
+    return { pages: locs.filter(u => !u.endsWith('.xml')).slice(0, 40), blogPosts: [] }
   } catch {
-    return []
+    return empty
   }
+}
+
+// Kept for compatibility — returns only page URLs
+async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+  const { pages, blogPosts } = await fetchSitemapData(sitemapUrl)
+  return [...pages, ...blogPosts]
 }
 
 function scoreUrlRelevance(url: string, keywords: string[]): number {
@@ -590,7 +626,7 @@ async function runTopicGeneration({
         .not('status', 'in', '("rejected","generating")')
         .neq('id', topicData.id),
       db.from('content_sitemap_pages')
-        .select('url, is_priority, is_excluded, created_at')
+        .select('url, is_priority, is_excluded, created_at, source_sitemap')
         .eq('client_id', effectiveClientId),
     ])
 
@@ -616,7 +652,7 @@ async function runTopicGeneration({
       }
     }
 
-    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
+    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string; source_sitemap: string | null }[]
     const priorityUrls = sitemapRows.filter(r => r.is_priority && isLinkableUrl(r.url)).map(r => r.url)
     const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
     if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
@@ -642,6 +678,9 @@ async function runTopicGeneration({
     const briefHasLinks   = (topicData.seo_brief?.internal_link_targets?.length ?? 0) > 0
     const sitemapPageCap  = briefHasLinks ? 30 : 60
 
+    // Blog post URLs from the sitemap — used for cannibalization prevention below
+    let sitemapBlogPostUrls: string[] = []
+
     if (cacheIsFresh1) {
       const generalPages = sitemapRows
         .filter(r => !r.is_priority && !r.is_excluded && isLinkableUrl(r.url))
@@ -651,9 +690,20 @@ async function runTopicGeneration({
         .slice(0, sitemapPageCap - priorityUrls.length)
       if (generalPages.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${generalPages.join('\n')}`)
+
+      // Identify existing blog posts from cached sitemap rows.
+      // source_sitemap column (set when post-sitemap.xml was explicitly followed)
+      // is the primary signal; URL path pattern is the fallback for older cache rows.
+      sitemapBlogPostUrls = sitemapRows
+        .filter(r => !r.is_excluded && (
+          /post|blog|article|news/i.test(r.source_sitemap ?? '') ||
+          /\/(blog|news|articles?|posts?)\//.test(r.url)
+        ))
+        .map(r => r.url)
     } else if (sitemapUrls.length > 0) {
-      const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
+      const sitemapDataArr = await Promise.all(sitemapUrls.map(fetchSitemapData))
       const excluded = new Set(excludedUrls)
+      const allPages = sitemapDataArr.flatMap(d => d.pages)
       const scored   = Array.from(new Set(allPages))
         .filter(u => !excluded.has(u))
         .map(u => ({ url: u, score: scoreUrlRelevance(u, topicKws) }))
@@ -663,12 +713,24 @@ async function runTopicGeneration({
       if (scored.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${scored.join('\n')}`)
       scored.forEach(u => allowedInternalUrls.add(u))
+      // Blog posts from post-specific sub-sitemaps (live fetch)
+      sitemapBlogPostUrls = sitemapDataArr.flatMap(d => d.blogPosts).filter(u => !excluded.has(u))
     }
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
     const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[]
     const pendingTopics = (pendingTopicsRes.data ?? []) as { topic?: string; target_keyword?: string | null }[]
+    // Derive readable topic labels from existing blog post URLs on the client's site.
+    // These are posts that predate our system and won't be in content_posts — including them
+    // prevents the AI from writing about topics the client has already published.
+    const sitemapBlogEntries = sitemapBlogPostUrls.slice(0, 80).map(url => {
+      try {
+        const slug = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
+        if (slug.length < 4) return null
+        return `"${slug.replace(/-/g, ' ')}" [existing site post]`
+      } catch { return null }
+    }).filter(Boolean)
     const avoidEntries = [
       ...existingPosts.map(p => {
         const label = p.focus_topic || p.title || ''
@@ -680,6 +742,7 @@ async function runTopicGeneration({
         if (!label) return null
         return t.target_keyword ? `"${label}" (keyword: ${t.target_keyword}) [queued]` : `"${label}" [queued]`
       }),
+      ...sitemapBlogEntries,
     ].filter(Boolean)
     const avoidList = avoidEntries.join('\n')
 
