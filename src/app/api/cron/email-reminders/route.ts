@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare }         from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export const maxDuration = 60
 
@@ -20,15 +21,16 @@ export async function GET(request: NextRequest) {
   // Load Discord config + active schedules in parallel
   const [settingsRes, schedulesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, discord_ops_channel_id')
+      .select('discord_bot_token, discord_ops_channel_id, notification_config')
       .maybeSingle(),
     db.from('email_schedules')
       .select('client_id, emails_per_week, assigned_user_id, clients(name, discord_channel_id), users(name)')
       .eq('is_active', true),
   ])
 
-  const botToken   = (settingsRes.data?.discord_bot_token as string | null) ?? null
-  const opsChannel = ((settingsRes.data?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const botToken    = (settingsRes.data?.discord_bot_token as string | null) ?? null
+  const opsChannel  = ((settingsRes.data?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const notifConfig = ((settingsRes.data?.notification_config as NotifConfig | null)) ?? {}
 
   if (!botToken || !opsChannel) {
     return NextResponse.json({ ok: true, skipped: 'Discord not configured' })
@@ -65,10 +67,10 @@ export async function GET(request: NextRequest) {
         (assignedName ? `👤 Assigned: ${assignedName}\n` : '') +
         `→ Upload at /admin/emails`
 
-      await sendDiscordMessage(botToken, opsChannel, msg)
+      if (getNotif(notifConfig, 'email_reminder').discord) await sendDiscordMessage(botToken, opsChannel, msg)
 
       // Also ping the client's own Discord channel if configured
-      if (clientRow?.discord_channel_id) {
+      if (clientRow?.discord_channel_id && getNotif(notifConfig, 'email_reminder').discord) {
         await sendDiscordMessage(botToken, clientRow.discord_channel_id, msg)
       }
 

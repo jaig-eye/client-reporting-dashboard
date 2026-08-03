@@ -3,6 +3,8 @@ import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendDiscordMessage } from '@/lib/discord'
 import { sendEmail } from '@/lib/email'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+import { getNotif }        from '@/lib/notificationConfig'
 
 export const maxDuration = 300
 
@@ -11,9 +13,8 @@ const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site alread
 const FLAP_THRESHOLD      = 2
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
-// Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
-// their Cloudflare "Skip" rule (WAF + Bot Fight Mode + rate limiting).
-const MONITOR_UA = 'LaunchLocal-Monitor/1.0 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+// Clients can whitelist by UA string: http.user_agent contains "GoLaunchLocal"
+const MONITOR_UA = `${PLATFORM_BOT_UA} LaunchLocal-Monitor/1.0 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36`
 
 interface SiteRow {
   id:                   string
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, notification_email, agency_name')
+      .select('discord_bot_token, notification_email, agency_name, notification_config')
       .maybeSingle(),
     db.from('sites')
       .select('id, name, url, status, is_up, consecutive_failures, client_id, discord_channel_id, clients(name, discord_channel_id)')
@@ -87,6 +88,7 @@ export async function GET(request: NextRequest) {
   const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
   const alertEmail = agencyRes.data?.notification_email as string | null ?? null
   const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const notifConfig = (agencyRes.data?.notification_config as import('@/lib/notificationConfig').NotifConfig | null) ?? {}
   const sites      = (sitesRes.data ?? []) as unknown as SiteRow[]
 
   if (sites.length === 0) {
@@ -192,7 +194,7 @@ export async function GET(request: NextRequest) {
         })
 
         const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
-        await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        if (getNotif(notifConfig, 'uptime_down').discord) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({
@@ -233,7 +235,7 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+          if (getNotif(notifConfig, 'uptime_recovered').discord) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
           if (alertEmail) {
             await sendEmail({

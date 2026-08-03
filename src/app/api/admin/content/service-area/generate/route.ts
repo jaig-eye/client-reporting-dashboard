@@ -9,6 +9,9 @@ import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { buildServiceAreaSlug, buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import type { SlugStructure }                          from '@/lib/content/buildServiceAreaSlug'
+import { stripHallucinatedLinks }                      from '@/lib/content/linkUtils'
+import { sendDiscordMessage }                          from '@/lib/discord'
+import { getNotif, type NotifConfig }                  from '@/lib/notificationConfig'
 
 export const maxDuration = 300
 
@@ -108,36 +111,6 @@ function stripDangerousHtml(html: string): string {
     .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
 }
 
-function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
-  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-  const allowed = new Set(Array.from(allowedUrls).map(norm))
-  const internalHosts = new Set<string>()
-  Array.from(allowed).forEach(u => {
-    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
-  })
-  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-    if (!m) return match
-    const href = m[1].trim()
-    if (/^(mailto:|tel:|#)/.test(href)) return match
-    if (/^https?:/.test(href)) {
-      try {
-        const parsed = new URL(href)
-        const hostname = parsed.hostname.toLowerCase()
-        if (internalHosts.size === 0) return match
-        if (!internalHosts.has(hostname)) return match
-        if (allowed.has(norm(href))) return match
-        if (allowed.has(norm(parsed.pathname))) return match
-        console.warn('[sa-generate] stripped hallucinated internal link:', href)
-        return text
-      } catch { return match }
-    }
-    if (allowed.has(norm(href))) return match
-    console.warn('[sa-generate] stripped hallucinated internal link:', href)
-    return text
-  })
-}
 
 // ─── Core generation ──────────────────────────────────────────────────────────
 
@@ -186,7 +159,7 @@ async function generatePage(topicId: string) {
   // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
   const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').limit(1).maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notification_config').limit(1).maybeSingle(),
     db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls').eq('client_id', clientId).maybeSingle(),
     db.from('content_sitemap_pages').select('url').eq('client_id', clientId).eq('is_service_page', true).ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`).maybeSingle(),
   ])
@@ -545,19 +518,15 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   // Discord notification
   const discordToken = agency?.discord_bot_token as string | null
-  const notifySa = (agency as Record<string, unknown> | null)?.notify_sa_generated !== false
-  if (discordToken && notifySa) {
+  const notifConfig  = ((agency as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  if (discordToken && getNotif(notifConfig, 'content_sa_generated').discord) {
     // Fire-and-forget
     ;(async () => {
       try {
         const { data: client } = await db.from('clients').select('discord_channel_id').eq('id', clientId).single()
         const channelId = (client as Record<string, unknown> | null)?.discord_channel_id as string | null
         if (channelId) {
-          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bot ${discordToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: `📍 **Service area page ready:** "${parsed.title || `${serviceName} in ${city}`}" — ready for review` }),
-          })
+          await sendDiscordMessage(discordToken, channelId, `📍 **Service area page ready:** "${parsed.title || `${serviceName} in ${city}`}" — ready for review`)
         }
       } catch { /* ignore */ }
     })()

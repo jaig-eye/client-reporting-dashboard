@@ -43,10 +43,22 @@ export async function POST(request: NextRequest) {
 
   // ── Compute publish slots synchronously ────────────────────────────────────
   const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek })
-  const count = Math.min(slots.length, 50)
 
-  if (count === 0) {
-    return NextResponse.json({ error: 'No publish slots computed for the given parameters' }, { status: 400 })
+  // Skip slots that already have topics assigned — prevents duplicate topics when the
+  // wizard fires this endpoint twice (e.g. double-click, network retry).
+  const { data: existingTopics } = await db
+    .from('content_topics')
+    .select('target_publish_date')
+    .eq('client_id', client_id)
+    .in('target_publish_date', slots)
+
+  const existingDates = new Set((existingTopics ?? []).map(t => t.target_publish_date as string))
+  const openSlots = slots.filter(s => !existingDates.has(s))
+
+  const count = Math.min(openSlots.length, 50)
+
+  if (openSlots.length === 0) {
+    return NextResponse.json({ ok: true, queued: false, slots, reason: 'All slots already have topics' })
   }
 
   // ── Generate topics + assign dates in background ─────────────────────────
@@ -70,10 +82,10 @@ export async function POST(request: NextRequest) {
           console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} returned 0 topics`)
           break
         }
-        const fittingTopics = result.topics.slice(0, slots.length - inserted)
+        const fittingTopics = result.topics.slice(0, openSlots.length - inserted)
         await Promise.all(fittingTopics.map(async (t, i) => {
           const slotIndex   = inserted + i
-          const publishDate = slots[slotIndex]
+          const publishDate = openSlots[slotIndex]
           await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
         }))
         inserted += fittingTopics.length

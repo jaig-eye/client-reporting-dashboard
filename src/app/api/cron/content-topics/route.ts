@@ -20,6 +20,7 @@ import type { TopicSummary }         from '@/lib/content/generateTopics'
 import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config')
     .single()
 
   const notifEmail          = (agencySettings?.notification_email          as string | null)  ?? null
@@ -102,7 +103,8 @@ export async function GET(request: NextRequest) {
   const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
-  const opsChannelId = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const opsChannelId  = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const notifConfig   = (agencySettings?.notification_config as NotifConfig | null) ?? {}
 
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
@@ -524,7 +526,7 @@ export async function GET(request: NextRequest) {
           const bcBlogUrl = `https://login.bigcommerce.com/manage/content/blog`
           const alertMsg  = `⚠️ BC post due tomorrow — ${bp.title ?? '(untitled)'} for ${clientNameBc} needs manual publish: ${bcBlogUrl}`
 
-          if (discordBotTk && opsChannelId) {
+          if (discordBotTk && opsChannelId && getNotif(notifConfig, 'content_bc_post_due').discord && getNotif(notifConfig, 'content_bc_post_due').ops) {
             void sendDiscordMessage(discordBotTk, opsChannelId, alertMsg).catch(() => {})
           }
 
@@ -755,7 +757,7 @@ export async function GET(request: NextRequest) {
               link_url:    contentUrl,
             }).then(null, () => {})
 
-            if (saDiscordToken && opsChannelId) {
+            if (saDiscordToken && opsChannelId && getNotif(notifConfig, 'content_sa_auto_pushed').discord && getNotif(notifConfig, 'content_sa_auto_pushed').ops) {
               void sendDiscordMessage(
                 saDiscordToken, opsChannelId,
                 `📍 **${successSaPosts.length} service area page${successSaPosts.length === 1 ? '' : 's'} auto-pushed** for **${saClientName}** — review in draft: ${contentUrl}`
@@ -808,7 +810,7 @@ export async function GET(request: NextRequest) {
             const bcPagesUrl = `https://login.bigcommerce.com/manage/content/pages`
             const alertMsg   = `⚠️ BC service area page due tomorrow — ${bp.title ?? '(untitled)'} for ${saClientName} needs manual publish: ${bcPagesUrl}`
 
-            if (saDiscordTokenSpot && opsChannelId) {
+            if (saDiscordTokenSpot && opsChannelId && getNotif(notifConfig, 'content_bc_sa_due').discord && getNotif(notifConfig, 'content_bc_sa_due').ops) {
               void sendDiscordMessage(saDiscordTokenSpot, opsChannelId, alertMsg).catch(() => {})
             }
             db.from('admin_alerts').insert({
@@ -1012,11 +1014,17 @@ export async function GET(request: NextRequest) {
 
         const totalCount  = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
         const clientCount = clientCountMap.size
-        // Distinct calendar weeks covered by the batch
+        // Distinct calendar weeks covered by the batch (ISO Monday-aligned)
+        const isoWeekKey = (dateStr: string): string => {
+          const d = new Date(dateStr + 'T00:00:00Z')
+          const day = d.getUTCDay()
+          d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day))
+          return d.toISOString().slice(0, 10)
+        }
         const weekNums = new Set(
           (monthPosts ?? [])
             .filter((p): p is typeof p & { target_publish_date: string } => !!p.target_publish_date)
-            .map(p => Math.floor(new Date(p.target_publish_date + 'T00:00:00Z').getTime() / (7 * 86_400_000)))
+            .map(p => isoWeekKey(p.target_publish_date))
         )
         const weekCount = weekNums.size || Math.ceil(totalCount / Math.max(clientCount, 1))
 
@@ -1028,7 +1036,7 @@ export async function GET(request: NextRequest) {
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
         })
-        if (!insertErr) {
+        if (!insertErr && getNotif(notifConfig, 'content_monthly_review').discord && getNotif(notifConfig, 'content_monthly_review').ops) {
           void sendDiscordMessage(
             discordBotToken, opsChannelId,
             `✍️ **Monthly review ready** — ${totalCount} post${totalCount === 1 ? '' : 's'} · ${clientCount} client${clientCount === 1 ? '' : 's'} · ${weekCount} week${weekCount === 1 ? '' : 's'}\nReview: ${contentUrl}`
@@ -1070,7 +1078,7 @@ export async function GET(request: NextRequest) {
   // don't double-notify on the same run that just generated posts.
   if (discordBotToken && opsChannelId && nowTs.getUTCDate() >= 10) {
     const contentReviewUrl = contentUrl
-    type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
+    type PostRow = { id: string; client_id: string }
 
     const monthStart     = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
     const sevenDaysAgo   = new Date(Date.now() - 7 * 86_400_000).toISOString()
@@ -1110,7 +1118,7 @@ export async function GET(request: NextRequest) {
             meta: { content_type: 'monthly_mid_check', count: pendingCount, month: monthStart },
             link_url: contentReviewUrl,
           })
-          if (!midInsertErr) {
+          if (!midInsertErr && getNotif(notifConfig, 'content_mid_month_check').discord && getNotif(notifConfig, 'content_mid_month_check').ops) {
             void sendDiscordMessage(discordBotToken, opsChannelId,
               `📋 **${pendingCount} post${pendingCount === 1 ? '' : 's'} still awaiting approval** — ${pendingClients} client${pendingClients === 1 ? '' : 's'} need review\nReview: ${contentReviewUrl}`
             ).catch(() => {})

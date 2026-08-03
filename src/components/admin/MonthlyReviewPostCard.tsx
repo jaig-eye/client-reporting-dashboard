@@ -21,14 +21,17 @@ export interface MonthlyReviewPost {
 }
 
 interface Props {
-  post:        MonthlyReviewPost
-  isApproved:  boolean
-  isRejected:  boolean
-  isLoading:   boolean
-  isCollapsed: boolean
-  onApprove:   (id: string) => void
-  onReject:    (id: string, discard?: boolean) => void
-  onOpenEditor:(id: string) => void
+  post:            MonthlyReviewPost
+  isApproved:      boolean
+  isRejected:      boolean
+  isDiscarded:     boolean
+  isRegenerating:  boolean
+  isLoading:       boolean
+  isCollapsed:     boolean
+  onApprove:       (id: string) => void
+  onReject:        (id: string, discard?: boolean) => void
+  onOpenEditor:    (id: string) => void
+  onRestore:       (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -43,12 +46,12 @@ function fmtDate(iso: string): string {
 }
 
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isLoading, isCollapsed, onApprove, onReject, onOpenEditor,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, onApprove, onReject, onOpenEditor, onRestore,
 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [tab,      setTab]      = useState<'content' | 'seo'>('content')
 
-  const isDone = isApproved || isRejected
+  const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
   if (isCollapsed) {
     return null
@@ -57,13 +60,13 @@ export default function MonthlyReviewPostCard({
   return (
     <div
       style={{
-        border:        '1px solid var(--border)',
+        border:        `1px solid ${isRegenerating ? '#fca5a5' : 'var(--border)'}`,
         borderRadius:  8,
         overflow:      'hidden',
-        background:    'var(--bg-surface)',
+        background:    isRegenerating ? '#fff1f2' : 'var(--bg-surface)',
         animation:     isApproved && !expanded ? 'monthly-approve-flash 0.6s ease forwards' : undefined,
-        opacity:       isRejected ? 0.55 : 1,
-        transition:    'opacity 0.3s',
+        opacity:       isRejected || isDiscarded ? 0.55 : 1,
+        transition:    'opacity 0.3s, background 0.3s',
       }}
     >
       {/* Collapsed row */}
@@ -125,15 +128,32 @@ export default function MonthlyReviewPostCard({
           <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999 }}>
             Rejected
           </span>
+        ) : isDiscarded ? (
+          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '3px 10px', borderRadius: 999 }}>
+              Discarded
+            </span>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onRestore(post.id)}
+            >
+              Restore
+            </button>
+          </div>
+        ) : isRegenerating ? (
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 10px', borderRadius: 999 }}>
+            ⟳ Regenerating…
+          </span>
         ) : (
           <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
             <button
-              className="btn btn-sm btn-danger"
+              className="btn btn-sm"
               disabled={isLoading}
-              onClick={() => onReject(post.id, false)}
-              title="Reject this post and let the cron generate a replacement"
+              onClick={() => onOpenEditor(post.id)}
+              title="Open editor to review and edit this post"
             >
-              Regenerate
+              Review
             </button>
             <button
               className="btn btn-sm"

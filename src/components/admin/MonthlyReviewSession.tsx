@@ -30,6 +30,7 @@ function getMonth(): string {
 }
 
 export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set())
   const [approvedIds,    setApprovedIds]    = useState<Set<string>>(() => {
     // Pre-populate from admin_approved_at so page survives a refresh
     const pre = new Set<string>()
@@ -39,6 +40,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     return pre
   })
   const [rejectedIds,    setRejectedIds]    = useState<Set<string>>(new Set())
+  const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
@@ -55,15 +57,14 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   const totalPosts    = initialPosts.length
   const approvedCount = approvedIds.size
-  // A session is complete when every post has been approved OR rejected — not only approved.
-  // Without this, rejecting even one post locks the completion screen behind an impossible condition.
-  const actionedCount = approvedIds.size + rejectedIds.size
+  // A session is complete when every post has been approved, rejected, or discarded.
+  const actionedCount = approvedIds.size + rejectedIds.size + discardedIds.size
   const isComplete    = totalPosts > 0 && actionedCount >= totalPosts
 
   // Count clients done
   const clientsDone = clientIds.filter(cid => {
     const ps = postsByClient.get(cid) ?? []
-    return ps.length > 0 && ps.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id))
+    return ps.length > 0 && ps.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
   }).length
 
   const handleApprove = useCallback(async (postId: string) => {
@@ -105,7 +106,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       const url = `/api/admin/content/posts/${postId}/dismiss${discard ? '?discard=true' : ''}`
       const res = await fetch(url, { method: 'POST' })
       if (!res.ok) throw new Error(await res.text())
-      setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+      if (discard) {
+        setDiscardedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+      } else {
+        setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+      }
     } catch (e) {
       console.error('Reject failed:', e)
       alert('Failed to reject post. Please try again.')
@@ -114,9 +119,36 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [])
 
+  const handleRestore = useCallback(async (postId: string) => {
+    setLoadingId(postId)
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/restore`, { method: 'POST' })
+      if (!res.ok) throw new Error(await res.text())
+      setDiscardedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+    } catch (e) {
+      console.error('Restore failed:', e)
+      alert('Failed to restore post. Please try again.')
+    } finally {
+      setLoadingId(null)
+    }
+  }, [])
+
   const handleOpenEditor = useCallback((postId: string) => {
     setEditorPostId(postId)
   }, [])
+
+  const handleRegenerateStart = useCallback(() => {
+    if (editorPostId) {
+      setRegeneratingIds(prev => { const next = new Set(prev); next.add(editorPostId); return next })
+    }
+  }, [editorPostId])
+
+  const handleRegenerateDone = useCallback(() => {
+    if (editorPostId) {
+      setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
+    }
+    setEditorPostId(null)
+  }, [editorPostId])
 
   if (editorPostId) {
     const editorPost = initialPosts.find(p => p.id === editorPostId)
@@ -127,6 +159,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         sites={allSites}
         onClose={() => setEditorPostId(null)}
         onUpdate={() => setEditorPostId(null)}
+        onRegenerateStart={handleRegenerateStart}
+        onRegenerateDone={handleRegenerateDone}
       />
     )
   }
@@ -189,10 +223,13 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   posts={posts}
                   approvedIds={approvedIds}
                   rejectedIds={rejectedIds}
+                  discardedIds={discardedIds}
+                  regeneratingIds={regeneratingIds}
                   loadingId={loadingId}
                   onApprove={handleApprove}
                   onReject={handleReject}
                   onOpenEditor={handleOpenEditor}
+                  onRestore={handleRestore}
                 />
               )
             })

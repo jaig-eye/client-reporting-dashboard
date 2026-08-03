@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -7,6 +9,7 @@ import { logActivity } from '@/lib/activity'
 import { parseBody } from '@/lib/apiError'
 import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
@@ -74,7 +77,7 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
     if (!res.ok) return empty
     const xml = await res.text()
@@ -89,7 +92,7 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
         try {
           const sub = await fetch(subUrl, {
             signal: AbortSignal.timeout(4000),
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+            headers: { 'User-Agent': PLATFORM_BOT_UA },
           })
           if (!sub.ok) return
           const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
@@ -350,49 +353,6 @@ function computeInternalLinks(html: string): number {
 
 // ─── Link validator ───────────────────────────────────────────────────────────
 
-// Strips any internal <a href> that is NOT in the provided allowedUrls set.
-// Absolute external links (different hostname) and mailto/tel/# are left untouched.
-// Absolute internal links (same hostname as the site) ARE validated — the AI generates
-// absolute URLs as prompted, so bypassing https:// would make this function a no-op.
-function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
-  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-  const allowed = new Set(Array.from(allowedUrls).map(norm))
-  // Derive known internal hostnames from the allowed set so we can distinguish
-  // absolute internal links from genuine external links.
-  const internalHosts = new Set<string>()
-  Array.from(allowed).forEach(u => {
-    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative URL — skip */ }
-  })
-  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-    if (!m) return match
-    const href = m[1].trim()
-    if (/^(mailto:|tel:|#)/.test(href)) return match        // safe: not a page link
-    if (/^https?:/.test(href)) {
-      try {
-        const parsed = new URL(href)
-        const hostname = parsed.hostname.toLowerCase()
-        // When no internal hosts are known we can't tell internal from external — leave all absolute URLs alone
-        if (internalHosts.size === 0) return match
-        // External hostname — strip the link, keep the anchor text (can't verify external URLs at generation time)
-        if (!internalHosts.has(hostname)) {
-          console.warn('[generate] stripped external link:', href)
-          return text
-        }
-        // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
-        if (allowed.has(norm(href))) return match
-        if (allowed.has(norm(parsed.pathname))) return match
-        console.warn('[generate] stripped hallucinated internal link:', href)
-        return text
-      } catch { return match }
-    }
-    // Relative URL — validate against allowed set
-    if (allowed.has(norm(href))) return match
-    console.warn('[generate] stripped hallucinated internal link:', href)
-    return text
-  })
-}
 
 // ─── FAQ JSON-LD schema injection ─────────────────────────────────────────────
 
@@ -499,7 +459,7 @@ How to use the client context above — MUST follow every rule:
 - Priority pages: include internal links to at least 2 of the priority pages listed in the context. Anchor text must be descriptive and contextually natural — never generic ("click here").
 - Excluded pages: never link to, cite, or reference any URL listed under excluded pages.
 - Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
-- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.
+- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list (e.g. if the list contains '/about/', link to '/about/' exactly — never '/services/about/' or '/en/about/').
 - NEVER link to XML files, sitemaps, PHP scripts, feed or RSS URLs, search result pages, or any URL that is not a real HTML content page. Every permitted URL is already pre-filtered in the lists above.
 - EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.
 - AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.` : ''
@@ -541,7 +501,7 @@ SEO guidelines:
 - End with a clear call-to-action
 - Reference credible sources (government agencies, studies, industry publications) by name in the prose where factually relevant — do NOT insert hyperlinks to external websites
 - Add descriptive alt text to any <img> tags including the focus keyword
-- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
+- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
 - AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
 ${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
@@ -1145,7 +1105,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
         }
       }
 
-      if (agencySettings.discord_bot_token && discordChannelId) {
+      const _notifConfig = ((agencySettings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
+      if (agencySettings.discord_bot_token && discordChannelId && getNotif(_notifConfig, 'content_post_generated').discord) {
         void sendDiscordMessage(
           agencySettings.discord_bot_token,
           discordChannelId,
@@ -1191,7 +1152,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings, error: agErr } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token')
+    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token, notification_config')
     .limit(1)
     .maybeSingle()
 

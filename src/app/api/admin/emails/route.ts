@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export async function GET(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
       try {
         const { data: settings } = await db
           .from('agency_settings')
-          .select('discord_bot_token, discord_ops_channel_id')
+          .select('discord_bot_token, discord_ops_channel_id, notification_config')
           .maybeSingle()
 
         const { data: submitter } = userId
@@ -116,6 +117,7 @@ export async function POST(request: NextRequest) {
         const submitterName = submitter?.name ?? 'Admin'
         const botToken      = settings?.discord_bot_token as string | null
         const opsChannel    = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+        const notifConfig   = ((settings?.notification_config as NotifConfig | null)) ?? {}
         const baseUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
         const reviewUrl     = `${baseUrl}/admin/emails?open=${campaign.id}`
 
@@ -125,7 +127,7 @@ export async function POST(request: NextRequest) {
           `👤 Submitted by ${submitterName}\n` +
           `🔗 [Review now](${reviewUrl})`
 
-        await sendDiscordMessage(botToken, opsChannel, msg)
+        if (getNotif(notifConfig, 'email_submitted').discord) await sendDiscordMessage(botToken, opsChannel, msg)
 
         // Also ping per-client Discord channel
         const { data: client } = await db
@@ -133,7 +135,7 @@ export async function POST(request: NextRequest) {
           .select('discord_channel_id')
           .eq('id', body.client_id)
           .maybeSingle()
-        if (client?.discord_channel_id) {
+        if (client?.discord_channel_id && getNotif(notifConfig, 'email_submitted').discord) {
           await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
         }
       } catch (e) {

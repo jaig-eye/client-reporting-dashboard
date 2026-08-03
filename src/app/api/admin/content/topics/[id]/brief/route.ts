@@ -3,6 +3,7 @@
 // Called by the content-topics cron and can be triggered manually from the UI.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   let sitemapSample: string[] = []
   if (sitemapUrls.length > 0) {
     try {
-      const res = await fetch(sitemapUrls[0], { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'SEOBot/1.0' } })
+      const res = await fetch(sitemapUrls[0], { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': PLATFORM_BOT_UA } })
       if (res.ok) {
         const xml   = await res.text()
         const urls2 = Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim()).filter(u => !u.endsWith('.xml')).slice(0, 30)

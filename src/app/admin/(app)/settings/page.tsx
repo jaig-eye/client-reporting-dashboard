@@ -849,6 +849,11 @@ export default function AgencySettingsPage() {
         {/* ─── Notifications ─────────────────────────────────────── */}
         {visitedTabs.has('notifications') && <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
           <div className="space-y-5">
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <a href="/admin/settings/notifications" className="btn btn-secondary btn-sm">
+              Manage Discord notification types →
+            </a>
+          </div>
           <div className="card p-6 space-y-5">
             <div>
               <h2 className="section-title">Email Notifications</h2>
@@ -913,12 +918,6 @@ export default function AgencySettingsPage() {
                 hint="Sent when topics are automatically generated 30 days before a client's scheduled publish date"
                 checked={form.notify_schedule_generated}
                 onChange={v => field('notify_schedule_generated', v)}
-              />
-              <Toggle
-                label="Service area page generated (Discord)"
-                hint="Discord notification when a service area page is generated and ready for review"
-                checked={form.notify_sa_generated}
-                onChange={v => field('notify_sa_generated', v)}
               />
               <Toggle
                 label="Metric anomaly alerts (email)"

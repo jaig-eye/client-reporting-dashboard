@@ -29,6 +29,7 @@ export default function EmailSchedulePanel({ clientId }: Props) {
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
+  const [saveError,  setSaveError]  = useState<string | null>(null)
 
   // local form state
   const [isActive,          setIsActive]          = useState(true)
@@ -56,6 +57,7 @@ export default function EmailSchedulePanel({ clientId }: Props) {
   async function save() {
     setSaving(true)
     setSaved(false)
+    setSaveError(null)
     try {
       const res = await fetch(`/api/admin/email-schedules/${clientId}`, {
         method: 'PUT',
@@ -67,13 +69,16 @@ export default function EmailSchedulePanel({ clientId }: Props) {
           reminder_days_before: reminderDaysBefore,
         }),
       })
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? `Server error (${res.status})`)
+      }
       const { schedule: updated } = await res.json() as { schedule: Schedule }
       setSchedule(updated)
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
-    } catch {
-      // swallow — user can retry
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save schedule. Please try again.')
     } finally {
       setSaving(false)
     }
@@ -104,7 +109,7 @@ export default function EmailSchedulePanel({ clientId }: Props) {
             <input
               type="checkbox"
               checked={isActive}
-              onChange={e => setIsActive(e.target.checked)}
+              onChange={e => { setIsActive(e.target.checked); setSaveError(null) }}
               style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
             />
             <span style={{
@@ -168,7 +173,11 @@ export default function EmailSchedulePanel({ clientId }: Props) {
         {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save Schedule'}
       </button>
 
-      {!schedule && (
+      {saveError && (
+        <p style={{ margin: '6px 0 0', fontSize: '0.72rem', color: 'var(--red)' }}>{saveError}</p>
+      )}
+
+      {!schedule && !saveError && (
         <p style={{ margin: '6px 0 0', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
           No schedule set yet. Save to create one.
         </p>

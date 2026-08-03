@@ -96,6 +96,11 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
     autoGenerate: true,
   })
+  const [imageGen,    setImageGen]    = useState(false)
+  const [imagePrompt, setImagePrompt] = useState('')
+
+  // Detected connection (B1/B2 — set during loadInit for connection_id save)
+  const [detectedConnectionId, setDetectedConnectionId] = useState<string | null>(null)
 
   // Step 6 state — additional content types
   const [enableServicePages,    setEnableServicePages]    = useState(false)
@@ -114,32 +119,41 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // ── Load initial data on mount ─────────────────────────────────────────────
   useEffect(() => {
     async function loadInit() {
+      // Multi-source URL detection: WP → BC → GSC priority order (B1)
       try {
-        // Check for GSC connection
         const res = await fetch(`/api/admin/clients/${clientId}/connections`)
         if (res.ok) {
-          const conns = await res.json() as Array<{ type: string }>
+          const conns = await res.json() as Array<{ id: string; type: string; config?: { site_url?: string; property_url?: string } }>
+          let detectedUrl = ''
+          let detectedId: string | null = null
+
+          for (const conn of conns) {
+            const rawUrl = conn.config?.site_url ?? conn.config?.property_url ?? ''
+            const cleanUrl = rawUrl.replace(/^sc-domain:/, 'https://')
+            if (!cleanUrl) continue
+
+            if (conn.type === 'wordpress') {
+              detectedUrl = cleanUrl
+              detectedId  = conn.id
+              break // highest priority
+            }
+            if ((conn.type === 'bigcommerce' || conn.type === 'google_search_console') && !detectedUrl) {
+              detectedUrl = cleanUrl
+              detectedId  = conn.id
+            }
+          }
+
+          if (detectedUrl) {
+            setAnalyzeUrl(detectedUrl)
+            setSitemapUrl(detectedUrl.replace(/\/$/, '') + '/sitemap_index.xml')
+            setWpUrl(detectedUrl)
+            setDetectedConnectionId(detectedId)
+          }
           setHasGsc(conns.some(c => c.type === 'google_search_console'))
         } else {
           setHasGsc(false)
         }
-      } catch {
-        setHasGsc(false)
-      }
-
-      // Try to pre-fill WordPress URL for sitemap and analyze steps
-      try {
-        const res = await fetch(`/api/admin/clients/${clientId}/connections`)
-        if (res.ok) {
-          const conns = await res.json() as Array<{ type: string; config?: { site_url?: string } }>
-          const wp = conns.find(c => c.type === 'wordpress')
-          if (wp?.config?.site_url) {
-            setAnalyzeUrl(wp.config.site_url)
-            setSitemapUrl(wp.config.site_url + '/sitemap.xml')
-            setWpUrl(wp.config.site_url)
-          }
-        }
-      } catch { /* ignore */ }
+      } catch { setHasGsc(false) }
 
       // Pre-populate Step 6 from existing client settings (re-run support)
       try {
@@ -281,6 +295,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         regular_page_topic_guidelines:  rpGuidelinesWiz || null,
         eeat_data:                      eeatData,
         wizard_completed:               wizardCompleted,
+        connection_id:                  detectedConnectionId ?? undefined,
+        content_image_generation:       imageGen,
+        content_image_prompt:           imagePrompt || null,
       }),
     })
     if (!res.ok) {
@@ -410,7 +427,16 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setPages={setPages}
             />
           )}
-          {step === 5 && <StepSchedule schedule={schedule} setSchedule={setSchedule} />}
+          {step === 5 && (
+            <StepSchedule
+              schedule={schedule}
+              setSchedule={setSchedule}
+              imageGen={imageGen}
+              setImageGen={setImageGen}
+              imagePrompt={imagePrompt}
+              setImagePrompt={setImagePrompt}
+            />
+          )}
           {step === 6 && (
             <StepContentTypes
               enableServicePages={enableServicePages}
@@ -791,7 +817,13 @@ function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, p
 
 // ─── Step 5: Schedule ─────────────────────────────────────────────────────────
 
-function StepSchedule({ schedule, setSchedule }: { schedule: Schedule; setSchedule: (s: Schedule) => void }) {
+function StepSchedule({
+  schedule, setSchedule, imageGen, setImageGen, imagePrompt, setImagePrompt,
+}: {
+  schedule: Schedule; setSchedule: (s: Schedule) => void
+  imageGen: boolean; setImageGen: (v: boolean) => void
+  imagePrompt: string; setImagePrompt: (v: string) => void
+}) {
   const needsDay = ['weekly', 'biweekly'].includes(schedule.frequency)
 
   return (
@@ -834,22 +866,41 @@ function StepSchedule({ schedule, setSchedule }: { schedule: Schedule; setSchedu
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-        {([
-          { key: 'autoGenerate', label: 'Auto-generate posts', sub: 'Automatically generate posts from approved topics' },
-        ] as const).map(t => (
-          <label key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.625rem 0.875rem', borderRadius: 8, background: 'var(--bg-subtle)', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={schedule[t.key]}
-              onChange={e => setSchedule({ ...schedule, [t.key]: e.target.checked })}
-              style={{ width: 15, height: 15 }}
-            />
-            <div>
-              <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.label}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>{t.sub}</div>
-            </div>
-          </label>
-        ))}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.625rem 0.875rem', borderRadius: 8, background: 'var(--bg-subtle)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={schedule.autoGenerate}
+            onChange={e => setSchedule({ ...schedule, autoGenerate: e.target.checked })}
+            style={{ width: 15, height: 15 }}
+          />
+          <div>
+            <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Auto-generate posts</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Automatically generate posts from approved topics</div>
+          </div>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0.625rem 0.875rem', borderRadius: 8, background: 'var(--bg-subtle)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={imageGen}
+            onChange={e => setImageGen(e.target.checked)}
+            style={{ width: 15, height: 15 }}
+          />
+          <div>
+            <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Generate AI featured image</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Uses DALL-E to create a featured image for each post</div>
+          </div>
+        </label>
+
+        {imageGen && (
+          <input
+            type="text"
+            value={imagePrompt}
+            onChange={e => setImagePrompt(e.target.value)}
+            placeholder="e.g. Outdoor lifestyle photo, warm tones, no text overlays"
+            style={inputStyle}
+          />
+        )}
       </div>
     </div>
   )

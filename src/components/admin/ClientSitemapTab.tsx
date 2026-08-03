@@ -212,7 +212,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
         </div>
 
         <div>
-          <Label hint="e.g. /blog — prefix applied to blog post URLs in AI context">Blog URL Prefix</Label>
+          <Label hint="URL prefix for blog posts (e.g. /blog). Required for BigCommerce to set the correct permalink. For WordPress, helps the AI understand internal URL structure.">Blog URL Prefix</Label>
           <input
             className="input"
             type="text"

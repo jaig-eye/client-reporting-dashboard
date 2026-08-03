@@ -1272,7 +1272,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <input className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
                 </div>
                 <div>
-                  <Label hint="prefix prepended to BC blog post URLs, e.g. /blog/">Blog URL Prefix</Label>
+                  <Label hint="BigCommerce only — URL prefix prepended to blog post URLs (e.g. /blog/). WordPress manages its own permalink structure and does not use this field.">Blog URL Prefix</Label>
                   <input className="input" type="text" value={(schedule as Record<string, unknown>).blog_url_prefix as string ?? ''} onChange={e => setSched('blog_url_prefix' as keyof typeof schedule, e.target.value || null)} placeholder="/blog/" />
                 </div>
               </>)}
@@ -2070,10 +2070,11 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
             {(() => {
+              const saStarted     = !!(saSettings.slug_structure)
               const saIsConfigured = !!(saSettings.connection_id && saSettings.slug_structure)
-              return saIsConfigured
-                ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
-                : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>
+              if (saIsConfigured) return <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
+              if (saStarted)      return <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Setup incomplete</span>
+              return <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Optional</span>
             })()}
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
               {saSettingsOpen ? '▲' : '▼'}

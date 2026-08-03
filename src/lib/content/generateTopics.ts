@@ -3,6 +3,7 @@
 // per-client API route and the bulk calendar/generate route use identical logic.
 
 import { createAdminClient }              from '@/lib/supabase/server'
+import { PLATFORM_BOT_UA }               from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors }            from '@/lib/content/competitorResearch'
@@ -30,7 +31,7 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
     if (!res.ok) return empty
     const xml = await res.text()
@@ -44,7 +45,7 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
         try {
           const sub = await fetch(subUrl, {
             signal: AbortSignal.timeout(4000),
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+            headers: { 'User-Agent': PLATFORM_BOT_UA },
           })
           if (!sub.ok) return
           const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))

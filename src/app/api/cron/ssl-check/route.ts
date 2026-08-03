@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { sendEmail } from '@/lib/email'
 import tls from 'tls'
 
@@ -67,17 +68,18 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, notification_email, agency_name')
+      .select('discord_bot_token, notification_email, agency_name, notification_config')
       .single(),
     db.from('sites')
       .select('id, name, url, client_id, ssl_days_remaining, clients(name, discord_channel_id)')
       .eq('status', 'active'),
   ])
 
-  const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
-  const alertEmail = agencyRes.data?.notification_email as string | null ?? null
-  const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
-  const sites      = sitesRes.data ?? []
+  const botToken    = agencyRes.data?.discord_bot_token as string | null ?? null
+  const alertEmail  = agencyRes.data?.notification_email as string | null ?? null
+  const agencyName  = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const notifConfig = (agencyRes.data?.notification_config as NotifConfig | null) ?? {}
+  const sites       = sitesRes.data ?? []
 
   let warned = 0; let critical = 0
 
@@ -186,7 +188,7 @@ export async function GET(request: NextRequest) {
 
         const emoji = info.daysLeft <= 0 ? '🔴' : '🟡'
         const msg   = `${emoji} **SSL alert: ${site.name}** — cert ${expiryLabel}\nHost: ${hostname} | Issuer: ${info.issuer ?? 'unknown'}`
-        if (botToken && channelId) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        if (botToken && channelId && getNotif(notifConfig, 'ssl_expiry').discord) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({

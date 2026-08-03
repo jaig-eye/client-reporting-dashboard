@@ -11,6 +11,7 @@ import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress, getCate
 import { publishBCPage } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 
 export async function POST(
@@ -421,13 +422,13 @@ export async function POST(
           // Score each category by how many of its words appear in the post's keyword/title
           const kwText = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
             .filter(Boolean).join(' ').toLowerCase()
-          const kwWords = kwText.split(/\s+/).filter(w => w.length > 2)
+          const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
 
           type ScoredCat = { id: number; name: string; slug: string; score: number }
           const scored: ScoredCat[] = allCats
             .filter(c => c.name.toLowerCase() !== 'uncategorized')
             .map(c => {
-              const catWords = (c.name + ' ' + c.slug.replace(/-/g, ' ')).toLowerCase().split(/\s+/).filter(w => w.length > 2)
+              const catWords = (c.name + ' ' + c.slug.replace(/-/g, ' ')).toLowerCase().split(/\s+/).filter(w => w.length >= 2)
               const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
               return { ...c, score }
             })
@@ -581,13 +582,14 @@ export async function POST(
     // Discord notification (fire-and-forget)
     try {
       const [{ data: agencySettings }, { data: client }] = await Promise.all([
-        db.from('agency_settings').select('discord_bot_token').single(),
+        db.from('agency_settings').select('discord_bot_token, notification_config').single(),
         db.from('clients').select('name, discord_channel_id').eq('id', String(p.client_id)).single(),
       ])
-      const botToken   = (agencySettings as { discord_bot_token?: string | null } | null)?.discord_bot_token
-      const channelId  = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
-      const clientName = (client as { name?: string } | null)?.name ?? ''
-      if (botToken && channelId) {
+      const botToken    = (agencySettings as { discord_bot_token?: string | null } | null)?.discord_bot_token
+      const notifConfig = ((agencySettings as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+      const channelId   = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
+      const clientName  = (client as { name?: string } | null)?.name ?? ''
+      if (botToken && channelId && getNotif(notifConfig, 'content_post_published').discord) {
         void sendDiscordMessage(
           botToken, channelId,
           `✅ Post uploaded to WordPress draft: **${String(p.title ?? '(untitled)')}**${clientName ? ` (${clientName})` : ''}`

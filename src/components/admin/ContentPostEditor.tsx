@@ -31,6 +31,8 @@ interface Props {
   sites:               Site[]
   onClose:             () => void
   onUpdate:            (post: UpdatedPost) => void
+  onRegenerateStart?:  () => void
+  onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
 }
 
 interface PostDetail {
@@ -147,7 +149,7 @@ const EDITOR_TABS: { id: EditorTab; label: string }[] = [
   { id: 'settings', label: 'Settings'   },
 ]
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -175,9 +177,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [tagInput,        setTagInput]        = useState('')
 
   // WP settings
-  const [wpStatus,     setWpStatus]     = useState<WpPublishStatus>('draft')
-  const [authorId,     setAuthorId]     = useState<number | null>(null)
-  const [connectionId, setConnectionId] = useState<string>(defaultConnectionId ?? '')
+  const [wpStatus,      setWpStatus]      = useState<WpPublishStatus>('draft')
+  const [authorId,      setAuthorId]      = useState<number | null>(null)
+  const [bcAuthorName,  setBcAuthorName]  = useState('')
+  const [connectionId,  setConnectionId]  = useState<string>(defaultConnectionId ?? '')
 
   // Featured image
   const [featuredImageUrl, setFeaturedImageUrl] = useState('')
@@ -197,6 +200,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
+
+  // Link health scan
+  type LinkScanResult = {
+    links:  { url: string; status: number | null; ok: boolean; redirected: boolean; finalUrl: string | null; error?: string }[]
+    phones: { raw: string; digits: string; valid: boolean }[]
+    scannedAt: string
+  }
+  const [linkScan,        setLinkScan]        = useState<LinkScanResult | 'scanning' | null>(null)
+  const [showBrokenLinks, setShowBrokenLinks] = useState(false)
 
   // Mark dirty on any field change after initial load
   const loadedRef = useRef(false)
@@ -268,11 +280,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         // Only suggest if the post has no explicit category selected yet
         if (!post?.wpCategoryIds || post.wpCategoryIds.length === 0) {
           const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
-          const kwWords = kwText.split(/\s+/).filter(w => w.length > 2)
+          const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
           const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
           const scored = nonDefault
             .map(c => {
-              const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+              const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
               const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
               return { ...c, score }
             })
@@ -366,6 +378,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
           wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
+          bcAuthorName: bcAuthorName || null,
           connectionId: connectionId || null,
         }),
       })
@@ -462,7 +475,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           title, seoTitle, content, metaDescription, slug,
           targetKeyword, suggestedTags: tags,
           featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId, connectionId,
+          wpStatus, authorId, bcAuthorName: bcAuthorName || null, connectionId,
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json().catch(() => ({}))).error || 'Failed to save')
@@ -500,6 +513,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     if (!editNotes.trim()) { setError('Enter revision instructions first'); return }
     setRegenerating(true)
     setError('')
+    onRegenerateStart?.()
     try {
       const res = await fetch('/api/admin/content/regenerate', {
         method:  'POST',
@@ -518,10 +532,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setEditNotes('')
       setShowEditNotes(false)
       setIsDirty(true)
+      onRegenerateDone?.({ title: data.title ?? title })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to regenerate')
+      onRegenerateDone?.({})
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  async function handleScanLinks() {
+    setLinkScan('scanning')
+    setShowBrokenLinks(false)
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/scan-links`, { method: 'POST' })
+      if (!res.ok) throw new Error('Scan failed')
+      const data = await res.json() as LinkScanResult
+      setLinkScan(data)
+    } catch {
+      setLinkScan(null)
     }
   }
 
@@ -584,6 +613,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
+  const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
 
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
@@ -846,6 +876,54 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
                   <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
                 </div>
+
+                {/* Link Health */}
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.625rem', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-faint)' }}>LINK HEALTH</span>
+                    {linkScan === null && (
+                      <>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Links: not scanned</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Phones: not scanned</span>
+                        <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Scan Now</button>
+                      </>
+                    )}
+                    {linkScan === 'scanning' && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Scanning…</span>
+                    )}
+                    {linkScan !== null && linkScan !== 'scanning' && (() => {
+                      const okLinks    = linkScan.links.filter(l => l.ok).length
+                      const totalLinks = linkScan.links.length
+                      const brokenLinks = linkScan.links.filter(l => !l.ok && !l.redirected)
+                      const okPhones   = linkScan.phones.filter(p => p.valid).length
+                      const totalPhones = linkScan.phones.length
+                      const allLinksOk = brokenLinks.length === 0
+                      return (
+                        <>
+                          <span
+                            style={{ fontSize: '0.75rem', color: allLinksOk ? 'var(--green)' : 'var(--red)', background: 'var(--bg)', border: `1px solid ${allLinksOk ? 'var(--green)' : 'var(--red)'}`, borderRadius: 4, padding: '1px 6px', cursor: brokenLinks.length > 0 ? 'pointer' : 'default' }}
+                            onClick={() => brokenLinks.length > 0 && setShowBrokenLinks(v => !v)}
+                          >
+                            Links: {okLinks}/{totalLinks} OK{brokenLinks.length > 0 ? ` (${brokenLinks.length} broken)` : ' ✓'}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: okPhones === totalPhones ? 'var(--green)' : 'var(--amber)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>
+                            Phones: {totalPhones === 0 ? 'none' : `${okPhones}/${totalPhones} valid`}
+                          </span>
+                          <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--bg-subtle)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}>Rescan</button>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  {linkScan !== null && linkScan !== 'scanning' && showBrokenLinks && linkScan.links.filter(l => !l.ok).length > 0 && (
+                    <div style={{ marginTop: '0.375rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {linkScan.links.filter(l => !l.ok).map((l, i) => (
+                        <div key={i} style={{ fontSize: '0.7rem', color: l.redirected ? 'var(--amber)' : 'var(--red)', wordBreak: 'break-all' }}>
+                          {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` → ${l.status}` : l.error ? ` (${l.error})` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -863,15 +941,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* Author + publish status */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
                 <div>
-                  <label style={labelStyle}>WP Author</label>
-                  <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle} disabled={authorsLoading}>
-                    <option value="">{authorsLoading ? 'Loading…' : '— Default —'}</option>
-                    {authors.map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}{a.id === defaultAuthorId ? ' (Default)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <label style={labelStyle}>{isBc ? 'Author Name' : 'WP Author'}</label>
+                  {isBc ? (
+                    <input
+                      type="text"
+                      value={bcAuthorName}
+                      onChange={e => { setBcAuthorName(e.target.value); markDirty() }}
+                      placeholder="Author name displayed on the post"
+                      style={inputStyle}
+                    />
+                  ) : (
+                    <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle} disabled={authorsLoading}>
+                      <option value="">{authorsLoading ? 'Loading…' : '— Default —'}</option>
+                      {authors.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}{a.id === defaultAuthorId ? ' (Default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label style={labelStyle}>Publish as</label>

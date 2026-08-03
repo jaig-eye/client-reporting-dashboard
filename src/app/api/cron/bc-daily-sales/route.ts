@@ -3,6 +3,7 @@ import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { fetchBCOrders, fetchBCStoreTimezone } from '@/lib/connectors/bigcommerce'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export const maxDuration = 60
 
@@ -69,10 +70,11 @@ export async function GET(request: NextRequest) {
 
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('discord_bot_token')
+    .select('discord_bot_token, notification_config')
     .single()
 
-  const botToken = (agencySettings as Record<string, unknown> | null)?.discord_bot_token as string | null
+  const botToken    = (agencySettings as Record<string, unknown> | null)?.discord_bot_token as string | null
+  const notifConfig = ((agencySettings as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
   if (!botToken) {
     return NextResponse.json({ skipped: true, reason: 'No Discord bot token configured' })
   }
@@ -161,7 +163,7 @@ export async function GET(request: NextRequest) {
     ].join('\n')
 
     try {
-      await sendDiscordMessage(botToken, channelId, message)
+      if (getNotif(notifConfig, 'bc_daily_sales').discord) await sendDiscordMessage(botToken, channelId, message)
       results.push({ client: client.name, status: 'sent', yesterday: summary.grossRevenue, mtd: mtd.grossRevenue })
     } catch (err) {
       results.push({ client: client.name, status: 'discord_error', error: String(err) })

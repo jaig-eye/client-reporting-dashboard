@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { pauseGoogleCampaigns, resumeGoogleCampaigns } from '@/lib/connectors/google-ads'
 import { pauseMetaCampaigns,  resumeMetaCampaigns  }   from '@/lib/connectors/meta-ads'
 
@@ -26,17 +27,18 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
 
   // Round 1: agency settings (need cutoffDate before RPC params)
-  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token').single()
+  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, notification_config').single()
 
   type AgencyRow  = { ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null; discord_bot_token: string | null }
   type ClientRow  = { id: string; name: string; ad_fuel_cut: number | null; historic_bill_day: number | null; discord_channel_id: string | null; auto_pause_ads: boolean; auto_resume_ads: boolean; campaigns_paused_at: string | null }
   type SumRow     = { client_id: string; spend: number }
   type LedgerRow  = { client_id: string; amount_af: number; split_override: number | null; date_of_payment: string }
 
-  const agencyCut  = (agencyRes.data as AgencyRow | null)?.ad_fuel_cut ?? 0.20
-  const cutoffDate = (agencyRes.data as AgencyRow | null)?.ad_fuel_cutoff_date ?? '2025-01-01'
-  const botToken   = (agencyRes.data as AgencyRow | null)?.discord_bot_token ?? null
-  const cutoffMs   = new Date(cutoffDate + 'T00:00:00Z').getTime()
+  const agencyCut   = (agencyRes.data as AgencyRow | null)?.ad_fuel_cut ?? 0.20
+  const cutoffDate  = (agencyRes.data as AgencyRow | null)?.ad_fuel_cutoff_date ?? '2025-01-01'
+  const botToken    = (agencyRes.data as AgencyRow | null)?.discord_bot_token ?? null
+  const notifConfig = ((agencyRes.data as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  const cutoffMs    = new Date(cutoffDate + 'T00:00:00Z').getTime()
 
   // Round 2: all other queries using the correct cutoffDate
   const [clientsRes, ledgerRes, gSpendRes, mSpendRes] = await Promise.all([
@@ -205,7 +207,7 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id) {
+      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_paused').discord) {
         const total  = googleCount + metaCount
         const balStr = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const nameLines = [
@@ -254,7 +256,7 @@ export async function GET(request: NextRequest) {
             meta_campaigns_affected:   0,
           }),
         ])
-        if (botToken && client.discord_channel_id) {
+        if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').discord) {
           const msg = `✅ **Ad Fuel Balance Restored — ${client.name}**: Balance is ${balStr}. No campaigns were recorded from auto-pause — please re-enable campaigns manually if needed.`
           try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
         }
@@ -292,7 +294,7 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id) {
+      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').discord) {
         const total     = googleCount + metaCount
         const balStr    = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const gNames    = storedNames.google ?? []

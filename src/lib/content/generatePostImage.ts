@@ -22,22 +22,28 @@ export function buildImagePrompt(
   settings: ClientSettings | null,
   promptOverride?: string,
 ): string {
-  if (promptOverride?.trim()) return promptOverride.trim()
-
-  const concept  = post.image_concept?.trim()
-  const keyword  = post.target_keyword?.trim()
+  const title    = post.seo_title?.trim() || post.title?.trim() || ''
+  const keyword  = post.target_keyword?.trim() || ''
   const service  = settings?.services?.split(',')[0]?.trim() ?? 'local service'
   const location = settings?.geographic_focus?.trim() ?? ''
 
-  const subject = concept || `${keyword ?? 'professional service'} in ${location || 'a local area'}`
+  const contextParts = [
+    title    && `for a post titled "${title}"`,
+    keyword  && `about "${keyword}"`,
+    location && `in ${location}`,
+  ].filter(Boolean)
+  const context = contextParts.length ? ' ' + contextParts.join(', ') : ''
 
-  return [
-    `Professional, clean blog header image for a local ${service} business.`,
-    subject + '.',
-    'Natural lighting, photorealistic, no text overlays, no visible people faces.',
-    'Style: modern, trustworthy, high-quality local business photography.',
-    'Wide landscape format.',
-  ].join(' ')
+  const base  = `Professional blog header image for a local ${service} business${context}.`
+  const style = 'Natural lighting, photorealistic, no text overlays, no faces. Wide landscape format.'
+
+  if (promptOverride?.trim()) {
+    // User guidance is creative direction; post context anchors it to the topic.
+    return `${base} ${promptOverride.trim()}. ${style}`
+  }
+
+  const subject = post.image_concept?.trim() || keyword || 'professional service work'
+  return `${base} ${subject}. ${style}`
 }
 
 export type ImageGenResult =
