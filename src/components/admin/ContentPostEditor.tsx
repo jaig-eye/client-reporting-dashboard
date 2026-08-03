@@ -62,6 +62,7 @@ interface PostDetail {
   postConnectionId:          string | null
   scheduleDefaultAuthorId:   number | null
   schedulePublishMode:       string | null
+  scheduleBcAuthor:          string | null
 }
 
 interface Author {
@@ -236,6 +237,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
+        setBcAuthorName(data.scheduleBcAuthor ?? '')
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         // Seed connection: post's stored connection > schedule default > first BC site > first any site

@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
   // Fetch schedule config defaults so the editor can pre-populate WP Author and Publish As
   const [csRes, saRes] = await Promise.all([
-    db.from('content_settings').select('default_author_id, wp_publish_mode').eq('client_id', clientId).maybeSingle(),
+    db.from('content_settings').select('default_author_id, wp_publish_mode, bc_author').eq('client_id', clientId).maybeSingle(),
     isServiceArea
       ? db.from('service_area_settings').select('wp_publish_mode, default_author_id').eq('client_id', clientId).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
     postConnectionId:    p.connection_id ? String(p.connection_id) : null,
     scheduleDefaultAuthorId,
     schedulePublishMode,
+    scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
   })
 }
 
