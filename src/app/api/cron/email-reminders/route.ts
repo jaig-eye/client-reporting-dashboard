@@ -67,10 +67,11 @@ export async function GET(request: NextRequest) {
         (assignedName ? `👤 Assigned: ${assignedName}\n` : '') +
         `→ Upload at /admin/emails`
 
-      if (getNotif(notifConfig, 'email_reminder').discord) await sendDiscordMessage(botToken, opsChannel, msg)
+      const notif = getNotif(notifConfig, 'email_reminder')
+      if (notif.discord && notif.ops) await sendDiscordMessage(botToken, opsChannel, msg)
 
       // Also ping the client's own Discord channel if configured
-      if (clientRow?.discord_channel_id && getNotif(notifConfig, 'email_reminder').discord) {
+      if (clientRow?.discord_channel_id && notif.discord && notif.client) {
         await sendDiscordMessage(botToken, clientRow.discord_channel_id, msg)
       }
 

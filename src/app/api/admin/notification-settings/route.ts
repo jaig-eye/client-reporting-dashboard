@@ -43,9 +43,18 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
+  const { data: existing, error: fetchErr } = await db
+    .from('agency_settings')
+    .select('id')
+    .maybeSingle()
+
+  if (fetchErr) return NextResponse.json({ error: 'Failed to load settings' }, { status: 500 })
+  if (!existing) return NextResponse.json({ error: 'Agency settings not found' }, { status: 404 })
+
   const { error } = await db
     .from('agency_settings')
     .update({ notification_config: config })
+    .eq('id', existing.id)
 
   if (error) return NextResponse.json({ error: 'Failed to save' }, { status: 500 })
   return NextResponse.json({ ok: true })

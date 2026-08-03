@@ -33,6 +33,7 @@ interface Props {
   onUpdate:            (post: UpdatedPost) => void
   onRegenerateStart?:  () => void
   onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
+  onRegenerateError?:  () => void
 }
 
 interface PostDetail {
@@ -149,7 +150,7 @@ const EDITOR_TABS: { id: EditorTab; label: string }[] = [
   { id: 'settings', label: 'Settings'   },
 ]
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -535,7 +536,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       onRegenerateDone?.({ title: data.title ?? title })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to regenerate')
-      onRegenerateDone?.({})
+      onRegenerateError?.()
     } finally {
       setRegenerating(false)
     }

@@ -49,5 +49,10 @@ export async function POST(
     return NextResponse.json({ error: postUpdate.error.message }, { status: 500 })
   }
 
+  if (topicUpdate.error) {
+    console.error('[restore] topic update failed:', topicUpdate.error)
+    return NextResponse.json({ error: 'Post restored but topic update failed' }, { status: 500 })
+  }
+
   return NextResponse.json({ success: true })
 }

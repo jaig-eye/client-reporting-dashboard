@@ -150,6 +150,13 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     setEditorPostId(null)
   }, [editorPostId])
 
+  const handleRegenerateError = useCallback(() => {
+    if (editorPostId) {
+      setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
+    }
+    // Keep the editor open so the user can see the error message
+  }, [editorPostId])
+
   if (editorPostId) {
     const editorPost = initialPosts.find(p => p.id === editorPostId)
     return (
@@ -161,6 +168,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         onUpdate={() => setEditorPostId(null)}
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
+        onRegenerateError={handleRegenerateError}
       />
     )
   }
