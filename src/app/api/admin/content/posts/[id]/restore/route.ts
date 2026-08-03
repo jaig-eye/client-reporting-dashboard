@@ -51,7 +51,9 @@ export async function POST(
 
   if (topicUpdate.error) {
     console.error('[restore] topic update failed:', topicUpdate.error)
-    return NextResponse.json({ error: 'Post restored but topic update failed' }, { status: 500 })
+    // Post is already restored — returning 500 would leave the UI stuck (retry gets 409).
+    // Return success with a warning; the topic inconsistency is non-critical.
+    return NextResponse.json({ success: true, warning: 'topic_update_failed' })
   }
 
   return NextResponse.json({ success: true })
