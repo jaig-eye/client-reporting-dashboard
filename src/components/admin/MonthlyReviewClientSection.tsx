@@ -17,7 +17,7 @@ interface Props {
   onRestore:       (id: string) => void
 }
 
-type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number }
+type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
 export default function MonthlyReviewClientSection({
   clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore,
@@ -43,15 +43,18 @@ export default function MonthlyReviewClientSection({
         )
       )
       let ok = 0, total = 0, broken = 0
-      for (const r of results) {
+      const perPost: Record<string, number> = {}
+      results.forEach((r, i) => {
         if (r.status === 'fulfilled') {
           const links = r.value.links ?? []
+          const postBroken = links.filter((l: { ok: boolean }) => !l.ok).length
           total  += links.length
           ok     += links.filter((l: { ok: boolean }) => l.ok).length
-          broken += links.filter((l: { ok: boolean }) => !l.ok).length
+          broken += postBroken
+          if (postBroken > 0) perPost[posts[i].id] = postBroken
         }
-      }
-      setScanState({ ok, total, broken })
+      })
+      setScanState({ ok, total, broken, perPost })
     } catch {
       setScanState('idle')
     }
@@ -120,6 +123,7 @@ export default function MonthlyReviewClientSection({
               isRegenerating={regeneratingIds.has(post.id)}
               isLoading={loadingId === post.id}
               isCollapsed={false}
+              brokenLinkCount={typeof scanState === 'object' ? (scanState.perPost[post.id] ?? 0) : undefined}
               onApprove={onApprove}
               onReject={onReject}
               onOpenEditor={onOpenEditor}

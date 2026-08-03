@@ -439,25 +439,28 @@ export async function POST(
             postCategoryIds = [scored[0].id]
             console.log(`[approve] Auto-categorized "${p.title}" → existing "${scored[0].name}" (score ${scored[0].score})`)
           } else {
-            // No existing category matches — derive a name and create it in WP
-            const rawKw   = (p.target_keyword || p.title || '').toString()
-            // Strip trailing location / filler phrases and keep the first 3 meaningful words
-            const stripped = rawKw
-              .replace(/\b(in|near|for|the|a|an|and|or|of|from|to|at|by|with|about|how|what|why|when|where|fl|florida)\b.*/i, '')
-              .trim()
-            const newCatName = stripped.split(/\s+/).slice(0, 3)
-              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-              .join(' ') || 'Blog'
-
-            const created = await createCategory(siteUrl, auth, newCatName)
-            if (created) {
-              postCategoryIds = [created.id]
-              console.log(`[approve] Auto-categorized "${p.title}" → NEW category "${created.name}" (id ${created.id})`)
+            // No keyword match — use "Blog" as a safe theme-neutral default rather than
+            // deriving from title keywords (which produces nonsensical category names like "Brush Guards Vs").
+            // First check if a blog-like category already exists but wasn't scored.
+            const blogCat = allCats.find(c =>
+              ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()) ||
+              ['blog', 'articles', 'news', 'posts'].includes(c.slug?.toLowerCase() ?? '')
+            )
+            if (blogCat) {
+              postCategoryIds = [blogCat.id]
+              console.log(`[approve] Auto-categorized "${p.title}" → existing "${blogCat.name}" (default fallback)`)
             } else {
-              // 409: category name exists but wasn't in the initial fetch (pagination edge-case) — refetch
-              const refreshed = await getCategories(siteUrl, auth)
-              const found = refreshed.find(c => c.name.toLowerCase() === newCatName.toLowerCase())
-              if (found) postCategoryIds = [found.id]
+              const newCatName = 'Blog'
+              const created = await createCategory(siteUrl, auth, newCatName)
+              if (created) {
+                postCategoryIds = [created.id]
+                console.log(`[approve] Auto-categorized "${p.title}" → NEW category "Blog"`)
+              } else {
+                // 409: Blog category exists but wasn't in the initial fetch — refetch
+                const refreshed = await getCategories(siteUrl, auth)
+                const found = refreshed.find(c => c.name.toLowerCase() === 'blog')
+                if (found) postCategoryIds = [found.id]
+              }
             }
           }
 

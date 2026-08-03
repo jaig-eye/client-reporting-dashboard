@@ -295,15 +295,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           if (scored.length > 0) {
             setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
           } else {
-            // Derive a new category name using same heuristic as server-side approve route
-            const rawKw = (post?.targetKeyword || post?.title || '')
-            const stripped = rawKw
-              .replace(/\b(in|near|for|the|a|an|and|or|of|from|to|at|by|with|about|how|what|why|when|where|fl|florida)\b.*/i, '')
-              .trim()
-            const newName = stripped.split(/\s+/).slice(0, 3)
-              .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-              .join(' ') || 'Blog'
-            setCategorySuggestion({ id: null, name: newName, isNew: true })
+            // No keyword match — suggest "Blog" as a safe default rather than deriving
+            // a name from the post title (which produces nonsensical category names).
+            const blogCat = nonDefault.find(c =>
+              ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase())
+            )
+            if (blogCat) {
+              setCategorySuggestion({ id: blogCat.id, name: blogCat.name, isNew: false })
+            } else {
+              setCategorySuggestion({ id: null, name: 'Blog', isNew: true })
+            }
           }
         }
       }

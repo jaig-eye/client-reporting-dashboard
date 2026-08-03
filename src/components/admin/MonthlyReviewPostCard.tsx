@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 
 export interface MonthlyReviewPost {
   id:                  string
@@ -21,17 +20,18 @@ export interface MonthlyReviewPost {
 }
 
 interface Props {
-  post:            MonthlyReviewPost
-  isApproved:      boolean
-  isRejected:      boolean
-  isDiscarded:     boolean
-  isRegenerating:  boolean
-  isLoading:       boolean
-  isCollapsed:     boolean
-  onApprove:       (id: string) => void
-  onReject:        (id: string, discard?: boolean) => void
-  onOpenEditor:    (id: string) => void
-  onRestore:       (id: string) => void
+  post:             MonthlyReviewPost
+  isApproved:       boolean
+  isRejected:       boolean
+  isDiscarded:      boolean
+  isRegenerating:   boolean
+  isLoading:        boolean
+  isCollapsed:      boolean
+  brokenLinkCount?: number
+  onApprove:        (id: string) => void
+  onReject:         (id: string, discard?: boolean) => void
+  onOpenEditor:     (id: string) => void
+  onRestore:        (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -46,11 +46,8 @@ function fmtDate(iso: string): string {
 }
 
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, onApprove, onReject, onOpenEditor, onRestore,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore,
 }: Props) {
-  const [expanded, setExpanded] = useState(false)
-  const [tab,      setTab]      = useState<'content' | 'seo'>('content')
-
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
   if (isCollapsed) {
@@ -60,25 +57,22 @@ export default function MonthlyReviewPostCard({
   return (
     <div
       style={{
-        border:        `1px solid ${isRegenerating ? '#fca5a5' : 'var(--border)'}`,
-        borderRadius:  8,
-        overflow:      'hidden',
-        background:    isRegenerating ? '#fff1f2' : 'var(--bg-surface)',
-        animation:     isApproved && !expanded ? 'monthly-approve-flash 0.6s ease forwards' : undefined,
-        opacity:       isRejected || isDiscarded ? 0.55 : 1,
-        transition:    'opacity 0.3s, background 0.3s',
+        border:     `1px solid ${isRegenerating ? '#fca5a5' : 'var(--border)'}`,
+        borderRadius: 8,
+        overflow:   'hidden',
+        background: isRegenerating ? '#fff1f2' : 'var(--bg-surface)',
+        animation:  isApproved ? 'monthly-approve-flash 0.6s ease forwards' : undefined,
+        opacity:    isRejected || isDiscarded ? 0.55 : 1,
+        transition: 'opacity 0.3s, background 0.3s',
       }}
     >
-      {/* Collapsed row */}
+      {/* Card row */}
       <div
-        onClick={() => !isDone && setExpanded(e => !e)}
         style={{
           display:    'flex',
           alignItems: 'center',
           gap:        12,
           padding:    '10px 14px',
-          cursor:     isDone ? 'default' : 'pointer',
-          userSelect: 'none',
         }}
       >
         {/* Thumbnail */}
@@ -116,42 +110,42 @@ export default function MonthlyReviewPostCard({
                 {post.content_type === 'blog' ? 'Blog' : post.content_type === 'service_area' ? 'SA Page' : post.content_type === 'service_page' ? 'Service Page' : 'Page'}
               </span>
             )}
+            {brokenLinkCount != null && brokenLinkCount > 0 && (
+              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fee2e2', color: '#dc2626' }}>
+                🔗 {brokenLinkCount} broken
+              </span>
+            )}
           </div>
         </div>
 
         {/* Status / actions */}
         {isApproved ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             ✓ Approved
           </span>
         ) : isRejected ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             Rejected
           </span>
         ) : isDiscarded ? (
-          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '3px 10px', borderRadius: 999 }}>
               Discarded
             </span>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onRestore(post.id)}
-            >
+            <button className="btn btn-sm" disabled={isLoading} onClick={() => onRestore(post.id)}>
               Restore
             </button>
           </div>
         ) : isRegenerating ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 10px', borderRadius: 999 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             ⟳ Regenerating…
           </span>
         ) : (
-          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
             <button
               className="btn btn-sm"
               disabled={isLoading}
               onClick={() => onOpenEditor(post.id)}
-              title="Open editor to review and edit this post"
             >
               Review
             </button>
@@ -159,7 +153,6 @@ export default function MonthlyReviewPostCard({
               className="btn btn-sm"
               disabled={isLoading}
               onClick={() => onReject(post.id, true)}
-              title="Permanently discard this post and its topic"
               style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
             >
               Discard
@@ -174,110 +167,7 @@ export default function MonthlyReviewPostCard({
             </button>
           </div>
         )}
-
-        {!isDone && (
-          <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>
-            {expanded ? '▲' : '▼'}
-          </span>
-        )}
       </div>
-
-      {/* Expanded area */}
-      {expanded && !isDone && (
-        <div style={{ borderTop: '1px solid var(--border)' }}>
-          {/* Featured image strip */}
-          {post.featured_image_url && (
-            <img
-              src={post.featured_image_url}
-              alt=""
-              style={{ width: '100%', height: 180, objectFit: 'cover' }}
-            />
-          )}
-
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', padding: '0 14px' }}>
-            {(['content', 'seo'] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                style={{
-                  padding:       '8px 14px',
-                  fontSize:      13,
-                  fontWeight:    tab === t ? 600 : 400,
-                  color:         tab === t ? 'var(--blue)' : 'var(--text-muted)',
-                  background:    'none',
-                  border:        'none',
-                  borderBottom:  tab === t ? '2px solid var(--blue)' : '2px solid transparent',
-                  cursor:        'pointer',
-                  textTransform: 'capitalize',
-                }}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div style={{ padding: 14, maxHeight: 360, overflowY: 'auto' }}>
-            {tab === 'content' ? (
-              <div
-                style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--text-secondary)' }}
-                dangerouslySetInnerHTML={{ __html: post.content ?? '<em>No content</em>' }}
-              />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>SEO Title</div>
-                  <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>{post.seo_title ?? post.title ?? '—'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Meta Description</div>
-                  <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>{post.meta_description ?? '—'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Target Keyword</div>
-                  <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>{post.target_keyword ?? '—'}</div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Action bar */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={() => { setExpanded(false); onOpenEditor(post.id) }}
-            >
-              Open Editor
-            </button>
-            <button
-              className="btn btn-sm btn-danger"
-              disabled={isLoading}
-              onClick={() => { setExpanded(false); onReject(post.id, false) }}
-              title="Reject this post and let the cron generate a replacement"
-            >
-              Regenerate
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => { setExpanded(false); onReject(post.id, true) }}
-              title="Permanently discard this post and its topic"
-              style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
-            >
-              Discard
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={isLoading}
-              onClick={() => onApprove(post.id)}
-              style={{ background: '#16a34a', borderColor: '#16a34a' }}
-            >
-              {isLoading ? 'Approving…' : 'Approve →'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

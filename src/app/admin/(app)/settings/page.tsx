@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
+import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
 import { useTheme } from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
@@ -849,11 +850,57 @@ export default function AgencySettingsPage() {
         {/* ─── Notifications ─────────────────────────────────────── */}
         {visitedTabs.has('notifications') && <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
           <div className="space-y-5">
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <a href="/admin/settings/notifications" className="btn btn-secondary btn-sm">
-              Manage Discord notification types →
-            </a>
+
+          {/* Discord bot — prerequisite for channel notifications */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Discord Bot</h2>
+              <p className="section-desc">Shared bot for all channel notifications. Each client&apos;s channel ID is configured in their Integrations tab.</p>
+            </div>
+            <IntegrationCard
+              icon="🤖"
+              name="Discord Bot"
+              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
+              isConnected={!!form.discord_bot_token}
+              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
+              onConfigure={openDiscordModal}
+              justConnected={discordJustSaved}
+            />
+            <IntegrationModal
+              open={discordModalOpen}
+              onClose={() => setDiscordModalOpen(false)}
+              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
+              title="Discord Bot"
+              icon="🤖"
+              isConnected={!!form.discord_bot_token}
+              howTo={
+                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
+                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
+                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
+                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
+                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
+                </ol>
+              }
+              onSave={saveDiscordCredential}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
+                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
+                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
+              </div>
+            </IntegrationModal>
           </div>
+
+          {/* Discord notification type table */}
+          <div className="card p-6">
+            <div style={{ marginBottom: 16 }}>
+              <h2 className="section-title">Notification Types</h2>
+              <p className="section-desc">Control which events fire to each Discord channel.</p>
+            </div>
+            <NotificationTypeTable />
+          </div>
+
           <div className="card p-6 space-y-5">
             <div>
               <h2 className="section-title">Email Notifications</h2>
@@ -1064,45 +1111,6 @@ export default function AgencySettingsPage() {
             </p>
           </div>
 
-          <div className="card p-6 space-y-4">
-            <div>
-              <h2 className="section-title">Discord Notifications</h2>
-              <p className="section-desc">Bot token used to post Ad Fuel low-balance alerts to per-client Discord channels.</p>
-            </div>
-            <IntegrationCard
-              icon="🤖"
-              name="Discord Bot"
-              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
-              isConnected={!!form.discord_bot_token}
-              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
-              onConfigure={openDiscordModal}
-              justConnected={discordJustSaved}
-            />
-            <IntegrationModal
-              open={discordModalOpen}
-              onClose={() => setDiscordModalOpen(false)}
-              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
-              title="Discord Bot"
-              icon="🤖"
-              isConnected={!!form.discord_bot_token}
-              howTo={
-                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
-                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
-                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
-                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
-                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
-                </ol>
-              }
-              onSave={saveDiscordCredential}
-            >
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
-                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
-                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
-              </div>
-            </IntegrationModal>
-          </div>
           </div>
         </div>}
 
