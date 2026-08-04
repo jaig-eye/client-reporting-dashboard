@@ -787,6 +787,27 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 <textarea ref={contentTextareaRef} value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
               </div>
 
+              {/* Link scan trigger — always visible in content tab so users don't need to go to SEO Checklist */}
+              <div style={{ marginBottom: 8, marginTop: -4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {(linkScan === null || linkScan === 'scanning') ? (
+                  <button
+                    type="button"
+                    onClick={handleScanLinks}
+                    disabled={linkScan === 'scanning'}
+                    style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
+                  >
+                    {linkScan === 'scanning' ? '⟳ Scanning links…' : '🔗 Scan for broken links'}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: '0.72rem', color: linkScan.links.some(l => !l.ok) ? '#dc2626' : '#16a34a' }}>
+                    {linkScan.links.filter(l => !l.ok).length === 0
+                      ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
+                      : `⚠ ${linkScan.links.filter(l => !l.ok).length} broken link${linkScan.links.filter(l => !l.ok).length !== 1 ? 's' : ''} — see below`}
+                    <button type="button" onClick={handleScanLinks} style={{ marginLeft: 8, fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
+                  </span>
+                )}
+              </div>
+
               {/* Broken links — inline panel below content HTML */}
               {linkScan !== null && linkScan !== 'scanning' && (() => {
                 const broken = linkScan.links.filter(l => !l.ok)

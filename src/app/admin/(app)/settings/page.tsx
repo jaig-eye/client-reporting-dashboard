@@ -67,6 +67,7 @@ interface Settings {
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
   discord_bot_token:              string
+  discord_ops_channel_id:         string
   crm_name:                       string
   payment_sound_url:              string
   brand_primary:                  string
@@ -121,6 +122,7 @@ const DEFAULT: Settings = {
   metric_layouts:                 null,
   hidden_connector_types:         [],
   discord_bot_token:              '',
+  discord_ops_channel_id:         '',
   crm_name:                       'CRM',
   brand_primary:                  '#2563eb',
   stripe_api_key:                 '',
@@ -890,6 +892,23 @@ export default function AgencySettingsPage() {
                   placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
               </div>
             </IntegrationModal>
+            {/* Agency ops Discord channel — inline (not sensitive, no need for modal) */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>
+                Agency Discord Channel ID
+              </label>
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                Internal ops channel that receives agency-side alerts (uptime, SSL, content review, etc.). Right-click the channel in Discord → Copy Channel ID.
+              </p>
+              <input
+                className="input"
+                type="text"
+                value={form.discord_ops_channel_id}
+                onChange={e => field('discord_ops_channel_id', e.target.value)}
+                placeholder="e.g. 1234567890123456789"
+                style={{ maxWidth: 340 }}
+              />
+            </div>
           </div>
 
           {/* Notification type table */}

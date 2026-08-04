@@ -68,6 +68,21 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }).length
 
   const handleApprove = useCallback(async (postId: string) => {
+    // Optimistic — show approved immediately, push to site in background
+    const post = initialPosts.find(p => p.id === postId)
+    const nextApproved = new Set(approvedIds)
+    nextApproved.add(postId)
+    if (post) {
+      const clientPosts = postsByClient.get(post.client_id) ?? []
+      const allDone    = clientPosts.every(p => nextApproved.has(p.id) || rejectedIds.has(p.id))
+      const wasAllDone = clientPosts.every(p => approvedIds.has(p.id)  || rejectedIds.has(p.id))
+      if (nextApproved.size + rejectedIds.size >= totalPosts) playMonthDone()
+      else if (allDone && !wasAllDone) playClientDone()
+      else playApprove()
+    } else {
+      playApprove()
+    }
+    setApprovedIds(nextApproved)
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/approve`, {
@@ -76,24 +91,10 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         body:    JSON.stringify({ action: 'approve_and_push', source: 'monthly_review' }),
       })
       if (!res.ok) throw new Error(await res.text())
-
-      const post = initialPosts.find(p => p.id === postId)
-      if (post) {
-        const clientPosts  = postsByClient.get(post.client_id) ?? []
-        const nextApproved = new Set(approvedIds)
-        nextApproved.add(postId)
-        const allDone    = clientPosts.every(p => nextApproved.has(p.id) || rejectedIds.has(p.id))
-        const wasAllDone = clientPosts.every(p => approvedIds.has(p.id)  || rejectedIds.has(p.id))
-        if (nextApproved.size + rejectedIds.size >= totalPosts) playMonthDone()
-        else if (allDone && !wasAllDone) playClientDone()
-        else playApprove()
-      } else {
-        playApprove()
-      }
-
-      setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     } catch (e) {
       console.error('Approve failed:', e)
+      // Revert optimistic update on failure
+      setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
       alert('Failed to approve post. Please try again.')
     } finally {
       setLoadingId(null)

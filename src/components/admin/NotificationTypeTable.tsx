@@ -4,14 +4,15 @@ import { useCallback, useEffect, useState } from 'react'
 import type { NotifConfig, NotifSettings } from '@/lib/notificationConfig'
 
 interface NotifRow {
-  key:        string
-  label:      string
+  key:         string
+  linkedKeys?: string[]  // extra DB keys to keep in sync with this row's toggles
+  label:       string
   description: string
-  hasAgency:  boolean  // agency Discord ops channel
-  hasEmail:   boolean  // global team email
-  hasManager: boolean  // account manager email
-  hasClient:  boolean  // per-client Discord
-  isBc?:      boolean  // BigCommerce-specific row (visual grouping)
+  hasAgency:   boolean  // agency Discord ops channel
+  hasEmail:    boolean  // global team email
+  hasManager:  boolean  // account manager email
+  hasClient:   boolean  // per-client Discord
+  isBc?:       boolean  // BigCommerce-specific row (visual grouping)
 }
 
 const GROUPS: { title: string; rows: NotifRow[] }[] = [
@@ -31,9 +32,8 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
       { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
       { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
       { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
-      { key: 'content_post_generated',  label: 'Post generated',             description: 'Sent when a new post is ready for review',                       hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
-      { key: 'content_post_published',  label: 'Post published to WP / BC', description: 'Sent when a post is uploaded and approved',                       hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
-      { key: 'content_sa_generated',    label: 'SA page generated',          description: 'Sent when a service area page is ready for review',               hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'Sent when a new post or service area page is ready for review', hasAgency: false, hasEmail: true, hasManager: true, hasClient: true },
+      { key: 'content_post_published',  label: 'Content published to WP / BC', description: 'Sent when a post or SA page is approved and uploaded',            hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
     ],
   },
   {
@@ -157,11 +157,15 @@ export default function NotificationTypeTable() {
     }
   }, [local])
 
-  function set(key: string, field: 'agency' | 'email' | 'manager' | 'client', value: boolean) {
-    setLocal(prev => {
-      const cur = getEffective(key)
-      return { ...prev, [key]: { ...cur, [field]: value } }
-    })
+  function set(key: string, field: 'agency' | 'email' | 'manager' | 'client', value: boolean, linkedKeys?: string[]) {
+    const base = local ?? {} as NotifConfig
+    const cur  = getEffective(key)
+    const next: NotifConfig = { ...base, [key]: { ...cur, [field]: value } }
+    for (const lk of linkedKeys ?? []) {
+      const lkCur = getEffective(lk)
+      next[lk] = { ...lkCur, [field]: value }
+    }
+    setLocal(next)
     setSuccess(false)
   }
 
@@ -180,7 +184,7 @@ export default function NotificationTypeTable() {
       if (!res.ok) throw new Error('Save failed')
       setSaved(local)
       setSuccess(true)
-      setTimeout(() => setSuccess(false), 3000)
+      setTimeout(() => setSuccess(false), 4500)
     } catch {
       setError('Failed to save. Please try again.')
     } finally {
@@ -231,8 +235,8 @@ export default function NotificationTypeTable() {
       )}
 
       {success && !isDirty && (
-        <div style={{ background: '#f0fdf4', border: '1px solid var(--green)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--green)' }}>
-          Saved
+        <div style={{ background: '#f0fdf4', border: '1px solid #16a34a', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: '#15803d', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 500 }}>
+          <span style={{ fontSize: 15 }}>✓</span> Notification settings saved
         </div>
       )}
 
@@ -286,7 +290,7 @@ export default function NotificationTypeTable() {
                     {/* Agency Discord */}
                     <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
                       {row.hasAgency ? (
-                        <Toggle checked={eff.agency} onChange={v => set(row.key, 'agency', v)} color="amber" />
+                        <Toggle checked={eff.agency} onChange={v => set(row.key, 'agency', v, row.linkedKeys)} color="amber" />
                       ) : (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
                       )}
@@ -294,7 +298,7 @@ export default function NotificationTypeTable() {
                     {/* Global Emails */}
                     <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
                       {row.hasEmail ? (
-                        <Toggle checked={eff.email} onChange={v => set(row.key, 'email', v)} color="blue" />
+                        <Toggle checked={eff.email} onChange={v => set(row.key, 'email', v, row.linkedKeys)} color="blue" />
                       ) : (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
                       )}
@@ -302,7 +306,7 @@ export default function NotificationTypeTable() {
                     {/* Acc Manager */}
                     <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
                       {row.hasManager ? (
-                        <Toggle checked={eff.manager} onChange={v => set(row.key, 'manager', v)} color="purple" />
+                        <Toggle checked={eff.manager} onChange={v => set(row.key, 'manager', v, row.linkedKeys)} color="purple" />
                       ) : (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
                       )}
@@ -310,7 +314,7 @@ export default function NotificationTypeTable() {
                     {/* Client Discord */}
                     <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
                       {row.hasClient ? (
-                        <Toggle checked={eff.client} onChange={v => set(row.key, 'client', v)} color="green" />
+                        <Toggle checked={eff.client} onChange={v => set(row.key, 'client', v, row.linkedKeys)} color="green" />
                       ) : (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
                       )}

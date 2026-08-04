@@ -441,6 +441,9 @@ function buildSystemPrompt(
   postStructure: string,
   masterPreamble?: string | null
 ): string {
+  const currentYear = new Date().getFullYear()
+  const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
+
   const jsonFormat = `CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No markdown fences, no explanation, no text before or after the JSON. The object must have exactly these fields:
 {
   "title": "Post H1 title — descriptive, includes focus keyword",
@@ -475,7 +478,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${rulesReminder}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -487,9 +490,10 @@ Your writing demonstrates E-E-A-T (Experience, Expertise, Authority, Trustworthi
 
 Topic strategy:
 - Answer real questions the target audience searches for
-- Consider seasonal relevance and local industry angles
+- Consider seasonal relevance and local industry angles — the current year is ${currentYear}
 - Write about subjects tied to the business's services and value proposition
 - Avoid vague titles; be specific and targeted
+- Reference current year (${currentYear}) for fresh, relevant content; only use ${currentYear - 1} for historical comparison${yearNote}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
 
 SEO guidelines:
