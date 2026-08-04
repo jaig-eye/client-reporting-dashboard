@@ -775,9 +775,10 @@ async function runTopicGeneration({
       const q = l.query.toLowerCase().trim()
       return !Array.from(coveredKeywords).some(kw => q.includes(kw) || kw.includes(q))
     })
-    filteredGscLinks.forEach(l => allowedInternalUrls.add(l.url))
-    // Always add ALL GSC URLs to the allowed set (so linking to them is valid even if filtered from prompt)
-    gscLinks.forEach(l => allowedInternalUrls.add(l.url))
+    // GSC URLs are NOT added to allowedInternalUrls — they're sourced from indexed pages which
+    // may include deleted or never-sitemapped content. If a GSC URL is also in the client's
+    // sitemap it's already in allowedInternalUrls from the sitemap_pages query above, so
+    // valid GSC link suggestions survive; stale/deleted ones get stripped by stripHallucinatedLinks.
     manualLinks.forEach(l => allowedInternalUrls.add(l.url))
 
     const internalLinkLines: string[] = []
