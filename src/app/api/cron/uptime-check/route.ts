@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
         if (notifDown.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
         if (notifDown.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
-        if (alertEmail) {
+        if (alertEmail && notifDown.email) {
           await sendEmail({
             to:      alertEmail,
             subject: `[${agencyName}] Site DOWN: ${site.name}`,
@@ -241,7 +241,7 @@ export async function GET(request: NextRequest) {
           if (notifRecovered.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
           if (notifRecovered.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
-          if (alertEmail) {
+          if (alertEmail && notifRecovered.email) {
             await sendEmail({
               to:      alertEmail,
               subject: `[${agencyName}] Site recovered: ${site.name}`,

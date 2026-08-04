@@ -38,9 +38,13 @@ export async function PUT(request: NextRequest) {
     }
     const v = val as unknown as Record<string, unknown>
     const knownFields = ['agency', 'email', 'manager', 'client']
-    const hasKnown = knownFields.some(f => f in v && typeof v[f] === 'boolean')
+    const hasKnown = knownFields.some(f => f in v)
     if (!hasKnown) {
       return NextResponse.json({ error: `Key "${key}" must have at least one of: agency, email, manager, client` }, { status: 400 })
+    }
+    const badField = knownFields.find(f => f in v && typeof v[f] !== 'boolean')
+    if (badField) {
+      return NextResponse.json({ error: `Key "${key}.${badField}" must be a boolean` }, { status: 400 })
     }
   }
 
