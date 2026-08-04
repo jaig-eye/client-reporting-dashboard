@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
           `🔗 [Review now](${reviewUrl})`
 
         const notif = getNotif(notifConfig, 'email_submitted')
-        if (notif.discord && notif.ops) await sendDiscordMessage(botToken, opsChannel, msg)
+        if (notif.email) await sendDiscordMessage(botToken, opsChannel, msg)
 
         // Also ping per-client Discord channel
         const { data: client } = await db
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
           .select('discord_channel_id')
           .eq('id', body.client_id)
           .maybeSingle()
-        if (client?.discord_channel_id && notif.discord && notif.client) {
+        if (client?.discord_channel_id && notif.client) {
           await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
         }
       } catch (e) {

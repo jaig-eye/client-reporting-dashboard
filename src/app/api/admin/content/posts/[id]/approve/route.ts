@@ -592,7 +592,7 @@ export async function POST(
       const notifConfig = ((agencySettings as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
       const channelId   = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
       const clientName  = (client as { name?: string } | null)?.name ?? ''
-      if (botToken && channelId && getNotif(notifConfig, 'content_post_published').discord) {
+      if (botToken && channelId && getNotif(notifConfig, 'content_post_published').client) {
         void sendDiscordMessage(
           botToken, channelId,
           `✅ Post uploaded to WordPress draft: **${String(p.title ?? '(untitled)')}**${clientName ? ` (${clientName})` : ''}`

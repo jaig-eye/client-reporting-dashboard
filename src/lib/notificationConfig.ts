@@ -1,16 +1,31 @@
 // Per-notification-type configuration helper.
 // Reads from agency_settings.notification_config (JSONB, migration 184).
-// Falls back to { discord: true, ops: true, client: true } when a key is absent
-// so new notification types are automatically enabled until explicitly disabled.
+// Falls back to { email: true, manager: false, client: true } when a key is absent.
 
 export interface NotifSettings {
-  discord: boolean  // master Discord toggle — if false, no Discord send for this type
-  ops:     boolean  // send to agency ops channel
-  client:  boolean  // send to per-client Discord channel
+  email:   boolean  // global team email notification
+  manager: boolean  // account manager email (per-client)
+  client:  boolean  // per-client Discord channel
 }
 
 export type NotifConfig = Record<string, NotifSettings>
 
 export function getNotif(config: NotifConfig | null | undefined, key: string): NotifSettings {
-  return (config ?? {})[key] ?? { discord: true, ops: true, client: true }
+  const raw = (config ?? {})[key] as unknown as Record<string, boolean> | undefined
+  if (!raw) return { email: true, manager: false, client: true }
+
+  // Migrate old schema { discord, ops, client } → new schema { email, manager, client }
+  if ('discord' in raw || 'ops' in raw) {
+    return {
+      email:   (raw.discord ?? true) && (raw.ops ?? true),
+      manager: false,
+      client:  (raw.discord ?? true) && (raw.client ?? true),
+    }
+  }
+
+  return {
+    email:   raw.email   ?? true,
+    manager: raw.manager ?? false,
+    client:  raw.client  ?? true,
+  }
 }

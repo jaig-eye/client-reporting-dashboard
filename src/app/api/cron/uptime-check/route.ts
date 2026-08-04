@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
         })
 
         const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
-        if (getNotif(notifConfig, 'uptime_down').discord) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        if (getNotif(notifConfig, 'uptime_down').email) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({
@@ -235,7 +235,7 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          if (getNotif(notifConfig, 'uptime_recovered').discord) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+          if (getNotif(notifConfig, 'uptime_recovered').email) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
 
           if (alertEmail) {
             await sendEmail({

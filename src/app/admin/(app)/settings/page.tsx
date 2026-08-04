@@ -892,29 +892,20 @@ export default function AgencySettingsPage() {
             </IntegrationModal>
           </div>
 
-          {/* Discord notification type table */}
+          {/* Notification type table */}
           <div className="card p-6">
             <div style={{ marginBottom: 16 }}>
               <h2 className="section-title">Notification Types</h2>
-              <p className="section-desc">Control which events fire to each Discord channel.</p>
+              <p className="section-desc">Control which events send a global team email, account manager email, or client Discord message.</p>
             </div>
-            <NotificationTypeTable />
-          </div>
-
-          <div className="card p-6 space-y-5">
-            <div>
-              <h2 className="section-title">Email Notifications</h2>
-              <p className="section-desc">Receive email alerts when content events occur in the system.</p>
-            </div>
-
-            <FormField label="Notification Email" hint="receives all content alerts">
-              <div style={{ display: 'flex', gap: 8 }}>
+            <FormField label="Global Email Address" hint="receives all Global Emails notifications">
+              <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
                 <input
                   className="input"
                   type="email"
                   value={form.notification_email}
                   onChange={e => field('notification_email', e.target.value)}
-                  placeholder="you@agency.com"
+                  placeholder="team@agency.com"
                   style={{ flex: 1 }}
                 />
                 <button
@@ -933,39 +924,15 @@ export default function AgencySettingsPage() {
                 </p>
               )}
             </FormField>
+            <NotificationTypeTable />
+          </div>
 
+          <div className="card p-6 space-y-5">
+            <div>
+              <h2 className="section-title">Metric Alert Thresholds</h2>
+              <p className="section-desc">Configure when metric anomaly alerts fire via email.</p>
+            </div>
             <div className="space-y-3">
-              <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Notify when:</p>
-              <Toggle
-                label="Topics created for a client"
-                hint="Sent when new topic suggestions are generated and ready for review"
-                checked={form.notify_topics_created}
-                onChange={v => field('notify_topics_created', v)}
-              />
-              <Toggle
-                label="Post uploaded to WordPress"
-                hint="Sent when a generated post is uploaded to WordPress as a draft"
-                checked={form.notify_post_uploaded}
-                onChange={v => field('notify_post_uploaded', v)}
-              />
-              <Toggle
-                label="Topics ready for approval"
-                hint="Sent when new scheduled topics are ready for approval"
-                checked={form.notify_topic_ready}
-                onChange={v => field('notify_topic_ready', v)}
-              />
-              <Toggle
-                label="Post needs approval (within 48h of publish date)"
-                hint="Reminder when an approved topic's post hasn't been approved with publish date approaching"
-                checked={form.notify_approval_needed}
-                onChange={v => field('notify_approval_needed', v)}
-              />
-              <Toggle
-                label="Topics auto-generated for scheduled client"
-                hint="Sent when topics are automatically generated 30 days before a client's scheduled publish date"
-                checked={form.notify_schedule_generated}
-                onChange={v => field('notify_schedule_generated', v)}
-              />
               <Toggle
                 label="Metric anomaly alerts (email)"
                 hint="Daily digest when any client metric changes by more than the threshold vs the prior comparison window"
@@ -1044,12 +1011,6 @@ export default function AgencySettingsPage() {
                   </div>
                 </div>
               )}
-              <Toggle
-                label="Connector auth errors (expired tokens, revoked access)"
-                hint="Email when a sync fails because a platform token has expired or been revoked — with a link to reconnect"
-                checked={form.notify_connector_errors}
-                onChange={v => field('notify_connector_errors', v)}
-              />
             </div>
           </div>
 

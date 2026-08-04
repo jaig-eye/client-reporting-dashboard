@@ -1106,7 +1106,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       }
 
       const _notifConfig = ((agencySettings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
-      if (agencySettings.discord_bot_token && discordChannelId && getNotif(_notifConfig, 'content_post_generated').discord) {
+      if (agencySettings.discord_bot_token && discordChannelId && getNotif(_notifConfig, 'content_post_generated').client) {
         void sendDiscordMessage(
           agencySettings.discord_bot_token,
           discordChannelId,

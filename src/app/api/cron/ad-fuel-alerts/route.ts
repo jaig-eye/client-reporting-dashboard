@@ -228,7 +228,7 @@ export async function GET(request: NextRequest) {
 
     // Discord notification is best-effort
     try {
-      if (getNotif(notifConfig, 'ad_fuel_low').discord) await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      if (getNotif(notifConfig, 'ad_fuel_low').client) await sendDiscordMessage(botToken, client.discord_channel_id, message)
     } catch (err) {
       console.error(`[ad-fuel-alerts] Discord send failed for ${client.name}:`, err)
     }

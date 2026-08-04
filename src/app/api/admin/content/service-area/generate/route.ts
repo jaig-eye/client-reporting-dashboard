@@ -519,7 +519,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   // Discord notification
   const discordToken = agency?.discord_bot_token as string | null
   const notifConfig  = ((agency as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
-  if (discordToken && getNotif(notifConfig, 'content_sa_generated').discord) {
+  if (discordToken && getNotif(notifConfig, 'content_sa_generated').client) {
     // Fire-and-forget
     ;(async () => {
       try {

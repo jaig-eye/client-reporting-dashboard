@@ -207,7 +207,7 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_paused').discord) {
+      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_paused').client) {
         const total  = googleCount + metaCount
         const balStr = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const nameLines = [
@@ -256,7 +256,7 @@ export async function GET(request: NextRequest) {
             meta_campaigns_affected:   0,
           }),
         ])
-        if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').discord) {
+        if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').client) {
           const msg = `✅ **Ad Fuel Balance Restored — ${client.name}**: Balance is ${balStr}. No campaigns were recorded from auto-pause — please re-enable campaigns manually if needed.`
           try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
         }
@@ -294,7 +294,7 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').discord) {
+      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').client) {
         const total     = googleCount + metaCount
         const balStr    = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const gNames    = storedNames.google ?? []

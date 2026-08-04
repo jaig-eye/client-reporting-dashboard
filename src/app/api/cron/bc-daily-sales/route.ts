@@ -163,7 +163,7 @@ export async function GET(request: NextRequest) {
     ].join('\n')
 
     try {
-      if (getNotif(notifConfig, 'bc_daily_sales').discord) await sendDiscordMessage(botToken, channelId, message)
+      if (getNotif(notifConfig, 'bc_daily_sales').client) await sendDiscordMessage(botToken, channelId, message)
       results.push({ client: client.name, status: 'sent', yesterday: summary.grossRevenue, mtd: mtd.grossRevenue })
     } catch (err) {
       results.push({ client: client.name, status: 'discord_error', error: String(err) })
