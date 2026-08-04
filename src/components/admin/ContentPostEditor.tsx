@@ -212,6 +212,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [linkScan,        setLinkScan]        = useState<LinkScanResult | 'scanning' | null>(null)
   const [showBrokenLinks, setShowBrokenLinks] = useState(false)
 
+  const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
+
   // Mark dirty on any field change after initial load
   const loadedRef = useRef(false)
 
@@ -367,6 +369,26 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
       setTags(prev => prev.slice(0, -1))
     }
+  }
+
+  // ── Jump to broken link in content textarea ─────────────────────────────────
+  function jumpToLink(url: string) {
+    const textarea = contentTextareaRef.current
+    if (!textarea || !content) return
+    const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const hrefMatch = new RegExp(`href=["']${escaped}["']`, 'i').exec(content)
+    if (!hrefMatch) return
+    const tagStart = content.lastIndexOf('<a', hrefMatch.index)
+    const tagEnd   = content.indexOf('>', hrefMatch.index) + 1
+    const selStart = tagStart >= 0 ? tagStart : hrefMatch.index
+    setActiveEditorTab('content')
+    // Use rAF to ensure the tab has switched before trying to focus
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(selStart, tagEnd > selStart ? tagEnd : selStart + url.length)
+      const linesBefore = content.substring(0, selStart).split('\n').length
+      textarea.scrollTop = Math.max(0, (linesBefore - 3) * 18)
+    })
   }
 
   // ── Save Changes ────────────────────────────────────────────────────────────
@@ -762,8 +784,37 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* Content */}
               <div className="mb-4">
                 <label style={labelStyle}>Content (HTML)</label>
-                <textarea value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
+                <textarea ref={contentTextareaRef} value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
               </div>
+
+              {/* Broken links — inline panel below content HTML */}
+              {linkScan !== null && linkScan !== 'scanning' && (() => {
+                const broken = linkScan.links.filter(l => !l.ok)
+                if (broken.length === 0) return null
+                return (
+                  <div className="mb-4" style={{ border: '1px solid #fca5a5', borderRadius: 6, background: '#fff1f2', padding: '0.625rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      🔗 {broken.length} broken link{broken.length !== 1 ? 's' : ''} — click to jump
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {broken.map((l, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, fontSize: '0.75rem', color: l.redirected ? '#b45309' : '#dc2626', wordBreak: 'break-all' }}>
+                            {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` (${l.status})` : l.error ? ` (${l.error})` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => jumpToLink(l.url)}
+                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', color: '#dc2626', flexShrink: 0, whiteSpace: 'nowrap' }}
+                          >
+                            Jump ↓
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Featured image */}
               <div className="mb-4">

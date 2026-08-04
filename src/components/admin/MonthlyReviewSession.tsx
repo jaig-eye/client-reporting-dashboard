@@ -157,25 +157,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     // Keep the editor open so the user can see the error message
   }, [editorPostId])
 
-  if (editorPostId) {
-    const editorPost = initialPosts.find(p => p.id === editorPostId)
-    return (
-      <ContentPostEditor
-        postId={editorPostId}
-        defaultConnectionId={editorPost?.connection_id ?? null}
-        sites={allSites}
-        onClose={() => setEditorPostId(null)}
-        onUpdate={() => setEditorPostId(null)}
-        onRegenerateStart={handleRegenerateStart}
-        onRegenerateDone={handleRegenerateDone}
-        onRegenerateError={handleRegenerateError}
-      />
-    )
-  }
-
   const displayMonth = month || getMonth()
+  const editorPost = editorPostId ? initialPosts.find(p => p.id === editorPostId) : null
 
   return (
+    <>
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
       <MonthlyReviewProgress
         approvedCount={approvedCount}
@@ -245,5 +231,18 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         </div>
       )}
     </div>
+    {editorPostId && editorPost && (
+      <ContentPostEditor
+        postId={editorPostId}
+        defaultConnectionId={editorPost.connection_id ?? null}
+        sites={allSites}
+        onClose={() => setEditorPostId(null)}
+        onUpdate={() => setEditorPostId(null)}
+        onRegenerateStart={handleRegenerateStart}
+        onRegenerateDone={handleRegenerateDone}
+        onRegenerateError={handleRegenerateError}
+      />
+    )}
+    </>
   )
 }
