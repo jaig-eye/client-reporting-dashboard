@@ -242,6 +242,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
         onRegenerateError={handleRegenerateError}
+        autoScanLinks
       />
     )}
     </>

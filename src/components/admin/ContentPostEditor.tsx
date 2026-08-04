@@ -34,6 +34,7 @@ interface Props {
   onRegenerateStart?:  () => void
   onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
   onRegenerateError?:  () => void
+  autoScanLinks?:      boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
 }
 
 interface PostDetail {
@@ -151,7 +152,7 @@ const EDITOR_TABS: { id: EditorTab; label: string }[] = [
   { id: 'settings', label: 'Settings'   },
 ]
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, autoScanLinks }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -330,6 +331,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     if (connectionId) loadSiteData(connectionId)
   }, [connectionId, loadSiteData])
 
+  // Auto-scan links on mount when opened from a context that requests it (e.g. monthly review)
+  useEffect(() => {
+    if (autoScanLinks) handleScanLinks()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Live SEO computations ───────────────────────────────────────────────────
   const liveWordCount      = content ? countWords(content) : 0
   const liveHeadings       = content ? countHeadings(content) : 0
@@ -381,14 +388,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     const tagStart = content.lastIndexOf('<a', hrefMatch.index)
     const tagEnd   = content.indexOf('>', hrefMatch.index) + 1
     const selStart = tagStart >= 0 ? tagStart : hrefMatch.index
+    const selEnd   = tagEnd > selStart ? tagEnd : selStart + url.length
     setActiveEditorTab('content')
-    // Use rAF to ensure the tab has switched before trying to focus
-    requestAnimationFrame(() => {
+    // setTimeout(50) gives the tab-switch re-render time to complete.
+    // HTML has very few newlines so line-counting is unreliable — use a character-position
+    // proportion against scrollHeight to center the match in the visible viewport.
+    setTimeout(() => {
       textarea.focus()
-      textarea.setSelectionRange(selStart, tagEnd > selStart ? tagEnd : selStart + url.length)
-      const linesBefore = content.substring(0, selStart).split('\n').length
-      textarea.scrollTop = Math.max(0, (linesBefore - 3) * 18)
-    })
+      textarea.setSelectionRange(selStart, selEnd)
+      const ratio = selStart / Math.max(content.length, 1)
+      textarea.scrollTop = Math.max(0, ratio * textarea.scrollHeight - textarea.clientHeight / 3)
+    }, 50)
   }
 
   // ── Save Changes ────────────────────────────────────────────────────────────
