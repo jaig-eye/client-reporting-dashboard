@@ -259,7 +259,11 @@ export default function NotificationTypeTable() {
 
             {/* Rows */}
             {group.rows.map((row, i) => {
-              const eff    = getEffective(row.key)
+              // For merged rows: if the primary key was never persisted, fall back to
+              // the first linked key's values so the UI reflects the actual saved state.
+              const eff    = (!local?.[row.key] && row.linkedKeys?.[0])
+                ? getEffective(row.linkedKeys[0])
+                : getEffective(row.key)
               const isLast = i === group.rows.length - 1
               return (
                 <div

@@ -82,7 +82,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } else {
       playApprove()
     }
-    setApprovedIds(nextApproved)
+    setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/approve`, {
