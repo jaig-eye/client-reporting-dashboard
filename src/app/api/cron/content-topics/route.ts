@@ -549,7 +549,7 @@ export async function GET(request: NextRequest) {
   {
     const { data: saSettingsRows } = await db
       .from('service_area_settings')
-      .select('client_id, pages_per_run, auto_approve_pages, auto_push_pages, schedule_frequency, schedule_day_of_week')
+      .select('client_id, pages_per_run, auto_approve_pages, auto_push_pages, schedule_frequency, schedule_day_of_week, service_areas, service_pages, slug_structure, base_page_path')
       .eq('auto_generate', true)
       .not('client_id', 'is', null)
 
@@ -557,12 +557,16 @@ export async function GET(request: NextRequest) {
     const saPushed:     string[] = []
 
     for (const saRow of (saSettingsRows ?? []) as {
-      client_id:           string
-      pages_per_run:       number | null
-      auto_approve_pages:  boolean | null
-      auto_push_pages:     boolean | null
-      schedule_frequency:  string | null
+      client_id:            string
+      pages_per_run:        number | null
+      auto_approve_pages:   boolean | null
+      auto_push_pages:      boolean | null
+      schedule_frequency:   string | null
       schedule_day_of_week: number | null
+      service_areas:        { city: string; state: string; rationale?: string }[] | null
+      service_pages:        { name: string; url?: string }[] | null
+      slug_structure:       string | null
+      base_page_path:       string | null
     }[]) {
       const {
         client_id:          saClientId,
@@ -572,6 +576,158 @@ export async function GET(request: NextRequest) {
       } = saRow
 
       const saLimit = pagesPerRun ?? 1
+
+      // ── Auto-schedule SA topics for upcoming slots (mirrors blog lead-window) ─
+      {
+        const saFrequency  = saRow.schedule_frequency   ?? 'monthly'
+        const saDayOfWeek  = saRow.schedule_day_of_week ?? 1
+        const saServiceAreas = saRow.service_areas ?? []
+
+        if (saServiceAreas.length > 0) {
+          const saCycle      = getCycleDays(saFrequency)
+          const saLeadWindow = saCycle * 8 // 8-cycle look-ahead (same as wizard default)
+          const saWeeksToScan = Math.ceil(saLeadWindow / 7) + 1
+
+          const saSlots = computeFutureSlots(saFrequency, saDayOfWeek, saWeeksToScan).filter(slot => {
+            const daysOut = Math.round((new Date(slot + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
+            return daysOut > 0 && daysOut <= saLeadWindow
+          })
+
+          // Fetch all non-rejected SA topics for this client (slot occupancy + dedup)
+          const { data: allSaTopics } = await db
+            .from('content_topics')
+            .select('target_publish_date, city, state_abbr, service_name')
+            .eq('client_id', saClientId)
+            .eq('content_type', 'service_area')
+            .not('status', 'eq', 'rejected')
+
+          // Count existing topics per slot
+          type SaTopicRow = { target_publish_date: string | null; city: string | null; state_abbr: string | null; service_name: string | null }
+          const topicsPerSlot = new Map<string, number>()
+          for (const t of (allSaTopics ?? []) as SaTopicRow[]) {
+            if (t.target_publish_date) topicsPerSlot.set(t.target_publish_date, (topicsPerSlot.get(t.target_publish_date) ?? 0) + 1)
+          }
+
+          // Build dedup set from existing topics
+          const saExistingCombos = new Set<string>()
+          for (const t of (allSaTopics ?? []) as SaTopicRow[]) {
+            if (t.city && t.state_abbr && t.service_name) {
+              saExistingCombos.add(`${t.city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${t.state_abbr.toLowerCase()}|${t.service_name.toLowerCase().replace(/[^a-z0-9]/g, '')}`)
+            }
+          }
+
+          // Also dedup against live sitemap pages
+          const { data: sitemapRows } = await db
+            .from('content_sitemap_pages')
+            .select('url')
+            .eq('client_id', saClientId)
+
+          const saSlugStructure = saRow.slug_structure ?? 'service_slash_city_state'
+          const saBasePath      = saRow.base_page_path?.trim() ?? null
+          for (const p of (sitemapRows ?? []) as { url: string }[]) {
+            // Inline parse: extract service+city+state from sitemap URL
+            try {
+              const pathname = new URL(p.url).pathname.replace(/\/$/, '')
+              let city = '', state = '', service = ''
+              if (saBasePath) {
+                const base = saBasePath.replace(/^\/|\/$/g, '')
+                if (!pathname.startsWith(`/${base}/`)) continue
+                const child = pathname.slice(`/${base}/`.length)
+                if (!child) continue
+                service = base.split('/').pop() ?? ''
+                const lastHyphen = child.lastIndexOf('-')
+                if (lastHyphen !== -1 && child.slice(lastHyphen + 1).length === 2) {
+                  state = child.slice(lastHyphen + 1).toUpperCase()
+                  city  = child.slice(0, lastHyphen)
+                } else {
+                  city = child
+                }
+              } else if (saSlugStructure === 'service_slash_city_state' || saSlugStructure === 'service_slash_city') {
+                const parts = pathname.split('/').filter(Boolean)
+                if (parts.length !== 2) continue
+                service = parts[0]
+                const lastHyphen = parts[1].lastIndexOf('-')
+                if (saSlugStructure === 'service_slash_city_state' && lastHyphen !== -1 && parts[1].slice(lastHyphen + 1).length === 2) {
+                  state = parts[1].slice(lastHyphen + 1).toUpperCase()
+                  city  = parts[1].slice(0, lastHyphen)
+                } else {
+                  city = parts[1]
+                }
+              } else if (saSlugStructure === 'service_dash_city_state') {
+                const seg = pathname.split('/').filter(Boolean)
+                if (seg.length !== 1) continue
+                const m = seg[0].match(/^(.+)-([a-z]{2})$/)
+                if (!m) continue
+                state = m[2].toUpperCase()
+                const dashParts = m[1].split('-')
+                service = dashParts[0]; city = dashParts.slice(1).join('-')
+              }
+              if (city && service) {
+                saExistingCombos.add(`${city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${state.toLowerCase()}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`)
+              }
+            } catch { /* skip unparseable URLs */ }
+          }
+
+          // Build service list (same priority as wizard: service_pages → brand DNA)
+          const saServicePageNames = (saRow.service_pages ?? []).map((p: { name: string }) => p.name)
+          const { data: saContentSettings } = await db
+            .from('content_settings')
+            .select('services')
+            .eq('client_id', saClientId)
+            .maybeSingle()
+          const brandDnaServices = ((saContentSettings?.services as string | null) ?? '')
+            .split(',').map((s: string) => s.trim()).filter(Boolean)
+
+          const serviceSet = new Map<string, string>()
+          const addSvc = (s: string) => { const k = s.toLowerCase(); if (!serviceSet.has(k)) serviceSet.set(k, s) }
+          saServicePageNames.forEach(addSvc)
+          brandDnaServices.forEach(addSvc)
+          const saServices = Array.from(serviceSet.values())
+
+          if (saServices.length > 0) {
+            const saToInsert: {
+              client_id: string; content_type: string
+              city: string; state_abbr: string; service_name: string
+              topic: string; rationale: string | null; status: string; target_publish_date: string
+            }[] = []
+            let areaIdx = 0, serviceIdx = 0
+
+            for (const slot of saSlots) {
+              const filled  = topicsPerSlot.get(slot) ?? 0
+              const needed  = Math.max(0, saLimit - filled)
+              for (let p = 0; p < needed; p++) {
+                const maxAttempts = Math.max(1, saServices.length * saServiceAreas.length)
+                let placed = false
+                for (let attempt = 0; attempt < maxAttempts && !placed; attempt++) {
+                  const area    = saServiceAreas[areaIdx    % saServiceAreas.length]
+                  const service = saServices[serviceIdx % saServices.length]
+                  areaIdx++; serviceIdx++
+                  const key = `${area.city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${area.state.toLowerCase()}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+                  if (saExistingCombos.has(key)) continue
+                  saExistingCombos.add(key)
+                  saToInsert.push({
+                    client_id:           saClientId,
+                    content_type:        'service_area',
+                    city:                area.city,
+                    state_abbr:          area.state,
+                    service_name:        service,
+                    topic:               `${service} in ${area.city}, ${area.state}`,
+                    rationale:           area.rationale ?? null,
+                    status:              'pending',
+                    target_publish_date: slot,
+                  })
+                  placed = true
+                }
+              }
+            }
+
+            if (saToInsert.length > 0) {
+              await db.from('content_topics').insert(saToInsert)
+              console.log(`[content-topics cron] SA auto-scheduled ${saToInsert.length} topics for ${saClientId}`)
+            }
+          }
+        }
+      }
 
       // Resolve client name for notifications
       const { data: saClient } = await db
