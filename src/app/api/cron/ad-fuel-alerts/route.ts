@@ -19,12 +19,13 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
 
   // Round 1: agency settings (need cutoffDate before RPC params)
-  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, notification_config').single()
+  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, discord_ops_channel_id, notification_config').single()
 
   const botToken    = agencyRes.data?.discord_bot_token
   if (!botToken) return NextResponse.json({ skipped: true, reason: 'No discord_bot_token configured' })
 
-  const notifConfig = ((agencyRes.data as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  const notifConfig  = ((agencyRes.data as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  const opsChannelId = (agencyRes.data as Record<string, unknown> | null)?.discord_ops_channel_id as string | null ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
   const agencyCut   = agencyRes.data?.ad_fuel_cut ?? 0.20
   const cutoffDate  = agencyRes.data?.ad_fuel_cutoff_date ?? '2025-01-01'
   const cutoffMs   = new Date(cutoffDate + 'T00:00:00Z').getTime()
@@ -228,7 +229,9 @@ export async function GET(request: NextRequest) {
 
     // Discord notification is best-effort
     try {
-      if (getNotif(notifConfig, 'ad_fuel_low').client) await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      const notifFuel = getNotif(notifConfig, 'ad_fuel_low')
+      if (notifFuel.client && client.discord_channel_id) await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      if (notifFuel.agency && opsChannelId)             await sendDiscordMessage(botToken, opsChannelId, message)
     } catch (err) {
       console.error(`[ad-fuel-alerts] Discord send failed for ${client.name}:`, err)
     }

@@ -526,7 +526,7 @@ export async function GET(request: NextRequest) {
           const bcBlogUrl = `https://login.bigcommerce.com/manage/content/blog`
           const alertMsg  = `⚠️ BC post due tomorrow — ${bp.title ?? '(untitled)'} for ${clientNameBc} needs manual publish: ${bcBlogUrl}`
 
-          if (discordBotTk && opsChannelId && getNotif(notifConfig, 'content_bc_post_due').email) {
+          if (discordBotTk && opsChannelId && getNotif(notifConfig, 'content_bc_post_due').agency) {
             void sendDiscordMessage(discordBotTk, opsChannelId, alertMsg).catch(() => {})
           }
 
@@ -757,7 +757,7 @@ export async function GET(request: NextRequest) {
               link_url:    contentUrl,
             }).then(null, () => {})
 
-            if (saDiscordToken && opsChannelId && getNotif(notifConfig, 'content_sa_auto_pushed').email) {
+            if (saDiscordToken && opsChannelId && getNotif(notifConfig, 'content_sa_auto_pushed').agency) {
               void sendDiscordMessage(
                 saDiscordToken, opsChannelId,
                 `📍 **${successSaPosts.length} service area page${successSaPosts.length === 1 ? '' : 's'} auto-pushed** for **${saClientName}** — review in draft: ${contentUrl}`
@@ -810,7 +810,7 @@ export async function GET(request: NextRequest) {
             const bcPagesUrl = `https://login.bigcommerce.com/manage/content/pages`
             const alertMsg   = `⚠️ BC service area page due tomorrow — ${bp.title ?? '(untitled)'} for ${saClientName} needs manual publish: ${bcPagesUrl}`
 
-            if (saDiscordTokenSpot && opsChannelId && getNotif(notifConfig, 'content_bc_sa_due').email) {
+            if (saDiscordTokenSpot && opsChannelId && getNotif(notifConfig, 'content_bc_sa_due').agency) {
               void sendDiscordMessage(saDiscordTokenSpot, opsChannelId, alertMsg).catch(() => {})
             }
             db.from('admin_alerts').insert({
@@ -1036,7 +1036,7 @@ export async function GET(request: NextRequest) {
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
         })
-        if (!insertErr && getNotif(notifConfig, 'content_monthly_review').email) {
+        if (!insertErr && getNotif(notifConfig, 'content_monthly_review').agency) {
           void sendDiscordMessage(
             discordBotToken, opsChannelId,
             `✍️ **Monthly review ready** — ${totalCount} post${totalCount === 1 ? '' : 's'} · ${clientCount} client${clientCount === 1 ? '' : 's'} · ${weekCount} week${weekCount === 1 ? '' : 's'}\nReview: ${contentUrl}`
@@ -1118,7 +1118,7 @@ export async function GET(request: NextRequest) {
             meta: { content_type: 'monthly_mid_check', count: pendingCount, month: monthStart },
             link_url: contentReviewUrl,
           })
-          if (!midInsertErr && getNotif(notifConfig, 'content_mid_month_check').email) {
+          if (!midInsertErr && getNotif(notifConfig, 'content_mid_month_check').agency) {
             void sendDiscordMessage(discordBotToken, opsChannelId,
               `📋 **${pendingCount} post${pendingCount === 1 ? '' : 's'} still awaiting approval** — ${pendingClients} client${pendingClients === 1 ? '' : 's'} need review\nReview: ${contentReviewUrl}`
             ).catch(() => {})

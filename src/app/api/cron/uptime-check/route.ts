@@ -51,10 +51,9 @@ async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckR
       },
     })
     const responseMs = Date.now() - start
-    // 401/403 = auth-gated or WAF challenge page — server is up.
-    // 429 = monitor is rate-limited, not the site broken — count as UP to avoid false alerts.
-    // 404, 5xx = site genuinely broken.
-    const isUp = res.status < 400 || res.status === 401 || res.status === 403 || res.status === 429
+    // Any 4xx means the server IS responding (auth wall, rate limit, not-found, etc.) = UP.
+    // Only 5xx server errors = genuinely broken. 499 (nginx client disconnect) is 4xx → UP.
+    const isUp = res.status < 500
     return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
   } catch (err) {
     const responseMs = Date.now() - start
@@ -78,17 +77,18 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, notification_email, agency_name, notification_config')
+      .select('discord_bot_token, discord_ops_channel_id, notification_email, agency_name, notification_config')
       .maybeSingle(),
     db.from('sites')
       .select('id, name, url, status, is_up, consecutive_failures, client_id, discord_channel_id, clients(name, discord_channel_id)')
       .eq('status', 'active'),
   ])
 
-  const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
-  const alertEmail = agencyRes.data?.notification_email as string | null ?? null
-  const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
-  const notifConfig = (agencyRes.data?.notification_config as import('@/lib/notificationConfig').NotifConfig | null) ?? {}
+  const botToken        = agencyRes.data?.discord_bot_token as string | null ?? null
+  const alertEmail      = agencyRes.data?.notification_email as string | null ?? null
+  const agencyName      = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const opsChannelId    = (agencyRes.data?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
+  const notifConfig     = (agencyRes.data?.notification_config as import('@/lib/notificationConfig').NotifConfig | null) ?? {}
   const sites      = (sitesRes.data ?? []) as unknown as SiteRow[]
 
   if (sites.length === 0) {
@@ -142,8 +142,8 @@ export async function GET(request: NextRequest) {
     })
 
     const wasDown = site.is_up === false
-    // Site-level channel: own channel, then client-level default, then agency-wide fallback.
-    const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+    // Client-level channel for per-client Discord notifications.
+    const clientChannelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? null
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
@@ -194,7 +194,9 @@ export async function GET(request: NextRequest) {
         })
 
         const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
-        if (getNotif(notifConfig, 'uptime_down').email) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        const notifDown = getNotif(notifConfig, 'uptime_down')
+        if (notifDown.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+        if (notifDown.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
         if (alertEmail) {
           await sendEmail({
@@ -235,7 +237,9 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          if (getNotif(notifConfig, 'uptime_recovered').email) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+          const notifRecovered = getNotif(notifConfig, 'uptime_recovered')
+          if (notifRecovered.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+          if (notifRecovered.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
           if (alertEmail) {
             await sendEmail({

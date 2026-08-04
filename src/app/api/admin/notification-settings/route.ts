@@ -30,15 +30,17 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Validate shape: each key must be { discord, ops, client } booleans
+  // Validate shape: each key must have at least one known boolean field
   const config = body.config ?? {}
   for (const [key, val] of Object.entries(config)) {
     if (typeof val !== 'object' || val === null) {
       return NextResponse.json({ error: `Invalid value for key "${key}"` }, { status: 400 })
     }
     const v = val as unknown as Record<string, unknown>
-    if (typeof v.discord !== 'boolean' || typeof v.ops !== 'boolean' || typeof v.client !== 'boolean') {
-      return NextResponse.json({ error: `Key "${key}" must have boolean discord, ops, client fields` }, { status: 400 })
+    const knownFields = ['agency', 'email', 'manager', 'client']
+    const hasKnown = knownFields.some(f => f in v && typeof v[f] === 'boolean')
+    if (!hasKnown) {
+      return NextResponse.json({ error: `Key "${key}" must have at least one of: agency, email, manager, client` }, { status: 400 })
     }
   }
 

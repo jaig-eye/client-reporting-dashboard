@@ -896,7 +896,7 @@ export default function AgencySettingsPage() {
           <div className="card p-6">
             <div style={{ marginBottom: 16 }}>
               <h2 className="section-title">Notification Types</h2>
-              <p className="section-desc">Control which events send a global team email, account manager email, or client Discord message.</p>
+              <p className="section-desc">Control which events send to Agency Discord, Global Emails, the Account Manager, or the Client Discord channel.</p>
             </div>
             <FormField label="Global Email Address" hint="receives all Global Emails notifications">
               <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
@@ -925,13 +925,13 @@ export default function AgencySettingsPage() {
               )}
             </FormField>
             <NotificationTypeTable />
-          </div>
 
-          <div className="card p-6 space-y-5">
-            <div>
-              <h2 className="section-title">Metric Alert Thresholds</h2>
-              <p className="section-desc">Configure when metric anomaly alerts fire via email.</p>
-            </div>
+            {/* Metric Alert Thresholds — folded into this card */}
+            <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>Metric Alert Thresholds</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Configure when metric anomaly alerts fire via email.</div>
+              </div>
             <div className="space-y-3">
               <Toggle
                 label="Metric anomaly alerts (email)"
@@ -1011,6 +1011,7 @@ export default function AgencySettingsPage() {
                   </div>
                 </div>
               )}
+            </div>
             </div>
           </div>
 

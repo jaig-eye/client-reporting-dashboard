@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
 
   // Round 1: agency settings (need cutoffDate before RPC params)
-  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, notification_config').single()
+  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, discord_ops_channel_id, notification_config').single()
 
-  type AgencyRow  = { ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null; discord_bot_token: string | null }
+  type AgencyRow  = { ad_fuel_cut: number | null; ad_fuel_cutoff_date: string | null; discord_bot_token: string | null; discord_ops_channel_id: string | null }
   type ClientRow  = { id: string; name: string; ad_fuel_cut: number | null; historic_bill_day: number | null; discord_channel_id: string | null; auto_pause_ads: boolean; auto_resume_ads: boolean; campaigns_paused_at: string | null }
   type SumRow     = { client_id: string; spend: number }
   type LedgerRow  = { client_id: string; amount_af: number; split_override: number | null; date_of_payment: string }
@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
   const agencyCut   = (agencyRes.data as AgencyRow | null)?.ad_fuel_cut ?? 0.20
   const cutoffDate  = (agencyRes.data as AgencyRow | null)?.ad_fuel_cutoff_date ?? '2025-01-01'
   const botToken    = (agencyRes.data as AgencyRow | null)?.discord_bot_token ?? null
+  const opsChannelId = (agencyRes.data as AgencyRow | null)?.discord_ops_channel_id ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
   const notifConfig = ((agencyRes.data as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
   const cutoffMs    = new Date(cutoffDate + 'T00:00:00Z').getTime()
 
@@ -207,7 +208,8 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_paused').client) {
+      if (botToken) {
+        const notifPaused = getNotif(notifConfig, 'ad_fuel_paused')
         const total  = googleCount + metaCount
         const balStr = `$${Math.abs(balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const nameLines = [
@@ -215,7 +217,10 @@ export async function GET(request: NextRequest) {
           metaCampaignNames.length   > 0 ? `Meta: ${fmtNames(metaCampaignNames)}`     : '',
         ].filter(Boolean).join('\n')
         const msg = `🚨 **Ad Fuel Auto-Pause — ${client.name}**: Balance is -${balStr}. ${total} campaign(s) paused (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
-        try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+        try {
+          if (notifPaused.client && client.discord_channel_id) await sendDiscordMessage(botToken, client.discord_channel_id, msg)
+          if (notifPaused.agency && opsChannelId)              await sendDiscordMessage(botToken, opsChannelId, msg)
+        } catch {}
       }
 
       paused.push(client.name)
@@ -256,9 +261,13 @@ export async function GET(request: NextRequest) {
             meta_campaigns_affected:   0,
           }),
         ])
-        if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').client) {
+        if (botToken) {
+          const notifResumed = getNotif(notifConfig, 'ad_fuel_resumed')
           const msg = `✅ **Ad Fuel Balance Restored — ${client.name}**: Balance is ${balStr}. No campaigns were recorded from auto-pause — please re-enable campaigns manually if needed.`
-          try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+          try {
+            if (notifResumed.client && client.discord_channel_id) await sendDiscordMessage(botToken, client.discord_channel_id, msg)
+            if (notifResumed.agency && opsChannelId)              await sendDiscordMessage(botToken, opsChannelId, msg)
+          } catch {}
         }
         resumed.push(client.name)
         continue
@@ -294,7 +303,8 @@ export async function GET(request: NextRequest) {
         }),
       ])
 
-      if (botToken && client.discord_channel_id && getNotif(notifConfig, 'ad_fuel_resumed').client) {
+      if (botToken) {
+        const notifResumed2 = getNotif(notifConfig, 'ad_fuel_resumed')
         const total     = googleCount + metaCount
         const balStr    = `$${balance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
         const gNames    = storedNames.google ?? []
@@ -304,7 +314,10 @@ export async function GET(request: NextRequest) {
           mNames.length > 0 ? `Meta: ${fmtNames(mNames)}`   : '',
         ].filter(Boolean).join('\n')
         const msg = `✅ **Ad Fuel Auto-Resume — ${client.name}**: Balance restored to ${balStr}. ${total} campaign(s) resumed (${googleCount} Google, ${metaCount} Meta).${nameLines ? `\n${nameLines}` : ''}${errorMsg ? `\n⚠️ Errors: ${errorMsg}` : ''}`
-        try { await sendDiscordMessage(botToken, client.discord_channel_id, msg) } catch {}
+        try {
+          if (notifResumed2.client && client.discord_channel_id) await sendDiscordMessage(botToken, client.discord_channel_id, msg)
+          if (notifResumed2.agency && opsChannelId)              await sendDiscordMessage(botToken, opsChannelId, msg)
+        } catch {}
       }
 
       resumed.push(client.name)

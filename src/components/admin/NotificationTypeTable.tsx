@@ -7,53 +7,55 @@ interface NotifRow {
   key:        string
   label:      string
   description: string
+  hasAgency:  boolean  // agency Discord ops channel
   hasEmail:   boolean  // global team email
   hasManager: boolean  // account manager email
   hasClient:  boolean  // per-client Discord
+  isBc?:      boolean  // BigCommerce-specific row (visual grouping)
 }
 
 const GROUPS: { title: string; rows: NotifRow[] }[] = [
   {
     title: 'Uptime & SSL',
     rows: [
-      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasEmail: true,  hasManager: true,  hasClient: false },
-      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasEmail: true,  hasManager: true,  hasClient: false },
-      { key: 'ssl_expiry',       label: 'SSL expiring / expired', description: 'Fires when a certificate is within 30 days of expiry', hasEmail: true,  hasManager: false, hasClient: false },
+      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'ssl_expiry',       label: 'SSL expiring / expired', description: 'Fires when a certificate is within 30 days of expiry', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
     ],
   },
   {
     title: 'Content',
     rows: [
-      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once per month when posts are generated and ready to approve',  hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_mid_month_check', label: 'Mid-month pending reminder', description: 'After the 10th if posts are still unapproved',                   hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_post_generated',  label: 'Post generated',             description: 'Sent when a new post is ready for review',                       hasEmail: false, hasManager: true,  hasClient: true  },
-      { key: 'content_post_published',  label: 'Post published to WP / BC', description: 'Sent when a post is uploaded and approved',                       hasEmail: false, hasManager: true,  hasClient: true  },
-      { key: 'content_sa_generated',    label: 'SA page generated',          description: 'Sent when a service area page is ready for review',               hasEmail: false, hasManager: true,  hasClient: true  },
+      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once per month when posts are generated and ready to approve',  hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
+      { key: 'content_mid_month_check', label: 'Mid-month pending reminder', description: 'After the 10th if posts are still unapproved',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
+      { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
+      { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_post_generated',  label: 'Post generated',             description: 'Sent when a new post is ready for review',                       hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'content_post_published',  label: 'Post published to WP / BC', description: 'Sent when a post is uploaded and approved',                       hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'content_sa_generated',    label: 'SA page generated',          description: 'Sent when a service area page is ready for review',               hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
     ],
   },
   {
     title: 'Ad Management',
     rows: [
-      { key: 'ad_fuel_low',     label: 'Ad Fuel low / depleted',  description: 'Balance dropped below threshold or hit zero',        hasEmail: false, hasManager: true,  hasClient: true },
-      { key: 'ad_fuel_paused',  label: 'Campaigns auto-paused',   description: 'Ad Fuel balance went negative and campaigns paused', hasEmail: false, hasManager: true,  hasClient: true },
-      { key: 'ad_fuel_resumed', label: 'Campaigns auto-resumed',  description: 'Balance restored and campaigns re-enabled',          hasEmail: false, hasManager: true,  hasClient: true },
-      { key: 'bc_daily_sales',  label: 'BigCommerce daily sales', description: 'Daily sales summary sent to client channel',         hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'ad_fuel_low',     label: 'Ad Fuel low / depleted',  description: 'Balance dropped below threshold or hit zero',        hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
+      { key: 'ad_fuel_paused',  label: 'Campaigns auto-paused',   description: 'Ad Fuel balance went negative and campaigns paused', hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
+      { key: 'ad_fuel_resumed', label: 'Campaigns auto-resumed',  description: 'Balance restored and campaigns re-enabled',          hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
+      { key: 'bc_daily_sales',  label: 'BigCommerce daily sales', description: 'Daily sales summary sent to client channel',         hasAgency: false, hasEmail: false, hasManager: false, hasClient: true, isBc: true },
     ],
   },
   {
     title: 'Email Workflow',
     rows: [
-      { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasEmail: true, hasManager: false, hasClient: true },
-      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
     ],
   },
   {
     title: 'Sync & Integration',
     rows: [
-      { key: 'sync_connector_error', label: 'Connector auth error', description: 'An OAuth token expired or was revoked', hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'sync_connector_error', label: 'Connector auth error', description: 'An OAuth token expired or was revoked', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
 ]
@@ -64,9 +66,12 @@ function Toggle({ checked, disabled, onChange, color }: {
   checked:   boolean
   disabled?: boolean
   onChange:  (v: boolean) => void
-  color:     'blue' | 'purple' | 'green'
+  color:     'amber' | 'blue' | 'purple' | 'green'
 }) {
-  const activeColor = color === 'blue' ? '#2563eb' : color === 'purple' ? '#7c3aed' : '#16a34a'
+  const activeColor =
+    color === 'amber'  ? '#d97706' :
+    color === 'blue'   ? '#2563eb' :
+    color === 'purple' ? '#7c3aed' : '#16a34a'
   return (
     <button
       role="switch"
@@ -123,27 +128,36 @@ export default function NotificationTypeTable() {
       .finally(() => setLoading(false))
   }, [])
 
-  const DEFAULT: NotifSettings = { email: true, manager: false, client: true }
+  const DEFAULT: NotifSettings = { agency: true, email: false, manager: false, client: true }
 
   const getEffective = useCallback((key: string): NotifSettings => {
     const raw = local?.[key] as Record<string, boolean> | undefined
     if (!raw) return DEFAULT
-    // Handle old schema on read
     if ('discord' in raw || 'ops' in raw) {
       return {
-        email:   (raw.discord ?? true) && (raw.ops ?? true),
+        agency:  (raw.discord ?? true) && (raw.ops ?? true),
+        email:   false,
         manager: false,
         client:  (raw.discord ?? true) && (raw.client ?? true),
       }
     }
+    if ('email' in raw && !('agency' in raw)) {
+      return {
+        agency:  raw.email   ?? true,
+        email:   false,
+        manager: raw.manager ?? false,
+        client:  raw.client  ?? true,
+      }
+    }
     return {
-      email:   raw.email   ?? true,
+      agency:  raw.agency  ?? true,
+      email:   raw.email   ?? false,
       manager: raw.manager ?? false,
       client:  raw.client  ?? true,
     }
   }, [local])
 
-  function set(key: string, field: 'email' | 'manager' | 'client', value: boolean) {
+  function set(key: string, field: 'agency' | 'email' | 'manager' | 'client', value: boolean) {
     setLocal(prev => {
       const cur = getEffective(key)
       return { ...prev, [key]: { ...cur, [field]: value } }
@@ -176,23 +190,27 @@ export default function NotificationTypeTable() {
 
   if (loading) return <div style={{ color: 'var(--text-muted)', padding: '8px 0', fontSize: 13 }}>Loading…</div>
 
-  const COL_W = 86
+  const COL_W = 72
 
   return (
     <div>
       {/* Channel legend */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#2563eb', display: 'inline-block' }} />
-          Global Emails — agency-wide email
+      <div style={{ display: 'flex', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#d97706', display: 'inline-block', flexShrink: 0 }} />
+          Agency Discord
         </span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#7c3aed', display: 'inline-block' }} />
-          Acc Manager — account manager email
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#2563eb', display: 'inline-block', flexShrink: 0 }} />
+          Global Emails
         </span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
-          Client Discord — per-client channel
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />
+          Acc Manager
+        </span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#16a34a', display: 'inline-block', flexShrink: 0 }} />
+          Client Discord
         </span>
       </div>
 
@@ -227,10 +245,11 @@ export default function NotificationTypeTable() {
               <span style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
                 {group.title}
               </span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb', width: COL_W, textAlign: 'center' }}>Global Emails</span>
-                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7c3aed', width: COL_W, textAlign: 'center' }}>Acc Manager</span>
-                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#16a34a', width: COL_W, textAlign: 'center' }}>Client Discord</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#d97706', width: COL_W, textAlign: 'center' }}>Agency</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb', width: COL_W, textAlign: 'center' }}>Emails</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7c3aed', width: COL_W, textAlign: 'center' }}>Mgr</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#16a34a', width: COL_W, textAlign: 'center' }}>Client</span>
               </div>
             </div>
 
@@ -248,13 +267,30 @@ export default function NotificationTypeTable() {
                     gap:                 8,
                     borderBottom:        isLast ? 'none' : '1px solid var(--border)',
                     alignItems:          'center',
+                    borderLeft:          row.isBc ? '3px solid #f59e0b' : '3px solid transparent',
+                    background:          row.isBc ? 'rgba(245, 158, 11, 0.04)' : undefined,
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>{row.label}</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {row.isBc && (
+                        <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', borderRadius: 3, padding: '1px 4px', lineHeight: 1.4, flexShrink: 0 }}>
+                          BC
+                        </span>
+                      )}
+                      {row.label}
+                    </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 1 }}>{row.description}</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {/* Agency Discord */}
+                    <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
+                      {row.hasAgency ? (
+                        <Toggle checked={eff.agency} onChange={v => set(row.key, 'agency', v)} color="amber" />
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
+                      )}
+                    </div>
                     {/* Global Emails */}
                     <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
                       {row.hasEmail ? (

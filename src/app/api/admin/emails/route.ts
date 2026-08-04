@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
           `🔗 [Review now](${reviewUrl})`
 
         const notif = getNotif(notifConfig, 'email_submitted')
-        if (notif.email) await sendDiscordMessage(botToken, opsChannel, msg)
+        if (notif.agency) await sendDiscordMessage(botToken, opsChannel, msg)
 
         // Also ping per-client Discord channel
         const { data: client } = await db

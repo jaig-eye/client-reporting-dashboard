@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
           }).then(null, () => {})
 
           // Discord alert
-          if (discordToken && opsChannelId && getNotif(notifConfig, 'sync_connector_error').email) {
+          if (discordToken && opsChannelId && getNotif(notifConfig, 'sync_connector_error').agency) {
             const msg = `🔑 **Connector auth error — ${client.name}**\nAn integration token has expired or been revoked. Syncing is paused until reconnected.\n→ ${connectionsUrl}`
             void sendDiscordMessage(discordToken, opsChannelId, msg).catch(() => {})
           }
