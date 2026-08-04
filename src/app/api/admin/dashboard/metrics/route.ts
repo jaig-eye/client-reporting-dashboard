@@ -48,6 +48,7 @@ export type ClientMetricData = {
   deltaRoas?: number
   deltaCpl?: number
   afBalance: number
+  pendingAch: number
   hasAfLedger: boolean
 }
 
@@ -272,10 +273,11 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Round 3 (parallel): ad fuel cumulative queries ────────────────────────
-  const [afGoogleRes, afMetaRes, afLedgerRes] = await Promise.all([
+  const [afGoogleRes, afMetaRes, afLedgerRes, afPendingRes] = await Promise.all([
     db.rpc('sum_google_spend_by_client', { from_date: afCutoffDate }),
     db.rpc('sum_meta_spend_by_client',   { from_date: afCutoffDate }),
     db.from('ad_fuel_ledger').select('client_id, amount_af, date_of_payment'),
+    db.from('ad_fuel_ach_pending').select('client_id, amount_af'),
   ])
 
   const afGMap: Record<string, number> = {}
@@ -287,6 +289,11 @@ export async function GET(request: NextRequest) {
   for (const r of (afLedgerRes.data ?? []) as AfLedgerRow[]) {
     if (!afLedgerByClient[r.client_id]) afLedgerByClient[r.client_id] = []
     afLedgerByClient[r.client_id].push(r)
+  }
+
+  const pendingAchByClient: Record<string, number> = {}
+  for (const r of (afPendingRes.data ?? []) as { client_id: string; amount_af: number }[]) {
+    pendingAchByClient[r.client_id] = (pendingAchByClient[r.client_id] ?? 0) + Number(r.amount_af)
   }
 
   // ── Round 4: gap spend queries for historic_bill_day clients ──────────────
@@ -394,6 +401,7 @@ export async function GET(request: NextRequest) {
     const deltaCpl    = hasCompare && cpl  !== null && priorCpl  !== null ? calcDelta(cpl,  priorCpl)  : undefined
 
     const afBalance   = afBalanceByClient[client.id] ?? 0
+    const pendingAch  = pendingAchByClient[client.id] ?? 0
     const hasAfLedger = (afLedgerByClient[client.id]?.length ?? 0) > 0
 
     totalSpend += spend
@@ -401,7 +409,7 @@ export async function GET(request: NextRequest) {
     clientMetrics[client.id] = {
       spend, conversions, clicks, impressions, ctr, roas, cpl, showRoas, efficiencyScore,
       deltaSpend, deltaConv, deltaCtr, deltaClicks, deltaImpr, deltaRoas, deltaCpl,
-      afBalance, hasAfLedger,
+      afBalance, pendingAch, hasAfLedger,
     }
   }
 

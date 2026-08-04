@@ -198,6 +198,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [defaultAuthorId, setDefaultAuthorId] = useState<number | null>(null)
   const [wpTags,         setWpTags]         = useState<WpTag[]>([])
   const [categories,        setCategories]        = useState<WpCategory[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(false)
   const [categoryIds,       setCategoryIds]       = useState<number[]>([])
   const [categorySuggestion, setCategorySuggestion] = useState<CategorySuggestion | null>(null)
 
@@ -330,6 +331,42 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   useEffect(() => {
     if (connectionId) loadSiteData(connectionId)
   }, [connectionId, loadSiteData])
+
+  const refreshCategories = useCallback(async () => {
+    if (!connectionId) return
+    setCategoriesLoading(true)
+    try {
+      const res = await fetch(`/api/admin/wordpress/categories?connection_id=${connectionId}`)
+      if (!res.ok) return
+      const fetchedCats: WpCategory[] = (await res.json()).categories ?? []
+      setCategories(fetchedCats)
+      // Re-run suggestion only if the user hasn't pinned a category
+      if (categoryIds.length === 0) {
+        const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
+        const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
+        const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
+        const scored = nonDefault
+          .map(c => {
+            const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
+            const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
+            return { ...c, score }
+          })
+          .filter(c => c.score > 0)
+          .sort((a, b) => b.score - a.score)
+        if (scored.length > 0) {
+          setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
+        } else {
+          const blogCat = nonDefault.find(c => ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()))
+          setCategorySuggestion(blogCat
+            ? { id: blogCat.id, name: blogCat.name, isNew: false }
+            : { id: null, name: 'Blog', isNew: true }
+          )
+        }
+      }
+    } catch { /* non-fatal */ } finally {
+      setCategoriesLoading(false)
+    }
+  }, [connectionId, categoryIds, post?.targetKeyword, post?.title])
 
   // Auto-scan links on mount when opened from a context that requests it (e.g. monthly review)
   useEffect(() => {
@@ -1060,7 +1097,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* WP Categories */}
               {categories.length > 0 && (
                 <div className="mb-4">
-                  <label style={labelStyle}>WP Categories</label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>WP Categories</label>
+                    <button
+                      type="button"
+                      onClick={refreshCategories}
+                      disabled={categoriesLoading}
+                      style={{ fontSize: '0.6875rem', padding: '0.125rem 0.5rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--surface)', cursor: categoriesLoading ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: categoriesLoading ? 0.6 : 1 }}
+                    >
+                      {categoriesLoading ? '⟳ Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
                   {/* Auto-category suggestion — shown when no category is explicitly selected */}
                   {categorySuggestion && categoryIds.length === 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${categorySuggestion.isNew ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>

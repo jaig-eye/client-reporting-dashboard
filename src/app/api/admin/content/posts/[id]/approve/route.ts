@@ -214,10 +214,11 @@ export async function POST(
         const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
 
         await db.from('content_posts').update({
-          bc_post_id:    bcPage.id,
-          bc_store_hash: storeHash,
-          status:        'draft_saved',
-          published_url: bcEditUrl,
+          bc_post_id:        bcPage.id,
+          bc_store_hash:     storeHash,
+          status:            'draft_saved',
+          published_url:     bcEditUrl,
+          admin_approved_at: new Date().toISOString(),
         }).eq('id', id)
 
         const adminSession = await getAdminSession()
@@ -270,10 +271,11 @@ export async function POST(
       const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
 
       await db.from('content_posts').update({
-        bc_post_id:    Number(bcPost.id),
-        bc_store_hash: storeHash,
-        status:        'draft_saved',
-        published_url: bcEditUrl,
+        bc_post_id:        Number(bcPost.id),
+        bc_store_hash:     storeHash,
+        status:            'draft_saved',
+        published_url:     bcEditUrl,
+        admin_approved_at: new Date().toISOString(),
       }).eq('id', id)
 
       const adminSession = await getAdminSession()
@@ -496,11 +498,12 @@ export async function POST(
       : `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
 
     await db.from('content_posts').update({
-      wp_post_id:    result.id,
-      wp_site_url:   siteUrl,
-      wp_status:     isServiceArea ? result.status : wpPublishStatus,
-      status:        'draft_saved',
-      published_url: result.link || wpEditUrl,
+      wp_post_id:        result.id,
+      wp_site_url:       siteUrl,
+      wp_status:         isServiceArea ? result.status : wpPublishStatus,
+      status:            'draft_saved',
+      published_url:     result.link || wpEditUrl,
+      admin_approved_at: new Date().toISOString(),
     }).eq('id', id)
 
     // Inject nearby-city links into sibling SA pages (fire-and-forget)

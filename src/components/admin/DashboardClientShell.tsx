@@ -3,7 +3,7 @@
 import { useState, useEffect }  from 'react'
 import Link                      from 'next/link'
 import { ConnectorLogo }         from '@/components/ConnectorLogo'
-import { GearSix, BookOpen, Check } from '@phosphor-icons/react/dist/ssr'
+import { PresentationChart, BookOpen, Check } from '@phosphor-icons/react/dist/ssr'
 import type { ConnectorType }    from '@/lib/types'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
@@ -188,7 +188,7 @@ type BuiltRow = {
   | 'roas' | 'cpl' | 'showRoas' | 'efficiencyScore'
   | 'deltaSpend' | 'deltaConv' | 'deltaCtr' | 'deltaClicks'
   | 'deltaImpr' | 'deltaRoas' | 'deltaCpl'
-  | 'afBalance' | 'hasAfLedger'
+  | 'afBalance' | 'hasAfLedger' | 'pendingAch'
 >
 
 // ─── main component ───────────────────────────────────────────────────────────
@@ -308,6 +308,7 @@ export default function DashboardClientShell({
       deltaRoas:       metrics?.deltaRoas,
       deltaCpl:        metrics?.deltaCpl,
       afBalance:       metrics?.afBalance        ?? 0,
+      pendingAch:      metrics?.pendingAch       ?? 0,
       hasAfLedger:     metrics?.hasAfLedger      ?? false,
     }
   })
@@ -460,8 +461,8 @@ export default function DashboardClientShell({
                     >
                       {/* Client name + logo */}
                       <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                        <a
-                          href={`/api/admin/preview/${row.id}`}
+                        <Link
+                          href={`/admin/clients/${row.id}`}
                           style={{ color: 'var(--text-primary)', fontWeight: 600, textDecoration: 'none' }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -482,7 +483,7 @@ export default function DashboardClientShell({
                             )}
                             <span>{row.name}</span>
                           </div>
-                        </a>
+                        </Link>
                       </td>
 
                       {/* Data sources — connector logo icons */}
@@ -615,12 +616,22 @@ export default function DashboardClientShell({
                           <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                             {metricsLoading ? <SkeletonCell /> : (
                               row.hasAfLedger ? (
-                                <span style={{
-                                  color:      row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
-                                  fontWeight: 600,
-                                }}>
-                                  {fmtBalance(row.afBalance)}
-                                </span>
+                                <div>
+                                  <span style={{
+                                    color:      row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
+                                    fontWeight: 600,
+                                  }}>
+                                    {fmtBalance(row.afBalance)}
+                                  </span>
+                                  {(row.pendingAch ?? 0) > 0 && (() => {
+                                    const proj = row.afBalance + (row.pendingAch ?? 0)
+                                    return (
+                                      <div style={{ fontSize: '0.7rem', fontWeight: 400, marginTop: 1, color: proj >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                                        {fmtBalance(proj)} proj.
+                                      </div>
+                                    )
+                                  })()}
+                                </div>
                               ) : <Dash />
                             )}
                           </td>
@@ -652,9 +663,9 @@ export default function DashboardClientShell({
                               : <BookOpen size={16} aria-hidden />}
                           </button>
                         )}
-                        <Link
-                          href={`/admin/clients/${row.id}`}
-                          title="Client Settings"
+                        <a
+                          href={`/api/admin/preview/${row.id}`}
+                          title="View Client Dashboard"
                           style={{
                             display: 'inline-flex', alignItems: 'center',
                             padding: '0.3rem', borderRadius: 6,
@@ -662,8 +673,8 @@ export default function DashboardClientShell({
                             transition: 'background 0.1s, color 0.1s',
                           }}
                         >
-                          <GearSix size={16} aria-hidden />
-                        </Link>
+                          <PresentationChart size={16} aria-hidden />
+                        </a>
                       </td>
                     </tr>
                   )
