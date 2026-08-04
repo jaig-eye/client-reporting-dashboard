@@ -608,11 +608,20 @@ export async function GET(request: NextRequest) {
             if (t.target_publish_date) topicsPerSlot.set(t.target_publish_date, (topicsPerSlot.get(t.target_publish_date) ?? 0) + 1)
           }
 
+          const saSlugStructure = saRow.slug_structure ?? 'service_slash_city_state'
+          const saBasePath      = saRow.base_page_path?.trim() ?? null
+
+          // Dedup key: omit state for service_slash_city (state not encoded in URLs for this structure)
+          const saComboKey = (city: string, state: string, service: string) => {
+            const stateNorm = saSlugStructure === 'service_slash_city' ? '' : state.toLowerCase()
+            return `${city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${stateNorm}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+          }
+
           // Build dedup set from existing topics
           const saExistingCombos = new Set<string>()
           for (const t of (allSaTopics ?? []) as SaTopicRow[]) {
-            if (t.city && t.state_abbr && t.service_name) {
-              saExistingCombos.add(`${t.city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${t.state_abbr.toLowerCase()}|${t.service_name.toLowerCase().replace(/[^a-z0-9]/g, '')}`)
+            if (t.city && t.service_name) {
+              saExistingCombos.add(saComboKey(t.city, t.state_abbr ?? '', t.service_name))
             }
           }
 
@@ -622,10 +631,7 @@ export async function GET(request: NextRequest) {
             .select('url')
             .eq('client_id', saClientId)
 
-          const saSlugStructure = saRow.slug_structure ?? 'service_slash_city_state'
-          const saBasePath      = saRow.base_page_path?.trim() ?? null
           for (const p of (sitemapRows ?? []) as { url: string }[]) {
-            // Inline parse: extract service+city+state from sitemap URL
             try {
               const pathname = new URL(p.url).pathname.replace(/\/$/, '')
               let city = '', state = '', service = ''
@@ -662,9 +668,7 @@ export async function GET(request: NextRequest) {
                 const dashParts = m[1].split('-')
                 service = dashParts[0]; city = dashParts.slice(1).join('-')
               }
-              if (city && service) {
-                saExistingCombos.add(`${city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${state.toLowerCase()}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`)
-              }
+              if (city && service) saExistingCombos.add(saComboKey(city, state, service))
             } catch { /* skip unparseable URLs */ }
           }
 
@@ -690,34 +694,43 @@ export async function GET(request: NextRequest) {
               city: string; state_abbr: string; service_name: string
               topic: string; rationale: string | null; status: string; target_publish_date: string
             }[] = []
+            // Cartesian-product traversal: outer = areas, inner = services.
+            // Indices persist across slots so we distribute evenly without diagonal-skip bias.
             let areaIdx = 0, serviceIdx = 0
+            const numAreas    = saServiceAreas.length
+            const numServices = saServices.length
 
             for (const slot of saSlots) {
-              const filled  = topicsPerSlot.get(slot) ?? 0
-              const needed  = Math.max(0, saLimit - filled)
+              const filled = topicsPerSlot.get(slot) ?? 0
+              const needed = Math.max(0, saLimit - filled)
               for (let p = 0; p < needed; p++) {
-                const maxAttempts = Math.max(1, saServices.length * saServiceAreas.length)
                 let placed = false
-                for (let attempt = 0; attempt < maxAttempts && !placed; attempt++) {
-                  const area    = saServiceAreas[areaIdx    % saServiceAreas.length]
-                  const service = saServices[serviceIdx % saServices.length]
-                  areaIdx++; serviceIdx++
-                  const key = `${area.city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${area.state.toLowerCase()}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`
-                  if (saExistingCombos.has(key)) continue
-                  saExistingCombos.add(key)
-                  saToInsert.push({
-                    client_id:           saClientId,
-                    content_type:        'service_area',
-                    city:                area.city,
-                    state_abbr:          area.state,
-                    service_name:        service,
-                    topic:               `${service} in ${area.city}, ${area.state}`,
-                    rationale:           area.rationale ?? null,
-                    status:              'pending',
-                    target_publish_date: slot,
-                  })
-                  placed = true
+                outer: for (let ai = 0; ai < numAreas; ai++) {
+                  for (let si = 0; si < numServices; si++) {
+                    const area    = saServiceAreas[(areaIdx + ai) % numAreas]
+                    const service = saServices[(serviceIdx + si) % numServices]
+                    const key = saComboKey(area.city, area.state, service)
+                    if (saExistingCombos.has(key)) continue
+                    saExistingCombos.add(key)
+                    saToInsert.push({
+                      client_id:           saClientId,
+                      content_type:        'service_area',
+                      city:                area.city,
+                      state_abbr:          area.state,
+                      service_name:        service,
+                      topic:               `${service} in ${area.city}, ${area.state}`,
+                      rationale:           area.rationale ?? null,
+                      status:              'pending',
+                      target_publish_date: slot,
+                    })
+                    // Advance indices past what we just used
+                    areaIdx    = (areaIdx + ai + 1) % numAreas
+                    serviceIdx = (serviceIdx + si + 1) % numServices
+                    placed = true
+                    break outer
+                  }
                 }
+                if (!placed) break // all combos exhausted for this client
               }
             }
 
