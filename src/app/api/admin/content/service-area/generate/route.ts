@@ -523,7 +523,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   const imageGen  = !!(cs.content_image_generation)
   const imagePromptOverride = (cs.content_image_prompt as string | null) ?? undefined
   if (openaiKey && imageGen) {
-    waitUntil(generatePostImage(db, post.id, openaiKey, imagePromptOverride).catch(() => {}))
+    waitUntil(
+      generatePostImage(db, post.id, openaiKey, imagePromptOverride)
+        .then(r => { if (!r.ok) console.error(`[SA generate] image gen failed for post ${post.id}:`, r.error) })
+        .catch(err => console.error(`[SA generate] image gen threw for post ${post.id}:`, err))
+    )
   }
 
   // Write admin_alert

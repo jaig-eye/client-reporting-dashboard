@@ -32,10 +32,12 @@ function getMonth(): string {
 export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set())
   const [approvedIds,    setApprovedIds]    = useState<Set<string>>(() => {
-    // Pre-populate from admin_approved_at so page survives a refresh
+    // Pre-populate only from posts actually pushed to a CMS (draft_saved).
+    // approve_only posts (status='approved') have admin_approved_at but no platform ID —
+    // they should remain actionable so the reviewer can trigger the push.
     const pre = new Set<string>()
     for (const p of initialPosts) {
-      if (p.admin_approved_at) pre.add(p.id)
+      if (p.status === 'draft_saved') pre.add(p.id)
     }
     return pre
   })
