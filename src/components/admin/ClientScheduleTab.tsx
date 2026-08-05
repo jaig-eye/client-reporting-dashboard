@@ -2837,6 +2837,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           postId={reviewPost.id}
           defaultConnectionId={schedule.connection_id ?? null}
           sites={clientSites}
+          topicBreakdown={(() => {
+            const t = topics.find(t => t.post?.id === reviewPost.id)
+            if (!t) return null
+            return {
+              keyword_opportunity: t.keyword_opportunity,
+              ranking_strategy: t.ranking_strategy,
+              audience_intent: t.audience_intent,
+              why_now: t.why_now,
+              competition_level: t.competition_level,
+              page_to_support: t.page_to_support ?? null,
+              competitors_researched: t.competitors_researched?.urls ?? null,
+            }
+          })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
         />
@@ -3826,6 +3839,19 @@ function PipelineCalendar({
           postId={reviewPost.id}
           defaultConnectionId={connectionId}
           sites={sites}
+          topicBreakdown={(() => {
+            const t = topics.find(t => t.post?.id === reviewPost.id)
+            if (!t) return null
+            return {
+              keyword_opportunity: t.keyword_opportunity,
+              ranking_strategy: t.ranking_strategy,
+              audience_intent: t.audience_intent,
+              why_now: t.why_now,
+              competition_level: t.competition_level,
+              page_to_support: t.page_to_support ?? null,
+              competitors_researched: t.competitors_researched?.urls ?? null,
+            }
+          })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
         />

@@ -35,6 +35,7 @@ interface Props {
   onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
   onRegenerateError?:  () => void
   autoScanLinks?:      boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
+  topicBreakdown?:     TopicBreakdown | null
 }
 
 interface PostDetail {
@@ -60,6 +61,7 @@ interface PostDetail {
   bcStoreHash:      string | null
   featuredImageUrl:          string | null
   targetPublishDate:         string | null
+  topicId:                   string | null
   postConnectionId:          string | null
   scheduleDefaultAuthorId:   number | null
   schedulePublishMode:       string | null
@@ -144,15 +146,26 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-type EditorTab = 'content' | 'seo' | 'settings'
+type EditorTab = 'content' | 'seo' | 'settings' | 'strategy'
 
 const EDITOR_TABS: { id: EditorTab; label: string }[] = [
   { id: 'content',  label: 'Content'    },
   { id: 'seo',      label: 'SEO & Meta' },
   { id: 'settings', label: 'Settings'   },
+  { id: 'strategy', label: 'Strategy'   },
 ]
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, autoScanLinks }: Props) {
+interface TopicBreakdown {
+  keyword_opportunity?:    string | null
+  ranking_strategy?:       string | null
+  audience_intent?:        string | null
+  why_now?:                string | null
+  competition_level?:      string | null
+  page_to_support?:        string | null
+  competitors_researched?: string[] | null
+}
+
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -163,6 +176,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [error,           setError]           = useState('')
   const [isDirty,         setIsDirty]         = useState(false)
   const [activeEditorTab, setActiveEditorTab] = useState<EditorTab>('content')
+  const [fetchedBreakdown, setFetchedBreakdown] = useState<TopicBreakdown | null>(null)
 
   // Image generation
   const [generatingImage,   setGeneratingImage]   = useState(false)
@@ -256,6 +270,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           setWpStatus(publishDate > new Date() ? 'future' : 'publish')
         } else if (data.schedulePublishMode) {
           setWpStatus('future')
+        }
+
+        // Auto-fetch topic breakdown when not passed as prop (e.g. monthly review context)
+        if (topicBreakdown === undefined && data.topicId) {
+          fetch(`/api/admin/content/topics/${data.topicId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then((bd: TopicBreakdown | null) => { if (bd) setFetchedBreakdown(bd) })
+            .catch(() => {})
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load')
@@ -1167,6 +1189,51 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* ── TAB: Strategy ────────────────────────────────────────────── */}
+            <div style={{ display: activeEditorTab === 'strategy' ? 'block' : 'none', padding: '0.5rem 0' }}>
+              {(() => {
+                const bd = topicBreakdown ?? fetchedBreakdown
+                if (!bd) return null
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {([
+                      { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+                      { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+                      { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
+                      { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+                      { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+                    ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
+                      const val = bd[key]
+                      if (!val || typeof val !== 'string') return null
+                      return (
+                        <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.75rem 1rem' }}>
+                          <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+                          <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
+                        </div>
+                      )
+                    })}
+                    {bd.page_to_support && (
+                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                        <strong>Page to support:</strong>{' '}
+                        <a href={bd.page_to_support} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{bd.page_to_support}</a>
+                      </div>
+                    )}
+                    {bd.competitors_researched && bd.competitors_researched.length > 0 && (
+                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                        <strong>Competitors researched:</strong>{' '}
+                        {bd.competitors_researched.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              {!(topicBreakdown ?? fetchedBreakdown) && (
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-faint)', textAlign: 'center', paddingTop: 32 }}>
+                  No strategy data available for this post.
+                </p>
+              )}
             </div>
           </div>
         )}

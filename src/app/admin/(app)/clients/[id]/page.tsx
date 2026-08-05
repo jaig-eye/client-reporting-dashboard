@@ -34,7 +34,6 @@ import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
 import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
-import EmailSchedulePanel from '@/components/admin/EmailSchedulePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -574,18 +573,7 @@ export default async function ClientDetailPage({
             />
           </div>
 
-          {/* Email Schedule */}
-          <div className="card p-5">
-            <p className="section-desc mb-3">Set a weekly email cadence for this client. The assigned team member will receive a Discord reminder if no email is submitted by Monday each week.</p>
-            <EmailSchedulePanel clientId={id} />
-          </div>
-
-          {/* Client logo */}
-          <div className="card p-5">
-            <h2 className="section-title mb-3">Client Logo</h2>
-            <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
-            <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
-          </div>
+          {/* Client logo and email schedule removed — logo upload moved to Business Info in Overview tab */}
 
           {/* Data Coverage */}
           <div className="card p-5">

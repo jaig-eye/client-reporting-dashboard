@@ -5,9 +5,11 @@ import { useRef, useState } from 'react'
 export default function ClientLogoUpload({
   clientId,
   currentLogoUrl,
+  onUpload,
 }: {
   clientId: string
   currentLogoUrl?: string
+  onUpload?: (url: string) => void
 }) {
   const fileRef   = useRef<HTMLInputElement>(null)
   const [logoUrl,   setLogoUrl]   = useState(currentLogoUrl ?? '')
@@ -49,6 +51,7 @@ export default function ClientLogoUpload({
     setLogoUrl(url)
     setUrlInput('')
     setSaved(true)
+    onUpload?.(url)
     setTimeout(() => setSaved(false), 2500)
   }
 

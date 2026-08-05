@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
+import ClientLogoUpload from './ClientLogoUpload'
 
 interface AdminUser {
   id:         string
@@ -111,8 +112,9 @@ export default function OverviewTab({
   }, [])
 
   // ── Business info editing ─────────────────────────────────────────────────
-  const [editingBiz, setEditingBiz] = useState(false)
-  const [bizForm,    setBizForm]    = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
+  const [editingBiz,    setEditingBiz]    = useState(false)
+  const [bizForm,       setBizForm]       = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
+  const [displayLogoUrl, setDisplayLogoUrl] = useState(logoUrl ?? '')
   const [bizSaving,  setBizSaving]  = useState(false)
   const [bizError,   setBizError]   = useState('')
 
@@ -267,7 +269,6 @@ export default function OverviewTab({
                 { key: 'address', label: 'Address',       required: false },
                 { key: 'phone',   label: 'Phone',         required: false },
                 { key: 'website', label: 'Website',       required: false },
-                { key: 'logoUrl', label: 'Logo URL',      required: false },
               ] as const).map(f => (
                 <div key={f.key}>
                   <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>{f.label}</label>
@@ -276,11 +277,8 @@ export default function OverviewTab({
                     value={bizForm[f.key]}
                     onChange={e => setBizForm(v => ({ ...v, [f.key]: e.target.value }))}
                     required={f.required}
-                    placeholder={f.label === 'Logo URL' ? 'https://…' : f.label}
+                    placeholder={f.label}
                   />
-                  {f.key === 'logoUrl' && bizForm.logoUrl && (
-                    <img src={bizForm.logoUrl} alt="preview" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} style={{ marginTop: 6, height: 32, objectFit: 'contain', objectPosition: 'left', borderRadius: 4 }} />
-                  )}
                 </div>
               ))}
               <div className="flex items-center gap-2">
@@ -295,15 +293,22 @@ export default function OverviewTab({
             </form>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-              {logoUrl && (
-                <img src={logoUrl} alt={name} style={{ height: 40, objectFit: 'contain', objectPosition: 'left' }} />
-              )}
               <InfoRow label="Business Name" value={name} bold />
               <InfoRow label="Address"  value={address} />
               <InfoRow label="Phone"    value={phone} />
               <InfoRow label="Website"  value={website} link />
             </div>
           )}
+
+          {/* Logo upload — always visible, saves directly to clients table */}
+          <div style={{ marginTop: '1rem', paddingTop: '0.875rem', borderTop: '1px solid var(--border)' }}>
+            <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Client Logo</p>
+            <ClientLogoUpload
+              clientId={clientId}
+              currentLogoUrl={displayLogoUrl}
+              onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
+            />
+          </div>
         </div>
 
         {/* Notes card */}

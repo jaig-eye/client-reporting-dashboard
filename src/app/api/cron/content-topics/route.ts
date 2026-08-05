@@ -158,7 +158,7 @@ export async function GET(request: NextRequest) {
       schedule_frequency,
       schedule_day_of_week,
       weeks_ahead           = 1,
-      auto_approve_topics   = false,
+      auto_approve_topics   = true,  // legacy default: auto_generate implies auto_approve
       auto_push_posts       = false,
       generate_service_pages = false,
       generate_regular_pages = false,
