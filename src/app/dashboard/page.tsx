@@ -153,34 +153,6 @@ export default async function DashboardPage({
   const client = clientResult.data as Client | null
   if (!client) redirect('/access')
 
-  // Blog posts — only fetched when the section is enabled
-  let upcomingPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null }[] = []
-  let recentPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null; published_url: string | null }[] = []
-  if (settings.show_blog_posts === true) {
-    const today = new Date().toISOString().slice(0, 10)
-    const [upRes, recRes] = await Promise.all([
-      db.from('content_posts')
-        .select('id, title, target_publish_date, featured_image_url')
-        .eq('client_id', client.id)
-        .eq('content_type', 'blog')
-        .in('status', ['approved', 'for_review', 'draft_saved'])
-        .gte('target_publish_date', today)
-        .is('wp_post_id', null)
-        .is('bc_post_id', null)
-        .order('target_publish_date', { ascending: true })
-        .limit(6),
-      db.from('content_posts')
-        .select('id, title, target_publish_date, featured_image_url, published_url')
-        .eq('client_id', client.id)
-        .eq('content_type', 'blog')
-        .or('wp_post_id.not.is.null,bc_post_id.not.is.null,status.eq.published')
-        .order('target_publish_date', { ascending: false })
-        .limit(10),
-    ])
-    upcomingPosts = (upRes.data ?? []) as typeof upcomingPosts
-    recentPosts   = (recRes.data ?? []) as typeof recentPosts
-  }
-
   // Default end to yesterday — today is a partial day and inflates totals vs platform dashboards
   const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
@@ -211,6 +183,35 @@ export default async function DashboardPage({
   })[]
 
   const hiddenTypes      = new Set<string>(settings.hidden_connector_types ?? [])
+
+  // Blog posts — only fetched when the section is enabled
+  let upcomingPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null }[] = []
+  let recentPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null; published_url: string | null }[] = []
+  if (settings.show_blog_posts === true) {
+    const today = new Date().toISOString().slice(0, 10)
+    const [upRes, recRes] = await Promise.all([
+      db.from('content_posts')
+        .select('id, title, target_publish_date, featured_image_url')
+        .eq('client_id', client.id)
+        .eq('content_type', 'blog')
+        .in('status', ['approved', 'for_review', 'draft_saved'])
+        .gte('target_publish_date', today)
+        .is('wp_post_id', null)
+        .is('bc_post_id', null)
+        .order('target_publish_date', { ascending: true })
+        .limit(6),
+      db.from('content_posts')
+        .select('id, title, target_publish_date, featured_image_url, published_url')
+        .eq('client_id', client.id)
+        .eq('content_type', 'blog')
+        .or('wp_post_id.not.is.null,bc_post_id.not.is.null,status.eq.published')
+        .order('target_publish_date', { ascending: false })
+        .limit(10),
+    ])
+    upcomingPosts = (upRes.data ?? []) as typeof upcomingPosts
+    recentPosts   = (recRes.data ?? []) as typeof recentPosts
+  }
+
   const adFuelCut        = client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut
   // In raw cost mode (admin-only toggle) suppress the markup so admins see true spend.
   const rawMode            = cookieStore.get('admin_raw_mode')?.value === '1'
