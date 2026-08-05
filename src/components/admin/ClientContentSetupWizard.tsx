@@ -51,7 +51,7 @@ interface Props {
   onComplete: () => void
 }
 
-const TOTAL_STEPS = 8
+const TOTAL_STEPS = 9
 
 const FREQ_OPTIONS = [
   { id: 'daily',    label: 'Daily',       sub: '1 post/day' },
@@ -101,6 +101,14 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   // Detected connection (B1/B2 — set during loadInit for connection_id save)
   const [detectedConnectionId, setDetectedConnectionId] = useState<string | null>(null)
+
+  // Step 2: WP connect form state
+  const [wpConnectSiteUrl,  setWpConnectSiteUrl]  = useState('')
+  const [wpConnectUsername, setWpConnectUsername] = useState('')
+  const [wpConnectAppPwd,   setWpConnectAppPwd]   = useState('')
+  const [wpConnecting,      setWpConnecting]      = useState(false)
+  const [wpConnectMsg,      setWpConnectMsg]      = useState('')
+  const [wpJustConnected,   setWpJustConnected]   = useState(false)
 
   // Step 6 state — additional content types
   const [enableServicePages,    setEnableServicePages]    = useState(false)
@@ -177,6 +185,43 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
+  async function handleWpConnect() {
+    if (!wpConnectSiteUrl.trim() || !wpConnectUsername.trim() || !wpConnectAppPwd.trim()) {
+      setWpConnectMsg('All three fields are required.')
+      return
+    }
+    setWpConnecting(true)
+    setWpConnectMsg('')
+    try {
+      const normalised = wpConnectSiteUrl.trim().replace(/\/$/, '')
+      const res = await fetch(`/api/admin/clients/${clientId}/direct-connections`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'wordpress', siteUrl: normalised, username: wpConnectUsername.trim(), appPassword: wpConnectAppPwd.trim() }),
+      })
+      const data = await res.json() as { ok?: boolean; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'Connection failed')
+      // Update URL states so brand analysis and sitemap steps are pre-filled
+      setWpUrl(normalised)
+      setAnalyzeUrl(normalised)
+      setSitemapUrl(normalised + '/sitemap_index.xml')
+      setWpJustConnected(true)
+      // Re-fetch connections to pick up the new connector ID
+      try {
+        const connsRes = await fetch(`/api/admin/clients/${clientId}/connections`)
+        if (connsRes.ok) {
+          const conns = await connsRes.json() as Array<{ id: string; type: string; config?: { site_url?: string } }>
+          const wpConn = conns.find(c => c.type === 'wordpress')
+          if (wpConn) setDetectedConnectionId(wpConn.id)
+        }
+      } catch { /* non-fatal */ }
+    } catch (err) {
+      setWpConnectMsg(err instanceof Error ? err.message : 'Connection failed')
+    } finally {
+      setWpConnecting(false)
+    }
+  }
+
   async function handleAnalyze() {
     if (!analyzeUrl.trim()) return
     setAnalyzing(true)
@@ -215,6 +260,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   }
 
   async function handleFetchPages() {
+    if (!sitemapUrl.trim()) {
+      setSitemapMsg('Enter a sitemap URL above first.')
+      return
+    }
     setFetchingPages(true)
     setSitemapMsg('Fetching sitemap…')
     setPages([])
@@ -257,7 +306,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   }, [clientId, researchDone, brand.services, brand.geographic_focus])
 
   useEffect(() => {
-    if (step === 6) loadResearch()
+    if (step === 7) loadResearch()
   }, [step, loadResearch])
 
   async function saveSettings(wizardCompleted: boolean) {
@@ -404,6 +453,23 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         <div style={{ padding: '1.5rem', flex: 1 }}>
           {step === 1 && <StepWelcome clientName={clientName} hasGsc={hasGsc} wpUrl={wpUrl} />}
           {step === 2 && (
+            <StepWpConnect
+              clientId={clientId}
+              wpUrl={wpUrl}
+              siteUrlInput={wpConnectSiteUrl}
+              setSiteUrlInput={setWpConnectSiteUrl}
+              username={wpConnectUsername}
+              setUsername={setWpConnectUsername}
+              appPassword={wpConnectAppPwd}
+              setAppPassword={setWpConnectAppPwd}
+              connecting={wpConnecting}
+              connectMsg={wpConnectMsg}
+              justConnected={wpJustConnected}
+              onConnect={handleWpConnect}
+              onSkip={next}
+            />
+          )}
+          {step === 3 && (
             <StepBrandAnalysis
               analyzeUrl={analyzeUrl}
               setAnalyzeUrl={setAnalyzeUrl}
@@ -415,8 +481,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brandLoaded={brandLoaded}
             />
           )}
-          {step === 3 && <StepEeat brand={brand} setBrand={setBrand} />}
-          {step === 4 && (
+          {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
+          {step === 5 && (
             <StepSitemap
               sitemapUrl={sitemapUrl}
               setSitemapUrl={setSitemapUrl}
@@ -427,7 +493,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setPages={setPages}
             />
           )}
-          {step === 5 && (
+          {step === 6 && (
             <StepSchedule
               schedule={schedule}
               setSchedule={setSchedule}
@@ -437,7 +503,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setImagePrompt={setImagePrompt}
             />
           )}
-          {step === 6 && (
+          {step === 7 && (
             <StepContentTypes
               enableServicePages={enableServicePages}
               setEnableServicePages={setEnableServicePages}
@@ -449,8 +515,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setRpGuidelines={setRpGuidelinesWiz}
             />
           )}
-          {step === 7 && <StepResearch research={research} done={researchDone} />}
-          {step === 8 && (
+          {step === 8 && <StepResearch research={research} done={researchDone} />}
+          {step === 9 && (
             <StepReady
               clientName={clientName}
               brand={brand}
@@ -467,7 +533,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         </div>
 
         {/* Footer nav */}
-        {step < 8 && (
+        {step < 9 && (
           <div style={{
             padding: '1rem 1.5rem 1.25rem',
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -486,7 +552,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               className="btn btn-primary"
               style={{ fontSize: '0.875rem' }}
             >
-              {step === 6 ? 'Skip →' : 'Continue →'}
+              {step === 7 ? 'Skip →' : 'Continue →'}
             </button>
           </div>
         )}
@@ -598,7 +664,178 @@ function StepWelcome({ clientName, hasGsc, wpUrl }: { clientName: string; hasGsc
   )
 }
 
-// ─── Step 2: Brand Analysis ───────────────────────────────────────────────────
+// ─── Step 2: WordPress Connection ────────────────────────────────────────────
+
+function StepWpConnect({
+  clientId, wpUrl, siteUrlInput, setSiteUrlInput, username, setUsername,
+  appPassword, setAppPassword, connecting, connectMsg, justConnected, onConnect, onSkip,
+}: {
+  clientId: string
+  wpUrl: string
+  siteUrlInput: string
+  setSiteUrlInput: (v: string) => void
+  username: string
+  setUsername: (v: string) => void
+  appPassword: string
+  setAppPassword: (v: string) => void
+  connecting: boolean
+  connectMsg: string
+  justConnected: boolean
+  onConnect: () => void
+  onSkip: () => void
+}) {
+  void clientId // used in parent for the API call
+  const isConnected = !!wpUrl
+
+  if (isConnected) {
+    return (
+      <div>
+        <StepTitle>WordPress Connected</StepTitle>
+        <StepSub>Your client&apos;s WordPress site is already connected and ready for publishing.</StepSub>
+        <style>{`
+          @keyframes wp-slide-in { from { transform:translateY(6px); opacity:0 } to { transform:translateY(0); opacity:1 } }
+        `}</style>
+        <div style={{
+          padding: '1.25rem 1.5rem',
+          borderRadius: 12,
+          border: '2px solid #86efac',
+          background: '#f0fdf4',
+          display: 'flex', alignItems: 'center', gap: 16,
+          animation: 'wp-slide-in 0.35s ease',
+        }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <polyline points="5,13 9,17 19,7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>Connected</div>
+            <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{wpUrl}</div>
+          </div>
+        </div>
+        <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          Click <strong>Continue</strong> to proceed to the next step.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <StepTitle>Connect WordPress</StepTitle>
+      <StepSub>
+        Connect your client&apos;s WordPress site so posts can be published automatically.
+        You&apos;ll need the site URL and a WordPress Application Password.
+      </StepSub>
+
+      {justConnected ? (
+        <>
+          <style>{`
+            @keyframes wp-check-in { from { transform:scale(0.8); opacity:0 } to { transform:scale(1); opacity:1 } }
+            @keyframes check-draw  { from { stroke-dashoffset:50; opacity:0 } to { stroke-dashoffset:0; opacity:1 } }
+          `}</style>
+          <div style={{
+            padding: '1.5rem',
+            borderRadius: 12,
+            border: '2px solid #86efac',
+            background: '#f0fdf4',
+            display: 'flex', alignItems: 'center', gap: 16,
+            animation: 'wp-check-in 0.4s cubic-bezier(0.34,1.56,0.64,1)',
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <polyline
+                  points="5,13 9,17 19,7"
+                  stroke="white"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray="50"
+                  strokeDashoffset="0"
+                  style={{ animation: 'check-draw 0.4s ease 0.15s both' }}
+                />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>WordPress connected!</div>
+              <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
+            </div>
+          </div>
+          <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+            Connection saved. Click <strong>Continue</strong> to proceed.
+          </p>
+        </>
+      ) : (
+        <>
+          <Field label="WordPress Site URL">
+            <input
+              type="url"
+              value={siteUrlInput}
+              onChange={e => setSiteUrlInput(e.target.value)}
+              placeholder="https://example.com"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="WordPress Username">
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="Admin username"
+              style={inputStyle}
+              autoComplete="username"
+            />
+          </Field>
+          <Field label="Application Password">
+            <input
+              type="password"
+              value={appPassword}
+              onChange={e => setAppPassword(e.target.value)}
+              placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+              style={inputStyle}
+              autoComplete="new-password"
+            />
+          </Field>
+
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginBottom: 16, lineHeight: 1.5 }}>
+            Generate an Application Password in WP Admin → Users → Profile → Application Passwords section.
+          </p>
+
+          {connectMsg && (
+            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: '#fee2e2', color: '#dc2626', fontSize: '0.8125rem', marginBottom: 16 }}>
+              {connectMsg}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              onClick={onConnect}
+              disabled={connecting || !siteUrlInput.trim() || !username.trim() || !appPassword.trim()}
+              className="btn btn-primary"
+              style={{ fontSize: '0.875rem' }}
+            >
+              {connecting ? 'Connecting…' : 'Connect WordPress'}
+            </button>
+            <button
+              onClick={onSkip}
+              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.8125rem', padding: 0 }}
+            >
+              Skip — not using WordPress
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
 function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded }: {
   analyzeUrl: string
