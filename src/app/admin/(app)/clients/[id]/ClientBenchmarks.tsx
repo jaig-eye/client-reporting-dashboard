@@ -71,8 +71,9 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, showBlogPos
 
   async function toggleBlogVisible(next: boolean) {
     setBlogVisible(next)
-    await patch({ show_blog_posts: next })
-    router.refresh()
+    const data = await patch({ show_blog_posts: next })
+    if (data?.error) setBlogVisible(!next)
+    else router.refresh()
   }
 
   function toggleBenchmark(key: BenchmarkKey) {

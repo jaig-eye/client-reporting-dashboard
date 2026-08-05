@@ -1166,7 +1166,7 @@ export default async function DashboardPage({
                   {upcomingPosts.map(post => (
                     <div key={post.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
                       {post.featured_image_url ? (
-                        <div style={{ height: 120, background: `url(${post.featured_image_url}) center/cover no-repeat var(--bg-muted)` }} />
+                        <div style={{ height: 120, background: `url('${post.featured_image_url}') center/cover no-repeat var(--bg-muted)` }} />
                       ) : (
                         <div style={{ height: 120, background: 'var(--bg-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ opacity: 0.25 }}>
@@ -1198,7 +1198,7 @@ export default async function DashboardPage({
                   cursor: 'pointer', userSelect: 'none', listStyle: 'none',
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style={{ transition: 'transform 0.15s' }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" className="details-caret">
                     <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
                   </svg>
                   Published Posts ({recentPosts.length})
@@ -1213,7 +1213,7 @@ export default async function DashboardPage({
                       {post.featured_image_url && (
                         <div style={{
                           width: 36, height: 36, borderRadius: 4, flexShrink: 0,
-                          background: `url(${post.featured_image_url}) center/cover no-repeat var(--bg-muted)`,
+                          background: `url('${post.featured_image_url}') center/cover no-repeat var(--bg-muted)`,
                         }} />
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
