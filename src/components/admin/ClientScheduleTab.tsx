@@ -644,9 +644,22 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
   // ── Auto-set connection_id ─────────────────────────────────────────────────
+  // When WP is connected after schedule config was saved, persist the default
+  // so generate/approve routes pick it up without requiring a manual Save click.
   useEffect(() => {
     if (!schedule.connection_id && firstConnectionId) {
       setSched('connection_id', firstConnectionId)
+      fetch('/api/admin/content/client-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, connection_id: firstConnectionId }),
+      })
+        .then(r => r.ok ? null : r.json().then(d => { throw new Error(d.error ?? 'Save failed') }))
+        .catch(err => {
+          console.error('[auto-save connection_id]', err)
+          setSched('connection_id', null) // roll back optimistic update
+          showToast('Could not auto-save site connection — please select and save manually', 'error')
+        })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firstConnectionId])

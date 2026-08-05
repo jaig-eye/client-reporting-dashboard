@@ -128,33 +128,32 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   useEffect(() => {
     async function loadInit() {
       // Multi-source URL detection: WP → BC → GSC priority order (B1)
+      let connectionDetectedUrl = ''
       try {
         const res = await fetch(`/api/admin/clients/${clientId}/connections`)
         if (res.ok) {
-          const conns = await res.json() as Array<{ id: string; type: string; config?: { site_url?: string; property_url?: string } }>
-          let detectedUrl = ''
+          const conns = await res.json() as Array<{ id: string; type: string; site_url?: string | null }>
           let detectedId: string | null = null
 
           for (const conn of conns) {
-            const rawUrl = conn.config?.site_url ?? conn.config?.property_url ?? ''
-            const cleanUrl = rawUrl.replace(/^sc-domain:/, 'https://')
+            const cleanUrl = (conn.site_url ?? '').replace(/^sc-domain:/, 'https://')
             if (!cleanUrl) continue
 
             if (conn.type === 'wordpress') {
-              detectedUrl = cleanUrl
+              connectionDetectedUrl = cleanUrl
               detectedId  = conn.id
               break // highest priority
             }
-            if ((conn.type === 'bigcommerce' || conn.type === 'google_search_console') && !detectedUrl) {
-              detectedUrl = cleanUrl
+            if ((conn.type === 'bigcommerce' || conn.type === 'google_search_console') && !connectionDetectedUrl) {
+              connectionDetectedUrl = cleanUrl
               detectedId  = conn.id
             }
           }
 
-          if (detectedUrl) {
-            setAnalyzeUrl(detectedUrl)
-            setSitemapUrl(detectedUrl.replace(/\/$/, '') + '/sitemap_index.xml')
-            setWpUrl(detectedUrl)
+          if (connectionDetectedUrl) {
+            setAnalyzeUrl(connectionDetectedUrl)
+            setSitemapUrl(connectionDetectedUrl.replace(/\/$/, '') + '/sitemap_index.xml')
+            setWpUrl(connectionDetectedUrl)
             setDetectedConnectionId(detectedId)
           }
           setHasGsc(conns.some(c => c.type === 'google_search_console'))
@@ -163,7 +162,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         }
       } catch { setHasGsc(false) }
 
-      // Pre-populate Step 6 from existing client settings (re-run support)
+      // Pre-populate Step 6 from existing client settings (re-run support).
+      // Also use saved sitemap_url as fallback when no connection URL was detected.
       try {
         const res = await fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
         if (res.ok) {
@@ -172,11 +172,20 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             generate_regular_pages?: boolean
             service_page_topic_guidelines?: string | null
             regular_page_topic_guidelines?: string | null
+            sitemap_url?: string | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
           if (cs.service_page_topic_guidelines) setSpGuidelinesWiz(cs.service_page_topic_guidelines)
           if (cs.regular_page_topic_guidelines) setRpGuidelinesWiz(cs.regular_page_topic_guidelines)
+          // Fall back to previously-saved sitemap URL when connections didn't provide a site URL
+          if (cs.sitemap_url && !connectionDetectedUrl) {
+            setSitemapUrl(cs.sitemap_url)
+            // Derive site URL from saved sitemap — strip any sitemap-like filename
+            // (covers /sitemap_index.xml, /wp-sitemap.xml, /post-sitemap.xml, etc.)
+            const derivedSite = cs.sitemap_url.replace(/\/[^/]*sitemap[^/]*\.xml$/i, '').replace(/\/$/, '')
+            if (derivedSite) setAnalyzeUrl(derivedSite)
+          }
         }
       } catch { /* ignore */ }
     }
@@ -210,7 +219,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
       try {
         const connsRes = await fetch(`/api/admin/clients/${clientId}/connections`)
         if (connsRes.ok) {
-          const conns = await connsRes.json() as Array<{ id: string; type: string; config?: { site_url?: string } }>
+          const conns = await connsRes.json() as Array<{ id: string; type: string; site_url?: string | null }>
           const wpConn = conns.find(c => c.type === 'wordpress')
           if (wpConn) setDetectedConnectionId(wpConn.id)
         }

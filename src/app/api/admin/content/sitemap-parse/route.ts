@@ -9,7 +9,11 @@ import { isPublicUrl }               from '@/lib/ssrf'
 
 function extractLocs(xml: string): string[] {
   return Array.from(xml.matchAll(/<loc[^>]*>\s*([\s\S]*?)\s*<\/loc>/gi), m => m[1].trim())
-    .map(u => u.replace(/&amp;/g, '&').replace(/\s/g, ''))
+    .map(u => u
+      .replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '') // strip CDATA wrappers
+      .replace(/&amp;/g, '&')
+      .replace(/\s/g, '')
+    )
 }
 
 export async function POST(request: NextRequest) {
@@ -108,6 +112,8 @@ export async function POST(request: NextRequest) {
       fetchErrors.push(`${sitemapUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
     }
   }
+
+  if (fetchErrors.length > 0) console.log('[sitemap-parse] fetch errors:', fetchErrors)
 
   const pageUrls = Array.from(pageMap.keys())
   const urls = pageUrls
