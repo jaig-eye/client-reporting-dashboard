@@ -145,6 +145,8 @@ export interface Client {
   benchmark_cpl?:       number | null
   /** When true, shows the Performance Benchmarks section on the client dashboard. */
   show_benchmarks?: boolean
+  /** When true, shows the Blog Posts section on the client dashboard. */
+  show_blog_posts?: boolean
   /**
    * Metric card IDs hidden from the client dashboard.
    * Valid IDs: spend, leads, cpl, roas, ctr, conv_rate, cpm, daily_chart, campaigns

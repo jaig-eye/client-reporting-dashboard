@@ -9,6 +9,7 @@ type BenchmarkKey = typeof ALL_BENCHMARK_KEYS[number]
 interface Props {
   clientId: string
   showBenchmarks: boolean
+  showBlogPosts: boolean
   globalDefaults: {
     benchmark_roas:      number
     benchmark_ctr:       number
@@ -28,10 +29,11 @@ interface Props {
   }
 }
 
-export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefaults, current }: Props) {
+export default function ClientBenchmarks({ clientId, showBenchmarks, showBlogPosts, globalDefaults, current }: Props) {
   const router = useRouter()
 
   const [dashVisible, setDashVisible] = useState(showBenchmarks)
+  const [blogVisible, setBlogVisible] = useState(showBlogPosts)
 
   // Which benchmarks are enabled (null = all enabled / not yet configured)
   const [enabled, setEnabled] = useState<Set<BenchmarkKey>>(
@@ -64,6 +66,12 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
   async function toggleDashVisible(next: boolean) {
     setDashVisible(next)
     await patch({ show_benchmarks: next })
+    router.refresh()
+  }
+
+  async function toggleBlogVisible(next: boolean) {
+    setBlogVisible(next)
+    await patch({ show_blog_posts: next })
     router.refresh()
   }
 
@@ -142,23 +150,41 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
 
   return (
     <div className="space-y-4">
-      {/* Dashboard visibility toggle */}
-      <label className="flex items-center gap-3 cursor-pointer">
-        <button
-          type="button" role="switch" aria-checked={dashVisible}
-          onClick={() => toggleDashVisible(!dashVisible)}
-          className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-          style={{ background: dashVisible ? 'var(--blue)' : 'var(--bg-muted)' }}
-        >
-          <span
-            className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-            style={{ transform: dashVisible ? 'translateX(1rem)' : 'translateX(0)' }}
-          />
-        </button>
-        <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-          {dashVisible ? 'Visible on client dashboard' : 'Hidden from client dashboard'}
-        </span>
-      </label>
+      {/* Dashboard visibility toggles */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <button
+            type="button" role="switch" aria-checked={dashVisible}
+            onClick={() => toggleDashVisible(!dashVisible)}
+            className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
+            style={{ background: dashVisible ? 'var(--blue)' : 'var(--bg-muted)' }}
+          >
+            <span
+              className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
+              style={{ transform: dashVisible ? 'translateX(1rem)' : 'translateX(0)' }}
+            />
+          </button>
+          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            {dashVisible ? 'Performance benchmarks visible on dashboard' : 'Performance benchmarks hidden from dashboard'}
+          </span>
+        </label>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <button
+            type="button" role="switch" aria-checked={blogVisible}
+            onClick={() => toggleBlogVisible(!blogVisible)}
+            className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
+            style={{ background: blogVisible ? 'var(--blue)' : 'var(--bg-muted)' }}
+          >
+            <span
+              className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
+              style={{ transform: blogVisible ? 'translateX(1rem)' : 'translateX(0)' }}
+            />
+          </button>
+          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            {blogVisible ? 'Blog posts visible on dashboard' : 'Blog posts hidden from dashboard'}
+          </span>
+        </label>
+      </div>
 
       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
         Toggle individual benchmarks on/off. Disabled benchmarks are hidden from the benchmark panel <em>and</em> the admin health cards. Leave a value blank to use the global default.

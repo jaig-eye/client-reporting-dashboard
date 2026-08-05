@@ -945,21 +945,64 @@ export default function AgencySettingsPage() {
             </FormField>
             <NotificationTypeTable />
 
-            {/* Metric Alert Thresholds — folded into this card */}
-            <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>Metric Alert Thresholds</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Configure when metric anomaly alerts fire via email.</div>
+            {/* Metric Alert Thresholds — styled to match NotificationTypeTable groups */}
+            <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              {/* Group header */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center',
+                padding: '0.625rem 1rem',
+                background: 'var(--bg-subtle)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+                  Metric Alerts
+                </span>
+                <div style={{ width: 72, display: 'flex', justifyContent: 'center' }}>
+                  <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb' }}>
+                    EMAILS
+                  </span>
+                </div>
               </div>
-            <div className="space-y-3">
-              <Toggle
-                label="Metric anomaly alerts (email)"
-                hint="Daily digest when any client metric changes by more than the threshold vs the prior comparison window"
-                checked={form.notify_metric_alerts}
-                onChange={v => field('notify_metric_alerts', v)}
-              />
+
+              {/* Toggle row */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center',
+                padding: '0.625rem 1rem',
+                borderBottom: form.notify_metric_alerts ? '1px solid var(--border)' : 'none',
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Metric anomaly alerts</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1, maxWidth: 480 }}>
+                    Daily digest when any client metric changes beyond threshold vs the prior comparison window
+                  </div>
+                </div>
+                <div style={{ width: 72, display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    role="switch"
+                    aria-checked={form.notify_metric_alerts}
+                    onClick={() => field('notify_metric_alerts', !form.notify_metric_alerts)}
+                    style={{
+                      width: 36, height: 20, borderRadius: 999,
+                      background: form.notify_metric_alerts ? '#2563eb' : 'var(--bg-subtle)',
+                      border: `1px solid ${form.notify_metric_alerts ? '#2563eb' : 'var(--border)'}`,
+                      cursor: 'pointer', position: 'relative',
+                      transition: 'background 0.15s, border-color 0.15s',
+                      padding: 0, flexShrink: 0,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2, left: form.notify_metric_alerts ? 18 : 2,
+                      width: 14, height: 14, borderRadius: '50%',
+                      background: 'white', transition: 'left 0.15s',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Threshold config */}
               {form.notify_metric_alerts && (
-                <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {/* Day-over-day */}
                   <div>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -1030,7 +1073,6 @@ export default function AgencySettingsPage() {
                   </div>
                 </div>
               )}
-            </div>
             </div>
           </div>
 

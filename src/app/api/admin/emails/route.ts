@@ -23,11 +23,10 @@ export async function GET(request: NextRequest) {
       sent_at, utm_campaign,
       open_rate, click_rate, conversions, revenue,
       status, reviewer_notes, reviewed_at,
-      submitted_by, reviewed_by, assigned_to, created_at, updated_at,
+      submitted_by, reviewed_by, created_at, updated_at,
       clients(name),
       submitter:users!submitted_by(name, avatar_url),
-      reviewer:users!reviewed_by(name),
-      assignee:users!assigned_to(name, avatar_url)
+      reviewer:users!reviewed_by(name)
     `)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -90,9 +89,8 @@ export async function POST(request: NextRequest) {
       utm_campaign:      body.utm_campaign?.trim() || null,
       status:            body.status === 'draft' ? 'draft' : 'pending_review',
       submitted_by:      userId,
-      assigned_to:       userId,
     })
-    .select('id, title, client_id, status, submitted_by, assigned_to, clients(name)')
+    .select('id, title, client_id, status, submitted_by, clients(name)')
     .single()
 
   if (error || !campaign) {

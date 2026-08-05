@@ -153,6 +153,34 @@ export default async function DashboardPage({
   const client = clientResult.data as Client | null
   if (!client) redirect('/access')
 
+  // Blog posts — only fetched when the section is enabled
+  let upcomingPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null }[] = []
+  let recentPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null; published_url: string | null }[] = []
+  if (client.show_blog_posts === true) {
+    const today = new Date().toISOString().slice(0, 10)
+    const [upRes, recRes] = await Promise.all([
+      db.from('content_posts')
+        .select('id, title, target_publish_date, featured_image_url')
+        .eq('client_id', client.id)
+        .eq('content_type', 'blog')
+        .in('status', ['approved', 'for_review', 'draft_saved'])
+        .gte('target_publish_date', today)
+        .is('wp_post_id', null)
+        .is('bc_post_id', null)
+        .order('target_publish_date', { ascending: true })
+        .limit(6),
+      db.from('content_posts')
+        .select('id, title, target_publish_date, featured_image_url, published_url')
+        .eq('client_id', client.id)
+        .eq('content_type', 'blog')
+        .or('wp_post_id.not.is.null,bc_post_id.not.is.null,status.eq.published')
+        .order('target_publish_date', { ascending: false })
+        .limit(10),
+    ])
+    upcomingPosts = (upRes.data ?? []) as typeof upcomingPosts
+    recentPosts   = (recRes.data ?? []) as typeof recentPosts
+  }
+
   // Default end to yesterday — today is a partial day and inflates totals vs platform dashboards
   const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
   const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
@@ -1121,6 +1149,95 @@ export default async function DashboardPage({
                 referrerPolicy="no-referrer-when-downgrade"
               />
             </div>
+          </div>
+        )}
+
+        {/* ── Blog Posts ───────────────────────────────────────── */}
+        {client.show_blog_posts === true && (upcomingPosts.length > 0 || recentPosts.length > 0) && (
+          <div>
+            <h2 className="section-title">Blog Posts</h2>
+
+            {upcomingPosts.length > 0 && (
+              <div style={{ marginTop: '0.75rem' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '0.625rem' }}>
+                  Coming Soon
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                  {upcomingPosts.map(post => (
+                    <div key={post.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                      {post.featured_image_url ? (
+                        <div style={{ height: 120, background: `url(${post.featured_image_url}) center/cover no-repeat var(--bg-muted)` }} />
+                      ) : (
+                        <div style={{ height: 120, background: 'var(--bg-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ opacity: 0.25 }}>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                          </svg>
+                        </div>
+                      )}
+                      <div style={{ padding: '0.625rem 0.75rem' }}>
+                        <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 3 }}>
+                          {post.title ?? 'Untitled'}
+                        </div>
+                        {post.target_publish_date && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                            Publishing {new Date(post.target_publish_date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {recentPosts.length > 0 && (
+              <details style={{ marginTop: upcomingPosts.length > 0 ? '1.25rem' : '0.75rem' }}>
+                <summary style={{
+                  fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.06em', color: 'var(--text-muted)',
+                  cursor: 'pointer', userSelect: 'none', listStyle: 'none',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style={{ transition: 'transform 0.15s' }}>
+                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  </svg>
+                  Published Posts ({recentPosts.length})
+                </summary>
+                <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {recentPosts.map(post => (
+                    <div key={post.id} style={{
+                      display: 'flex', alignItems: 'center', gap: '0.75rem',
+                      padding: '0.5rem 0.75rem', borderRadius: 6,
+                      background: 'var(--bg-subtle)',
+                    }}>
+                      {post.featured_image_url && (
+                        <div style={{
+                          width: 36, height: 36, borderRadius: 4, flexShrink: 0,
+                          background: `url(${post.featured_image_url}) center/cover no-repeat var(--bg-muted)`,
+                        }} />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {post.published_url ? (
+                          <a href={post.published_url} target="_blank" rel="noopener noreferrer"
+                            style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none' }}>
+                            {post.title ?? 'Untitled'}
+                          </a>
+                        ) : (
+                          <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                            {post.title ?? 'Untitled'}
+                          </span>
+                        )}
+                      </div>
+                      {post.target_publish_date && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                          {new Date(post.target_publish_date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         )}
 
