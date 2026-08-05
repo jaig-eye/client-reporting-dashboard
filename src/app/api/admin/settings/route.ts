@@ -52,6 +52,7 @@ export async function PUT(request: NextRequest) {
     'sync_frequency', 'sync_hour_utc', 'sync_day_of_week',
     'metric_layouts',
     'hidden_connector_types',
+    'show_blog_posts',
     'discord_bot_token',
     'ad_fuel_cutoff_date',
     'crm_name',

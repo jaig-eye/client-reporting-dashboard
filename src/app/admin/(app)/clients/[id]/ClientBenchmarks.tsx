@@ -9,7 +9,6 @@ type BenchmarkKey = typeof ALL_BENCHMARK_KEYS[number]
 interface Props {
   clientId: string
   showBenchmarks: boolean
-  showBlogPosts: boolean
   globalDefaults: {
     benchmark_roas:      number
     benchmark_ctr:       number
@@ -29,11 +28,10 @@ interface Props {
   }
 }
 
-export default function ClientBenchmarks({ clientId, showBenchmarks, showBlogPosts, globalDefaults, current }: Props) {
+export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefaults, current }: Props) {
   const router = useRouter()
 
   const [dashVisible, setDashVisible] = useState(showBenchmarks)
-  const [blogVisible, setBlogVisible] = useState(showBlogPosts)
 
   // Which benchmarks are enabled (null = all enabled / not yet configured)
   const [enabled, setEnabled] = useState<Set<BenchmarkKey>>(
@@ -67,13 +65,6 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, showBlogPos
     setDashVisible(next)
     await patch({ show_benchmarks: next })
     router.refresh()
-  }
-
-  async function toggleBlogVisible(next: boolean) {
-    setBlogVisible(next)
-    const data = await patch({ show_blog_posts: next })
-    if (data?.error) setBlogVisible(!next)
-    else router.refresh()
   }
 
   function toggleBenchmark(key: BenchmarkKey) {
@@ -167,22 +158,6 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, showBlogPos
           </button>
           <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
             {dashVisible ? 'Performance benchmarks visible on dashboard' : 'Performance benchmarks hidden from dashboard'}
-          </span>
-        </label>
-        <label className="flex items-center gap-3 cursor-pointer">
-          <button
-            type="button" role="switch" aria-checked={blogVisible}
-            onClick={() => toggleBlogVisible(!blogVisible)}
-            className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-            style={{ background: blogVisible ? 'var(--blue)' : 'var(--bg-muted)' }}
-          >
-            <span
-              className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-              style={{ transform: blogVisible ? 'translateX(1rem)' : 'translateX(0)' }}
-            />
-          </button>
-          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {blogVisible ? 'Blog posts visible on dashboard' : 'Blog posts hidden from dashboard'}
           </span>
         </label>
       </div>

@@ -487,7 +487,6 @@ export default async function ClientDetailPage({
             <ClientBenchmarks
               clientId={id}
               showBenchmarks={!!client.show_benchmarks}
-              showBlogPosts={!!client.show_blog_posts}
               globalDefaults={globalBenchmarks}
               current={{
                 benchmark_roas:      client.benchmark_roas,

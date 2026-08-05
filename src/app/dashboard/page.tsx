@@ -156,7 +156,7 @@ export default async function DashboardPage({
   // Blog posts — only fetched when the section is enabled
   let upcomingPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null }[] = []
   let recentPosts: { id: string; title: string | null; target_publish_date: string | null; featured_image_url: string | null; published_url: string | null }[] = []
-  if (client.show_blog_posts === true) {
+  if (settings.show_blog_posts === true) {
     const today = new Date().toISOString().slice(0, 10)
     const [upRes, recRes] = await Promise.all([
       db.from('content_posts')
@@ -1153,7 +1153,7 @@ export default async function DashboardPage({
         )}
 
         {/* ── Blog Posts ───────────────────────────────────────── */}
-        {client.show_blog_posts === true && (upcomingPosts.length > 0 || recentPosts.length > 0) && (
+        {settings.show_blog_posts === true && (upcomingPosts.length > 0 || recentPosts.length > 0) && (
           <div>
             <h2 className="section-title">Blog Posts</h2>
 

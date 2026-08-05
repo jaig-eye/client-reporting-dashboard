@@ -66,6 +66,7 @@ interface Settings {
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
+  show_blog_posts:                boolean
   discord_bot_token:              string
   discord_ops_channel_id:         string
   crm_name:                       string
@@ -121,6 +122,7 @@ const DEFAULT: Settings = {
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
+  show_blog_posts:                false,
   discord_bot_token:              '',
   discord_ops_channel_id:         '',
   crm_name:                       'CRM',
@@ -579,6 +581,12 @@ export default function AgencySettingsPage() {
                     }}
                   />
                 ))}
+                <Toggle
+                  label="Show Blog Posts"
+                  hint="Content calendar blog posts — upcoming and recently published posts tab on client dashboards"
+                  checked={form.show_blog_posts}
+                  onChange={v => field('show_blog_posts', v)}
+                />
               </div>
             </div>
           </div>

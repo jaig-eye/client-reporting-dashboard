@@ -201,9 +201,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
     <div>
       {/* Title row + search + add button */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem' }}>
-        <p style={{ flex: 1, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: 0 }}>
-          Notes
-        </p>
+        <h2 className="section-title" style={{ flex: 1, margin: 0 }}>Notes</h2>
         <div style={{ position: 'relative' }}>
           <MagnifyingGlass size={12} style={{ position: 'absolute', left: 7, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }} aria-hidden />
           <input
