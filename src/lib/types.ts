@@ -250,6 +250,8 @@ export interface AgencySettings {
   metric_layouts?: Record<string, unknown> | null
   /** Connector types globally hidden from all client dashboards (e.g. 'google_analytics', 'google_search_console', 'ahrefs'). */
   hidden_connector_types?: string[]
+  /** Whether blog posts section is shown on client dashboards globally. */
+  show_blog_posts?: boolean
   /** Discord bot token for sending per-client notifications to Discord channels. */
   discord_bot_token?: string | null
   /** Whether to send a Discord notification when a service area page is generated. */
