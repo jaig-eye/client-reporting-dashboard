@@ -6,7 +6,7 @@ import { buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
-import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
+import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash, CalendarCheck, Article } from '@phosphor-icons/react'
 import { useSiloSounds } from '@/lib/useSiloSounds'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -412,13 +412,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
       .then(r => r.json())
       .then((d: Record<string, unknown>) => {
+        const autoGen = (d.auto_generate as boolean) ?? false
         const loaded: Partial<ClientScheduleSettings> = {
           schedule_frequency:    (d.schedule_frequency    as string  | null) ?? null,
           schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
           monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
           weeks_ahead:           (d.weeks_ahead            as number)         ?? 6,
           schedule_start_date:   (d.schedule_start_date    as string  | null) ?? null,
-          auto_generate:         (d.auto_generate          as boolean)        ?? false,
+          auto_generate:         autoGen,
           connection_id:         (d.connection_id          as string  | null) ?? null,
           default_author_id:     (d.default_author_id      as number  | null) ?? null,
           default_category_ids:  Array.isArray(d.default_category_ids) ? (d.default_category_ids as number[]) : null,
@@ -427,8 +428,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           publish_time:          (d.publish_time            as string  | null) ?? null,
           wp_publish_mode:       ((d.wp_publish_mode as string | null) === 'draft_only' ? 'draft_only' : 'scheduled_draft') as 'scheduled_draft' | 'draft_only',
           topic_guidelines:      (d.topic_guidelines        as string  | null) ?? null,
-          auto_approve_topics:   (d.auto_approve_topics      as boolean)        ?? false,
-          auto_push_posts:       (d.auto_push_posts          as boolean)        ?? false,
+          // If auto_generate is on, sub-fields must also be on (they may lag in DB for legacy clients)
+          auto_approve_topics:   autoGen || ((d.auto_approve_topics as boolean) ?? false),
+          auto_push_posts:       autoGen || ((d.auto_push_posts    as boolean) ?? false),
         }
         setSchedule(loaded)
         // Always collapsed by default
@@ -1205,7 +1207,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           onClick={() => setScheduleOpen(o => !o)}
           style={{ display: 'flex', alignItems: 'center', gap: 8 }}
         >
-          <span style={{ fontSize: '0.9rem' }}>⚙</span>
+          <CalendarCheck size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
           <span style={{ flex: 1 }} />
           {schedule.auto_generate && (
@@ -1989,7 +1991,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setSpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <Article size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{spGuidelinesOpen ? '▲' : '▼'}</span>
@@ -2063,7 +2065,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setSaSettingsOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <CalendarCheck size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
             <span style={{ flex: 1 }} />
             {!!saSettings.auto_generate && (
@@ -2725,7 +2727,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setRpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <Article size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{rpGuidelinesOpen ? '▲' : '▼'}</span>
