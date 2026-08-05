@@ -221,14 +221,14 @@ export default function EmailsClientShell({ clients }: Props) {
               gap: '0.75rem',
               alignItems: 'center',
               padding: '0.75rem 1rem',
-              background: 'var(--bg-subtle)',
-              border: '1px solid var(--border)',
+              background: email.status === 'pending_review' ? 'rgba(234,179,8,0.04)' : 'var(--bg-subtle)',
+              border: `1px solid ${email.status === 'pending_review' ? 'rgba(234,179,8,0.55)' : 'var(--border)'}`,
               borderRadius: 8,
               cursor: 'pointer',
               transition: 'border-color 0.15s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--blue)')}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = email.status === 'pending_review' ? '#ca8a04' : 'var(--blue)')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = email.status === 'pending_review' ? 'rgba(234,179,8,0.55)' : 'var(--border)')}
           >
             {/* Preview thumbnail */}
             <div style={{

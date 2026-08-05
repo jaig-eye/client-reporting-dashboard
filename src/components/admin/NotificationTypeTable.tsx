@@ -49,6 +49,7 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
     title: 'Email Workflow',
     rows: [
       { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved — includes who approved it', hasAgency: true, hasEmail: true, hasManager: true,  hasClient: true },
       { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
     ],
   },

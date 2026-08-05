@@ -300,20 +300,17 @@ export default function OverviewTab({
             </div>
           )}
 
-          {/* Logo upload — always visible, saves directly to clients table */}
-          <div style={{ marginTop: '1rem', paddingTop: '0.875rem', borderTop: '1px solid var(--border)' }}>
-            <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Client Logo</p>
-            <ClientLogoUpload
-              clientId={clientId}
-              currentLogoUrl={displayLogoUrl}
-              onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
-            />
-          </div>
-        </div>
-
-        {/* Notes card */}
-        <div className="card p-5">
-          <ClientNotesStream clientId={clientId} />
+          {/* Logo upload — only visible in edit mode */}
+          {editingBiz && (
+            <div style={{ marginTop: '1rem', paddingTop: '0.875rem', borderTop: '1px solid var(--border)' }}>
+              <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Client Logo</p>
+              <ClientLogoUpload
+                clientId={clientId}
+                currentLogoUrl={displayLogoUrl}
+                onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Contacts card */}
@@ -406,6 +403,11 @@ export default function OverviewTab({
               </div>
             </form>
           )}
+        </div>
+
+        {/* Notes card */}
+        <div className="card p-5">
+          <ClientNotesStream clientId={clientId} />
         </div>
 
         {/* Stripe invoice history */}

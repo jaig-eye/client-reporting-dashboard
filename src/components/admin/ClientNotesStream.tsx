@@ -65,6 +65,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
   const [search,   setSearch]   = useState('')
 
   // Add-note form
+  const [addingNote,   setAddingNote]   = useState(false)
   const [draftTitle,   setDraftTitle]   = useState('')
   const [draft,        setDraft]        = useState('')
   const [saving,       setSaving]       = useState(false)
@@ -117,6 +118,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error()
       const { note } = await res.json() as { note: Note }
       setNotes(prev => sortNotes(prev.map(n => n.id === temp.id ? note : n)))
+      setAddingNote(false)
     } catch {
       setNotes(prev => prev.filter(n => n.id !== temp.id))
       setDraft(content)
@@ -197,7 +199,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
 
   return (
     <div>
-      {/* Title row + search */}
+      {/* Title row + search + add button */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem' }}>
         <p style={{ flex: 1, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: 0 }}>
           Notes
@@ -212,40 +214,61 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
             style={{ ...inp, paddingLeft: 24, width: 130, fontSize: '0.72rem' }}
           />
         </div>
-      </div>
-
-      {/* Add note form */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: '0.75rem' }}>
-        <input
-          value={draftTitle}
-          onChange={e => setDraftTitle(e.target.value)}
-          placeholder="Title (optional)"
-          style={{ ...inp, fontSize: '0.78rem' }}
-        />
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void addNote() }
-          }}
-          placeholder="Add a note… (⌘↵ to save)"
-          rows={2}
-          style={{ ...inp, resize: 'vertical' }}
-        />
         <button
-          onClick={() => void addNote()}
-          disabled={!draft.trim() || saving}
+          onClick={() => { setAddingNote(v => !v); setDraft(''); setDraftTitle('') }}
           style={{
-            alignSelf: 'flex-end', padding: '0.25rem 0.75rem',
-            background: 'var(--blue)', color: '#fff', border: 'none',
-            borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-            opacity: !draft.trim() || saving ? 0.5 : 1,
+            padding: '0.25rem 0.625rem', background: 'var(--blue)', color: '#fff',
+            border: 'none', borderRadius: 5, fontSize: '0.72rem', fontWeight: 600,
+            cursor: 'pointer', whiteSpace: 'nowrap',
           }}
         >
-          {saving ? 'Saving…' : 'Add Note'}
+          + Add Note
         </button>
       </div>
+
+      {/* Add note form — only shown when addingNote */}
+      {addingNote && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: '0.75rem' }}>
+          <input
+            value={draftTitle}
+            onChange={e => setDraftTitle(e.target.value)}
+            placeholder="Title (optional)"
+            style={{ ...inp, fontSize: '0.78rem' }}
+          />
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void addNote() }
+            }}
+            placeholder="Add a note… (⌘↵ to save)"
+            rows={2}
+            autoFocus
+            style={{ ...inp, resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => { setAddingNote(false); setDraft(''); setDraftTitle('') }}
+              style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void addNote()}
+              disabled={!draft.trim() || saving}
+              style={{
+                padding: '0.25rem 0.75rem',
+                background: 'var(--blue)', color: '#fff', border: 'none',
+                borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+                opacity: !draft.trim() || saving ? 0.5 : 1,
+              }}
+            >
+              {saving ? 'Saving…' : 'Save Note'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Notes list */}
       {loading && <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Loading…</p>}
@@ -255,7 +278,7 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
         </p>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: '14.5rem', overflowY: 'auto', paddingRight: 2 }}>
         {filtered.map(note => (
           <div
             key={note.id}

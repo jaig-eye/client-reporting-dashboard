@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
+import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export async function POST(
   request: NextRequest,
@@ -57,6 +59,58 @@ export async function POST(
   if (error) {
     console.error('[email review POST]', error)
     return NextResponse.json({ error: 'Failed to update review' }, { status: 500 })
+  }
+
+  // Fire approval notification non-blocking
+  if (body.action === 'approve') {
+    void (async () => {
+      try {
+        const { data: settings } = await db
+          .from('agency_settings')
+          .select('discord_bot_token, discord_ops_channel_id, notification_config')
+          .maybeSingle()
+
+        const { data: reviewer } = userId
+          ? await db.from('users').select('name').eq('id', userId).maybeSingle()
+          : { data: null }
+
+        const { data: campaign } = await db
+          .from('email_campaigns')
+          .select('title, client_id, clients(name)')
+          .eq('id', id)
+          .maybeSingle()
+
+        const reviewerName  = reviewer?.name ?? 'Admin'
+        const clientName    = (campaign?.clients as unknown as { name: string } | null)?.name ?? 'Unknown client'
+        const botToken      = settings?.discord_bot_token as string | null
+        const opsChannel    = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+        const notifConfig   = (settings?.notification_config as NotifConfig | null) ?? {}
+        const notif         = getNotif(notifConfig, 'email_approved')
+        const baseUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+        const emailUrl      = `${baseUrl}/admin/emails?open=${id}`
+
+        const msg =
+          `✅ **Email approved** for **${clientName}**\n` +
+          `📌 _${campaign?.title ?? 'Untitled'}_\n` +
+          `👤 Approved by ${reviewerName}\n` +
+          `🔗 [View email](${emailUrl})`
+
+        if (botToken && opsChannel && notif.agency) await sendDiscordMessage(botToken, opsChannel, msg)
+
+        if (notif.client && campaign?.client_id) {
+          const { data: client } = await db
+            .from('clients')
+            .select('discord_channel_id')
+            .eq('id', campaign.client_id)
+            .maybeSingle()
+          if (botToken && client?.discord_channel_id) {
+            await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
+          }
+        }
+      } catch (e) {
+        console.error('[email review approve discord]', e)
+      }
+    })()
   }
 
   return NextResponse.json({ email: data })
