@@ -182,9 +182,11 @@ export default async function ClientDetailPage({
 
       {/* Page heading */}
       <div className="page-header" style={{ marginBottom: '0.5rem' }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {client.logo_url && (
+            <img src={client.logo_url} alt={client.name} style={{ height: 36, maxWidth: 100, objectFit: 'contain', flexShrink: 0 }} />
+          )}
           <h1 className="page-title">{client.name}</h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>/admin/clients/{id}</p>
         </div>
         <div className="flex gap-2">
           {adsLibraryUrl && <CopyAdLibraryButton url={adsLibraryUrl} />}

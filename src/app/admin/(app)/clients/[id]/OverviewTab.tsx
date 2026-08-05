@@ -293,6 +293,9 @@ export default function OverviewTab({
             </form>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+              {displayLogoUrl && (
+                <img src={displayLogoUrl} alt={name} style={{ maxHeight: 48, maxWidth: 140, objectFit: 'contain', marginBottom: '0.25rem' }} />
+              )}
               <InfoRow label="Business Name" value={name} bold />
               <InfoRow label="Address"  value={address} />
               <InfoRow label="Phone"    value={phone} />

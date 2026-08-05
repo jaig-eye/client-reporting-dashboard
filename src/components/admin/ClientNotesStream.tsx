@@ -216,11 +216,8 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
         </div>
         <button
           onClick={() => { setAddingNote(v => !v); setDraft(''); setDraftTitle('') }}
-          style={{
-            padding: '0.25rem 0.625rem', background: 'var(--blue)', color: '#fff',
-            border: 'none', borderRadius: 5, fontSize: '0.72rem', fontWeight: 600,
-            cursor: 'pointer', whiteSpace: 'nowrap',
-          }}
+          className="btn btn-secondary"
+          style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
         >
           + Add Note
         </button>
