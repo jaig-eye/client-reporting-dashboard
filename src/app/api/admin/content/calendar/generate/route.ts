@@ -69,10 +69,12 @@ export async function POST(request: NextRequest) {
   const BATCH_SIZE = 10
   waitUntil(
     (async () => {
-      // Purge orphaned null-date topics from previous jobs that were killed mid-run.
+      // Purge orphaned pending topics with no publish date from previous jobs killed mid-run.
+      // Scoped to status='pending' — approved/generated topics may intentionally have no date.
       await db.from('content_topics')
         .delete()
         .eq('client_id', client_id)
+        .eq('status', 'pending')
         .is('target_publish_date', null)
         .lt('created_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
 
@@ -108,13 +110,14 @@ export async function POST(request: NextRequest) {
         await Promise.all(fittingTopics.map(async (t, i) => {
           const slotIndex   = inserted + i
           const publishDate = trulyOpenSlots[slotIndex]
-          await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
+          const { error: updateErr } = await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
+          if (updateErr) console.error(`[calendar/generate] failed to assign ${publishDate} to topic ${t.id}:`, updateErr.message)
         }))
         inserted += fittingTopics.length
         console.log(`[calendar/generate] batch ${b + 1}/${totalBatches}: ${result.topics.length} topics (total ${inserted})`)
       }
 
-      logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: openSlots.length } })
+      await logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: inserted } })
     })()
   )
 
