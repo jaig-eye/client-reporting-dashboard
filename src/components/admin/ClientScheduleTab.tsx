@@ -447,6 +447,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         setModalStartDate(d.schedule_start_date ? String(d.schedule_start_date) : today())
         setModalWeeks((d.weeks_ahead as number) ?? 6)
         setSchedLoading(false)
+        // If auto_generate is on but sub-flags lag in DB (legacy clients), sync them silently.
+        if (autoGen && (!(d.auto_approve_topics as boolean) || !(d.auto_push_posts as boolean))) {
+          fetch('/api/admin/content/client-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: clientId, auto_approve_topics: true, auto_push_posts: true }),
+          }).catch(() => {})
+        }
       })
       .catch(() => setSchedLoading(false))
   }, [clientId])
@@ -647,6 +655,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   // When WP is connected after schedule config was saved, persist the default
   // so generate/approve routes pick it up without requiring a manual Save click.
   useEffect(() => {
+    if (schedLoading) return  // wait for settings to load before auto-saving
     if (!schedule.connection_id && firstConnectionId) {
       setSched('connection_id', firstConnectionId)
       fetch('/api/admin/content/client-settings', {
@@ -662,7 +671,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstConnectionId])
+  }, [firstConnectionId, schedLoading])
 
   // ── Load authors ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -704,6 +713,15 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   }, [clientId])
 
   useEffect(() => { loadPipeline() }, [loadPipeline])
+
+  // Reload pipeline when the post editor opens without matching topic data (e.g. opened
+  // within seconds of generation before the first poll completes).
+  useEffect(() => {
+    if (reviewPost && !topics.some(t => t.post?.id === reviewPost.id)) {
+      loadPipeline()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewPost?.id])
 
   // ── Toast ──────────────────────────────────────────────────────────────────
   function showToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
@@ -1026,7 +1044,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           }
         }, 15_000)
       } else {
-        showToast(`${data.count} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
+        showToast(data.reason ?? `${data.count ?? 0} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`)
         loadPipeline()
       }
     } else {
@@ -3415,6 +3433,14 @@ function PipelineCalendar({
 
   useEffect(() => { loadPipeline() }, [loadPipeline])
   useEffect(() => { if (refreshSignal > 0) loadPipeline() }, [refreshSignal, loadPipeline])
+
+  // Reload pipeline when the post editor opens without matching topic data.
+  useEffect(() => {
+    if (reviewPost && !topics.some(t => t.post?.id === reviewPost.id)) {
+      loadPipeline()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewPost?.id])
 
   async function topicAction(id: string, status: 'approved' | 'rejected') {
     setTopicLoading(p => ({ ...p, [id]: true }))

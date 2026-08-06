@@ -4,7 +4,7 @@
 // the modal only sends start_date and weeks_ahead.
 //
 // Body: { client_id, start_date?, weeks_ahead }
-// Returns: { count, client_name, slots: string[] }
+// Returns: { queued: true, slots: string[] } — or { queued: false, slots, reason } when all slots occupied
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -55,11 +55,12 @@ export async function POST(request: NextRequest) {
   const existingDates = new Set((existingTopics ?? []).map(t => t.target_publish_date as string))
   const openSlots = slots.filter(s => !existingDates.has(s))
 
-  const count = Math.min(openSlots.length, 50)
-
   if (openSlots.length === 0) {
     return NextResponse.json({ ok: true, queued: false, slots, reason: 'All slots already have topics' })
   }
+
+  // Read admin session before returning — cookies are request-scoped and unavailable inside waitUntil.
+  const adminSession = await getAdminSession()
 
   // ── Generate topics + assign dates in background ─────────────────────────
   // Batch into groups of 10 — 8192 max_tokens fits ~10 topics with full rationale.
@@ -68,6 +69,27 @@ export async function POST(request: NextRequest) {
   const BATCH_SIZE = 10
   waitUntil(
     (async () => {
+      // Purge orphaned null-date topics from previous jobs that were killed mid-run.
+      await db.from('content_topics')
+        .delete()
+        .eq('client_id', client_id)
+        .is('target_publish_date', null)
+        .lt('created_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+
+      // Re-check open slots — a concurrent request may have queued its own job between
+      // our sync check above and when this background task actually starts.
+      const { data: nowFilled } = await db
+        .from('content_topics')
+        .select('target_publish_date')
+        .eq('client_id', client_id)
+        .in('target_publish_date', openSlots)
+        .not('target_publish_date', 'is', null)
+      const filledSet = new Set((nowFilled ?? []).map(t => t.target_publish_date as string))
+      const trulyOpenSlots = openSlots.filter(s => !filledSet.has(s))
+
+      if (trulyOpenSlots.length === 0) return
+
+      const count = Math.min(trulyOpenSlots.length, 50)
       let inserted = 0
       const totalBatches = Math.ceil(count / BATCH_SIZE)
       for (let b = 0; b < totalBatches; b++) {
@@ -82,21 +104,21 @@ export async function POST(request: NextRequest) {
           console.error(`[calendar/generate] batch ${b + 1}/${totalBatches} returned 0 topics`)
           break
         }
-        const fittingTopics = result.topics.slice(0, openSlots.length - inserted)
+        const fittingTopics = result.topics.slice(0, trulyOpenSlots.length - inserted)
         await Promise.all(fittingTopics.map(async (t, i) => {
           const slotIndex   = inserted + i
-          const publishDate = openSlots[slotIndex]
+          const publishDate = trulyOpenSlots[slotIndex]
           await db.from('content_topics').update({ target_publish_date: publishDate }).eq('id', t.id)
         }))
         inserted += fittingTopics.length
         console.log(`[calendar/generate] batch ${b + 1}/${totalBatches}: ${result.topics.length} topics (total ${inserted})`)
       }
+
+      logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: openSlots.length } })
     })()
   )
 
-  const adminSession = await getAdminSession()
-  logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: slots.length } })
-  return NextResponse.json({ ok: true, queued: true, slots })
+  return NextResponse.json({ ok: true, queued: true, slots: openSlots })
 }
 
 // ── Slot computation ───────────────────────────────────────────────────────
@@ -138,7 +160,7 @@ function computeSlots(params: {
   if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
     const targetDay = frequency === 'monthly_first' ? 1
                     : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 28
+                    : frequency === 'monthly_end'   ? 31
                     : anchor.getDate() // rolling: same day each month
 
     let year  = anchor.getFullYear()
