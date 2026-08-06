@@ -10,7 +10,9 @@ export const maxDuration = 300
 
 const TIMEOUT_MS          = 15_000
 const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site already has a failure
-const FLAP_THRESHOLD      = 2
+const FLAP_THRESHOLD      = 3       // consecutive failed check-runs before declaring DOWN
+const RETRY_DELAY_MS      = 3_000   // delay between the first and second attempt within one check
+const MAX_ATTEMPTS        = 2       // attempts per check (1 retry); both must fail to count as DOWN
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Clients can whitelist by UA string: http.user_agent contains "GoLaunchLocal"
@@ -38,32 +40,41 @@ interface CheckResult {
 }
 
 async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckResult, 'siteId'>> {
-  const start = Date.now()
-  try {
-    const res = await fetch(url, {
-      signal:   AbortSignal.timeout(timeoutMs),
-      redirect: 'follow',
-      headers:  {
-        'User-Agent':      MONITOR_UA,
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-      },
-    })
-    const responseMs = Date.now() - start
-    // Any 4xx means the server IS responding (auth wall, rate limit, not-found, etc.) = UP.
-    // Only 5xx server errors = genuinely broken. 499 (nginx client disconnect) is 4xx → UP.
-    const isUp = res.status < 500
-    return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
-  } catch (err) {
-    const responseMs = Date.now() - start
-    const msg = err instanceof Error ? err.message : String(err)
-    const cause = msg.includes('timeout') ? 'timeout'
-      : msg.includes('ENOTFOUND') ? 'dns'
-      : msg.includes('ECONNREFUSED') ? 'connection_refused'
-      : 'other'
-    return { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+  // Any 4xx means the server IS responding (auth wall, rate limit, not-found, etc.) = UP.
+  // Only 5xx server errors = genuinely broken. 499 (nginx client disconnect) is 4xx → UP.
+  let last: Omit<CheckResult, 'siteId'> = { isUp: false, statusCode: null, responseMs: null, finalUrl: null, error: 'other' }
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+
+    const start = Date.now()
+    try {
+      const res = await fetch(url, {
+        signal:   AbortSignal.timeout(timeoutMs),
+        redirect: 'follow',
+        headers:  {
+          'User-Agent':      MONITOR_UA,
+          'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+        },
+      })
+      const responseMs = Date.now() - start
+      const isUp = res.status < 500
+      last = { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
+      if (isUp) return last   // UP on any attempt → stop immediately
+    } catch (err) {
+      const responseMs = Date.now() - start
+      const msg = err instanceof Error ? err.message : String(err)
+      const cause = msg.includes('timeout') ? 'timeout'
+        : msg.includes('ENOTFOUND') ? 'dns'
+        : msg.includes('ECONNREFUSED') ? 'connection_refused'
+        : 'other'
+      last = { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+    }
   }
+
+  return last  // all attempts failed → DOWN
 }
 
 export async function GET(request: NextRequest) {
@@ -219,7 +230,7 @@ export async function GET(request: NextRequest) {
         last_checked_at:      checkedAt,
         last_status_code:     statusCode,
         last_response_ms:     responseMs,
-        consecutive_failures: wasDown ? 0 : (site.consecutive_failures ?? 0),
+        consecutive_failures: 0,   // always reset — any passing check breaks the streak
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
