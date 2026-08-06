@@ -1158,41 +1158,50 @@ export default async function DashboardPage({
           <div>
             <h2 className="section-title">Blog Posts</h2>
 
-            {upcomingPosts.length > 0 && (
+            {/* Published posts — card grid */}
+            {recentPosts.length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '0.625rem' }}>
-                  Coming Soon
+                  Published
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                  {upcomingPosts.map(post => (
-                    <div key={post.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                      {post.featured_image_url ? (
-                        <div style={{ height: 120, background: `url('${post.featured_image_url}') center/cover no-repeat var(--bg-muted)` }} />
-                      ) : (
-                        <div style={{ height: 120, background: 'var(--bg-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ opacity: 0.25 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                          </svg>
-                        </div>
-                      )}
-                      <div style={{ padding: '0.625rem 0.75rem' }}>
-                        <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 3 }}>
-                          {post.title ?? 'Untitled'}
-                        </div>
-                        {post.target_publish_date && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                            Publishing {new Date(post.target_publish_date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {recentPosts.map(post => {
+                    const inner = (
+                      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                        {post.featured_image_url ? (
+                          <div style={{ height: 120, background: `url('${post.featured_image_url}') center/cover no-repeat var(--bg-muted)` }} />
+                        ) : (
+                          <div style={{ height: 120, background: 'var(--bg-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ opacity: 0.25 }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                            </svg>
                           </div>
                         )}
+                        <div style={{ padding: '0.625rem 0.75rem' }}>
+                          <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 3 }}>
+                            {post.title ?? 'Untitled'}
+                          </div>
+                          {post.target_publish_date && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                              {new Date(post.target_publish_date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                    return post.published_url ? (
+                      <a key={post.id} href={post.published_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
+                        {inner}
+                      </a>
+                    ) : <div key={post.id}>{inner}</div>
+                  })}
                 </div>
               </div>
             )}
 
-            {recentPosts.length > 0 && (
-              <details style={{ marginTop: upcomingPosts.length > 0 ? '1.25rem' : '0.75rem' }}>
+            {/* Upcoming posts — collapsible list */}
+            {upcomingPosts.length > 0 && (
+              <details style={{ marginTop: recentPosts.length > 0 ? '1.25rem' : '0.75rem' }}>
                 <summary style={{
                   fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase',
                   letterSpacing: '0.06em', color: 'var(--text-muted)',
@@ -1202,10 +1211,10 @@ export default async function DashboardPage({
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" className="details-caret">
                     <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
                   </svg>
-                  Published Posts ({recentPosts.length})
+                  Coming Soon ({upcomingPosts.length})
                 </summary>
                 <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  {recentPosts.map(post => (
+                  {upcomingPosts.map(post => (
                     <div key={post.id} style={{
                       display: 'flex', alignItems: 'center', gap: '0.75rem',
                       padding: '0.5rem 0.75rem', borderRadius: 6,
@@ -1218,16 +1227,9 @@ export default async function DashboardPage({
                         }} />
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        {post.published_url ? (
-                          <a href={post.published_url} target="_blank" rel="noopener noreferrer"
-                            style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none' }}>
-                            {post.title ?? 'Untitled'}
-                          </a>
-                        ) : (
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                            {post.title ?? 'Untitled'}
-                          </span>
-                        )}
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {post.title ?? 'Untitled'}
+                        </span>
                       </div>
                       {post.target_publish_date && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', flexShrink: 0 }}>
