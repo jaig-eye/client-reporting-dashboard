@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -7,6 +9,7 @@ import { logActivity } from '@/lib/activity'
 import { parseBody } from '@/lib/apiError'
 import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
@@ -63,22 +66,58 @@ type AgencySettings = {
 
 // ─── Sitemap fetching ─────────────────────────────────────────────────────────
 
-async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+function extractSitemapLocs(xml: string): string[] {
+  return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
+}
+
+// Returns { pages: URLs for internal linking, blogPosts: URLs from post/blog sub-sitemaps }
+// Handles both flat sitemaps and sitemap indexes (one level deep).
+async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; blogPosts: string[] }> {
+  const empty = { pages: [], blogPosts: [] }
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
-    if (!res.ok) return []
+    if (!res.ok) return empty
     const xml = await res.text()
-    const matches = Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi))
-    return matches
-      .map(m => m[1].trim())
-      .filter(url => !url.endsWith('.xml'))
-      .slice(0, 40)
+    const locs = extractSitemapLocs(xml)
+
+    if (xml.includes('<sitemapindex')) {
+      // Sitemap index — follow sub-sitemaps in parallel (capped at 10)
+      const subUrls = locs.filter(u => u.endsWith('.xml')).slice(0, 10)
+      const pages: string[]     = []
+      const blogPosts: string[] = []
+      await Promise.all(subUrls.map(async subUrl => {
+        try {
+          const sub = await fetch(subUrl, {
+            signal: AbortSignal.timeout(4000),
+            headers: { 'User-Agent': PLATFORM_BOT_UA },
+          })
+          if (!sub.ok) return
+          const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
+          // Categorise by sub-sitemap URL — "post", "blog", "article", "news" → blog posts
+          if (/post|blog|article|news/i.test(subUrl)) {
+            blogPosts.push(...subLocs)
+          } else {
+            pages.push(...subLocs)
+          }
+        } catch { /* non-fatal */ }
+      }))
+      return { pages: pages.slice(0, 40), blogPosts: blogPosts.slice(0, 150) }
+    }
+
+    // Flat sitemap — all locs are pages
+    return { pages: locs.filter(u => !u.endsWith('.xml')).slice(0, 40), blogPosts: [] }
   } catch {
-    return []
+    return empty
   }
+}
+
+// Kept for compatibility — returns only page URLs
+async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
+  const { pages, blogPosts } = await fetchSitemapData(sitemapUrl)
+  return [...pages, ...blogPosts]
 }
 
 function scoreUrlRelevance(url: string, keywords: string[]): number {
@@ -314,49 +353,6 @@ function computeInternalLinks(html: string): number {
 
 // ─── Link validator ───────────────────────────────────────────────────────────
 
-// Strips any internal <a href> that is NOT in the provided allowedUrls set.
-// Absolute external links (different hostname) and mailto/tel/# are left untouched.
-// Absolute internal links (same hostname as the site) ARE validated — the AI generates
-// absolute URLs as prompted, so bypassing https:// would make this function a no-op.
-function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
-  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-  const allowed = new Set(Array.from(allowedUrls).map(norm))
-  // Derive known internal hostnames from the allowed set so we can distinguish
-  // absolute internal links from genuine external links.
-  const internalHosts = new Set<string>()
-  Array.from(allowed).forEach(u => {
-    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative URL — skip */ }
-  })
-  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-    if (!m) return match
-    const href = m[1].trim()
-    if (/^(mailto:|tel:|#)/.test(href)) return match        // safe: not a page link
-    if (/^https?:/.test(href)) {
-      try {
-        const parsed = new URL(href)
-        const hostname = parsed.hostname.toLowerCase()
-        // When no internal hosts are known we can't tell internal from external — leave all absolute URLs alone
-        if (internalHosts.size === 0) return match
-        // External hostname — strip the link, keep the anchor text (can't verify external URLs at generation time)
-        if (!internalHosts.has(hostname)) {
-          console.warn('[generate] stripped external link:', href)
-          return text
-        }
-        // Check full absolute URL first, then path-only (handles relative-URL allowed sets)
-        if (allowed.has(norm(href))) return match
-        if (allowed.has(norm(parsed.pathname))) return match
-        console.warn('[generate] stripped hallucinated internal link:', href)
-        return text
-      } catch { return match }
-    }
-    // Relative URL — validate against allowed set
-    if (allowed.has(norm(href))) return match
-    console.warn('[generate] stripped hallucinated internal link:', href)
-    return text
-  })
-}
 
 // ─── FAQ JSON-LD schema injection ─────────────────────────────────────────────
 
@@ -445,6 +441,9 @@ function buildSystemPrompt(
   postStructure: string,
   masterPreamble?: string | null
 ): string {
+  const currentYear = new Date().getFullYear()
+  const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
+
   const jsonFormat = `CRITICAL — OUTPUT FORMAT: You must respond with ONLY a valid JSON object. No markdown fences, no explanation, no text before or after the JSON. The object must have exactly these fields:
 {
   "title": "Post H1 title — descriptive, includes focus keyword",
@@ -463,9 +462,10 @@ How to use the client context above — MUST follow every rule:
 - Priority pages: include internal links to at least 2 of the priority pages listed in the context. Anchor text must be descriptive and contextually natural — never generic ("click here").
 - Excluded pages: never link to, cite, or reference any URL listed under excluded pages.
 - Always-include links: every URL listed under "Always-include internal links" must appear somewhere in the post body with descriptive anchor text.
-- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances.
+- INTERNAL LINKS — CRITICAL: You may ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list, the "Priority pages" list, or any "Required internal links" list provided above. Do NOT invent, construct, guess, or derive any other internal URL — even if the page logically should exist. If a URL is not explicitly listed, do not link to it under any circumstances. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list (e.g. if the list contains '/about/', link to '/about/' exactly — never '/services/about/' or '/en/about/').
 - NEVER link to XML files, sitemaps, PHP scripts, feed or RSS URLs, search result pages, or any URL that is not a real HTML content page. Every permitted URL is already pre-filtered in the lists above.
-- EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.` : ''
+- EXTERNAL LINKS: Do NOT insert hyperlinks to any external website. If you reference a credible source (government agency, study, publication), name it in the prose only — do not create a clickable link to it.
+- AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.` : ''
 
   if (masterPreamble) {
     const rules = extractNonNegotiableRules(masterPreamble)
@@ -478,7 +478,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${rulesReminder}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -490,9 +490,10 @@ Your writing demonstrates E-E-A-T (Experience, Expertise, Authority, Trustworthi
 
 Topic strategy:
 - Answer real questions the target audience searches for
-- Consider seasonal relevance and local industry angles
+- Consider seasonal relevance and local industry angles — the current year is ${currentYear}
 - Write about subjects tied to the business's services and value proposition
 - Avoid vague titles; be specific and targeted
+- Reference current year (${currentYear}) for fresh, relevant content; only use ${currentYear - 1} for historical comparison${yearNote}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
 
 SEO guidelines:
@@ -504,8 +505,9 @@ SEO guidelines:
 - End with a clear call-to-action
 - Reference credible sources (government agencies, studies, industry publications) by name in the prose where factually relevant — do NOT insert hyperlinks to external websites
 - Add descriptive alt text to any <img> tags including the focus keyword
-- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error.
+- INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
+- AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
 ${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
 }
 
@@ -588,7 +590,7 @@ async function runTopicGeneration({
         .not('status', 'in', '("rejected","generating")')
         .neq('id', topicData.id),
       db.from('content_sitemap_pages')
-        .select('url, is_priority, is_excluded, created_at')
+        .select('url, is_priority, is_excluded, created_at, source_sitemap')
         .eq('client_id', effectiveClientId),
     ])
 
@@ -614,7 +616,7 @@ async function runTopicGeneration({
       }
     }
 
-    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string }[]
+    const sitemapRows  = (sitemapPagesRes.data ?? []) as { url: string; is_priority: boolean; is_excluded: boolean; created_at: string; source_sitemap: string | null }[]
     const priorityUrls = sitemapRows.filter(r => r.is_priority && isLinkableUrl(r.url)).map(r => r.url)
     const excludedUrls = sitemapRows.filter(r => r.is_excluded).map(r => r.url)
     if (priorityUrls.length > 0) contextLines.push(`\nPriority pages — prefer for internal links when contextually relevant:\n${priorityUrls.join('\n')}`)
@@ -640,6 +642,9 @@ async function runTopicGeneration({
     const briefHasLinks   = (topicData.seo_brief?.internal_link_targets?.length ?? 0) > 0
     const sitemapPageCap  = briefHasLinks ? 30 : 60
 
+    // Blog post URLs from the sitemap — used for cannibalization prevention below
+    let sitemapBlogPostUrls: string[] = []
+
     if (cacheIsFresh1) {
       const generalPages = sitemapRows
         .filter(r => !r.is_priority && !r.is_excluded && isLinkableUrl(r.url))
@@ -649,9 +654,20 @@ async function runTopicGeneration({
         .slice(0, sitemapPageCap - priorityUrls.length)
       if (generalPages.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${generalPages.join('\n')}`)
+
+      // Identify existing blog posts from cached sitemap rows.
+      // source_sitemap column (set when post-sitemap.xml was explicitly followed)
+      // is the primary signal; URL path pattern is the fallback for older cache rows.
+      sitemapBlogPostUrls = sitemapRows
+        .filter(r => !r.is_excluded && (
+          /post|blog|article|news/i.test(r.source_sitemap ?? '') ||
+          /\/(blog|news|articles?|posts?)\//.test(r.url)
+        ))
+        .map(r => r.url)
     } else if (sitemapUrls.length > 0) {
-      const allPages = (await Promise.all(sitemapUrls.map(fetchSitemapPages))).flat()
+      const sitemapDataArr = await Promise.all(sitemapUrls.map(fetchSitemapData))
       const excluded = new Set(excludedUrls)
+      const allPages = sitemapDataArr.flatMap(d => d.pages)
       const scored   = Array.from(new Set(allPages))
         .filter(u => !excluded.has(u))
         .map(u => ({ url: u, score: scoreUrlRelevance(u, topicKws) }))
@@ -661,12 +677,24 @@ async function runTopicGeneration({
       if (scored.length > 0)
         contextLines.push(`\nAvailable site pages for internal linking:\n${scored.join('\n')}`)
       scored.forEach(u => allowedInternalUrls.add(u))
+      // Blog posts from post-specific sub-sitemaps (live fetch)
+      sitemapBlogPostUrls = sitemapDataArr.flatMap(d => d.blogPosts).filter(u => !excluded.has(u))
     }
 
     const clientContext = contextLines.length > 0 ? `Client context:\n${contextLines.join('\n')}\n` : ''
 
     const existingPosts = (existingPostsRes.data ?? []) as { focus_topic?: string; title?: string; target_keyword?: string | null }[]
     const pendingTopics = (pendingTopicsRes.data ?? []) as { topic?: string; target_keyword?: string | null }[]
+    // Derive readable topic labels from existing blog post URLs on the client's site.
+    // These are posts that predate our system and won't be in content_posts — including them
+    // prevents the AI from writing about topics the client has already published.
+    const sitemapBlogEntries = sitemapBlogPostUrls.slice(0, 80).map(url => {
+      try {
+        const slug = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
+        if (slug.length < 4) return null
+        return `"${slug.replace(/-/g, ' ')}" [existing site post]`
+      } catch { return null }
+    }).filter(Boolean)
     const avoidEntries = [
       ...existingPosts.map(p => {
         const label = p.focus_topic || p.title || ''
@@ -678,6 +706,7 @@ async function runTopicGeneration({
         if (!label) return null
         return t.target_keyword ? `"${label}" (keyword: ${t.target_keyword}) [queued]` : `"${label}" [queued]`
       }),
+      ...sitemapBlogEntries,
     ].filter(Boolean)
     const avoidList = avoidEntries.join('\n')
 
@@ -746,9 +775,10 @@ async function runTopicGeneration({
       const q = l.query.toLowerCase().trim()
       return !Array.from(coveredKeywords).some(kw => q.includes(kw) || kw.includes(q))
     })
-    filteredGscLinks.forEach(l => allowedInternalUrls.add(l.url))
-    // Always add ALL GSC URLs to the allowed set (so linking to them is valid even if filtered from prompt)
-    gscLinks.forEach(l => allowedInternalUrls.add(l.url))
+    // GSC URLs are NOT added to allowedInternalUrls — they're sourced from indexed pages which
+    // may include deleted or never-sitemapped content. If a GSC URL is also in the client's
+    // sitemap it's already in allowedInternalUrls from the sitemap_pages query above, so
+    // valid GSC link suggestions survive; stale/deleted ones get stripped by stripHallucinatedLinks.
     manualLinks.forEach(l => allowedInternalUrls.add(l.url))
 
     const internalLinkLines: string[] = []
@@ -1080,7 +1110,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
         }
       }
 
-      if (agencySettings.discord_bot_token && discordChannelId) {
+      const _notifConfig = ((agencySettings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
+      if (agencySettings.discord_bot_token && discordChannelId && getNotif(_notifConfig, 'content_post_generated').client) {
         void sendDiscordMessage(
           agencySettings.discord_bot_token,
           discordChannelId,
@@ -1126,7 +1157,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings, error: agErr } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token')
+    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token, notification_config')
     .limit(1)
     .maybeSingle()
 

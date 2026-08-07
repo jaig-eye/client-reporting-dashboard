@@ -4,31 +4,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { PLATFORM_BOT_UA }           from '@/lib/platformBot'
+import { isPublicUrl }               from '@/lib/ssrf'
 
 function extractLocs(xml: string): string[] {
   return Array.from(xml.matchAll(/<loc[^>]*>\s*([\s\S]*?)\s*<\/loc>/gi), m => m[1].trim())
-    .map(u => u.replace(/&amp;/g, '&').replace(/\s/g, ''))
-}
-
-// Block private/internal IP ranges and dangerous schemes to prevent SSRF.
-function isPublicUrl(rawUrl: string): boolean {
-  let u: URL
-  try { u = new URL(rawUrl) } catch { return false }
-  if (!['http:', 'https:'].includes(u.protocol)) return false
-  const host = u.hostname.toLowerCase()
-  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false
-  if (host === 'metadata.google.internal' || host === 'metadata.goog') return false
-  const oct = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (oct) {
-    const [a, b] = [Number(oct[1]), Number(oct[2])]
-    if (a === 10 || a === 127 || a === 0) return false
-    if (a === 172 && b >= 16 && b <= 31)  return false
-    if (a === 192 && b === 168)            return false
-    if (a === 169 && b === 254)            return false
-    if (a === 100 && b >= 64 && b <= 127) return false
-  }
-  if (host === '::1' || host === '[::1]' || host.startsWith('fe80')) return false
-  return true
+    .map(u => u
+      .replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '') // strip CDATA wrappers
+      .replace(/&amp;/g, '&')
+      .replace(/\s/g, '')
+    )
 }
 
 export async function POST(request: NextRequest) {
@@ -61,10 +46,11 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const pageUrls   = new Set<string>()
+  // url → source sub-sitemap URL (or top-level sitemap URL for flat sitemaps)
+  const pageMap    = new Map<string, string>()
   const fetchErrors: string[] = []
   const headers = {
-    'User-Agent':                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'User-Agent':                PLATFORM_BOT_UA,
     'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language':           'en-US,en;q=0.5',
     'Accept-Encoding':           'gzip, deflate, br',
@@ -109,20 +95,28 @@ export async function POST(request: NextRequest) {
               fetchErrors.push(`${subUrl} → ${hint}`)
               continue
             }
-            for (const loc of extractLocs(await subRes.text())) pageUrls.add(loc)
+            // Record source sub-sitemap so callers can identify blog-post sitemaps later
+            for (const loc of extractLocs(await subRes.text())) {
+              if (!pageMap.has(loc)) pageMap.set(loc, subUrl)
+            }
           } catch (e) {
             fetchErrors.push(`${subUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
           }
         }
       } else {
-        for (const loc of locs) pageUrls.add(loc)
+        for (const loc of locs) {
+          if (!pageMap.has(loc)) pageMap.set(loc, sitemapUrl)
+        }
       }
     } catch (e) {
       fetchErrors.push(`${sitemapUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
     }
   }
 
-  const urls = Array.from(pageUrls)
+  if (fetchErrors.length > 0) console.log('[sitemap-parse] fetch errors:', fetchErrors)
+
+  const pageUrls = Array.from(pageMap.keys())
+  const urls = pageUrls
     .filter(u => {
       if (!u.startsWith('http')) return false
       // Reject binary/media/archive files by extension
@@ -144,10 +138,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `No pages found in sitemap.${detail}` }, { status: 400 })
   }
 
-  // Upsert URLs — preserve existing title/flags, only insert new rows
+  // Upsert URLs — insert new rows and update source_sitemap for existing ones.
+  // ignoreDuplicates: false with a 3-column payload is intentional: PostgREST issues
+  // ON CONFLICT (client_id, url) DO UPDATE SET source_sitemap = excluded.source_sitemap
+  // so only source_sitemap is touched; is_priority / is_excluded / title are NOT overwritten.
   await db.from('content_sitemap_pages').upsert(
-    urls.map(url => ({ client_id: clientId, url })),
-    { onConflict: 'client_id,url', ignoreDuplicates: true }
+    urls.map(url => ({ client_id: clientId, url, source_sitemap: pageMap.get(url) ?? null })),
+    { onConflict: 'client_id,url', ignoreDuplicates: false }
   )
 
   const { data: allPages } = await db

@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API helpers
@@ -43,8 +44,9 @@ async function wpGet(
 
   const res = await fetch(url.toString(), {
     headers: {
-      Authorization: authHeader(auth.username, auth.app_password),
+      Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
+      'User-Agent':   PLATFORM_BOT_UA,
     },
   })
   if (!res.ok) {
@@ -63,8 +65,9 @@ async function wpPost(
   const res = await fetch(wpApiUrl(siteUrl, path), {
     method: 'POST',
     headers: {
-      Authorization: authHeader(auth.username, auth.app_password),
+      Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
+      'User-Agent':   PLATFORM_BOT_UA,
     },
     body: JSON.stringify(body),
   })
@@ -197,6 +200,29 @@ export async function updatePage(
 }
 
 /**
+ * Create a new category in WordPress and return its ID.
+ * Returns null if the category already exists (409) — callers should retry getCategories() in that case.
+ */
+export async function createCategory(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  name: string
+): Promise<{ id: number; name: string; slug: string } | null> {
+  try {
+    const result = (await wpPost(siteUrl, '/categories', auth, { name })) as Record<string, unknown>
+    return {
+      id:   Number(result.id),
+      name: String(result.name || name),
+      slug: String(result.slug || ''),
+    }
+  } catch (err) {
+    // 409 = term already exists — non-fatal; caller falls back to existing match
+    if (err instanceof Error && err.message.includes('409')) return null
+    throw err
+  }
+}
+
+/**
  * Get existing categories from the WordPress site.
  */
 export async function getCategories(
@@ -288,7 +314,7 @@ export async function uploadMediaToWordPress(
   imageUrl: string,
   altText?: string
 ): Promise<number> {
-  const imgRes = await fetch(imageUrl)
+  const imgRes = await fetch(imageUrl, { headers: { 'User-Agent': PLATFORM_BOT_UA } })
   if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`)
   const buffer  = Buffer.from(await imgRes.arrayBuffer())
   const mime    = imgRes.headers.get('content-type') ?? 'image/jpeg'
@@ -300,7 +326,7 @@ export async function uploadMediaToWordPress(
 
   const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
     method:  'POST',
-    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+    headers: { Authorization: authHeader(auth.username, auth.app_password), 'User-Agent': PLATFORM_BOT_UA },
     body:    formData,
   })
   if (!res.ok) throw new Error(`WP media upload failed: ${await res.text()}`)

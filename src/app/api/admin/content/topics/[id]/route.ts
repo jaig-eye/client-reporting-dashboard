@@ -1,3 +1,4 @@
+// GET  /api/admin/content/topics/[id] — returns strategy/breakdown fields for the ContentPostEditor
 // PATCH /api/admin/content/topics/[id]
 // Updates topic status (approve/reject) and target_publish_date.
 // When approving past the generate_by_date deadline, fires post generation immediately.
@@ -7,6 +8,37 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = request.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+  const db = createAdminClient()
+  const { data, error } = await db
+    .from('content_topics')
+    .select('keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, page_to_support, competitors_researched')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const d = data as Record<string, unknown>
+  const cr = d.competitors_researched as { urls?: string[] } | null
+  return NextResponse.json({
+    keyword_opportunity: d.keyword_opportunity ?? null,
+    ranking_strategy:    d.ranking_strategy    ?? null,
+    audience_intent:     d.audience_intent     ?? null,
+    why_now:             d.why_now             ?? null,
+    competition_level:   d.competition_level   ?? null,
+    page_to_support:     d.page_to_support     ?? null,
+    competitors_researched: cr?.urls ?? null,
+  })
+}
 
 export async function PATCH(
   request: NextRequest,

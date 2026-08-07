@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
 import { sendEmail } from '@/lib/email'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export const maxDuration = 600
 
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
 
   const { data: settings } = await db
     .from('agency_settings')
-    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc, notify_connector_errors, notification_email, agency_name, discord_bot_token, discord_ops_channel_id')
+    .select('cron_enabled, sync_frequency, sync_hour_utc, sync_day_of_week, ads_sync_frequency, ads_sync_hour_utc, notify_connector_errors, notification_email, agency_name, discord_bot_token, discord_ops_channel_id, notification_config')
     .single()
 
   if (settings?.cron_enabled === false) {
@@ -68,6 +69,7 @@ export async function GET(request: NextRequest) {
   const agencyName     = (settings as Record<string, unknown>).agency_name as string | undefined
   const discordToken   = (settings as Record<string, unknown>).discord_bot_token as string | null | undefined
   const opsChannelId   = (settings as Record<string, unknown>).discord_ops_channel_id as string | null | undefined
+  const notifConfig    = ((settings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
   const connectionsUrl = `${process.env.NEXT_PUBLIC_APP_URL}/admin/connections`
 
   const settled = await Promise.allSettled(
@@ -116,7 +118,7 @@ export async function GET(request: NextRequest) {
           }).then(null, () => {})
 
           // Discord alert
-          if (discordToken && opsChannelId) {
+          if (discordToken && opsChannelId && getNotif(notifConfig, 'sync_connector_error').agency) {
             const msg = `🔑 **Connector auth error — ${client.name}**\nAn integration token has expired or been revoked. Syncing is paused until reconnected.\n→ ${connectionsUrl}`
             void sendDiscordMessage(discordToken, opsChannelId, msg).catch(() => {})
           }

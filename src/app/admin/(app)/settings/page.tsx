@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
+import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
 import { useTheme } from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
@@ -65,7 +66,9 @@ interface Settings {
   overview_columns:               string[]
   metric_layouts:                 MetricLayouts | null
   hidden_connector_types:         string[]
+  show_blog_posts:                boolean
   discord_bot_token:              string
+  discord_ops_channel_id:         string
   crm_name:                       string
   payment_sound_url:              string
   brand_primary:                  string
@@ -119,7 +122,9 @@ const DEFAULT: Settings = {
   overview_columns:               DEFAULT_OVERVIEW_COLUMNS,
   metric_layouts:                 null,
   hidden_connector_types:         [],
+  show_blog_posts:                false,
   discord_bot_token:              '',
+  discord_ops_channel_id:         '',
   crm_name:                       'CRM',
   brand_primary:                  '#2563eb',
   stripe_api_key:                 '',
@@ -576,6 +581,12 @@ export default function AgencySettingsPage() {
                     }}
                   />
                 ))}
+                <Toggle
+                  label="Show Blog Posts"
+                  hint="Content calendar blog posts — upcoming and recently published posts tab on client dashboards"
+                  checked={form.show_blog_posts}
+                  onChange={v => field('show_blog_posts', v)}
+                />
               </div>
             </div>
           </div>
@@ -849,20 +860,79 @@ export default function AgencySettingsPage() {
         {/* ─── Notifications ─────────────────────────────────────── */}
         {visitedTabs.has('notifications') && <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
           <div className="space-y-5">
-          <div className="card p-6 space-y-5">
-            <div>
-              <h2 className="section-title">Email Notifications</h2>
-              <p className="section-desc">Receive email alerts when content events occur in the system.</p>
-            </div>
 
-            <FormField label="Notification Email" hint="receives all content alerts">
-              <div style={{ display: 'flex', gap: 8 }}>
+          {/* Discord bot — prerequisite for channel notifications */}
+          <div className="card p-6 space-y-4">
+            <div>
+              <h2 className="section-title">Discord Bot</h2>
+              <p className="section-desc">Shared bot for all channel notifications. Each client&apos;s channel ID is configured in their Integrations tab.</p>
+            </div>
+            <IntegrationCard
+              icon="🤖"
+              name="Discord Bot"
+              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
+              isConnected={!!form.discord_bot_token}
+              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
+              onConfigure={openDiscordModal}
+              justConnected={discordJustSaved}
+            />
+            <IntegrationModal
+              open={discordModalOpen}
+              onClose={() => setDiscordModalOpen(false)}
+              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
+              title="Discord Bot"
+              icon="🤖"
+              isConnected={!!form.discord_bot_token}
+              howTo={
+                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
+                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
+                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
+                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
+                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
+                </ol>
+              }
+              onSave={saveDiscordCredential}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
+                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
+                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
+              </div>
+            </IntegrationModal>
+            {/* Agency ops Discord channel — inline (not sensitive, no need for modal) */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>
+                Agency Discord Channel ID
+              </label>
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                Internal ops channel that receives agency-side alerts (uptime, SSL, content review, etc.). Right-click the channel in Discord → Copy Channel ID.
+              </p>
+              <input
+                className="input"
+                type="text"
+                value={form.discord_ops_channel_id}
+                onChange={e => field('discord_ops_channel_id', e.target.value)}
+                placeholder="e.g. 1234567890123456789"
+                style={{ maxWidth: 340 }}
+              />
+            </div>
+          </div>
+
+          {/* Notification type table */}
+          <div className="card p-6">
+            <div style={{ marginBottom: 16 }}>
+              <h2 className="section-title">Notification Types</h2>
+              <p className="section-desc">Control which events send to Agency Discord, Global Emails, the Account Manager, or the Client Discord channel.</p>
+            </div>
+            <FormField label="Global Email Address" hint="receives all Global Emails notifications">
+              <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
                 <input
                   className="input"
                   type="email"
                   value={form.notification_email}
                   onChange={e => field('notification_email', e.target.value)}
-                  placeholder="you@agency.com"
+                  placeholder="team@agency.com"
                   style={{ flex: 1 }}
                 />
                 <button
@@ -881,53 +951,66 @@ export default function AgencySettingsPage() {
                 </p>
               )}
             </FormField>
+            <NotificationTypeTable />
 
-            <div className="space-y-3">
-              <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Notify when:</p>
-              <Toggle
-                label="Topics created for a client"
-                hint="Sent when new topic suggestions are generated and ready for review"
-                checked={form.notify_topics_created}
-                onChange={v => field('notify_topics_created', v)}
-              />
-              <Toggle
-                label="Post uploaded to WordPress"
-                hint="Sent when a generated post is uploaded to WordPress as a draft"
-                checked={form.notify_post_uploaded}
-                onChange={v => field('notify_post_uploaded', v)}
-              />
-              <Toggle
-                label="Topics ready for approval"
-                hint="Sent when new scheduled topics are ready for approval"
-                checked={form.notify_topic_ready}
-                onChange={v => field('notify_topic_ready', v)}
-              />
-              <Toggle
-                label="Post needs approval (within 48h of publish date)"
-                hint="Reminder when an approved topic's post hasn't been approved with publish date approaching"
-                checked={form.notify_approval_needed}
-                onChange={v => field('notify_approval_needed', v)}
-              />
-              <Toggle
-                label="Topics auto-generated for scheduled client"
-                hint="Sent when topics are automatically generated 30 days before a client's scheduled publish date"
-                checked={form.notify_schedule_generated}
-                onChange={v => field('notify_schedule_generated', v)}
-              />
-              <Toggle
-                label="Service area page generated (Discord)"
-                hint="Discord notification when a service area page is generated and ready for review"
-                checked={form.notify_sa_generated}
-                onChange={v => field('notify_sa_generated', v)}
-              />
-              <Toggle
-                label="Metric anomaly alerts (email)"
-                hint="Daily digest when any client metric changes by more than the threshold vs the prior comparison window"
-                checked={form.notify_metric_alerts}
-                onChange={v => field('notify_metric_alerts', v)}
-              />
+            {/* Metric Alert Thresholds — styled to match NotificationTypeTable groups */}
+            <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              {/* Group header */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center',
+                padding: '0.625rem 1rem',
+                background: 'var(--bg-subtle)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+                  Metric Alerts
+                </span>
+                <div style={{ width: 72, display: 'flex', justifyContent: 'center' }}>
+                  <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb' }}>
+                    EMAILS
+                  </span>
+                </div>
+              </div>
+
+              {/* Toggle row */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center',
+                padding: '0.625rem 1rem',
+                borderBottom: form.notify_metric_alerts ? '1px solid var(--border)' : 'none',
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Metric anomaly alerts</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1, maxWidth: 480 }}>
+                    Daily digest when any client metric changes beyond threshold vs the prior comparison window
+                  </div>
+                </div>
+                <div style={{ width: 72, display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    role="switch"
+                    aria-checked={form.notify_metric_alerts}
+                    onClick={() => field('notify_metric_alerts', !form.notify_metric_alerts)}
+                    style={{
+                      width: 36, height: 20, borderRadius: 999,
+                      background: form.notify_metric_alerts ? '#2563eb' : 'var(--bg-subtle)',
+                      border: `1px solid ${form.notify_metric_alerts ? '#2563eb' : 'var(--border)'}`,
+                      cursor: 'pointer', position: 'relative',
+                      transition: 'background 0.15s, border-color 0.15s',
+                      padding: 0, flexShrink: 0,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2, left: form.notify_metric_alerts ? 18 : 2,
+                      width: 14, height: 14, borderRadius: '50%',
+                      background: 'white', transition: 'left 0.15s',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Threshold config */}
               {form.notify_metric_alerts && (
-                <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {/* Day-over-day */}
                   <div>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -998,12 +1081,6 @@ export default function AgencySettingsPage() {
                   </div>
                 </div>
               )}
-              <Toggle
-                label="Connector auth errors (expired tokens, revoked access)"
-                hint="Email when a sync fails because a platform token has expired or been revoked — with a link to reconnect"
-                checked={form.notify_connector_errors}
-                onChange={v => field('notify_connector_errors', v)}
-              />
             </div>
           </div>
 
@@ -1065,45 +1142,6 @@ export default function AgencySettingsPage() {
             </p>
           </div>
 
-          <div className="card p-6 space-y-4">
-            <div>
-              <h2 className="section-title">Discord Notifications</h2>
-              <p className="section-desc">Bot token used to post Ad Fuel low-balance alerts to per-client Discord channels.</p>
-            </div>
-            <IntegrationCard
-              icon="🤖"
-              name="Discord Bot"
-              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
-              isConnected={!!form.discord_bot_token}
-              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
-              onConfigure={openDiscordModal}
-              justConnected={discordJustSaved}
-            />
-            <IntegrationModal
-              open={discordModalOpen}
-              onClose={() => setDiscordModalOpen(false)}
-              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
-              title="Discord Bot"
-              icon="🤖"
-              isConnected={!!form.discord_bot_token}
-              howTo={
-                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
-                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
-                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
-                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
-                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
-                </ol>
-              }
-              onSave={saveDiscordCredential}
-            >
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
-                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
-                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
-              </div>
-            </IntegrationModal>
-          </div>
           </div>
         </div>}
 

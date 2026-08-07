@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { cookies }           from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -317,7 +318,7 @@ async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
   try {
     const res = await fetch(sitemapUrl, {
       signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SEOBot/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
     if (!res.ok) return []
     const xml = await res.text()

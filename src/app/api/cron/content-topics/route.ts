@@ -20,6 +20,7 @@ import type { TopicSummary }         from '@/lib/content/generateTopics'
 import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config')
     .single()
 
   const notifEmail          = (agencySettings?.notification_email          as string | null)  ?? null
@@ -102,7 +103,8 @@ export async function GET(request: NextRequest) {
   const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
-  const opsChannelId = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const opsChannelId  = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+  const notifConfig   = (agencySettings?.notification_config as NotifConfig | null) ?? {}
 
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
@@ -156,7 +158,7 @@ export async function GET(request: NextRequest) {
       schedule_frequency,
       schedule_day_of_week,
       weeks_ahead           = 1,
-      auto_approve_topics   = false,
+      auto_approve_topics   = true,  // legacy default: auto_generate implies auto_approve
       auto_push_posts       = false,
       generate_service_pages = false,
       generate_regular_pages = false,
@@ -524,7 +526,7 @@ export async function GET(request: NextRequest) {
           const bcBlogUrl = `https://login.bigcommerce.com/manage/content/blog`
           const alertMsg  = `⚠️ BC post due tomorrow — ${bp.title ?? '(untitled)'} for ${clientNameBc} needs manual publish: ${bcBlogUrl}`
 
-          if (discordBotTk && opsChannelId) {
+          if (discordBotTk && opsChannelId && getNotif(notifConfig, 'content_bc_post_due').agency) {
             void sendDiscordMessage(discordBotTk, opsChannelId, alertMsg).catch(() => {})
           }
 
@@ -547,7 +549,7 @@ export async function GET(request: NextRequest) {
   {
     const { data: saSettingsRows } = await db
       .from('service_area_settings')
-      .select('client_id, pages_per_run, auto_approve_pages, auto_push_pages, schedule_frequency, schedule_day_of_week')
+      .select('client_id, pages_per_run, auto_approve_pages, auto_push_pages, schedule_frequency, schedule_day_of_week, service_areas, service_pages, slug_structure, base_page_path')
       .eq('auto_generate', true)
       .not('client_id', 'is', null)
 
@@ -555,12 +557,16 @@ export async function GET(request: NextRequest) {
     const saPushed:     string[] = []
 
     for (const saRow of (saSettingsRows ?? []) as {
-      client_id:           string
-      pages_per_run:       number | null
-      auto_approve_pages:  boolean | null
-      auto_push_pages:     boolean | null
-      schedule_frequency:  string | null
+      client_id:            string
+      pages_per_run:        number | null
+      auto_approve_pages:   boolean | null
+      auto_push_pages:      boolean | null
+      schedule_frequency:   string | null
       schedule_day_of_week: number | null
+      service_areas:        { city: string; state: string; rationale?: string }[] | null
+      service_pages:        { name: string; url?: string }[] | null
+      slug_structure:       string | null
+      base_page_path:       string | null
     }[]) {
       const {
         client_id:          saClientId,
@@ -570,6 +576,171 @@ export async function GET(request: NextRequest) {
       } = saRow
 
       const saLimit = pagesPerRun ?? 1
+
+      // ── Auto-schedule SA topics for upcoming slots (mirrors blog lead-window) ─
+      {
+        const saFrequency  = saRow.schedule_frequency   ?? 'monthly'
+        const saDayOfWeek  = saRow.schedule_day_of_week ?? 1
+        const saServiceAreas = saRow.service_areas ?? []
+
+        if (saServiceAreas.length > 0) {
+          const saCycle      = getCycleDays(saFrequency)
+          const saLeadWindow = saCycle * 8 // 8-cycle look-ahead (same as wizard default)
+          const saWeeksToScan = Math.ceil(saLeadWindow / 7) + 1
+
+          const saSlots = computeFutureSlots(saFrequency, saDayOfWeek, saWeeksToScan).filter(slot => {
+            const daysOut = Math.round((new Date(slot + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
+            return daysOut > 0 && daysOut <= saLeadWindow
+          })
+
+          // Fetch all non-rejected SA topics for this client (slot occupancy + dedup)
+          const { data: allSaTopics } = await db
+            .from('content_topics')
+            .select('target_publish_date, city, state_abbr, service_name')
+            .eq('client_id', saClientId)
+            .eq('content_type', 'service_area')
+            .not('status', 'eq', 'rejected')
+
+          // Count existing topics per slot
+          type SaTopicRow = { target_publish_date: string | null; city: string | null; state_abbr: string | null; service_name: string | null }
+          const topicsPerSlot = new Map<string, number>()
+          for (const t of (allSaTopics ?? []) as SaTopicRow[]) {
+            if (t.target_publish_date) topicsPerSlot.set(t.target_publish_date, (topicsPerSlot.get(t.target_publish_date) ?? 0) + 1)
+          }
+
+          const saSlugStructure = saRow.slug_structure ?? 'service_slash_city_state'
+          const saBasePath      = saRow.base_page_path?.trim() ?? null
+
+          // Dedup key: omit state for service_slash_city (state not encoded in URLs for this structure)
+          const saComboKey = (city: string, state: string, service: string) => {
+            const stateNorm = saSlugStructure === 'service_slash_city' ? '' : state.toLowerCase()
+            return `${city.toLowerCase().replace(/[^a-z0-9]/g, '')}|${stateNorm}|${service.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+          }
+
+          // Build dedup set from existing topics
+          const saExistingCombos = new Set<string>()
+          for (const t of (allSaTopics ?? []) as SaTopicRow[]) {
+            if (t.city && t.service_name) {
+              saExistingCombos.add(saComboKey(t.city, t.state_abbr ?? '', t.service_name))
+            }
+          }
+
+          // Also dedup against live sitemap pages
+          const { data: sitemapRows } = await db
+            .from('content_sitemap_pages')
+            .select('url')
+            .eq('client_id', saClientId)
+
+          for (const p of (sitemapRows ?? []) as { url: string }[]) {
+            try {
+              const pathname = new URL(p.url).pathname.replace(/\/$/, '')
+              let city = '', state = '', service = ''
+              if (saBasePath) {
+                const base = saBasePath.replace(/^\/|\/$/g, '')
+                if (!pathname.startsWith(`/${base}/`)) continue
+                const child = pathname.slice(`/${base}/`.length)
+                if (!child) continue
+                service = base.split('/').pop() ?? ''
+                const lastHyphen = child.lastIndexOf('-')
+                if (lastHyphen !== -1 && child.slice(lastHyphen + 1).length === 2) {
+                  state = child.slice(lastHyphen + 1).toUpperCase()
+                  city  = child.slice(0, lastHyphen)
+                } else {
+                  city = child
+                }
+              } else if (saSlugStructure === 'service_slash_city_state' || saSlugStructure === 'service_slash_city') {
+                const parts = pathname.split('/').filter(Boolean)
+                if (parts.length !== 2) continue
+                service = parts[0]
+                const lastHyphen = parts[1].lastIndexOf('-')
+                if (saSlugStructure === 'service_slash_city_state' && lastHyphen !== -1 && parts[1].slice(lastHyphen + 1).length === 2) {
+                  state = parts[1].slice(lastHyphen + 1).toUpperCase()
+                  city  = parts[1].slice(0, lastHyphen)
+                } else {
+                  city = parts[1]
+                }
+              } else if (saSlugStructure === 'service_dash_city_state') {
+                const seg = pathname.split('/').filter(Boolean)
+                if (seg.length !== 1) continue
+                const m = seg[0].match(/^(.+)-([a-z]{2})$/)
+                if (!m) continue
+                state = m[2].toUpperCase()
+                const dashParts = m[1].split('-')
+                service = dashParts[0]; city = dashParts.slice(1).join('-')
+              }
+              if (city && service) saExistingCombos.add(saComboKey(city, state, service))
+            } catch { /* skip unparseable URLs */ }
+          }
+
+          // Build service list (same priority as wizard: service_pages → brand DNA)
+          const saServicePageNames = (saRow.service_pages ?? []).map((p: { name: string }) => p.name)
+          const { data: saContentSettings } = await db
+            .from('content_settings')
+            .select('services')
+            .eq('client_id', saClientId)
+            .maybeSingle()
+          const brandDnaServices = ((saContentSettings?.services as string | null) ?? '')
+            .split(',').map((s: string) => s.trim()).filter(Boolean)
+
+          const serviceSet = new Map<string, string>()
+          const addSvc = (s: string) => { const k = s.toLowerCase(); if (!serviceSet.has(k)) serviceSet.set(k, s) }
+          saServicePageNames.forEach(addSvc)
+          brandDnaServices.forEach(addSvc)
+          const saServices = Array.from(serviceSet.values())
+
+          if (saServices.length > 0) {
+            const saToInsert: {
+              client_id: string; content_type: string
+              city: string; state_abbr: string; service_name: string
+              topic: string; rationale: string | null; status: string; target_publish_date: string
+            }[] = []
+            // Cartesian-product traversal: outer = areas, inner = services.
+            // Indices persist across slots so we distribute evenly without diagonal-skip bias.
+            let areaIdx = 0, serviceIdx = 0
+            const numAreas    = saServiceAreas.length
+            const numServices = saServices.length
+
+            for (const slot of saSlots) {
+              const filled = topicsPerSlot.get(slot) ?? 0
+              const needed = Math.max(0, saLimit - filled)
+              for (let p = 0; p < needed; p++) {
+                let placed = false
+                outer: for (let ai = 0; ai < numAreas; ai++) {
+                  for (let si = 0; si < numServices; si++) {
+                    const area    = saServiceAreas[(areaIdx + ai) % numAreas]
+                    const service = saServices[(serviceIdx + si) % numServices]
+                    const key = saComboKey(area.city, area.state, service)
+                    if (saExistingCombos.has(key)) continue
+                    saExistingCombos.add(key)
+                    saToInsert.push({
+                      client_id:           saClientId,
+                      content_type:        'service_area',
+                      city:                area.city,
+                      state_abbr:          area.state,
+                      service_name:        service,
+                      topic:               `${service} in ${area.city}, ${area.state}`,
+                      rationale:           area.rationale ?? null,
+                      status:              'pending',
+                      target_publish_date: slot,
+                    })
+                    // Advance indices past what we just used
+                    areaIdx    = (areaIdx + ai + 1) % numAreas
+                    serviceIdx = (serviceIdx + si + 1) % numServices
+                    placed = true
+                    break outer
+                  }
+                }
+                if (!placed) break // all combos exhausted for this client
+              }
+            }
+
+            if (saToInsert.length > 0) {
+              await db.from('content_topics').insert(saToInsert)
+              console.log(`[content-topics cron] SA auto-scheduled ${saToInsert.length} topics for ${saClientId}`)
+            }
+          }
+        }
+      }
 
       // Resolve client name for notifications
       const { data: saClient } = await db
@@ -755,7 +926,7 @@ export async function GET(request: NextRequest) {
               link_url:    contentUrl,
             }).then(null, () => {})
 
-            if (saDiscordToken && opsChannelId) {
+            if (saDiscordToken && opsChannelId && getNotif(notifConfig, 'content_sa_auto_pushed').agency) {
               void sendDiscordMessage(
                 saDiscordToken, opsChannelId,
                 `📍 **${successSaPosts.length} service area page${successSaPosts.length === 1 ? '' : 's'} auto-pushed** for **${saClientName}** — review in draft: ${contentUrl}`
@@ -808,7 +979,7 @@ export async function GET(request: NextRequest) {
             const bcPagesUrl = `https://login.bigcommerce.com/manage/content/pages`
             const alertMsg   = `⚠️ BC service area page due tomorrow — ${bp.title ?? '(untitled)'} for ${saClientName} needs manual publish: ${bcPagesUrl}`
 
-            if (saDiscordTokenSpot && opsChannelId) {
+            if (saDiscordTokenSpot && opsChannelId && getNotif(notifConfig, 'content_bc_sa_due').agency) {
               void sendDiscordMessage(saDiscordTokenSpot, opsChannelId, alertMsg).catch(() => {})
             }
             db.from('admin_alerts').insert({
@@ -996,7 +1167,7 @@ export async function GET(request: NextRequest) {
         // posts were generated across multiple cron runs this month (postAccum only covers THIS run)
         const { data: monthPosts } = await db
           .from('content_posts')
-          .select('client_id')
+          .select('client_id, target_publish_date')
           .in('status', ['for_review', 'pending'])
           .gte('created_at', monthStart)
           .is('wp_post_id', null).is('bc_post_id', null)
@@ -1010,25 +1181,34 @@ export async function GET(request: NextRequest) {
           Array.from(postAccum.entries()).forEach(([cid, { items }]) => clientCountMap.set(cid, items.length))
         }
 
-        const { data: cRows } = await db.from('clients').select('id, name').in('id', Array.from(clientCountMap.keys()))
-        const nameMap = new Map((cRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-        const postLines = Array.from(clientCountMap.entries()).map(([cid, count]) =>
-          `• **${nameMap.get(cid) ?? cid}** — ${count} post${count === 1 ? '' : 's'}`
+        const totalCount  = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
+        const clientCount = clientCountMap.size
+        // Distinct calendar weeks covered by the batch (ISO Monday-aligned)
+        const isoWeekKey = (dateStr: string): string => {
+          const d = new Date(dateStr + 'T00:00:00Z')
+          const day = d.getUTCDay()
+          d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day))
+          return d.toISOString().slice(0, 10)
+        }
+        const weekNums = new Set(
+          (monthPosts ?? [])
+            .filter((p): p is typeof p & { target_publish_date: string } => !!p.target_publish_date)
+            .map(p => isoWeekKey(p.target_publish_date))
         )
-        const totalCount = Array.from(clientCountMap.values()).reduce((s, n) => s + n, 0)
+        const weekCount = weekNums.size || Math.ceil(totalCount / Math.max(clientCount, 1))
 
         // Insert dedup row first — if Discord fires but insert fails, we'd re-notify all month.
         const { error: insertErr } = await db.from('admin_alerts').insert({
           type: 'content', severity: 'info',
-          title: `${totalCount} post(s) ready for monthly review`,
-          body: postLines.join('\n'),
+          title: `Monthly review ready — ${totalCount} post(s) across ${clientCount} client(s)`,
+          body: `${totalCount} posts · ${clientCount} clients · ${weekCount} weeks`,
           meta: { content_type: 'monthly_review_ready', month: monthStart },
           link_url: contentUrl,
         })
-        if (!insertErr) {
+        if (!insertErr && getNotif(notifConfig, 'content_monthly_review').agency) {
           void sendDiscordMessage(
             discordBotToken, opsChannelId,
-            `✍️ **${totalCount} post${totalCount === 1 ? '' : 's'} generated** — ready for monthly review\n${postLines.join('\n')}\nReview: ${contentUrl}`
+            `✍️ **Monthly review ready** — ${totalCount} post${totalCount === 1 ? '' : 's'} · ${clientCount} client${clientCount === 1 ? '' : 's'} · ${weekCount} week${weekCount === 1 ? '' : 's'}\nReview: ${contentUrl}`
           ).catch(() => {})
         }
       }
@@ -1063,50 +1243,55 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Mid-month pending check — ONE Discord message per calendar month after the 10th ──
-  // Fires once if posts are still unapproved after the team has had time to review.
+  // Only fires if at least 7 days have passed since the monthly_review_ready alert so we
+  // don't double-notify on the same run that just generated posts.
   if (discordBotToken && opsChannelId && nowTs.getUTCDate() >= 10) {
     const contentReviewUrl = contentUrl
-    type PostRow = { id: string; title: string | null; target_publish_date: string | null; client_id: string }
+    type PostRow = { id: string; client_id: string }
 
-    const monthStartDate = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString().slice(0, 10)
-    const { data: pendingPosts } = await db
-      .from('content_posts')
-      .select('id, title, target_publish_date, client_id')
-      .in('status', ['for_review', 'pending'])
-      .not('target_publish_date', 'is', null)
-      .gte('target_publish_date', monthStartDate)
-      .is('wp_post_id', null).is('bc_post_id', null)
-      .order('target_publish_date', { ascending: true })
+    const monthStart     = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
+    const sevenDaysAgo   = new Date(Date.now() - 7 * 86_400_000).toISOString()
+    const monthStartDate = monthStart.slice(0, 10)
 
-    if (pendingPosts && pendingPosts.length > 0) {
-      const monthStart = new Date(Date.UTC(nowTs.getUTCFullYear(), nowTs.getUTCMonth(), 1)).toISOString()
-      const { data: existingMidCheck } = await db.from('admin_alerts')
-        .select('id').eq('type', 'content')
-        .filter('meta->>content_type', 'eq', 'monthly_mid_check')
-        .gte('created_at', monthStart)
-        .limit(1)
+    // Skip mid-check if review-ready was sent within the last 7 days — posts were just generated
+    const { data: recentReviewReady } = await db.from('admin_alerts')
+      .select('id').eq('type', 'content')
+      .filter('meta->>content_type', 'eq', 'monthly_review_ready')
+      .gte('created_at', sevenDaysAgo)
+      .limit(1)
 
-      if (!existingMidCheck || existingMidCheck.length === 0) {
-        const clientIds = Array.from(new Set((pendingPosts as PostRow[]).map(p => p.client_id)))
-        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
-        const clientNameMap = new Map((clientRows ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
-        const displayPosts = (pendingPosts as PostRow[]).slice(0, 8)
-        const lines = displayPosts.map(p =>
-          `• **${clientNameMap.get(p.client_id) ?? p.client_id}** — ${p.title ?? '(untitled)'}${p.target_publish_date ? ` (${p.target_publish_date})` : ''}`
-        )
-        if (pendingPosts.length > 8) lines.push(`…and ${pendingPosts.length - 8} more`)
-        // Insert dedup row first so a Discord failure doesn't re-alert next run
-        const { error: midInsertErr } = await db.from('admin_alerts').insert({
-          type: 'content', severity: 'warning',
-          title: `${pendingPosts.length} post(s) still awaiting approval`,
-          body: lines.join('\n'),
-          meta: { content_type: 'monthly_mid_check', count: pendingPosts.length, month: monthStart },
-          link_url: contentReviewUrl,
-        })
-        if (!midInsertErr) {
-          void sendDiscordMessage(discordBotToken, opsChannelId,
-            `📋 **${pendingPosts.length} post${pendingPosts.length === 1 ? '' : 's'} still awaiting approval** — manual review needed\n${lines.join('\n')}\nReview: ${contentReviewUrl}`
-          ).catch(() => {})
+    if (!recentReviewReady || recentReviewReady.length === 0) {
+      const { data: pendingPosts } = await db
+        .from('content_posts')
+        .select('id, client_id')
+        .in('status', ['for_review', 'pending'])
+        .not('target_publish_date', 'is', null)
+        .gte('target_publish_date', monthStartDate)
+        .is('wp_post_id', null).is('bc_post_id', null)
+
+      if (pendingPosts && pendingPosts.length > 0) {
+        const { data: existingMidCheck } = await db.from('admin_alerts')
+          .select('id').eq('type', 'content')
+          .filter('meta->>content_type', 'eq', 'monthly_mid_check')
+          .gte('created_at', monthStart)
+          .limit(1)
+
+        if (!existingMidCheck || existingMidCheck.length === 0) {
+          const pendingCount  = pendingPosts.length
+          const pendingClients = new Set((pendingPosts as PostRow[]).map(p => p.client_id)).size
+          // Insert dedup row first so a Discord failure doesn't re-alert next run
+          const { error: midInsertErr } = await db.from('admin_alerts').insert({
+            type: 'content', severity: 'warning',
+            title: `${pendingCount} post(s) still awaiting approval`,
+            body: `${pendingCount} posts across ${pendingClients} clients`,
+            meta: { content_type: 'monthly_mid_check', count: pendingCount, month: monthStart },
+            link_url: contentReviewUrl,
+          })
+          if (!midInsertErr && getNotif(notifConfig, 'content_mid_month_check').agency) {
+            void sendDiscordMessage(discordBotToken, opsChannelId,
+              `📋 **${pendingCount} post${pendingCount === 1 ? '' : 's'} still awaiting approval** — ${pendingClients} client${pendingClients === 1 ? '' : 's'} need review\nReview: ${contentReviewUrl}`
+            ).catch(() => {})
+          }
         }
       }
     }

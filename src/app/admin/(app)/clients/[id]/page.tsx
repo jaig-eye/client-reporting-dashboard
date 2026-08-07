@@ -34,7 +34,6 @@ import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
 import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
-import EmailSchedulePanel from '@/components/admin/EmailSchedulePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,71 +89,19 @@ export default async function ClientDetailPage({
   const client = clientRes.data as Client | null
   if (!client) notFound()
 
-  // Overview-tab data (contacts, admin users, stats)
-  const [contactsRes, adminUsersRes, overviewStatsRes] = activeTab === 'overview'
+  // Overview-tab data (contacts, admin users — stats are lazy-loaded client-side)
+  const [contactsRes, adminUsersRes] = activeTab === 'overview'
     ? await Promise.all([
         db.from('client_contacts').select('*').eq('client_id', id).order('created_at'),
         db.from('users').select('id, name, email, avatar_url').eq('is_active', true).order('name'),
-        (async () => {
-          const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
-          const settingsForBalance = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date').single()
-          const agencyForBalance = settingsForBalance.data as { ad_fuel_cut?: number | null; ad_fuel_cutoff_date?: string | null } | null
-          const cutoffDate = agencyForBalance?.ad_fuel_cutoff_date ?? '2025-01-01'
-          const cut = client.ad_fuel_cut ?? agencyForBalance?.ad_fuel_cut ?? 0.20
-          const split = 1 - cut
-
-          type SumRow = { client_id: string; spend: number }
-          const [gRes, mRes, ledgerRes, siteUptimeRes, pipelineRes] = await Promise.all([
-            db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }),
-            db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }),
-            db.from('ad_fuel_ledger').select('amount_af, date_of_payment').eq('client_id', id),
-            db.from('sites').select('uptime_7d').eq('client_id', id).eq('status', 'active'),
-            db.from('content_posts').select('id', { count: 'exact', head: true }).eq('client_id', id).eq('status', 'for_review'),
-          ])
-
-          const googleSpend = ((gRes.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
-          const metaSpend   = ((mRes.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
-
-          // MTD spend from RPCs with MTD date range
-          const [gMtd, mMtd] = await Promise.all([
-            db.rpc('sum_google_spend_by_client', { from_date: monthStart }),
-            db.rpc('sum_meta_spend_by_client',   { from_date: monthStart }),
-          ])
-          const googleMtd = ((gMtd.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
-          const metaMtd   = ((mMtd.data ?? []) as SumRow[]).find(r => r.client_id === id)?.spend ?? 0
-
-          const rawSpend   = googleSpend + metaSpend
-          const afSpend    = split > 0 ? rawSpend / split : 0
-
-          const cutoffMs  = new Date(cutoffDate + 'T00:00:00Z').getTime()
-          let afPurchased = 0
-          for (const e of (ledgerRes.data ?? []) as { amount_af: number; date_of_payment: string }[]) {
-            if (new Date(e.date_of_payment + 'T00:00:00Z').getTime() >= cutoffMs) {
-              afPurchased += Number(e.amount_af)
-            }
-          }
-
-          const siteRows = ((siteUptimeRes.data ?? []) as { uptime_7d: number | null }[])
-          const siteUptime7d = siteRows.length > 0
-            ? siteRows.reduce((sum, r) => sum + (r.uptime_7d ?? 100), 0) / siteRows.length
-            : null
-
-          return {
-            adFuelBalance:       Number((afPurchased - afSpend).toFixed(2)),
-            mtdSpend:            googleMtd + metaMtd,
-            siteUptime7d,
-            contentPipelineCount: pipelineRes.count ?? 0,
-          }
-        })(),
       ])
-    : [{ data: [] }, { data: [] }, Promise.resolve({ adFuelBalance: null, mtdSpend: null, siteUptime7d: null, contentPipelineCount: 0 })]
+    : [{ data: [] }, { data: [] }]
 
   type ContactRow = { id: string; name: string; email: string | null; phone: string | null; role: string }
   type AdminUserRow = { id: string; name: string; email: string; avatar_url: string | null }
 
   const contacts   = (contactsRes.data ?? []) as ContactRow[]
   const adminUsers = (adminUsersRes.data ?? []) as AdminUserRow[]
-  const overviewStats = overviewStatsRes as { adFuelBalance: number | null; mtdSpend: number | null; siteUptime7d: number | null; contentPipelineCount: number }
 
   type CoverageRow = { source: string; min_date: string | null; max_date: string | null; days_with_data: number }
   const SOURCE_LABELS: Record<string, string> = {
@@ -235,9 +182,11 @@ export default async function ClientDetailPage({
 
       {/* Page heading */}
       <div className="page-header" style={{ marginBottom: '0.5rem' }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {client.logo_url && (
+            <img src={client.logo_url} alt={client.name} style={{ height: 36, maxWidth: 100, objectFit: 'contain', flexShrink: 0 }} />
+          )}
           <h1 className="page-title">{client.name}</h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>/admin/clients/{id}</p>
         </div>
         <div className="flex gap-2">
           {adsLibraryUrl && <CopyAdLibraryButton url={adsLibraryUrl} />}
@@ -284,7 +233,6 @@ export default async function ClientDetailPage({
           accountManagerId={client.account_manager_id ?? null}
           adminUsers={adminUsers}
           contacts={contacts}
-          stats={overviewStats}
           dashUrl={dashUrl}
           adsLibraryUrl={adsLibraryUrl}
         />
@@ -627,18 +575,7 @@ export default async function ClientDetailPage({
             />
           </div>
 
-          {/* Email Schedule */}
-          <div className="card p-5">
-            <p className="section-desc mb-3">Set a weekly email cadence for this client. The assigned team member will receive a Discord reminder if no email is submitted by Monday each week.</p>
-            <EmailSchedulePanel clientId={id} />
-          </div>
-
-          {/* Client logo */}
-          <div className="card p-5">
-            <h2 className="section-title mb-3">Client Logo</h2>
-            <p className="section-desc mb-3">Displayed on the client&apos;s reporting dashboard.</p>
-            <ClientLogoUpload clientId={id} currentLogoUrl={client.logo_url} />
-          </div>
+          {/* Client logo and email schedule removed — logo upload moved to Business Info in Overview tab */}
 
           {/* Data Coverage */}
           <div className="card p-5">

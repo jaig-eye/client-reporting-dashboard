@@ -1,0 +1,2 @@
+ALTER TABLE clients
+  ADD COLUMN IF NOT EXISTS show_blog_posts BOOLEAN NOT NULL DEFAULT false;

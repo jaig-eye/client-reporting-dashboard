@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { sendEmail } from '@/lib/email'
 import tls from 'tls'
 
@@ -67,17 +68,19 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, notification_email, agency_name')
+      .select('discord_bot_token, discord_ops_channel_id, notification_email, agency_name, notification_config')
       .single(),
     db.from('sites')
       .select('id, name, url, client_id, ssl_days_remaining, clients(name, discord_channel_id)')
       .eq('status', 'active'),
   ])
 
-  const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
-  const alertEmail = agencyRes.data?.notification_email as string | null ?? null
-  const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
-  const sites      = sitesRes.data ?? []
+  const botToken     = agencyRes.data?.discord_bot_token as string | null ?? null
+  const alertEmail   = agencyRes.data?.notification_email as string | null ?? null
+  const agencyName   = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const opsChannelId = (agencyRes.data?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
+  const notifConfig  = (agencyRes.data?.notification_config as NotifConfig | null) ?? {}
+  const sites       = sitesRes.data ?? []
 
   let warned = 0; let critical = 0
 
@@ -170,9 +173,6 @@ export async function GET(request: NextRequest) {
           ? 'EXPIRED'
           : `expires in ${info.daysLeft} day${info.daysLeft === 1 ? '' : 's'}`
         const clientName = (site as Record<string, unknown> as { clients?: { name?: string } | null }).clients?.name ?? null
-        const channelId  = (site as Record<string, unknown> as { clients?: { discord_channel_id?: string | null } | null }).clients?.discord_channel_id
-          ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
-
         await db.from('admin_alerts').insert({
           type:        'integration',
           severity,
@@ -184,11 +184,12 @@ export async function GET(request: NextRequest) {
           link_url:    `/admin/sites`,
         })
 
-        const emoji = info.daysLeft <= 0 ? '🔴' : '🟡'
-        const msg   = `${emoji} **SSL alert: ${site.name}** — cert ${expiryLabel}\nHost: ${hostname} | Issuer: ${info.issuer ?? 'unknown'}`
-        if (botToken && channelId) await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        const emoji  = info.daysLeft <= 0 ? '🔴' : '🟡'
+        const msg    = `${emoji} **SSL alert: ${site.name}** — cert ${expiryLabel}\nHost: ${hostname} | Issuer: ${info.issuer ?? 'unknown'}`
+        const notifSsl = getNotif(notifConfig, 'ssl_expiry')
+        if (botToken && opsChannelId && notifSsl.agency) await sendDiscordMessage(botToken, opsChannelId, msg).catch(() => {})
 
-        if (alertEmail) {
+        if (alertEmail && notifSsl.email) {
           await sendEmail({
             to:      alertEmail,
             subject: `[${agencyName}] SSL ${info.daysLeft <= 0 ? 'Expired' : 'Expiring'}: ${site.name}`,

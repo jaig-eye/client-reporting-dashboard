@@ -22,7 +22,7 @@ export async function PATCH(
     'name', 'email', 'slug', 'logo_url', 'default_conversion_value', 'ad_fuel_cut',
     'lead_action', 'purchase_action',
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm', 'benchmark_cpl',
-    'show_benchmarks', 'hidden_metrics', 'enabled_benchmarks',
+    'show_benchmarks', 'show_blog_posts', 'hidden_metrics', 'enabled_benchmarks',
     'layout_type', 'metric_layout_override',
     'bill_day', 'historic_bill_day', 'monthly_budget', 'discord_channel_id',
     'local_dominator_url', 'stripe_customer_id',

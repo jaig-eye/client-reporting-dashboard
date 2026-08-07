@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
+import ClientLogoUpload from './ClientLogoUpload'
 
 interface AdminUser {
   id:         string
@@ -22,6 +23,7 @@ interface Contact {
 
 interface Stats {
   adFuelBalance:        number | null
+  pendingAch:           number
   mtdSpend:             number | null
   siteUptime7d:         number | null
   contentPipelineCount: number
@@ -58,7 +60,6 @@ interface Props {
   accountManagerId: string | null
   adminUsers:       AdminUser[]
   contacts:         Contact[]
-  stats:            Stats
   dashUrl:          string
   adsLibraryUrl:    string | null
 }
@@ -93,13 +94,27 @@ function normalizeUrl(url: string): string {
 export default function OverviewTab({
   clientId, name, address, phone, website, logoUrl,
   accountManagerId, adminUsers, contacts: initialContacts,
-  stats, dashUrl, adsLibraryUrl,
+  dashUrl, adsLibraryUrl,
 }: Props) {
   const router = useRouter()
 
+  // ── Lazy-load stats ───────────────────────────────────────────────────────
+  const [stats, setStats]           = useState<Stats | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`/api/admin/clients/${clientId}/overview-stats`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: Stats | null) => { if (data) setStats(data) })
+      .catch(() => {})
+      .finally(() => setStatsLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Business info editing ─────────────────────────────────────────────────
-  const [editingBiz, setEditingBiz] = useState(false)
-  const [bizForm,    setBizForm]    = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
+  const [editingBiz,    setEditingBiz]    = useState(false)
+  const [bizForm,       setBizForm]       = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
+  const [displayLogoUrl, setDisplayLogoUrl] = useState(logoUrl ?? '')
   const [bizSaving,  setBizSaving]  = useState(false)
   const [bizError,   setBizError]   = useState('')
 
@@ -254,7 +269,6 @@ export default function OverviewTab({
                 { key: 'address', label: 'Address',       required: false },
                 { key: 'phone',   label: 'Phone',         required: false },
                 { key: 'website', label: 'Website',       required: false },
-                { key: 'logoUrl', label: 'Logo URL',      required: false },
               ] as const).map(f => (
                 <div key={f.key}>
                   <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>{f.label}</label>
@@ -263,11 +277,8 @@ export default function OverviewTab({
                     value={bizForm[f.key]}
                     onChange={e => setBizForm(v => ({ ...v, [f.key]: e.target.value }))}
                     required={f.required}
-                    placeholder={f.label === 'Logo URL' ? 'https://…' : f.label}
+                    placeholder={f.label}
                   />
-                  {f.key === 'logoUrl' && bizForm.logoUrl && (
-                    <img src={bizForm.logoUrl} alt="preview" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} style={{ marginTop: 6, height: 32, objectFit: 'contain', objectPosition: 'left', borderRadius: 4 }} />
-                  )}
                 </div>
               ))}
               <div className="flex items-center gap-2">
@@ -282,13 +293,25 @@ export default function OverviewTab({
             </form>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-              {logoUrl && (
-                <img src={logoUrl} alt={name} style={{ height: 40, objectFit: 'contain', objectPosition: 'left' }} />
+              {displayLogoUrl && (
+                <img src={displayLogoUrl} alt={name} style={{ maxHeight: 48, maxWidth: 140, objectFit: 'contain', marginBottom: '0.25rem' }} />
               )}
               <InfoRow label="Business Name" value={name} bold />
               <InfoRow label="Address"  value={address} />
               <InfoRow label="Phone"    value={phone} />
               <InfoRow label="Website"  value={website} link />
+            </div>
+          )}
+
+          {/* Logo upload — only visible in edit mode */}
+          {editingBiz && (
+            <div style={{ marginTop: '1rem', paddingTop: '0.875rem', borderTop: '1px solid var(--border)' }}>
+              <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Client Logo</p>
+              <ClientLogoUpload
+                clientId={clientId}
+                currentLogoUrl={displayLogoUrl}
+                onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
+              />
             </div>
           )}
         </div>
@@ -383,6 +406,11 @@ export default function OverviewTab({
               </div>
             </form>
           )}
+        </div>
+
+        {/* Notes card */}
+        <div className="card p-5">
+          <ClientNotesStream clientId={clientId} />
         </div>
 
         {/* Stripe invoice history */}
@@ -512,29 +540,47 @@ export default function OverviewTab({
         {/* Key stats */}
         <div className="card p-5">
           <h2 className="section-title mb-3">At a Glance</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            <StatTile
-              label="Ad Fuel Balance"
-              value={stats.adFuelBalance != null
-                ? `${stats.adFuelBalance < 0 ? '-' : ''}$${Math.abs(stats.adFuelBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : '—'}
-              valueColor={stats.adFuelBalance != null && stats.adFuelBalance < 0 ? 'var(--red)' : stats.adFuelBalance != null && stats.adFuelBalance < 200 ? '#d97706' : 'var(--green)'}
-            />
-            <StatTile
-              label="MTD Spend (raw)"
-              value={fmt$(stats.mtdSpend)}
-            />
-            <StatTile
-              label="Site Uptime (7d)"
-              value={stats.siteUptime7d != null ? `${stats.siteUptime7d.toFixed(1)}%` : '—'}
-              valueColor={stats.siteUptime7d == null ? 'var(--text-faint)' : stats.siteUptime7d >= 99 ? 'var(--green)' : stats.siteUptime7d >= 95 ? '#d97706' : 'var(--red)'}
-            />
-            <StatTile
-              label="Content Pipeline"
-              value={String(stats.contentPipelineCount)}
-              valueColor={stats.contentPipelineCount > 0 ? 'var(--blue)' : 'var(--text-muted)'}
-            />
-          </div>
+          {statsLoading ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              {[0,1,2,3].map(i => (
+                <div key={i} style={{ height: 56, borderRadius: 8, background: 'var(--bg-subtle)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <StatTile
+                  label="Ad Fuel Balance"
+                  value={stats?.adFuelBalance != null
+                    ? `${stats.adFuelBalance < 0 ? '-' : ''}$${Math.abs(stats.adFuelBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
+                  valueColor={stats?.adFuelBalance != null && stats.adFuelBalance < 0 ? 'var(--red)' : stats?.adFuelBalance != null && stats.adFuelBalance < 200 ? '#d97706' : 'var(--green)'}
+                />
+                {stats != null && (stats.pendingAch ?? 0) > 0 && (() => {
+                  const proj = (stats.adFuelBalance ?? 0) + stats.pendingAch
+                  return (
+                    <p style={{ fontSize: '0.7rem', marginTop: 2, color: proj >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {proj >= 0 ? '' : '-'}${Math.abs(proj).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} projected
+                    </p>
+                  )
+                })()}
+              </div>
+              <StatTile
+                label="MTD Spend (raw)"
+                value={fmt$(stats?.mtdSpend ?? null)}
+              />
+              <StatTile
+                label="Site Uptime (7d)"
+                value={stats?.siteUptime7d != null ? `${stats.siteUptime7d.toFixed(1)}%` : '—'}
+                valueColor={stats?.siteUptime7d == null ? 'var(--text-faint)' : stats.siteUptime7d >= 99 ? 'var(--green)' : stats.siteUptime7d >= 95 ? '#d97706' : 'var(--red)'}
+              />
+              <StatTile
+                label="Content Pipeline"
+                value={String(stats?.contentPipelineCount ?? 0)}
+                valueColor={(stats?.contentPipelineCount ?? 0) > 0 ? 'var(--blue)' : 'var(--text-muted)'}
+              />
+            </div>
+          )}
         </div>
 
         {/* Account manager */}
@@ -603,10 +649,6 @@ export default function OverviewTab({
           </div>
         )}
 
-        {/* Notes stream — at the bottom so it can grow without pushing key info off screen */}
-        <div className="card p-5">
-          <ClientNotesStream clientId={clientId} />
-        </div>
       </div>
     </div>
   )

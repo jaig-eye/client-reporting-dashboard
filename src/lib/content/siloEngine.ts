@@ -7,6 +7,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import type {
   OptimizationBrief,
   RecommendedHeading,
@@ -73,7 +74,7 @@ export async function fetchPageText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(10_000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ContentBot/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
     if (!res.ok) return null
     const html = await res.text()

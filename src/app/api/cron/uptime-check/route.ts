@@ -3,17 +3,20 @@ import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendDiscordMessage } from '@/lib/discord'
 import { sendEmail } from '@/lib/email'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+import { getNotif }        from '@/lib/notificationConfig'
 
 export const maxDuration = 300
 
 const TIMEOUT_MS          = 15_000
 const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site already has a failure
-const FLAP_THRESHOLD      = 2
+const FLAP_THRESHOLD      = 3       // consecutive failed check-runs before declaring DOWN
+const RETRY_DELAY_MS      = 3_000   // delay between the first and second attempt within one check
+const MAX_ATTEMPTS        = 2       // attempts per check (1 retry); both must fail to count as DOWN
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
-// Prefix "LaunchLocal-Monitor" lets clients whitelist by UA string in
-// their Cloudflare "Skip" rule (WAF + Bot Fight Mode + rate limiting).
-const MONITOR_UA = 'LaunchLocal-Monitor/1.0 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+// Clients can whitelist by UA string: http.user_agent contains "GoLaunchLocal"
+const MONITOR_UA = `${PLATFORM_BOT_UA} LaunchLocal-Monitor/1.0 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36`
 
 interface SiteRow {
   id:                   string
@@ -37,33 +40,41 @@ interface CheckResult {
 }
 
 async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckResult, 'siteId'>> {
-  const start = Date.now()
-  try {
-    const res = await fetch(url, {
-      signal:   AbortSignal.timeout(timeoutMs),
-      redirect: 'follow',
-      headers:  {
-        'User-Agent':      MONITOR_UA,
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-      },
-    })
-    const responseMs = Date.now() - start
-    // 401/403 = auth-gated or WAF challenge page — server is up.
-    // 429 = monitor is rate-limited, not the site broken — count as UP to avoid false alerts.
-    // 404, 5xx = site genuinely broken.
-    const isUp = res.status < 400 || res.status === 401 || res.status === 403 || res.status === 429
-    return { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
-  } catch (err) {
-    const responseMs = Date.now() - start
-    const msg = err instanceof Error ? err.message : String(err)
-    const cause = msg.includes('timeout') ? 'timeout'
-      : msg.includes('ENOTFOUND') ? 'dns'
-      : msg.includes('ECONNREFUSED') ? 'connection_refused'
-      : 'other'
-    return { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+  // Any 4xx means the server IS responding (auth wall, rate limit, not-found, etc.) = UP.
+  // Only 5xx server errors = genuinely broken. 499 (nginx client disconnect) is 4xx → UP.
+  let last: Omit<CheckResult, 'siteId'> = { isUp: false, statusCode: null, responseMs: null, finalUrl: null, error: 'other' }
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+
+    const start = Date.now()
+    try {
+      const res = await fetch(url, {
+        signal:   AbortSignal.timeout(timeoutMs),
+        redirect: 'follow',
+        headers:  {
+          'User-Agent':      MONITOR_UA,
+          'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+        },
+      })
+      const responseMs = Date.now() - start
+      const isUp = res.status < 500
+      last = { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
+      if (isUp) return last   // UP on any attempt → stop immediately
+    } catch (err) {
+      const responseMs = Date.now() - start
+      const msg = err instanceof Error ? err.message : String(err)
+      const cause = msg.includes('timeout') ? 'timeout'
+        : msg.includes('ENOTFOUND') ? 'dns'
+        : msg.includes('ECONNREFUSED') ? 'connection_refused'
+        : 'other'
+      last = { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+    }
   }
+
+  return last  // all attempts failed → DOWN
 }
 
 export async function GET(request: NextRequest) {
@@ -77,16 +88,18 @@ export async function GET(request: NextRequest) {
 
   const [agencyRes, sitesRes] = await Promise.all([
     db.from('agency_settings')
-      .select('discord_bot_token, notification_email, agency_name')
+      .select('discord_bot_token, discord_ops_channel_id, notification_email, agency_name, notification_config')
       .maybeSingle(),
     db.from('sites')
       .select('id, name, url, status, is_up, consecutive_failures, client_id, discord_channel_id, clients(name, discord_channel_id)')
       .eq('status', 'active'),
   ])
 
-  const botToken   = agencyRes.data?.discord_bot_token as string | null ?? null
-  const alertEmail = agencyRes.data?.notification_email as string | null ?? null
-  const agencyName = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const botToken        = agencyRes.data?.discord_bot_token as string | null ?? null
+  const alertEmail      = agencyRes.data?.notification_email as string | null ?? null
+  const agencyName      = agencyRes.data?.agency_name as string | null ?? 'LaunchLocal'
+  const opsChannelId    = (agencyRes.data?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
+  const notifConfig     = (agencyRes.data?.notification_config as import('@/lib/notificationConfig').NotifConfig | null) ?? {}
   const sites      = (sitesRes.data ?? []) as unknown as SiteRow[]
 
   if (sites.length === 0) {
@@ -140,8 +153,8 @@ export async function GET(request: NextRequest) {
     })
 
     const wasDown = site.is_up === false
-    // Site-level channel: own channel, then client-level default, then agency-wide fallback.
-    const channelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? process.env.DISCORD_UPTIME_CHANNEL_ID ?? null
+    // Client-level channel for per-client Discord notifications.
+    const clientChannelId = site.discord_channel_id ?? site.clients?.discord_channel_id ?? null
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
@@ -192,9 +205,11 @@ export async function GET(request: NextRequest) {
         })
 
         const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
-        await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+        const notifDown = getNotif(notifConfig, 'uptime_down')
+        if (notifDown.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+        if (notifDown.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
-        if (alertEmail) {
+        if (alertEmail && notifDown.email) {
           await sendEmail({
             to:      alertEmail,
             subject: `[${agencyName}] Site DOWN: ${site.name}`,
@@ -215,7 +230,7 @@ export async function GET(request: NextRequest) {
         last_checked_at:      checkedAt,
         last_status_code:     statusCode,
         last_response_ms:     responseMs,
-        consecutive_failures: wasDown ? 0 : (site.consecutive_failures ?? 0),
+        consecutive_failures: 0,   // always reset — any passing check breaks the streak
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
@@ -233,9 +248,11 @@ export async function GET(request: NextRequest) {
 
           const downMins = Math.round(durationS / 60)
           const msg = `🟢 **${site.name} recovered** — was down ${downMins} min | ${site.url}`
-          await sendDiscordMessage(botToken, channelId, msg).catch(() => {})
+          const notifRecovered = getNotif(notifConfig, 'uptime_recovered')
+          if (notifRecovered.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+          if (notifRecovered.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
 
-          if (alertEmail) {
+          if (alertEmail && notifRecovered.email) {
             await sendEmail({
               to:      alertEmail,
               subject: `[${agencyName}] Site recovered: ${site.name}`,

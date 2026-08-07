@@ -9,8 +9,22 @@ import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { buildServiceAreaSlug, buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import type { SlugStructure }                          from '@/lib/content/buildServiceAreaSlug'
+import { stripHallucinatedLinks }                      from '@/lib/content/linkUtils'
+import { generatePostImage }                           from '@/lib/content/generatePostImage'
+import { sendDiscordMessage }                          from '@/lib/discord'
+import { getNotif, type NotifConfig }                  from '@/lib/notificationConfig'
 
 export const maxDuration = 300
+
+// Injected into every prompt (including custom master prompts) — cannot be bypassed.
+const URL_FIDELITY_BLOCK = `
+
+INTERNAL LINKS — CRITICAL: You will be given a list of allowed internal URLs. You MUST link ONLY to URLs that appear exactly in that list.
+- Do NOT invent, construct, guess, or derive any other internal URL.
+- Do NOT modify any URL in any way — do not prepend, append, or insert any path segment.
+- Use each URL character-for-character as it appears in the list.
+- For example, if the list contains '/about/', link to '/about/' exactly — NEVER '/services/about/' or '/en/about/'.
+- If no appropriate internal URL exists for a concept, do NOT add a link.`
 
 // Appended to custom master prompts so Claude always returns structured JSON.
 // DEFAULT_SA_PROMPT already ends with an equivalent instruction.
@@ -108,36 +122,6 @@ function stripDangerousHtml(html: string): string {
     .replace(/\bsrc\s*=\s*["']\s*javascript:/gi, 'src="javascript_removed:')
 }
 
-function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
-  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-  const allowed = new Set(Array.from(allowedUrls).map(norm))
-  const internalHosts = new Set<string>()
-  Array.from(allowed).forEach(u => {
-    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
-  })
-  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-    if (!m) return match
-    const href = m[1].trim()
-    if (/^(mailto:|tel:|#)/.test(href)) return match
-    if (/^https?:/.test(href)) {
-      try {
-        const parsed = new URL(href)
-        const hostname = parsed.hostname.toLowerCase()
-        if (internalHosts.size === 0) return match
-        if (!internalHosts.has(hostname)) return match
-        if (allowed.has(norm(href))) return match
-        if (allowed.has(norm(parsed.pathname))) return match
-        console.warn('[sa-generate] stripped hallucinated internal link:', href)
-        return text
-      } catch { return match }
-    }
-    if (allowed.has(norm(href))) return match
-    console.warn('[sa-generate] stripped hallucinated internal link:', href)
-    return text
-  })
-}
 
 // ─── Core generation ──────────────────────────────────────────────────────────
 
@@ -186,8 +170,8 @@ async function generatePage(topicId: string) {
   // Parallel: SA settings, agency settings, content_settings (for brand context), service page URL
   const [saRes, agencyRes, csRes, servicePageRes] = await Promise.all([
     db.from('service_area_settings').select('*').eq('client_id', clientId).maybeSingle(),
-    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notify_sa_generated').limit(1).maybeSingle(),
-    db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls').eq('client_id', clientId).maybeSingle(),
+    db.from('agency_settings').select('ai_provider, ai_model, ai_api_key, openai_api_key, service_area_master_prompt, agency_name, discord_bot_token, notification_config').limit(1).maybeSingle(),
+    db.from('content_settings').select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, cta_list, eeat_data, manual_link_urls, content_image_generation, content_image_prompt').eq('client_id', clientId).maybeSingle(),
     db.from('content_sitemap_pages').select('url').eq('client_id', clientId).eq('is_service_page', true).ilike('url', `%${serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}%`).maybeSingle(),
   ])
 
@@ -361,6 +345,7 @@ NON-NEGOTIABLE RULES:
 - Target word count: [WORD_COUNT]
 - NEVER add an H1 tag to the content. The WordPress title field automatically renders as H1.
 - NEVER link to external websites. Only use internal links to other pages on this website.
+- INTERNAL LINKS — CRITICAL: Only link to URLs provided in the context. Do NOT modify any URL — no added path segments, no trailing variants. Use each URL character-for-character as given. If no appropriate URL is provided, do NOT add a link.
 
 Page Structure:
 (WordPress title field sets the H1 — start content with an H2)
@@ -386,7 +371,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 }`
 
   const promptTemplate = masterPrompt
-    ? masterPrompt + JSON_OUTPUT_INSTRUCTION
+    ? masterPrompt + URL_FIDELITY_BLOCK + JSON_OUTPUT_INSTRUCTION
     : DEFAULT_SA_PROMPT
 
   // Additional values for blog-style master prompts (shared with content_settings fields)
@@ -533,6 +518,18 @@ Return ONLY valid JSON — no markdown fences, no explanation:
     .update({ status: 'generated', post_id: post.id })
     .eq('id', topicId)
 
+  // Generate featured image if configured (mirrors blog pipeline)
+  const openaiKey = agency?.openai_api_key as string | null
+  const imageGen  = !!(cs.content_image_generation)
+  const imagePromptOverride = (cs.content_image_prompt as string | null) ?? undefined
+  if (openaiKey && imageGen) {
+    waitUntil(
+      generatePostImage(db, post.id, openaiKey, imagePromptOverride)
+        .then(r => { if (!r.ok) console.error(`[SA generate] image gen failed for post ${post.id}:`, r.error) })
+        .catch(err => console.error(`[SA generate] image gen threw for post ${post.id}:`, err))
+    )
+  }
+
   // Write admin_alert
   await db.from('admin_alerts').insert({
     type:     'content',
@@ -545,19 +542,15 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   // Discord notification
   const discordToken = agency?.discord_bot_token as string | null
-  const notifySa = (agency as Record<string, unknown> | null)?.notify_sa_generated !== false
-  if (discordToken && notifySa) {
+  const notifConfig  = ((agency as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  if (discordToken && getNotif(notifConfig, 'content_sa_generated').client) {
     // Fire-and-forget
     ;(async () => {
       try {
         const { data: client } = await db.from('clients').select('discord_channel_id').eq('id', clientId).single()
         const channelId = (client as Record<string, unknown> | null)?.discord_channel_id as string | null
         if (channelId) {
-          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bot ${discordToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: `📍 **Service area page ready:** "${parsed.title || `${serviceName} in ${city}`}" — ready for review` }),
-          })
+          await sendDiscordMessage(discordToken, channelId, `📍 **Service area page ready:** "${parsed.title || `${serviceName} in ${city}`}" — ready for review`)
         }
       } catch { /* ignore */ }
     })()

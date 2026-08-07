@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendDiscordMessage } from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export const maxDuration = 60
 
@@ -18,13 +19,15 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
 
   // Round 1: agency settings (need cutoffDate before RPC params)
-  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token').single()
+  const agencyRes = await db.from('agency_settings').select('ad_fuel_cut, ad_fuel_cutoff_date, discord_bot_token, discord_ops_channel_id, notification_config').single()
 
-  const botToken   = agencyRes.data?.discord_bot_token
+  const botToken    = agencyRes.data?.discord_bot_token
   if (!botToken) return NextResponse.json({ skipped: true, reason: 'No discord_bot_token configured' })
 
-  const agencyCut  = agencyRes.data?.ad_fuel_cut ?? 0.20
-  const cutoffDate = agencyRes.data?.ad_fuel_cutoff_date ?? '2025-01-01'
+  const notifConfig  = ((agencyRes.data as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+  const opsChannelId = (agencyRes.data as Record<string, unknown> | null)?.discord_ops_channel_id as string | null ?? process.env.DISCORD_OPS_CHANNEL_ID ?? null
+  const agencyCut   = agencyRes.data?.ad_fuel_cut ?? 0.20
+  const cutoffDate  = agencyRes.data?.ad_fuel_cutoff_date ?? '2025-01-01'
   const cutoffMs   = new Date(cutoffDate + 'T00:00:00Z').getTime()
 
   const floor14 = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
@@ -226,7 +229,9 @@ export async function GET(request: NextRequest) {
 
     // Discord notification is best-effort
     try {
-      await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      const notifFuel = getNotif(notifConfig, 'ad_fuel_low')
+      if (notifFuel.client && client.discord_channel_id) await sendDiscordMessage(botToken, client.discord_channel_id, message)
+      if (notifFuel.agency && opsChannelId)             await sendDiscordMessage(botToken, opsChannelId, message)
     } catch (err) {
       console.error(`[ad-fuel-alerts] Discord send failed for ${client.name}:`, err)
     }

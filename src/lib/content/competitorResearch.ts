@@ -2,6 +2,8 @@
 // then scrapes H1/H2/H3 headings from each competitor page.
 // Called during topic generation when agency_settings.serp_api_key is configured.
 
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+
 const HEADING_RE = /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi
 
 function stripTags(html: string): string {
@@ -12,7 +14,7 @@ async function fetchCompetitorHeadings(url: string): Promise<string[]> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ContentResearch/1.0)' },
+      headers: { 'User-Agent': PLATFORM_BOT_UA },
     })
     if (!res.ok) return []
     const html = await res.text()

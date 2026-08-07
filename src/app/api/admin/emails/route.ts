@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 export async function GET(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
@@ -22,11 +23,10 @@ export async function GET(request: NextRequest) {
       sent_at, utm_campaign,
       open_rate, click_rate, conversions, revenue,
       status, reviewer_notes, reviewed_at,
-      submitted_by, reviewed_by, assigned_to, created_at, updated_at,
+      submitted_by, reviewed_by, created_at, updated_at,
       clients(name),
       submitter:users!submitted_by(name, avatar_url),
-      reviewer:users!reviewed_by(name),
-      assignee:users!assigned_to(name, avatar_url)
+      reviewer:users!reviewed_by(name)
     `)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -89,9 +89,8 @@ export async function POST(request: NextRequest) {
       utm_campaign:      body.utm_campaign?.trim() || null,
       status:            body.status === 'draft' ? 'draft' : 'pending_review',
       submitted_by:      userId,
-      assigned_to:       userId,
     })
-    .select('id, title, client_id, status, submitted_by, assigned_to, clients(name)')
+    .select('id, title, client_id, status, submitted_by, clients(name)')
     .single()
 
   if (error || !campaign) {
@@ -105,7 +104,7 @@ export async function POST(request: NextRequest) {
       try {
         const { data: settings } = await db
           .from('agency_settings')
-          .select('discord_bot_token, discord_ops_channel_id')
+          .select('discord_bot_token, discord_ops_channel_id, notification_config')
           .maybeSingle()
 
         const { data: submitter } = userId
@@ -116,6 +115,7 @@ export async function POST(request: NextRequest) {
         const submitterName = submitter?.name ?? 'Admin'
         const botToken      = settings?.discord_bot_token as string | null
         const opsChannel    = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+        const notifConfig   = ((settings?.notification_config as NotifConfig | null)) ?? {}
         const baseUrl       = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
         const reviewUrl     = `${baseUrl}/admin/emails?open=${campaign.id}`
 
@@ -125,7 +125,8 @@ export async function POST(request: NextRequest) {
           `👤 Submitted by ${submitterName}\n` +
           `🔗 [Review now](${reviewUrl})`
 
-        await sendDiscordMessage(botToken, opsChannel, msg)
+        const notif = getNotif(notifConfig, 'email_submitted')
+        if (botToken && opsChannel && notif.agency) await sendDiscordMessage(botToken, opsChannel, msg)
 
         // Also ping per-client Discord channel
         const { data: client } = await db
@@ -133,7 +134,7 @@ export async function POST(request: NextRequest) {
           .select('discord_channel_id')
           .eq('id', body.client_id)
           .maybeSingle()
-        if (client?.discord_channel_id) {
+        if (botToken && client?.discord_channel_id && notif.client) {
           await sendDiscordMessage(botToken, client.discord_channel_id as string, msg)
         }
       } catch (e) {

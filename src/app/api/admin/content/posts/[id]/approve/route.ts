@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
 import { publishBCPage } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 
 export async function POST(
@@ -213,10 +214,11 @@ export async function POST(
         const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
 
         await db.from('content_posts').update({
-          bc_post_id:    bcPage.id,
-          bc_store_hash: storeHash,
-          status:        'draft_saved',
-          published_url: bcEditUrl,
+          bc_post_id:        bcPage.id,
+          bc_store_hash:     storeHash,
+          status:            'draft_saved',
+          published_url:     bcEditUrl,
+          admin_approved_at: new Date().toISOString(),
         }).eq('id', id)
 
         const adminSession = await getAdminSession()
@@ -269,10 +271,11 @@ export async function POST(
       const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
 
       await db.from('content_posts').update({
-        bc_post_id:    Number(bcPost.id),
-        bc_store_hash: storeHash,
-        status:        'draft_saved',
-        published_url: bcEditUrl,
+        bc_post_id:        Number(bcPost.id),
+        bc_store_hash:     storeHash,
+        status:            'draft_saved',
+        published_url:     bcEditUrl,
+        admin_approved_at: new Date().toISOString(),
       }).eq('id', id)
 
       const adminSession = await getAdminSession()
@@ -407,28 +410,69 @@ export async function POST(
         ? Number(p.wp_author_id)
         : (cs?.default_author_id ? Number(cs.default_author_id) : undefined)
 
-      // Prefer per-post category IDs, then fall back to keyword-matched WP categories
+      // Prefer per-post category IDs, then client default, then auto-resolve
       let postCategoryIds: number[] | undefined
       if (Array.isArray(p.wp_category_ids) && (p.wp_category_ids as number[]).length > 0) {
         postCategoryIds = p.wp_category_ids as number[]
       } else if (Array.isArray(cs?.default_category_ids) && (cs!.default_category_ids as number[]).length > 0) {
         postCategoryIds = cs!.default_category_ids as number[]
       } else {
-        // Auto-categorize: fetch the site's WP categories and match by keyword
+        // Auto-categorize: broad-match against existing WP categories; create one if none fit.
         try {
-          const creds   = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-          const catRes  = await fetch(`${siteUrl}/wp-json/wp/v2/categories?per_page=100`, { headers: { Authorization: `Basic ${creds}` } })
-          if (catRes.ok) {
-            const allCats = (await catRes.json()) as { id: number; name: string; slug: string }[]
-            const keywords = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
-              .filter(Boolean).join(' ').toLowerCase()
-            const matched = allCats.find(cat =>
-              keywords.includes(cat.name.toLowerCase()) ||
-              keywords.includes(cat.slug.replace(/-/g, ' '))
+          const allCats = await getCategories(siteUrl, auth)
+
+          // Score each category by how many of its words appear in the post's keyword/title
+          const kwText = [p.target_keyword, p.title, ...((p.secondary_keywords as string[] | null) ?? [])]
+            .filter(Boolean).join(' ').toLowerCase()
+          const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
+
+          type ScoredCat = { id: number; name: string; slug: string; score: number }
+          const scored: ScoredCat[] = allCats
+            .filter(c => c.name.toLowerCase() !== 'uncategorized')
+            .map(c => {
+              const catWords = (c.name + ' ' + c.slug.replace(/-/g, ' ')).toLowerCase().split(/\s+/).filter(w => w.length >= 2)
+              const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
+              return { ...c, score }
+            })
+            .filter(c => c.score > 0)
+            .sort((a, b) => b.score - a.score)
+
+          if (scored.length > 0) {
+            postCategoryIds = [scored[0].id]
+            console.log(`[approve] Auto-categorized "${p.title}" → existing "${scored[0].name}" (score ${scored[0].score})`)
+          } else {
+            // No keyword match — use "Blog" as a safe theme-neutral default rather than
+            // deriving from title keywords (which produces nonsensical category names like "Brush Guards Vs").
+            // First check if a blog-like category already exists but wasn't scored.
+            const blogCat = allCats.find(c =>
+              ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()) ||
+              ['blog', 'articles', 'news', 'posts'].includes(c.slug?.toLowerCase() ?? '')
             )
-            if (matched) postCategoryIds = [matched.id]
+            if (blogCat) {
+              postCategoryIds = [blogCat.id]
+              console.log(`[approve] Auto-categorized "${p.title}" → existing "${blogCat.name}" (default fallback)`)
+            } else {
+              const newCatName = 'Blog'
+              const created = await createCategory(siteUrl, auth, newCatName)
+              if (created) {
+                postCategoryIds = [created.id]
+                console.log(`[approve] Auto-categorized "${p.title}" → NEW category "Blog"`)
+              } else {
+                // 409: Blog category exists but wasn't in the initial fetch — refetch
+                const refreshed = await getCategories(siteUrl, auth)
+                const found = refreshed.find(c => c.name.toLowerCase() === 'blog')
+                if (found) postCategoryIds = [found.id]
+              }
+            }
           }
-        } catch { /* non-fatal — WP will assign Uncategorized */ }
+
+          // Persist the resolved category so it shows correctly in review UI
+          if (postCategoryIds) {
+            await db.from('content_posts').update({ wp_category_ids: postCategoryIds }).eq('id', id)
+          }
+        } catch (e) {
+          console.warn('[approve] Auto-categorize failed (non-fatal):', e)
+        }
       }
 
       result = await publishPost(siteUrl, auth, {
@@ -454,11 +498,12 @@ export async function POST(
       : `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
 
     await db.from('content_posts').update({
-      wp_post_id:    result.id,
-      wp_site_url:   siteUrl,
-      wp_status:     isServiceArea ? result.status : wpPublishStatus,
-      status:        'draft_saved',
-      published_url: result.link || wpEditUrl,
+      wp_post_id:        result.id,
+      wp_site_url:       siteUrl,
+      wp_status:         isServiceArea ? result.status : wpPublishStatus,
+      status:            'draft_saved',
+      published_url:     result.link || wpEditUrl,
+      admin_approved_at: new Date().toISOString(),
     }).eq('id', id)
 
     // Inject nearby-city links into sibling SA pages (fire-and-forget)
@@ -543,13 +588,14 @@ export async function POST(
     // Discord notification (fire-and-forget)
     try {
       const [{ data: agencySettings }, { data: client }] = await Promise.all([
-        db.from('agency_settings').select('discord_bot_token').single(),
+        db.from('agency_settings').select('discord_bot_token, notification_config').single(),
         db.from('clients').select('name, discord_channel_id').eq('id', String(p.client_id)).single(),
       ])
-      const botToken   = (agencySettings as { discord_bot_token?: string | null } | null)?.discord_bot_token
-      const channelId  = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
-      const clientName = (client as { name?: string } | null)?.name ?? ''
-      if (botToken && channelId) {
+      const botToken    = (agencySettings as { discord_bot_token?: string | null } | null)?.discord_bot_token
+      const notifConfig = ((agencySettings as Record<string, unknown> | null)?.notification_config as NotifConfig | null) ?? {}
+      const channelId   = (client as { discord_channel_id?: string | null } | null)?.discord_channel_id
+      const clientName  = (client as { name?: string } | null)?.name ?? ''
+      if (botToken && channelId && getNotif(notifConfig, 'content_post_published').client) {
         void sendDiscordMessage(
           botToken, channelId,
           `✅ Post uploaded to WordPress draft: **${String(p.title ?? '(untitled)')}**${clientName ? ` (${clientName})` : ''}`

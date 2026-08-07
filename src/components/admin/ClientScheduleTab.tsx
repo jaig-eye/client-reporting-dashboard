@@ -6,7 +6,7 @@ import { buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
-import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
+import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash, CalendarCheck, Article } from '@phosphor-icons/react'
 import { useSiloSounds } from '@/lib/useSiloSounds'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -412,13 +412,14 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
       .then(r => r.json())
       .then((d: Record<string, unknown>) => {
+        const autoGen = (d.auto_generate as boolean) ?? false
         const loaded: Partial<ClientScheduleSettings> = {
           schedule_frequency:    (d.schedule_frequency    as string  | null) ?? null,
           schedule_day_of_week:  (d.schedule_day_of_week  as number  | null) ?? null,
           monthly_publish_day:   (d.monthly_publish_day   as number  | null) ?? null,
           weeks_ahead:           (d.weeks_ahead            as number)         ?? 6,
           schedule_start_date:   (d.schedule_start_date    as string  | null) ?? null,
-          auto_generate:         (d.auto_generate          as boolean)        ?? false,
+          auto_generate:         autoGen,
           connection_id:         (d.connection_id          as string  | null) ?? null,
           default_author_id:     (d.default_author_id      as number  | null) ?? null,
           default_category_ids:  Array.isArray(d.default_category_ids) ? (d.default_category_ids as number[]) : null,
@@ -427,8 +428,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           publish_time:          (d.publish_time            as string  | null) ?? null,
           wp_publish_mode:       ((d.wp_publish_mode as string | null) === 'draft_only' ? 'draft_only' : 'scheduled_draft') as 'scheduled_draft' | 'draft_only',
           topic_guidelines:      (d.topic_guidelines        as string  | null) ?? null,
-          auto_approve_topics:   (d.auto_approve_topics      as boolean)        ?? false,
-          auto_push_posts:       (d.auto_push_posts          as boolean)        ?? false,
+          // If auto_generate is on, sub-fields must also be on (they may lag in DB for legacy clients)
+          auto_approve_topics:   autoGen || ((d.auto_approve_topics as boolean) ?? false),
+          auto_push_posts:       autoGen || ((d.auto_push_posts    as boolean) ?? false),
         }
         setSchedule(loaded)
         // Always collapsed by default
@@ -642,9 +644,22 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
   // ── Auto-set connection_id ─────────────────────────────────────────────────
+  // When WP is connected after schedule config was saved, persist the default
+  // so generate/approve routes pick it up without requiring a manual Save click.
   useEffect(() => {
     if (!schedule.connection_id && firstConnectionId) {
       setSched('connection_id', firstConnectionId)
+      fetch('/api/admin/content/client-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, connection_id: firstConnectionId }),
+      })
+        .then(r => r.ok ? null : r.json().then(d => { throw new Error(d.error ?? 'Save failed') }))
+        .catch(err => {
+          console.error('[auto-save connection_id]', err)
+          setSched('connection_id', null) // roll back optimistic update
+          showToast('Could not auto-save site connection — please select and save manually', 'error')
+        })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firstConnectionId])
@@ -1205,7 +1220,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           onClick={() => setScheduleOpen(o => !o)}
           style={{ display: 'flex', alignItems: 'center', gap: 8 }}
         >
-          <span style={{ fontSize: '0.9rem' }}>⚙</span>
+          <CalendarCheck size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
           <span style={{ flex: 1 }} />
           {schedule.auto_generate && (
@@ -1272,7 +1287,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                   <input className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
                 </div>
                 <div>
-                  <Label hint="prefix prepended to BC blog post URLs, e.g. /blog/">Blog URL Prefix</Label>
+                  <Label hint="BigCommerce only — URL prefix prepended to blog post URLs (e.g. /blog/). WordPress manages its own permalink structure and does not use this field.">Blog URL Prefix</Label>
                   <input className="input" type="text" value={(schedule as Record<string, unknown>).blog_url_prefix as string ?? ''} onChange={e => setSched('blog_url_prefix' as keyof typeof schedule, e.target.value || null)} placeholder="/blog/" />
                 </div>
               </>)}
@@ -1989,7 +2004,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setSpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <Article size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{spGuidelinesOpen ? '▲' : '▼'}</span>
@@ -2063,17 +2078,18 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setSaSettingsOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <CalendarCheck size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Schedule Configuration</span>
             <span style={{ flex: 1 }} />
             {!!saSettings.auto_generate && (
               <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Auto</span>
             )}
             {(() => {
+              const saStarted     = !!(saSettings.slug_structure)
               const saIsConfigured = !!(saSettings.connection_id && saSettings.slug_structure)
-              return saIsConfigured
-                ? <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
-                : <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Not configured</span>
+              if (saIsConfigured) return <span style={{ color: 'var(--green)', fontSize: '0.8rem', fontWeight: 600 }}>✓</span>
+              if (saStarted)      return <span style={{ color: 'var(--amber)', fontSize: '0.75rem' }}>⚠ Setup incomplete</span>
+              return <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>Optional</span>
             })()}
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>
               {saSettingsOpen ? '▲' : '▼'}
@@ -2724,7 +2740,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
             onClick={() => setRpGuidelinesOpen(o => !o)}
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <span style={{ fontSize: '0.9rem' }}>⚙</span>
+            <Article size={16} weight="duotone" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Content Guidelines</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: 'var(--text-faint)', fontSize: '0.72rem', marginLeft: 4 }}>{rpGuidelinesOpen ? '▲' : '▼'}</span>
@@ -2836,6 +2852,19 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           postId={reviewPost.id}
           defaultConnectionId={schedule.connection_id ?? null}
           sites={clientSites}
+          topicBreakdown={(() => {
+            const t = topics.find(t => t.post?.id === reviewPost.id)
+            if (!t) return null
+            return {
+              keyword_opportunity: t.keyword_opportunity,
+              ranking_strategy: t.ranking_strategy,
+              audience_intent: t.audience_intent,
+              why_now: t.why_now,
+              competition_level: t.competition_level,
+              page_to_support: t.page_to_support ?? null,
+              competitors_researched: t.competitors_researched?.urls ?? null,
+            }
+          })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
         />
@@ -3825,6 +3854,19 @@ function PipelineCalendar({
           postId={reviewPost.id}
           defaultConnectionId={connectionId}
           sites={sites}
+          topicBreakdown={(() => {
+            const t = topics.find(t => t.post?.id === reviewPost.id)
+            if (!t) return null
+            return {
+              keyword_opportunity: t.keyword_opportunity,
+              ranking_strategy: t.ranking_strategy,
+              audience_intent: t.audience_intent,
+              why_now: t.why_now,
+              competition_level: t.competition_level,
+              page_to_support: t.page_to_support ?? null,
+              competitors_researched: t.competitors_researched?.urls ?? null,
+            }
+          })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
         />

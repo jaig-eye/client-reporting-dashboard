@@ -1,15 +1,16 @@
 /**
  * Site SEO crawler.
  *
- * Fetches pages with AgencyBot/1.0 and extracts SEO signals via regex.
+ * Fetches pages with the platform bot UA and extracts SEO signals via regex.
  * No external HTML-parsing library needed — avoids dependency bloat and
  * keeps the bundle edge-compatible.
  *
  * Cloudflare whitelist rule:
- *   cf.bot_management.verified_bot OR http.user_agent contains "AgencyBot"
+ *   cf.bot_management.verified_bot OR http.user_agent contains "GoLaunchLocal"
  */
 
-export const AGENT_UA = 'AgencyBot/1.0'
+import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+export const AGENT_UA = PLATFORM_BOT_UA
 const FETCH_TIMEOUT_MS = 10_000
 const CONCURRENT       = 5
 export const MAX_PAGES = 50
