@@ -106,6 +106,23 @@ export async function generateTopicsForClient(
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
+  // Build avoid-list queries scoped to the same content_type when one is provided.
+  // Blog generation avoids blog posts/topics only; SA generation avoids SA only —
+  // so neither wastes avoid-list slots on the other content type.
+  let existingTopicsQ = db.from('content_topics')
+    .select('topic, target_keyword')
+    .eq('client_id', clientId)
+    .not('status', 'eq', 'rejected')
+  if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
+
+  // No date cap — include all posts ever generated for this client so nothing is recycled.
+  let existingPostsQ = db.from('content_posts')
+    .select('title, focus_topic, target_keyword')
+    .eq('client_id', clientId)
+    .order('generated_at', { ascending: false })
+    .limit(500)
+  if (opts?.contentType) existingPostsQ = existingPostsQ.eq('content_type', opts.contentType)
+
   const [
     settingsRes,
     clientRes,
@@ -122,16 +139,8 @@ export async function generateTopicsForClient(
       .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data, topic_guidelines')
       .eq('client_id', clientId)
       .maybeSingle(),
-    db.from('content_topics')
-      .select('topic, target_keyword')
-      .eq('client_id', clientId)
-      .not('status', 'eq', 'rejected'),
-    db.from('content_posts')
-      .select('title, focus_topic, target_keyword')
-      .eq('client_id', clientId)
-      .gte('generated_at', new Date(Date.now() - 90 * 86_400_000).toISOString())
-      .order('generated_at', { ascending: false })
-      .limit(50),
+    existingTopicsQ,
+    existingPostsQ,
     db.from('gsc_metrics')
       .select('page, query, clicks, impressions, position, ctr')
       .eq('client_id', clientId)

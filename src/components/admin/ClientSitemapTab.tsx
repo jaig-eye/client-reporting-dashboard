@@ -29,6 +29,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [error,   setError]   = useState('')
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
+  const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 
   // Sitemap config state
   const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
@@ -299,11 +300,17 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
             </thead>
             <tbody>
               {sorted.map((page, i) => (
-                <tr key={page.url} style={{
-                  borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
-                  opacity: page.isExcluded ? 0.45 : 1,
-                  background: page.isPriority ? 'rgba(99,102,241,0.04)' : 'transparent',
-                }}>
+                <tr key={page.url}
+                  onMouseEnter={() => setHoveredUrl(page.url)}
+                  onMouseLeave={() => setHoveredUrl(null)}
+                  style={{
+                    borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
+                    opacity: page.isExcluded ? 0.45 : 1,
+                    background: hoveredUrl === page.url
+                      ? 'var(--bg-subtle)'
+                      : page.isPriority ? 'rgba(99,102,241,0.04)' : 'transparent',
+                    transition: 'background 0.1s',
+                  }}>
                   <td style={{ padding: '7px 10px', color: 'var(--text-primary)', maxWidth: 0 }}>
                     <a href={page.url} target="_blank" rel="noopener noreferrer"
                       style={{ color: 'var(--blue)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
