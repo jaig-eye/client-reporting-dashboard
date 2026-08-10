@@ -166,7 +166,19 @@ export async function POST(
 
       const newTopicId = topicResult.topics[0].id
 
-      // 2. Fetch full topic data (TopicSummary only has a few fields)
+      // 2. Immediately claim the new topic and retire the old one — do this BEFORE the AI call
+      //    so that no cron run can pick up either topic during the (potentially long) generation window.
+      await db.from('content_topics')
+        .update({ post_id: postId, status: 'approved' })
+        .eq('id', newTopicId)
+
+      if (post.topic_id) {
+        await db.from('content_topics')
+          .update({ post_id: null, status: 'rejected' })
+          .eq('id', post.topic_id as string)
+      }
+
+      // 3. Fetch full topic data (TopicSummary only has a few fields)
       const { data: newTopic } = await db
         .from('content_topics')
         .select('id, topic, target_keyword, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level')
@@ -260,7 +272,7 @@ Requirements:
       parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
       parsed.content = stripDangerousHtml(parsed.content)
 
-      // 8. Update post in-place with new content + link to new topic
+      // 8. Update post in-place with new content + mark new topic as fully generated
       await db.from('content_posts').update({
         title:            parsed.title,
         content:          parsed.content,
@@ -279,19 +291,12 @@ Requirements:
         status:           'for_review',
       }).eq('id', postId)
 
-      // 9. Retire old topic so the cron doesn't re-generate a post for it
-      if (post.topic_id) {
-        await db.from('content_topics')
-          .update({ post_id: null, status: 'rejected' })
-          .eq('id', post.topic_id as string)
-      }
-
-      // 10. Claim new topic for this post
+      // Topic was already claimed (step 2); mark it generated now that content is saved.
       await db.from('content_topics')
-        .update({ post_id: postId, status: 'generated' })
+        .update({ status: 'generated' })
         .eq('id', newTopic.id as string)
 
-      // 11. Admin alert — visible in the admin alert badge
+      // 9. Admin alert — visible in the admin alert badge
       await db.from('admin_alerts').insert({
         type:      'content',
         severity:  'info',
@@ -308,8 +313,15 @@ Requirements:
 
     } catch (err) {
       console.error('[full-regenerate] error:', err)
-      // Roll back so the post isn't stuck in 'generating' forever
-      await db.from('content_posts').update({ status: 'for_review' }).eq('id', postId)
+      // Only roll back if the post is still 'generating' — don't clobber a successful step 8
+      const { data: currentPost } = await db
+        .from('content_posts')
+        .select('status')
+        .eq('id', postId)
+        .maybeSingle()
+      if (currentPost?.status === 'generating') {
+        await db.from('content_posts').update({ status: 'for_review' }).eq('id', postId)
+      }
     }
   })())
 
