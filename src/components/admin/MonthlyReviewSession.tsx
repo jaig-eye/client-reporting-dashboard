@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
 import MonthlyReviewComplete   from './MonthlyReviewComplete'
@@ -30,7 +31,13 @@ function getMonth(): string {
 }
 
 export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
-  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set())
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(() => {
+    const pre = new Set<string>()
+    for (const p of initialPosts) {
+      if (p.status === 'generating') pre.add(p.id)
+    }
+    return pre
+  })
   const [approvedIds,    setApprovedIds]    = useState<Set<string>>(() => {
     // Pre-populate only from posts actually pushed to a CMS (draft_saved).
     // approve_only posts (status='approved') have admin_approved_at but no platform ID —
@@ -46,6 +53,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [toastError, setToastError] = useState(false)
+  const router = useRouter()
   const [regenModal,      setRegenModal]      = useState<{ postId: string } | null>(null)
   const [regenModalNotes, setRegenModalNotes] = useState('')
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
@@ -153,6 +162,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     if (editorPostId) {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
     }
+    setToastError(false)
     setToastMsg(`Post regenerated: ${updatedPost?.title ?? 'Done'} — ready for review`)
     setEditorPostId(null)
   }, [editorPostId])
@@ -184,10 +194,14 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       })
       if (!res.ok) {
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+        setToastError(true)
+        setToastMsg('Failed to start regeneration — please try again')
       }
       // Session-level polling picks up completion
     } catch {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+      setToastError(true)
+      setToastMsg('Failed to start regeneration — please try again')
     }
   }, [regenModal, regenModalNotes])
 
@@ -210,7 +224,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           const updated = await res.json()
           if (updated.status !== 'generating') {
             setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+            setToastError(false)
             setToastMsg(`Post regenerated: ${updated.title ?? 'Done'} — ready for review`)
+            router.refresh()
           }
         } catch { /* retry next tick */ }
       }
@@ -308,9 +324,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       />
     )}
     {toastMsg && (
-      <div style={{ position: 'fixed', bottom: 24, right: 24, background: '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        ✓ {toastMsg}
-        <button onClick={() => setToastMsg(null)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+      <div style={{ position: 'fixed', bottom: 24, right: 24, background: toastError ? '#dc2626' : '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        {toastError ? '✗' : '✓'} {toastMsg}
+        <button onClick={() => { setToastMsg(null); setToastError(false) }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
       </div>
     )}
     {regenModal && (

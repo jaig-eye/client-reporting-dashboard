@@ -133,17 +133,22 @@ export async function POST(
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
 
-  // Idempotency guard — don't double-queue
-  if (post.status === 'generating') {
-    return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
-  }
-
-  // Mark as generating synchronously so the UI sees it immediately
-  const { error: genErr } = await db.from('content_posts').update({ status: 'generating' }).eq('id', postId)
+  // Mark as generating atomically — the neq guard acts as the idempotency check so two
+  // concurrent requests can't both claim the slot (no TOCTOU window)
+  const { data: claimed, error: genErr } = await db
+    .from('content_posts')
+    .update({ status: 'generating' })
+    .eq('id', postId)
+    .neq('status', 'generating')
+    .select('id')
   if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
+  if (!claimed?.length) return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
 
   // Capture admin session before returning — cookies are request-scoped
   const adminSession = await getAdminSession()
+
+  // Hoisted so the catch block can reverse topic state changes made in step 2
+  let newTopicId: string | undefined
 
   waitUntil((async () => {
     try {
@@ -164,7 +169,7 @@ export async function POST(
         throw new Error(topicResult.error ?? 'No topics generated')
       }
 
-      const newTopicId = topicResult.topics[0].id
+      newTopicId = topicResult.topics[0].id
 
       // 2. Immediately claim the new topic and retire the old one — do this BEFORE the AI call
       //    so that no cron run can pick up either topic during the (potentially long) generation window.
@@ -183,7 +188,7 @@ export async function POST(
         .from('content_topics')
         .select('id, topic, target_keyword, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level')
         .eq('id', newTopicId)
-        .single()
+        .maybeSingle()
 
       if (!newTopic) throw new Error('New topic row not found')
 
@@ -269,11 +274,12 @@ Requirements:
 
       // 7. Parse + sanitize
       const parsed = parseResponse(rawText)
+      if (!parsed.title || !parsed.slug) throw new Error('AI returned invalid content: missing title or slug')
       parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
       parsed.content = stripDangerousHtml(parsed.content)
 
       // 8. Update post in-place with new content + mark new topic as fully generated
-      await db.from('content_posts').update({
+      const { error: saveErr } = await db.from('content_posts').update({
         title:            parsed.title,
         content:          parsed.content,
         meta_description: parsed.metaDescription,
@@ -290,6 +296,7 @@ Requirements:
         prompt_used:      userPrompt,
         status:           'for_review',
       }).eq('id', postId)
+      if (saveErr) throw new Error(`Failed to save generated content: ${saveErr.message}`)
 
       // Topic was already claimed (step 2); mark it generated now that content is saved.
       await db.from('content_topics')
@@ -321,6 +328,15 @@ Requirements:
         .maybeSingle()
       if (currentPost?.status === 'generating') {
         await db.from('content_posts').update({ status: 'for_review' }).eq('id', postId)
+        // Reverse topic state changes made in step 2
+        if (newTopicId) {
+          await db.from('content_topics').update({ post_id: null, status: 'rejected' }).eq('id', newTopicId)
+        }
+        if (post.topic_id) {
+          await db.from('content_topics')
+            .update({ post_id: postId, status: 'approved' })
+            .eq('id', post.topic_id as string)
+        }
       }
     }
   })())

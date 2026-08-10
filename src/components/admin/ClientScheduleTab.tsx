@@ -3568,11 +3568,13 @@ function PipelineCalendar({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ edit_notes: regenNotes.trim() || undefined }),
       })
-      const data = await res.json() as { ok?: boolean; error?: string }
+      const data = await res.json() as { ok?: boolean; error?: string; queued?: boolean }
       if (res.ok && data.ok) {
         setRegenConfirm(null)
         setRegenNotes('')
-        onShowToast('Regeneration started — post will update in about a minute', 'info')
+        if (data.queued !== false) {
+          onShowToast('Regeneration started — post will update in about a minute', 'info')
+        }
         await loadPipeline()
       } else {
         onShowToast(data.error || 'Failed to start regeneration', 'error')
@@ -3984,6 +3986,7 @@ function PipelineCalendar({
           })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+          onRegenerateDone={() => { loadPipeline() }}
         />
       )}
     </>
