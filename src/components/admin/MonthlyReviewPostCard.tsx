@@ -1,6 +1,5 @@
 'use client'
 
-import { ArrowClockwise } from '@phosphor-icons/react'
 
 export interface MonthlyReviewPost {
   id:                  string
@@ -143,40 +142,13 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onOpenEditor(post.id)}
-            >
-              Review
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onRegenerate(post.id)}
-              title="Regenerate post with new topic"
-              style={{ padding: '3px 7px', display: 'inline-flex', alignItems: 'center' }}
-            >
-              <ArrowClockwise size={13} weight="bold" />
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onReject(post.id, true)}
-              style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
-            >
-              Discard
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={isLoading}
-              onClick={() => onApprove(post.id)}
-              style={{ background: isLoading ? undefined : '#16a34a', borderColor: '#16a34a' }}
-            >
-              {isLoading ? '…' : 'Approve →'}
-            </button>
-          </div>
+          <button
+            className="btn btn-sm"
+            disabled={isLoading}
+            onClick={() => onOpenEditor(post.id)}
+          >
+            Review →
+          </button>
         )}
       </div>
     </div>

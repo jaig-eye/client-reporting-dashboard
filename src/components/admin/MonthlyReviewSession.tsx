@@ -179,6 +179,25 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     setRegenModal({ postId })
   }, [])
 
+  // Editor-initiated actions (monthly review mode)
+  const handleEditorApprove = useCallback(() => {
+    if (editorPostId) handleApprove(editorPostId)
+    // editor calls onClose() itself after this
+  }, [editorPostId, handleApprove])
+
+  const handleEditorDiscard = useCallback(() => {
+    if (editorPostId) handleReject(editorPostId, true)
+    // editor calls onClose() itself after this
+  }, [editorPostId, handleReject])
+
+  const handleEditorRegenerate = useCallback(() => {
+    if (editorPostId) {
+      const postId = editorPostId
+      setEditorPostId(null)
+      setRegenModal({ postId })
+    }
+  }, [editorPostId])
+
   const handleRegenModalConfirm = useCallback(async () => {
     if (!regenModal) return
     const { postId } = regenModal
@@ -320,6 +339,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
         onRegenerateError={handleRegenerateError}
+        onMonthlyApprove={handleEditorApprove}
+        onMonthlyDiscard={handleEditorDiscard}
+        onMonthlyRegenerate={handleEditorRegenerate}
         autoScanLinks
       />
     )}

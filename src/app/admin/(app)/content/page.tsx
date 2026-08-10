@@ -8,8 +8,6 @@ import { redirect }            from 'next/navigation'
 import GlobalContentSettings   from './ContentSettingsPanel'
 import ContentCalendar         from './ContentCalendar'
 import type { CalendarItem }   from './ContentCalendar'
-import PostReviewList           from '@/components/admin/PostReviewList'
-import type { PostReviewItem }  from '@/components/admin/PostReviewModal'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +22,6 @@ export default async function ContentPage({
 
   const params      = await searchParams
   const activeTab   = params.tab  ?? 'calendar'
-  const activeView  = params.view ?? 'calendar'
 
   const db = createAdminClient()
 
@@ -51,64 +48,16 @@ export default async function ContentPage({
     db.from('content_posts').select('silo_id, status').not('silo_id', 'is', null).limit(2000),
   ])
 
-  // Separate awaits: avoids Supabase inner-join type inference contaminating the main Promise.all tuple
   const reviewQueueRes = await db.from('content_posts')
-    .select('id, client_id, status, title, content, featured_image_url, target_keyword, target_publish_date, seo_title, meta_description, seo_score, admin_approved_at')
+    .select('id, status')
     .in('status', ['for_review', 'pending', 'approved'])
     .gte('target_publish_date', today)
     .is('wp_post_id', null)
     .is('bc_post_id', null)
-    .order('target_publish_date', { ascending: true })
-    .limit(100)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wpConnectionsRes = await (db as any).from('client_connections')
-    .select('id, client_id, external_id, connectors!inner(type, config)')
-    .eq('status', 'active')
+    .limit(200)
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const allClients    = (allClientsRes.data ?? []) as { id: string; name: string }[]
-
-  // Review queue for the list view
-  type ReviewRow = {
-    id: string; client_id: string; status: string; title: string | null; content: string | null
-    featured_image_url: string | null; target_keyword: string | null; target_publish_date: string | null
-    seo_title: string | null; meta_description: string | null; seo_score: number | null
-    admin_approved_at: string | null
-  }
-  const reviewQueue: PostReviewItem[] = ((reviewQueueRes.data ?? []) as unknown as ReviewRow[]).map(r => ({
-    id:                  r.id,
-    clientId:            r.client_id,
-    clientName:          allClientsMap.get(r.client_id) ?? 'Unknown',
-    title:               r.title,
-    content:             r.content,
-    featured_image_url:  r.featured_image_url,
-    target_keyword:      r.target_keyword,
-    target_publish_date: r.target_publish_date,
-    seo_title:           r.seo_title,
-    meta_description:    r.meta_description,
-    seo_score:           r.seo_score,
-    status:              r.status,
-    admin_approved_at:   r.admin_approved_at,
-  }))
-
-  // WP/BC site list for the inline editor in PostReviewList
-  type ConnRow = {
-    id: string; client_id: string; external_id: string | null
-    connectors: { type: string; config: Record<string, unknown> } | null
-  }
-  const allSites = ((wpConnectionsRes.data ?? []) as unknown as ConnRow[])
-    .filter(c => c.connectors?.type === 'wordpress' || c.connectors?.type === 'bigcommerce')
-    .map(c => ({
-      connectionId:   c.id,
-      siteUrl:        c.connectors?.type === 'wordpress'
-        ? (String(c.connectors.config?.site_url ?? c.external_id ?? ''))
-        : (String(c.connectors?.config?.store_hash ?? '')),
-      siteName:       allClientsMap.get(c.client_id) ?? 'Unknown',
-      clientId:       c.client_id,
-      clientName:     allClientsMap.get(c.client_id) ?? 'Unknown',
-      connectorType:  c.connectors?.type,
-    }))
 
   // Build calendar items
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,7 +148,7 @@ export default async function ContentPage({
     { id: 'settings', label: 'Settings' },
   ]
 
-  const pendingReviewCount = reviewQueue.filter(p => p.status !== 'approved').length
+  const pendingReviewCount = ((reviewQueueRes.data ?? []) as { status: string }[]).filter(p => p.status !== 'approved').length
 
   return (
     <div>
@@ -254,40 +203,7 @@ export default async function ContentPage({
       </div>
 
       {activeTab === 'calendar' && (
-        <>
-          {/* Calendar / List view toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: '1.25rem' }}>
-            {(['calendar', 'list'] as const).map(v => (
-              <a
-                key={v}
-                href={`?tab=calendar&view=${v}`}
-                style={{
-                  display:        'inline-block',
-                  padding:        '5px 14px',
-                  borderRadius:   6,
-                  fontSize:       '0.8125rem',
-                  fontWeight:     activeView === v ? 600 : 400,
-                  color:          activeView === v ? '#fff' : 'var(--text-muted)',
-                  background:     activeView === v ? 'var(--blue, #2563eb)' : 'var(--bg-subtle)',
-                  textDecoration: 'none',
-                  textTransform:  'capitalize',
-                }}
-              >
-                {v === 'list' ? 'Review Queue' : 'Timeline'}
-              </a>
-            ))}
-            {activeView === 'list' && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginLeft: '0.5rem' }}>
-                {reviewQueue.filter(p => p.status !== 'approved').length} pending approval
-              </span>
-            )}
-          </div>
-
-          {activeView === 'list'
-            ? <PostReviewList initialPosts={reviewQueue} allSites={allSites} />
-            : <ContentCalendar items={calendarItems} clients={allClients} />
-          }
-        </>
+        <ContentCalendar items={calendarItems} clients={allClients} />
       )}
 
       {activeTab === 'silos' && (

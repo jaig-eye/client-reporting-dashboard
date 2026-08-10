@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowCircleRight } from '@phosphor-icons/react'
+import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 
 interface Site {
   connectionId:  string
@@ -31,11 +31,14 @@ interface Props {
   sites:               Site[]
   onClose:             () => void
   onUpdate:            (post: UpdatedPost) => void
-  onRegenerateStart?:  () => void
-  onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
-  onRegenerateError?:  () => void
-  autoScanLinks?:      boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
-  topicBreakdown?:     TopicBreakdown | null
+  onRegenerateStart?:   () => void
+  onRegenerateDone?:    (post: Partial<UpdatedPost>) => void
+  onRegenerateError?:   () => void
+  onMonthlyApprove?:    () => void
+  onMonthlyDiscard?:    () => void
+  onMonthlyRegenerate?: () => void
+  autoScanLinks?:       boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
+  topicBreakdown?:      TopicBreakdown | null
 }
 
 interface PostDetail {
@@ -96,7 +99,13 @@ type WpPublishStatus = 'draft' | 'publish' | 'future'
 
 function seoCheck(field: string | null, keyword: string): boolean {
   if (!field || !keyword) return false
-  return field.toLowerCase().includes(keyword.toLowerCase())
+  const f = field.toLowerCase()
+  const k = keyword.toLowerCase()
+  if (f.includes(k)) return true
+  // Pass if ≥75% of keyword words appear in field — handles state abbreviations (FL vs Florida)
+  const words = k.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return false
+  return words.filter(w => f.includes(w)).length / words.length >= 0.75
 }
 
 function countWords(html: string): number {
@@ -165,7 +174,7 @@ interface TopicBreakdown {
   competitors_researched?: string[] | null
 }
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, autoScanLinks, topicBreakdown }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -511,6 +520,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     } finally {
       setSaving(false)
     }
+  }
+
+  // ── Monthly Review actions ───────────────────────────────────────────────────
+  async function handleMonthlyApprove() {
+    if (isDirty) await handleSave()
+    onMonthlyApprove?.()
+    onClose()
+  }
+
+  function handleMonthlyDiscard() {
+    onMonthlyDiscard?.()
+    onClose()
   }
 
   // ── Approve ─────────────────────────────────────────────────────────────────
@@ -1355,31 +1376,76 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
         {/* Footer actions */}
         {!loading && (
-          <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            {/* Save Changes */}
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || !isDirty}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
-            >
-              {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
-            </button>
-
-            {/* Approve — push to site */}
-            {!isOnSite && (
-              <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                <ArrowCircleRight size={15} weight="bold" />
-                {approving ? 'Saving…' : 'Approve'}
+          onMonthlyApprove ? (
+            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !isDirty}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
               </button>
-            )}
+              <div style={{ flex: 1 }} />
+              {onMonthlyRegenerate && (
+                <button
+                  type="button"
+                  title="Regenerate — picks a new topic and rewrites the post"
+                  onClick={onMonthlyRegenerate}
+                  className="btn btn-sm"
+                  disabled={saving}
+                  style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center' }}
+                >
+                  <ArrowClockwise size={13} weight="bold" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleMonthlyDiscard}
+                disabled={saving}
+                className="btn btn-sm"
+                style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleMonthlyApprove}
+                disabled={saving}
+                className="btn btn-sm btn-primary"
+                style={{ background: saving ? undefined : '#16a34a', borderColor: '#16a34a' }}
+              >
+                {saving ? '…' : 'Approve →'}
+              </button>
+            </div>
+          ) : (
+            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Save Changes */}
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !isDirty}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
+              </button>
 
-            <div style={{ flex: 1 }} />
-            <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
-              Reject
-            </button>
-          </div>
+              {/* Approve — push to site */}
+              {!isOnSite && (
+                <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <ArrowCircleRight size={15} weight="bold" />
+                  {approving ? 'Saving…' : 'Approve'}
+                </button>
+              )}
+
+              <div style={{ flex: 1 }} />
+              <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
+                Reject
+              </button>
+            </div>
+          )
         )}
       </div>
     </>

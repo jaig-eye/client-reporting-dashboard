@@ -13,8 +13,9 @@ type PostRow = {
 }
 
 type ClientSettings = {
-  services:          string | null
-  geographic_focus:  string | null
+  services:             string | null
+  geographic_focus:     string | null
+  content_image_prompt: string | null
 }
 
 export function buildImagePrompt(
@@ -72,11 +73,12 @@ export async function generatePostImage(
 
   const { data: clientSettings } = await db
     .from('content_settings')
-    .select('services, geographic_focus')
+    .select('services, geographic_focus, content_image_prompt')
     .eq('client_id', post.client_id)
     .maybeSingle()
 
-  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, promptOverride)
+  const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt)
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
@@ -106,7 +108,7 @@ export async function generatePostImage(
         if (item?.b64_json) {
           // gpt-image-1 returns base64 — decode and upload to Supabase directly
           const buffer   = Buffer.from(item.b64_json, 'base64')
-          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
             .upload(filename, buffer, { contentType: 'image/png', upsert: true })
@@ -151,7 +153,7 @@ export async function generatePostImage(
         const b64 = gemData.predictions?.[0]?.bytesBase64Encoded
         if (b64) {
           const buffer   = Buffer.from(b64, 'base64')
-          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
             .upload(filename, buffer, { contentType: 'image/png', upsert: true })
@@ -181,7 +183,7 @@ export async function generatePostImage(
       const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
       if (imgRes.ok) {
         const buffer   = Buffer.from(await imgRes.arrayBuffer())
-        const filename = `content-images/${post.client_id}/${postId}-ai.png`
+        const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
         const { error: upErr } = await db.storage
           .from('uploads')
           .upload(filename, buffer, { contentType: 'image/png', upsert: true })
