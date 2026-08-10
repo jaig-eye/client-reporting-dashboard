@@ -15,12 +15,13 @@ interface Props {
   onReject:        (id: string, discard?: boolean) => void
   onOpenEditor:    (id: string) => void
   onRestore:       (id: string) => void
+  onRegenerate:    (id: string) => void
 }
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
 export default function MonthlyReviewClientSection({
-  clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore,
+  clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
@@ -128,6 +129,7 @@ export default function MonthlyReviewClientSection({
               onReject={onReject}
               onOpenEditor={onOpenEditor}
               onRestore={onRestore}
+              onRegenerate={onRegenerate}
             />
           ))}
         </div>

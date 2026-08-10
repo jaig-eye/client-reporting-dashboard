@@ -32,6 +32,7 @@ interface Props {
   onReject:         (id: string, discard?: boolean) => void
   onOpenEditor:     (id: string) => void
   onRestore:        (id: string) => void
+  onRegenerate:     (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -46,7 +47,7 @@ function fmtDate(iso: string): string {
 }
 
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
@@ -141,13 +142,21 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
               className="btn btn-sm"
               disabled={isLoading}
               onClick={() => onOpenEditor(post.id)}
             >
               Review
+            </button>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onRegenerate(post.id)}
+              style={{ fontSize: '0.75rem', opacity: 0.8 }}
+            >
+              Regenerate
             </button>
             <button
               className="btn btn-sm"

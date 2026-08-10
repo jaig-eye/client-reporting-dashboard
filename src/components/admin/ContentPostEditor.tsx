@@ -170,7 +170,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
   const [savedFlash,      setSavedFlash]      = useState(false)
-  const [regenerating,    setRegenerating]    = useState(false)
+  const [regenerating,      setRegenerating]      = useState(false)
+  const [fullRegenerating,  setFullRegenerating]  = useState(false)
+  const [showEditDirection, setShowEditDirection] = useState(false)
   const [approving,       setApproving]       = useState(false)
   const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
@@ -289,6 +291,28 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postId])
+
+  // Poll every 10 s while a full-regenerate background job is running so the editor
+  // unlocks and notifies the user as soon as the new content lands.
+  useEffect(() => {
+    if (post?.status !== 'generating') return
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/admin/content/post?id=${postId}`)
+        if (!res.ok) return
+        const updated: PostDetail = await res.json()
+        if (updated.status !== 'generating') {
+          setPost(updated)
+          setTitle(updated.title ?? '')
+          setContent(updated.content ?? '')
+          clearInterval(timer)
+          onRegenerateDone?.({ title: updated.title })
+        }
+      } catch { /* network blip — will retry */ }
+    }, 10_000)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post?.status, postId])
 
   // ── Load authors + WP tags when connectionId changes ───────────────────────
   const loadSiteData = useCallback(async (connId: string) => {
@@ -633,6 +657,33 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       onRegenerateError?.()
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  // Full-regenerate: picks a brand-new topic + keyword, generates fresh content.
+  // Runs async in the background — the post status flips to 'generating' immediately.
+  async function handleFullRegenerate() {
+    setFullRegenerating(true)
+    setError('')
+    onRegenerateStart?.()
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ edit_notes: editNotes.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to start regeneration')
+      // Reload post to pick up status='generating' for the polling effect
+      const postRes = await fetch(`/api/admin/content/post?id=${postId}`)
+      if (postRes.ok) setPost(await postRes.json())
+      setShowEditDirection(false)
+      setEditNotes('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start regeneration')
+      onRegenerateError?.()
+    } finally {
+      setFullRegenerating(false)
     }
   }
 
@@ -1170,23 +1221,61 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 </div>
               )}
 
-              {/* AI re-edit */}
+              {/* Regeneration */}
               <div className="mb-4">
-                {!showEditNotes ? (
-                  <button type="button" onClick={() => setShowEditNotes(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                    Editor Notes for Regeneration…
-                  </button>
-                ) : (
-                  <div>
-                    <label style={labelStyle}>Editor Notes for Regeneration</label>
-                    <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }} placeholder="e.g. Make the tone more conversational and add a FAQ section at the end" autoFocus />
-                    <div className="flex gap-2">
-                      <button type="button" disabled={regenerating} onClick={handleRegenerate} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-                        {regenerating ? 'Regenerating…' : 'Regenerate with AI'}
-                      </button>
-                      <button type="button" onClick={() => { setShowEditNotes(false); setEditNotes('') }} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Cancel</button>
-                    </div>
+                {post?.status === 'generating' ? (
+                  <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                    <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }}>⟳</span>
+                    Generating new topic and content — this takes about a minute…
                   </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.8125rem' }}
+                        disabled={fullRegenerating || regenerating}
+                        onClick={handleFullRegenerate}
+                      >
+                        {fullRegenerating ? 'Queuing…' : 'Regenerate Post'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.75rem', opacity: 0.65 }}
+                        onClick={() => setShowEditDirection(v => !v)}
+                      >
+                        {showEditDirection ? 'Hide direction' : 'Add direction…'}
+                      </button>
+                    </div>
+                    {showEditDirection && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <textarea
+                          value={editNotes}
+                          onChange={e => setEditNotes(e.target.value)}
+                          rows={3}
+                          style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }}
+                          placeholder="e.g. Avoid motorcycle content, focus on car detailing instead…"
+                          autoFocus
+                        />
+                        <div className="flex gap-2" style={{ marginBottom: '0.25rem' }}>
+                          <button
+                            type="button"
+                            disabled={regenerating || fullRegenerating}
+                            onClick={handleRegenerate}
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.8125rem' }}
+                          >
+                            {regenerating ? 'Rewriting…' : 'Rewrite with Notes'}
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-faint)', margin: 0 }}>
+                          "Regenerate Post" picks a fresh topic. "Rewrite with Notes" keeps the topic but rewrites using your direction above.
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

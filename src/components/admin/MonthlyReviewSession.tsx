@@ -45,6 +45,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
   const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
 
@@ -146,10 +147,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [editorPostId])
 
-  const handleRegenerateDone = useCallback(() => {
+  const handleRegenerateDone = useCallback((updatedPost?: { title?: string | null }) => {
     if (editorPostId) {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
     }
+    setToastMsg(`Post regenerated: ${updatedPost?.title ?? 'Done'} — ready for review`)
     setEditorPostId(null)
   }, [editorPostId])
 
@@ -159,6 +161,51 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
     // Keep the editor open so the user can see the error message
   }, [editorPostId])
+
+  // Direct-from-card full-regenerate (no editor open)
+  const handleCardRegenerate = useCallback(async (postId: string) => {
+    setRegeneratingIds(prev => { const next = new Set(prev); next.add(postId); return next })
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) {
+        setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+      }
+      // Session-level polling picks up completion
+    } catch {
+      setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+    }
+  }, [])
+
+  // Toast auto-clear
+  useEffect(() => {
+    if (!toastMsg) return
+    const t = setTimeout(() => setToastMsg(null), 5000)
+    return () => clearTimeout(t)
+  }, [toastMsg])
+
+  // Session-level polling for posts regenerating without an open editor
+  useEffect(() => {
+    const orphaned = Array.from(regeneratingIds).filter(id => id !== editorPostId)
+    if (orphaned.length === 0) return
+    const timer = setInterval(async () => {
+      for (const postId of orphaned) {
+        try {
+          const res = await fetch(`/api/admin/content/post?id=${postId}`)
+          if (!res.ok) continue
+          const updated = await res.json()
+          if (updated.status !== 'generating') {
+            setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+            setToastMsg(`Post regenerated: ${updated.title ?? 'Done'} — ready for review`)
+          }
+        } catch { /* retry next tick */ }
+      }
+    }, 10_000)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regeneratingIds.size, editorPostId])
 
   const displayMonth = month || getMonth()
   const editorPost = editorPostId ? initialPosts.find(p => p.id === editorPostId) : null
@@ -227,6 +274,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   onReject={handleReject}
                   onOpenEditor={handleOpenEditor}
                   onRestore={handleRestore}
+                  onRegenerate={handleCardRegenerate}
                 />
               )
             })
@@ -246,6 +294,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         onRegenerateError={handleRegenerateError}
         autoScanLinks
       />
+    )}
+    {toastMsg && (
+      <div style={{ position: 'fixed', bottom: 24, right: 24, background: '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        ✓ {toastMsg}
+        <button onClick={() => setToastMsg(null)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+      </div>
     )}
     </>
   )
