@@ -154,6 +154,50 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
   })
 }
 
+// ─── Category auto-suggestion ───────────────────────────────────────────────────
+// Word-level matching (exact or shared prefix, ≥4 chars, stopwords removed) so a
+// laptop-repair post doesn't match "Business Phone Systems" just because 'business'
+// contains 'in' and 'phone' contains 'on'. Precision over recall — a bad guess is
+// worse than falling back to a Blog category the user can override.
+const CATEGORY_STOPWORDS = new Set([
+  'the','and','for','with','your','you','our','are','was','how','why','what','when','where','who',
+  'will','from','into','out','off','not','but','all','any','has','have','had','get','got','this',
+  'that','these','those','before','after','about','over','than','then','they','them','been','does',
+  'done','just','like','more','most','some','such','only','also','very','much','many','each','every',
+  'their','there','here','would','could','should','while','which','shop','call','calling','turn','need',
+])
+
+function tokenizeForCategory(text: string): string[] {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length >= 4 && !CATEGORY_STOPWORDS.has(w))
+}
+
+// Both inputs are already ≥4 chars: match on equality or a shared prefix
+// (handles system/systems, repair/repairs, cyber/cybersecurity).
+function categoryWordsOverlap(a: string, b: string): boolean {
+  return a === b || a.startsWith(b) || b.startsWith(a)
+}
+
+function suggestCategory(
+  cats: WpCategory[],
+  keyword: string | null | undefined,
+  title: string | null | undefined,
+): CategorySuggestion {
+  const kwWords    = tokenizeForCategory([keyword, title].filter(Boolean).join(' '))
+  const nonDefault = cats.filter(c => c.name.toLowerCase() !== 'uncategorized')
+  const scored = nonDefault
+    .map(c => ({ c, score: tokenizeForCategory(c.name).filter(cw => kwWords.some(kw => categoryWordsOverlap(cw, kw))).length }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  if (scored.length > 0) {
+    return { id: scored[0].c.id, name: scored[0].c.name, isNew: false }
+  }
+  // No meaningful keyword match — fall back to a Blog category rather than guessing.
+  const blogCat = nonDefault.find(c => ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()))
+  return blogCat ? { id: blogCat.id, name: blogCat.name, isNew: false } : { id: null, name: 'Blog', isNew: true }
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 type SectionId = 'content' | 'seo' | 'publish'
@@ -353,32 +397,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setCategories(fetchedCats)
         // Only suggest if the post has no explicit category selected yet
         if (!post?.wpCategoryIds || post.wpCategoryIds.length === 0) {
-          const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
-          const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
-          const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
-          const scored = nonDefault
-            .map(c => {
-              const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
-              const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
-              return { ...c, score }
-            })
-            .filter(c => c.score > 0)
-            .sort((a, b) => b.score - a.score)
-
-          if (scored.length > 0) {
-            setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
-          } else {
-            // No keyword match — suggest "Blog" as a safe default rather than deriving
-            // a name from the post title (which produces nonsensical category names).
-            const blogCat = nonDefault.find(c =>
-              ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase())
-            )
-            if (blogCat) {
-              setCategorySuggestion({ id: blogCat.id, name: blogCat.name, isNew: false })
-            } else {
-              setCategorySuggestion({ id: null, name: 'Blog', isNew: true })
-            }
-          }
+          setCategorySuggestion(suggestCategory(fetchedCats, post?.targetKeyword, post?.title))
         }
       }
       if (settingsRes?.ok) {
@@ -409,26 +428,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setCategories(fetchedCats)
       // Re-run suggestion only if the user hasn't pinned a category
       if (categoryIds.length === 0) {
-        const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
-        const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
-        const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
-        const scored = nonDefault
-          .map(c => {
-            const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
-            const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
-            return { ...c, score }
-          })
-          .filter(c => c.score > 0)
-          .sort((a, b) => b.score - a.score)
-        if (scored.length > 0) {
-          setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
-        } else {
-          const blogCat = nonDefault.find(c => ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()))
-          setCategorySuggestion(blogCat
-            ? { id: blogCat.id, name: blogCat.name, isNew: false }
-            : { id: null, name: 'Blog', isNew: true }
-          )
-        }
+        setCategorySuggestion(suggestCategory(fetchedCats, post?.targetKeyword, post?.title))
       }
     } catch { /* non-fatal */ } finally {
       setCategoriesLoading(false)

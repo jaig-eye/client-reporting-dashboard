@@ -45,8 +45,8 @@ export default function MonthlyReviewProgress({
         </div>
       )}
 
-      {/* Progress row */}
-      <div style={{ padding: '0 20px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* Progress row — add top padding when embedded (the title row above is hidden) */}
+      <div style={{ padding: embedded ? '14px 20px' : '0 20px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ flex: 1, background: 'var(--bg-subtle)', borderRadius: 999, height: 8, overflow: 'hidden' }}>
           <div style={{
             height: '100%',

@@ -101,6 +101,52 @@ function previewText(item: CalendarItem): string {
   return raw.length > 120 ? raw.slice(0, 118) + '…' : raw
 }
 
+// Group calendar items by client, ordered by client name — used to sub-group
+// each month section so the timeline is easier to scan per client.
+function groupByClient(items: CalendarItem[]): [string, CalendarItem[]][] {
+  const m = new Map<string, CalendarItem[]>()
+  for (const it of items) {
+    const arr = m.get(it.clientId) ?? []
+    arr.push(it)
+    m.set(it.clientId, arr)
+  }
+  return Array.from(m.entries()).sort((a, b) =>
+    (a[1][0]?.clientName ?? '').localeCompare(b[1][0]?.clientName ?? '')
+  )
+}
+
+function ClientGroupHeader({ clientId, clientName, count }: { clientId: string; clientName: string; count: number }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{clientName}</span>
+      <a
+        href={`/admin/clients/${clientId}?tab=content&subtab=schedule`}
+        title={`${clientName} content settings`}
+        aria-label={`${clientName} content settings`}
+        style={{ fontSize: 13, color: 'var(--text-faint)', textDecoration: 'none', lineHeight: 1 }}
+      >⚙</a>
+      <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{count}</span>
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+    </div>
+  )
+}
+
+// Renders a month's cards grouped into per-client subsections.
+function ClientGroupedCards({ items, onViewRationale }: { items: CalendarItem[]; onViewRationale: (i: CalendarItem) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {groupByClient(items).map(([cid, clientItems]) => (
+        <div key={cid}>
+          <ClientGroupHeader clientId={cid} clientName={clientItems[0]?.clientName ?? 'Unknown'} count={clientItems.length} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+            {clientItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={onViewRationale} />)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function ContentCalendar({
   items: initialItems,
   clients,
@@ -412,9 +458,7 @@ export default function ContentCalendar({
                         </div>
                       </button>
                       {!isCollapsed && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                          {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                        </div>
+                        <ClientGroupedCards items={monthItems} onViewRationale={setRationaleFor} />
                       )}
                     </div>
                   )
@@ -427,9 +471,7 @@ export default function ContentCalendar({
                       <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled</span>
                       <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                      {unscheduled.filter(i => !i.contentType || i.contentType === 'blog').map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                    </div>
+                    <ClientGroupedCards items={unscheduled.filter(i => !i.contentType || i.contentType === 'blog')} onViewRationale={setRationaleFor} />
                   </div>
                 )}
               </div>
