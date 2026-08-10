@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
+import CollapsibleSection from '@/components/admin/CollapsibleSection'
 
 interface Site {
   connectionId:  string
@@ -155,14 +156,7 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-type EditorTab = 'content' | 'seo' | 'settings' | 'strategy'
-
-const EDITOR_TABS: { id: EditorTab; label: string }[] = [
-  { id: 'content',  label: 'Content'    },
-  { id: 'seo',      label: 'SEO & Meta' },
-  { id: 'settings', label: 'Settings'   },
-  { id: 'strategy', label: 'Strategy'   },
-]
+type SectionId = 'content' | 'seo' | 'publish'
 
 interface TopicBreakdown {
   keyword_opportunity?:    string | null
@@ -187,8 +181,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
   const [isDirty,         setIsDirty]         = useState(false)
-  const [activeEditorTab, setActiveEditorTab] = useState<EditorTab>('content')
   const [fetchedBreakdown, setFetchedBreakdown] = useState<TopicBreakdown | null>(null)
+
+  // Two-pane tabless layout: collapsible right-column sections + header strategy panel
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content', 'seo', 'publish']))
+  const toggleSection = (id: SectionId) =>
+    setOpenSections(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  const openSection = (id: SectionId) =>
+    setOpenSections(prev => new Set(prev).add(id))
+  const [showStrategy, setShowStrategy] = useState(false)
+  const [isNarrow,     setIsNarrow]     = useState(false)
 
   // Image generation
   const [generatingImage,   setGeneratingImage]   = useState(false)
@@ -241,6 +243,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [showBrokenLinks, setShowBrokenLinks] = useState(false)
 
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Responsive: below 880px the panes stack and the left preview collapses to the overlay
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 880px)')
+    const on = () => setIsNarrow(mq.matches)
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
 
   // Mark dirty on any field change after initial load
   const loadedRef = useRef(false)
@@ -482,8 +493,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     const tagEnd   = content.indexOf('>', hrefMatch.index) + 1
     const selStart = tagStart >= 0 ? tagStart : hrefMatch.index
     const selEnd   = tagEnd > selStart ? tagEnd : selStart + url.length
-    setActiveEditorTab('content')
-    // setTimeout(50) gives the tab-switch re-render time to complete.
+    openSection('content')
+    // setTimeout(50) gives the section-open re-render time to complete.
     // HTML has very few newlines so line-counting is unreliable — use a character-position
     // proportion against scrollHeight to center the match in the visible viewport.
     setTimeout(() => {
@@ -793,7 +804,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     li{margin-bottom:.4rem}strong{font-weight:700}a{color:#2563eb;text-decoration:underline}
     img{max-width:100%;height:auto;border-radius:4px}
     blockquote{border-left:4px solid #e5e7eb;margin:1.5rem 0;padding:.75rem 1rem;color:#555;font-style:italic}
-  </style></head><body><h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
+  </style></head><body>${featuredImageUrl ? `<img src="${featuredImageUrl.replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
 
   return (
     <>
@@ -816,7 +827,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       {/* Drawer */}
       <div style={{
         position: 'fixed', top: 0, right: 0, bottom: 0,
-        width: 'min(720px, 100vw)',
+        width: 'min(1120px, 100vw)',
         background: 'var(--bg-surface)',
         boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
         zIndex: 51, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -837,9 +848,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {post.status === 'draft_saved' ? 'Scheduled' : post.status === 'for_review' ? 'For Review' : post.status}
             </span>
           )}
-          <button type="button" onClick={() => setShowPreview(true)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
-            Preview
-          </button>
+          {(topicBreakdown ?? fetchedBreakdown) && (
+            <button type="button" onClick={() => setShowStrategy(v => !v)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+              Strategy {showStrategy ? '▴' : '▾'}
+            </button>
+          )}
+          {isNarrow && (
+            <button type="button" onClick={() => setShowPreview(true)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+              Preview
+            </button>
+          )}
           {isOnSite && !post?.wpPostId && !post?.bcPostId && (
             <button type="button" onClick={handleRetry} disabled={retrying} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
               {retrying ? 'Pushing…' : 'Retry Push'}
@@ -850,31 +868,45 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           </button>
         </div>
 
-        {/* Tab navigation */}
-        {!loading && (
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 1.25rem' }}>
-            {EDITOR_TABS.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveEditorTab(tab.id)}
-                style={{
-                  padding: '0.5rem 0.875rem',
-                  fontSize: '0.75rem',
-                  fontWeight: activeEditorTab === tab.id ? 600 : 400,
-                  color: activeEditorTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: `2px solid ${activeEditorTab === tab.id ? 'var(--accent, #2563eb)' : 'transparent'}`,
-                  cursor: 'pointer',
-                  letterSpacing: '0.02em',
-                  marginBottom: -1,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {/* Strategy context — collapsible header panel */}
+        {!loading && showStrategy && (topicBreakdown ?? fetchedBreakdown) && (
+          <div style={{ borderBottom: '1px solid var(--border)', padding: '0.75rem 1.25rem', maxHeight: 260, overflowY: 'auto', background: 'var(--bg-subtle)' }}>
+            {(() => {
+              const bd = topicBreakdown ?? fetchedBreakdown
+              if (!bd) return null
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {([
+                    { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+                    { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+                    { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
+                    { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+                    { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+                  ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
+                    const val = bd[key]
+                    if (!val || typeof val !== 'string') return null
+                    return (
+                      <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.625rem 0.875rem' }}>
+                        <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
+                      </div>
+                    )
+                  })}
+                  {bd.page_to_support && (
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                      <strong>Page to support:</strong>{' '}
+                      <a href={bd.page_to_support} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{bd.page_to_support}</a>
+                    </div>
+                  )}
+                  {bd.competitors_researched && bd.competitors_researched.length > 0 && (
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                      <strong>Competitors researched:</strong>{' '}
+                      {bd.competitors_researched.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 
@@ -883,7 +915,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
           </div>
         ) : (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem' }}>
+          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            {/* Left: live rendered preview (wide screens only) */}
+            {!isNarrow && (
+              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: '#fff' }}>
+                <iframe srcDoc={previewSrcdoc} title="Live preview" style={{ width: '100%', height: '100%', border: 'none' }} />
+              </div>
+            )}
+
+            {/* Right: single-scroll collapsible edit column */}
+            <div style={{ flex: isNarrow ? '1 1 100%' : '1 1 45%', overflowY: 'auto', padding: '1.25rem', minWidth: 0 }}>
             {error && (
               <p className="text-xs mb-3" style={{ color: 'var(--red)', background: 'rgba(220,38,38,0.06)', padding: '0.5rem 0.75rem', borderRadius: 6 }}>
                 {error}
@@ -915,8 +956,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               </div>
             )}
 
-            {/* ── TAB: Content ──────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'content' ? 'block' : 'none' }}>
+            {/* ── SECTION: Content ──────────────────────────────────────────── */}
+            <CollapsibleSection title="Content" open={openSections.has('content')} onToggle={() => toggleSection('content')}>
               {/* H1 Title */}
               <div className="mb-4">
                 <label style={labelStyle}>H1 Title</label>
@@ -1001,10 +1042,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
 
-            {/* ── TAB: SEO & Meta ───────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'seo' ? 'block' : 'none' }}>
+            {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
+            <CollapsibleSection title="SEO & Meta" open={openSections.has('seo')} onToggle={() => toggleSection('seo')}>
               {/* SEO Title */}
               <div className="mb-4">
                 <label style={labelStyle}>
@@ -1143,10 +1184,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   )}
                 </div>
               </div>
-            </div>
+            </CollapsibleSection>
 
-            {/* ── TAB: Settings ─────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'settings' ? 'block' : 'none' }}>
+            {/* ── SECTION: Publish ──────────────────────────────────────────── */}
+            <CollapsibleSection title="Publish" open={openSections.has('publish')} onToggle={() => toggleSection('publish')}>
               {/* Site connection selector */}
               <div className="mb-4">
                 <label style={labelStyle}>Site Connection</label>
@@ -1325,51 +1366,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   </>
                 )}
               </div>
-            </div>
-
-            {/* ── TAB: Strategy ────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'strategy' ? 'block' : 'none', padding: '0.5rem 0' }}>
-              {(() => {
-                const bd = topicBreakdown ?? fetchedBreakdown
-                if (!bd) return null
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {([
-                      { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-                      { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-                      { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
-                      { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-                      { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-                    ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
-                      const val = bd[key]
-                      if (!val || typeof val !== 'string') return null
-                      return (
-                        <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.75rem 1rem' }}>
-                          <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-                          <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
-                        </div>
-                      )
-                    })}
-                    {bd.page_to_support && (
-                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
-                        <strong>Page to support:</strong>{' '}
-                        <a href={bd.page_to_support} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{bd.page_to_support}</a>
-                      </div>
-                    )}
-                    {bd.competitors_researched && bd.competitors_researched.length > 0 && (
-                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
-                        <strong>Competitors researched:</strong>{' '}
-                        {bd.competitors_researched.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-              {!(topicBreakdown ?? fetchedBreakdown) && (
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-faint)', textAlign: 'center', paddingTop: 32 }}>
-                  No strategy data available for this post.
-                </p>
-              )}
+            </CollapsibleSection>
             </div>
           </div>
         )}

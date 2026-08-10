@@ -19,18 +19,19 @@ interface Site {
 }
 
 interface Props {
-  posts:    MonthlyReviewPost[]
-  allSites: Site[]
-  month:    string
-  prevUrl?: string | null
-  nextUrl?: string | null
+  posts:     MonthlyReviewPost[]
+  allSites:  Site[]
+  month:     string
+  prevUrl?:  string | null
+  nextUrl?:  string | null
+  embedded?: boolean   // rendered inside the content page (softer chrome, no takeover)
 }
 
 function getMonth(): string {
   return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
+export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl, embedded }: Props) {
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(() => {
     const pre = new Set<string>()
     for (const p of initialPosts) {
@@ -259,7 +260,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   return (
     <>
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+    <div style={embedded ? undefined : { minHeight: '100vh', background: 'var(--bg-base)' }}>
       <MonthlyReviewProgress
         approvedCount={approvedCount}
         totalPosts={totalPosts}
@@ -267,6 +268,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         clientsDone={clientsDone}
         onExit={() => window.location.href = '/admin/content'}
         month={displayMonth}
+        embedded={embedded}
       />
 
       {isComplete ? (

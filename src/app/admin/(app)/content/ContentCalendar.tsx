@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
 import RationaleModal          from '@/components/admin/RationaleModal'
+import NewPostModal            from '@/components/admin/NewPostModal'
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 
 export type CalendarItem = {
   id:               string
@@ -115,6 +117,7 @@ export default function ContentCalendar({
   const [items,          setItems]          = useState(initialItems)
   const [rationaleFor,   setRationaleFor]   = useState<CalendarItem | null>(null)
   const [activeCalView,  setActiveCalView]  = useState<'blog' | 'service'>('blog')
+  const [showNewPost,    setShowNewPost]    = useState(false)
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => {
     // Auto-collapse fully-published past months
     const nowKey = `${today.getFullYear()}-${String(today.getMonth()).padStart(2, '0')}`
@@ -304,10 +307,17 @@ export default function ContentCalendar({
             </button>
           ))}
         </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Manual "pick a day + prompt" single-post generation */}
+        <button onClick={() => setShowNewPost(true)} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '5px 12px', whiteSpace: 'nowrap' }}>
+          + New Post
+        </button>
       </div>
 
-      {/* ── View switcher pill (only when SA content exists) ────────────────── */}
-      {(saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
+      {/* ── View switcher pill (only when SA content exists and non-blog types enabled) ── */}
+      {SHOW_NON_BLOG_CONTENT_TYPES && (saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
         <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)', marginBottom: 20 }}>
           {(['blog', 'service'] as const).map(view => {
             const count = view === 'blog'
@@ -472,6 +482,15 @@ export default function ContentCalendar({
 
       {/* ── Rationale modal ───────────────────────────────────────────────────── */}
       <RationaleModal item={rationaleFor} onClose={() => setRationaleFor(null)} />
+
+      {/* ── New Post modal (manual pick-a-day generation) ─────────────────────── */}
+      {showNewPost && (
+        <NewPostModal
+          clients={clients}
+          onClose={() => setShowNewPost(false)}
+          onCreated={() => router.refresh()}
+        />
+      )}
     </div>
   )
 }

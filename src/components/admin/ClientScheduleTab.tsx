@@ -5,6 +5,8 @@ import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content
 import { buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import PageGenerationWizard from '@/components/admin/PageGenerationWizard'
+import NewPostModal from '@/components/admin/NewPostModal'
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import ContentStatusBar, { computeStatusCounts } from '@/components/admin/ContentStatusBar'
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash, CalendarCheck, Article } from '@phosphor-icons/react'
 import { useSiloSounds } from '@/lib/useSiloSounds'
@@ -1190,7 +1192,9 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           { id: 'service',      label: 'SA Pages' },
           { id: 'regular_page', label: 'Regular Pages' },
           { id: 'silos',        label: 'Silos' },
-        ] as const).map(({ id, label }) => (
+        ] as const)
+          .filter(({ id }) => SHOW_NON_BLOG_CONTENT_TYPES || id === 'blog' || id === 'silos')
+          .map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setActivePill(id)}
@@ -1984,7 +1988,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
         </summary>
         <div className="p-5 pt-0" style={{ borderTop: '1px solid var(--border)' }}>
           {aiConfigured ? (
-            <ManualPostStub clientId={clientId} clientName={clientName} sites={clientSites} />
+            <ManualPostStub clientId={clientId} clientName={clientName} sites={clientSites} onCreated={loadPipeline} />
           ) : (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Configure an AI provider in Agency Settings to use the manual editor.</p>
           )}
@@ -3995,17 +3999,41 @@ function PipelineCalendar({
 
 // ─── Manual Post Stub ─────────────────────────────────────────────────────────
 
-function ManualPostStub({ clientId, clientName, sites }: { clientId: string; clientName: string; sites: SiteOption[] }) {
-  const [show, setShow] = useState(false)
-  if (!show) {
-    return (
-      <div style={{ padding: '1rem 0' }}>
-        <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Write or generate a one-off post for {clientName} without going through the topic → approval flow.</p>
-        <button className="btn btn-secondary" onClick={() => setShow(true)}>Open Editor</button>
-      </div>
-    )
-  }
+function ManualPostStub({ clientId, clientName, sites, onCreated }: { clientId: string; clientName: string; sites: SiteOption[]; onCreated: () => void }) {
+  const [showNewPost, setShowNewPost] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
   // Lazy import to keep initial bundle light
-  const ContentEditorWrapper = require('@/app/admin/(app)/content/ContentEditor').default
-  return <ContentEditorWrapper sites={sites} aiConfigured={true} preselectedClientId={clientId} />
+  const ContentEditorWrapper = showAdvanced
+    ? require('@/app/admin/(app)/content/ContentEditor').default
+    : null
+
+  return (
+    <div style={{ padding: '1rem 0' }}>
+      <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
+        Generate a one-off post for {clientName} on a chosen date — it lands in the pipeline for review just like an automated post.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" onClick={() => setShowNewPost(true)}>+ New Post</button>
+        <button className="btn btn-secondary" onClick={() => setShowAdvanced(v => !v)}>
+          {showAdvanced ? 'Hide advanced editor' : 'Advanced editor'}
+        </button>
+      </div>
+
+      {showAdvanced && ContentEditorWrapper && (
+        <div style={{ marginTop: 16 }}>
+          <ContentEditorWrapper sites={sites} aiConfigured={true} />
+        </div>
+      )}
+
+      {showNewPost && (
+        <NewPostModal
+          presetClientId={clientId}
+          presetClientName={clientName}
+          onClose={() => setShowNewPost(false)}
+          onCreated={onCreated}
+        />
+      )}
+    </div>
+  )
 }

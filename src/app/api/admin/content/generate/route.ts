@@ -13,6 +13,7 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
+import { BLOG_WRITER_INTENT_REMINDER } from '@/lib/content/blogStrategy'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
@@ -439,8 +440,12 @@ function buildSystemPrompt(
   clientContext: string,
   avoidTopics: string,
   postStructure: string,
-  masterPreamble?: string | null
+  masterPreamble?: string | null,
+  blogReminder?: string | null
 ): string {
+  // Appended last so it survives recency bias — keeps a stale near-me topic from
+  // producing a near-me article at write time (see blogStrategy.ts).
+  const blogIntentNote = blogReminder ? `\n\n${blogReminder}` : ''
   const currentYear = new Date().getFullYear()
   const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
 
@@ -478,7 +483,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}${blogIntentNote}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -508,7 +513,7 @@ SEO guidelines:
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
 - AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${blogIntentNote}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -756,7 +761,7 @@ async function runTopicGeneration({
       ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
       : ''
 
-    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)
+    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, contentType === 'blog' ? BLOG_WRITER_INTENT_REMINDER : null)
       + eeatSection + restrictionSection
 
     // ── Build user prompt ──────────────────────────────────────────────────────
@@ -1140,13 +1145,16 @@ export async function POST(request: NextRequest) {
   const adminSession = await getAdminSession()
 
   const body = await parseBody<{
-    prompt?:         string
-    client_id?:      string
-    topic_id?:       string
-    suppress_email?: boolean
+    prompt?:              string
+    client_id?:           string
+    topic_id?:            string
+    suppress_email?:      boolean
+    target_publish_date?: string   // manual "pick a day" flow
+    content_type?:        string   // manual flow — defaults to 'blog'
   }>(request)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
-  const { prompt, client_id, topic_id, suppress_email } = body
+  const { prompt, client_id, topic_id, suppress_email, target_publish_date, content_type } = body
+  const manualContentType = content_type ?? 'blog'
 
   if (!prompt && !topic_id) {
     return NextResponse.json({ error: 'Missing prompt or topic_id' }, { status: 400 })
@@ -1366,7 +1374,7 @@ export async function POST(request: NextRequest) {
     ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
     : ''
 
-  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble)
+  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? BLOG_WRITER_INTENT_REMINDER : null)
     + manualEeatSection + manualRestrictionSection
 
   let rawText: string
@@ -1420,28 +1428,36 @@ export async function POST(request: NextRequest) {
       targetLength: (clientSettings?.target_length as number | null) ?? 1500,
       brief:        null,
     })
+    // Clamp the requested date to today-or-later so a manual post lands on the
+    // calendar/review exactly like an automated one (matches Path A's clamp).
+    const manualToday = new Date().toISOString().slice(0, 10)
+    const manualPublishDate = target_publish_date && target_publish_date >= manualToday
+      ? target_publish_date
+      : manualToday
     const { data: savedPost, error: insertError } = await db.from('content_posts').insert({
-      client_id:        effectiveClientId,
-      connection_id:    connectionId,
-      status:           'for_review',
-      title:            parsed.title,
-      seo_title:        parsed.seoTitle || parsed.title,
-      content:          parsed.content,
-      meta_description: parsed.metaDescription,
-      slug:             finalSlug,
-      target_keyword:   parsed.focusKeyword,
-      focus_topic:      null,
-      topic_rationale:  null,
-      suggested_tags:   parsed.suggestedTags,
-      word_count:       wc,
-      heading_count:    computeHeadingCount(parsed.content),
-      internal_links:   computeInternalLinks(parsed.content),
-      generated_by:     'manual',
-      ai_model:         model,
-      prompt_used:      prompt ?? '',
-      seo_score:        seoScore,
-      schema_type:      null,
-      excerpt:          parsed.metaDescription || null,
+      client_id:           effectiveClientId,
+      connection_id:       connectionId,
+      status:              'for_review',
+      content_type:        manualContentType,
+      target_publish_date: manualPublishDate,
+      title:               parsed.title,
+      seo_title:           parsed.seoTitle || parsed.title,
+      content:             parsed.content,
+      meta_description:    parsed.metaDescription,
+      slug:                finalSlug,
+      target_keyword:      parsed.focusKeyword,
+      focus_topic:         null,
+      topic_rationale:     null,
+      suggested_tags:      parsed.suggestedTags,
+      word_count:          wc,
+      heading_count:       computeHeadingCount(parsed.content),
+      internal_links:      computeInternalLinks(parsed.content),
+      generated_by:        'manual',
+      ai_model:            model,
+      prompt_used:         prompt ?? '',
+      seo_score:           seoScore,
+      schema_type:         null,
+      excerpt:             parsed.metaDescription || null,
     }).select('id').maybeSingle()
     if (insertError) {
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })

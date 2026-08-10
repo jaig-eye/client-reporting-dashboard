@@ -1,5 +1,7 @@
 'use client'
 
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
+
 
 export interface MonthlyReviewPost {
   id:                  string
@@ -98,7 +100,7 @@ export default function MonthlyReviewPostCard({
             {post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}
             {post.content ? ` · ${wordCount(post.content).toLocaleString()}w` : ''}
             {post.isBc ? ' · BC' : ' · WP'}
-            {post.content_type && (
+            {SHOW_NON_BLOG_CONTENT_TYPES && post.content_type && (
               <span style={{
                 marginLeft: 6,
                 fontSize: 10,

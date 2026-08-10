@@ -3,6 +3,7 @@
 // Per-client schedule, frequency, and auto-generate are managed in Client Settings → Content tab.
 
 import { useState, useEffect } from 'react'
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 
 interface GlobalSettings {
   post_structure?: string
@@ -334,6 +335,8 @@ export default function ContentSettingsPanel({
         </div>
       </div>
 
+      {/* Non-blog master prompts — hidden while page types are sunset (see featureFlags) */}
+      {SHOW_NON_BLOG_CONTENT_TYPES && <>
       {/* Service Area Pages Prompt */}
       <div className="card p-6 space-y-4">
         <div>
@@ -423,6 +426,7 @@ export default function ContentSettingsPanel({
           {rpPromptError && <span className="text-xs" style={{ color: 'var(--red)' }}>{rpPromptError}</span>}
         </div>
       </div>
+      </>}
 
       {/* Content Notifications */}
       <div className="card p-6 space-y-4">

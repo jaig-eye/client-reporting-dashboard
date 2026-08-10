@@ -8,6 +8,14 @@ import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors }            from '@/lib/content/competitorResearch'
 import type { CompetitorResearch }        from '@/lib/content/competitorResearch'
+import {
+  BLOG_INTENT_ENUM,
+  NON_BLOG_INTENT_ENUM,
+  BLOG_INTENT_GUARDRAIL,
+  BLOG_LANDSCAPE_INSTRUCTION,
+  isAllowedBlogIntent,
+  isForbiddenBlogKeyword,
+} from '@/lib/content/blogStrategy'
 
 interface TopicIdea {
   topic:               string
@@ -338,6 +346,8 @@ export async function generateTopicsForClient(
   }
 
   // ── Prompt ─────────────────────────────────────────────────────────────────
+  // Requested content type (silo may refine this later; used here for GSC copy only).
+  const requestedIsBlog = (opts?.contentType ?? 'blog') === 'blog'
   const contextLines: string[] = []
   if (clientSettings?.business_background) contextLines.push(`Business: ${clientSettings.business_background}`)
   if (clientSettings?.services)            contextLines.push(`Services: ${clientSettings.services}`)
@@ -350,11 +360,11 @@ export async function generateTopicsForClient(
     : ''
 
   const gscGrowthText = growthTargets.length > 0
-    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article targeting the keyword and internally link it to that page:\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article and internally link it to that page.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
   const gscQuickWinsText = quickWins.length > 0
-    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these:\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
   const gscCtrText = ctrIssues.length > 0
@@ -454,6 +464,13 @@ SILO RULES (override any conflicting instructions above):
   }
 
   const effectiveContentType = siloContentType ?? opts?.contentType ?? 'blog'
+  const isBlog = effectiveContentType === 'blog'
+
+  // Blogs are constrained to informational/educational intent (see blogStrategy.ts).
+  // Service/regular pages keep the broader intent enum (local_service, commercial, etc.).
+  const intentEnumText      = isBlog ? BLOG_INTENT_ENUM : NON_BLOG_INTENT_ENUM
+  const blogIntentGuardrail = isBlog ? `\n${BLOG_INTENT_GUARDRAIL}\n` : ''
+  const blogLandscapeInstr  = isBlog ? `\n${BLOG_LANDSCAPE_INSTRUCTION}\n` : ''
 
   const contentTypeLabel = effectiveContentType === 'service_page'
     ? 'service landing page'
@@ -471,7 +488,7 @@ SILO RULES (override any conflicting instructions above):
 Suggest ${contentTypeLabel} topic ideas for a client based on their business context and Google Search Console data.
 
 ${contentTypeInstructions}
-
+${blogLandscapeInstr}
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
 ANGLE DIVERSIFICATION RULE: Every topic in your list must use a different content ANGLE. Never suggest variations of the same angle (e.g. "best roofers in Dallas" and "top-rated roofing companies in Dallas" are the same angle). Vary the angle across your full list — draw from these angle types: how-to guide, cost/pricing breakdown, comparison (A vs B), local case study, FAQ, seasonal tip, problem/solution, buyer's guide, checklist, myth-busting, behind-the-scenes. Aim to cover at least 3 distinct angle types in any list of 5 or more topics.
@@ -483,13 +500,13 @@ NICHE DISCOVERY RULE: At least 1 of your ${count} topics MUST be a genuinely new
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
 
 IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.
-${siloPromptBlock ? `\n${siloPromptBlock.trim()}\n` : ''}
+${blogIntentGuardrail}${siloPromptBlock ? `\n${siloPromptBlock.trim()}\n` : ''}
 Return ONLY a JSON array of exactly ${count} objects:
 [
   {
     "topic": "Full blog post title",
     "target_keyword": "primary keyword phrase",
-    "search_intent": "informational | commercial | local_service | comparison | cost_pricing | how_to | faq | emergency",
+    "search_intent": "${intentEnumText}",
     "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
     "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. Estimated volume and difficulty context. Any seasonal or trending component to the opportunity.",
     "ranking_strategy": "3–5 sentences: Which competitor gaps this article fills. What unique angle or depth will outperform existing page-1 results. Specific linking strategy (which existing site page this supports and why). Why this approach wins for this client over generic competitors.",
@@ -560,6 +577,22 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   if (!topics.length) {
     console.error('[generateTopics] AI returned empty topics array, rawText length:', rawText.length)
     return { topics: [], clientName, count: 0, error: 'No topics returned from AI' }
+  }
+
+  // ── Blog-intent safety net ──────────────────────────────────────────────────
+  // The guardrail prompt is primary enforcement; this drops transactional/near-me
+  // leaks and relabels any non-informational intent the model slipped through. A
+  // short valid list beats a padded transactional one (mirrors the uniqueness rule).
+  if (isBlog) {
+    const before = topics.length
+    topics = topics.filter(t => !isForbiddenBlogKeyword(t.target_keyword))
+    topics.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
+    if (topics.length < before) {
+      console.warn(`[generateTopics] dropped ${before - topics.length} transactional/near-me blog topic(s) for client ${clientId}`)
+    }
+    if (!topics.length) {
+      return { topics: [], clientName, count: 0, error: 'All generated topics were transactional/near-me intent — none suitable for a blog. Try again.' }
+    }
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────

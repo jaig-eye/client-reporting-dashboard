@@ -7,6 +7,7 @@ interface Props {
   clientsDone:    number
   onExit:         () => void
   month:          string
+  embedded?:      boolean
 }
 
 export default function MonthlyReviewProgress({
@@ -16,6 +17,7 @@ export default function MonthlyReviewProgress({
   clientsDone,
   onExit,
   month,
+  embedded,
 }: Props) {
   const pct = totalPosts > 0 ? Math.round((approvedCount / totalPosts) * 100) : 0
 
@@ -28,18 +30,20 @@ export default function MonthlyReviewProgress({
       borderBottom: '1px solid var(--border)',
       boxShadow:  '0 2px 8px rgba(0,0,0,0.06)',
     }}>
-      {/* Title row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px 8px' }}>
-        <a href="/admin/content" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: 14, display: 'flex', alignItems: 'center', gap: 4 }}>
-          ← Back
-        </a>
-        <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)', flex: 1 }}>
-          Monthly Review — {month}
+      {/* Title row — hidden when embedded (the content page already shows the title + view switcher) */}
+      {!embedded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px 8px' }}>
+          <a href="/admin/content" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: 14, display: 'flex', alignItems: 'center', gap: 4 }}>
+            ← Back
+          </a>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)', flex: 1 }}>
+            Monthly Review — {month}
+          </div>
+          <button onClick={onExit} className="btn btn-secondary btn-sm">
+            Exit Review
+          </button>
         </div>
-        <button onClick={onExit} className="btn btn-secondary btn-sm">
-          Exit Review
-        </button>
-      </div>
+      )}
 
       {/* Progress row */}
       <div style={{ padding: '0 20px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>

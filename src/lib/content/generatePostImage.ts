@@ -18,6 +18,30 @@ type ClientSettings = {
   content_image_prompt: string | null
 }
 
+// Intent → concrete scene direction, so the image reflects the article's angle
+// rather than a generic "service work" stock shot.
+const INTENT_SCENE: Record<string, string> = {
+  how_to:           'the task being performed up close — hands and the relevant tools mid-action',
+  cost_pricing:     'a planning and estimating scene — documents, a calculator, or materials laid out on a work surface',
+  comparison:       'two contrasting options or materials placed side by side for comparison',
+  faq:              'a clean, approachable establishing shot of the real work environment',
+  problem_solution: 'the problem condition shown clearly in context (e.g. the item that needs repair or attention)',
+  buyer_education:  'a considered, well-lit detail shot of the product or material being explained',
+  informational:    'an editorial establishing shot of the subject in its real-world setting',
+}
+
+// PostRow carries no search_intent, so infer the angle from the title/keyword.
+function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
+  const s = t.toLowerCase()
+  if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
+  if (/\b(cost|price|pricing|budget|\$)\b/.test(s))               return 'cost_pricing'
+  if (/\bvs\b|\bversus\b|\bcompare|\bcomparison\b/.test(s))        return 'comparison'
+  if (s.includes('?'))                                            return 'faq'
+  if (/\bsigns?\b|\bproblem|\bfix\b|\brepair|\bavoid\b/.test(s))   return 'problem_solution'
+  if (/\bbest\b|\bchoosing|\bchoose|\bbuyer|\btypes? of\b/.test(s)) return 'buyer_education'
+  return 'informational'
+}
+
 export function buildImagePrompt(
   post: PostRow,
   settings: ClientSettings | null,
@@ -25,26 +49,24 @@ export function buildImagePrompt(
 ): string {
   const title    = post.seo_title?.trim() || post.title?.trim() || ''
   const keyword  = post.target_keyword?.trim() || ''
-  const service  = settings?.services?.split(',')[0]?.trim() ?? 'local service'
-  const location = settings?.geographic_focus?.trim() ?? ''
+  const industry = settings?.services?.split(',')[0]?.trim() || 'local service'
+  const location = settings?.geographic_focus?.trim() || ''
 
-  const contextParts = [
-    title    && `for a post titled "${title}"`,
-    keyword  && `about "${keyword}"`,
-    location && `in ${location}`,
-  ].filter(Boolean)
-  const context = contextParts.length ? ' ' + contextParts.join(', ') : ''
+  // Derive a concrete subject from what we actually know about the post.
+  const subject = post.image_concept?.trim() || keyword || title || `${industry} work`
+  const scene   = INTENT_SCENE[inferIntentFromTitle(title || keyword)]
+  const context = title ? ` for a blog article titled "${title}"` : ''
+  const setting = `real-world ${industry} setting${location ? ` in ${location}` : ''}`
 
-  const base  = `Professional blog header image for a local ${service} business${context}.`
-  const style = 'Natural lighting, photorealistic, no text overlays, no faces. Wide landscape format.'
+  // Composition + hard constraints, stated explicitly for gpt-image-1 / Imagen.
+  const style = 'Natural daylight, photorealistic, muted professional color grade, shallow depth of field. Rule-of-thirds composition with generous negative space in the upper third for a headline. No text, words, letters, numbers, logos, watermarks, or signage. No human faces. 16:9 wide landscape.'
 
   if (promptOverride?.trim()) {
-    // User guidance is creative direction; post context anchors it to the topic.
-    return `${base} ${promptOverride.trim()}. ${style}`
+    // Client creative direction leads; post context anchors it to the topic.
+    return `Editorial photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${style}`
   }
 
-  const subject = post.image_concept?.trim() || keyword || 'professional service work'
-  return `${base} ${subject}. ${style}`
+  return `Editorial photograph${context}. Scene: ${scene}, visually representing "${subject}". Documentary, ${setting}. ${style}`
 }
 
 export type ImageGenResult =
