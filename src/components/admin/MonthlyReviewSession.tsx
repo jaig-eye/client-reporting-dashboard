@@ -46,6 +46,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [regenModal,      setRegenModal]      = useState<{ postId: string } | null>(null)
+  const [regenModalNotes, setRegenModalNotes] = useState('')
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
   const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
 
@@ -162,13 +164,23 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     // Keep the editor open so the user can see the error message
   }, [editorPostId])
 
-  // Direct-from-card full-regenerate (no editor open)
-  const handleCardRegenerate = useCallback(async (postId: string) => {
+  // Direct-from-card full-regenerate — opens confirm modal first
+  const handleCardRegenerate = useCallback((postId: string) => {
+    setRegenModal({ postId })
+  }, [])
+
+  const handleRegenModalConfirm = useCallback(async () => {
+    if (!regenModal) return
+    const { postId } = regenModal
+    const notes = regenModalNotes
+    setRegenModal(null)
+    setRegenModalNotes('')
     setRegeneratingIds(prev => { const next = new Set(prev); next.add(postId); return next })
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ edit_notes: notes.trim() || undefined }),
       })
       if (!res.ok) {
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
@@ -177,7 +189,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } catch {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
     }
-  }, [])
+  }, [regenModal, regenModalNotes])
 
   // Toast auto-clear
   useEffect(() => {
@@ -299,6 +311,39 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       <div style={{ position: 'fixed', bottom: 24, right: 24, background: '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
         ✓ {toastMsg}
         <button onClick={() => setToastMsg(null)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+      </div>
+    )}
+    {regenModal && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        onClick={e => { if (e.target === e.currentTarget) { setRegenModal(null); setRegenModalNotes('') } }}>
+        <div className="card" style={{ maxWidth: 420, width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Regenerate Post</h3>
+            <button onClick={() => { setRegenModal(null); setRegenModalNotes('') }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
+          </div>
+          <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              Picks a new topic and rewrites the post completely — the previous content will be replaced.
+            </p>
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                Direction (optional)
+              </label>
+              <textarea
+                rows={3}
+                value={regenModalNotes}
+                onChange={e => setRegenModalNotes(e.target.value)}
+                placeholder="e.g. Focus on residential services, avoid commercial content…"
+                style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', resize: 'vertical', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => { setRegenModal(null); setRegenModalNotes('') }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleRegenModalConfirm}>Regenerate →</button>
+            </div>
+          </div>
+        </div>
       </div>
     )}
     </>

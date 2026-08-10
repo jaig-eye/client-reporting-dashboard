@@ -139,7 +139,8 @@ export async function POST(
   }
 
   // Mark as generating synchronously so the UI sees it immediately
-  await db.from('content_posts').update({ status: 'generating' }).eq('id', postId)
+  const { error: genErr } = await db.from('content_posts').update({ status: 'generating' }).eq('id', postId)
+  if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
 
   // Capture admin session before returning — cookies are request-scoped
   const adminSession = await getAdminSession()

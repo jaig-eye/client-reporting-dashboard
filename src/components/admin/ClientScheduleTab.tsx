@@ -188,6 +188,7 @@ function getTopicDisplayStatus(t: Topic): DisplayStatus {
 
 function getPostDisplayStatus(p: Post): DisplayStatus {
   if (p.status === 'rejected')                                        return 'rejected'
+  if (p.status === 'generating')                                      return 'generating'
   if (p.status === 'for_review')                                      return 'generated'
   if (p.status === 'draft_saved' || p.status === 'published')         return 'published'
   return 'generated'
@@ -3410,6 +3411,9 @@ function PipelineCalendar({
   const [modalStartDate, setModalStartDate] = useState(today())
   const [modalWeeks,     setModalWeeks]     = useState(6)
   const [generating,     setGenerating]     = useState(false)
+  const [regenConfirm,   setRegenConfirm]   = useState<{ postId: string } | null>(null)
+  const [regenNotes,     setRegenNotes]     = useState('')
+  const [regenLoading,   setRegenLoading]   = useState(false)
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
   const topicsRef = useRef<Topic[]>([])
   useEffect(() => { topicsRef.current = topics }, [topics])
@@ -3554,6 +3558,32 @@ function PipelineCalendar({
     } else { onShowToast(data.error || 'Generation failed', 'error') }
   }
 
+  async function handleCalRegenerate() {
+    if (!regenConfirm) return
+    const { postId } = regenConfirm
+    setRegenLoading(true)
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ edit_notes: regenNotes.trim() || undefined }),
+      })
+      const data = await res.json() as { ok?: boolean; error?: string }
+      if (res.ok && data.ok) {
+        setRegenConfirm(null)
+        setRegenNotes('')
+        onShowToast('Regeneration started — post will update in about a minute', 'info')
+        await loadPipeline()
+      } else {
+        onShowToast(data.error || 'Failed to start regeneration', 'error')
+      }
+    } catch {
+      onShowToast('Failed to start regeneration', 'error')
+    } finally {
+      setRegenLoading(false)
+    }
+  }
+
   // ── Build calendar data ──────────────────────────────────────────────────────
   const allItems: RowItem[] = []
   const seenPostIds = new Set<string>()
@@ -3567,7 +3597,7 @@ function PipelineCalendar({
     allItems.push({ kind: 'topic', data: t })
   })
   posts.forEach(p => {
-    if (!seenPostIds.has(p.id) && ['for_review', 'draft_saved', 'published'].includes(p.status))
+    if (!seenPostIds.has(p.id) && ['for_review', 'draft_saved', 'published', 'generating'].includes(p.status))
       allItems.push({ kind: 'post', data: p })
   })
 
@@ -3703,9 +3733,12 @@ function PipelineCalendar({
                       if (item.kind === 'topic') {
                         const t = item.data
                         const linkedPost    = topicIdToPost.get(t.id)
-                        const displayStatus = (linkedPost?.status === 'draft_saved' || linkedPost?.status === 'published') ? 'published' as const : getTopicDisplayStatus(t)
-                        const hasDetail     = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
-                        const hasReview     = linkedPost && ['for_review', 'generated', 'draft_saved'].includes(linkedPost.status)
+                        const displayStatus = (linkedPost?.status === 'draft_saved' || linkedPost?.status === 'published') ? 'published' as const
+                          : linkedPost?.status === 'generating' ? 'generating' as const
+                          : getTopicDisplayStatus(t)
+                        const hasDetail        = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level)
+                        const hasReview        = linkedPost && ['for_review', 'generated', 'draft_saved'].includes(linkedPost.status)
+                        const isPostGenerating = linkedPost?.status === 'generating'
                         const hasError      = !!t.generation_error && !['rejected', 'generated'].includes(t.status)
 
                         return [
@@ -3735,10 +3768,22 @@ function PipelineCalendar({
                             </td>
                             <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
                               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                                {hasReview && (
+                                {isPostGenerating && (
+                                  <span style={{ fontSize: '0.62rem', color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+                                    ⟳ Generating…
+                                  </span>
+                                )}
+                              {hasReview && (
                                   <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                     onClick={() => setReviewPost(linkedPost!)}>
                                     <ArrowRight size={11} weight="bold" /> {linkedPost?.status === 'draft_saved' ? 'Edit' : 'Review'}
+                                  </button>
+                                )}
+                              {hasReview && (
+                                  <button className="btn btn-secondary" style={{ padding: '2px 6px', display: 'inline-flex', alignItems: 'center' }}
+                                    title="Regenerate post with new topic"
+                                    onClick={() => setRegenConfirm({ postId: linkedPost!.id })}>
+                                    <ArrowClockwise size={11} weight="bold" />
                                   </button>
                                 )}
                                 {hasError && (
@@ -3819,9 +3864,23 @@ function PipelineCalendar({
                           <td style={{ padding: '8px', textAlign: 'right', verticalAlign: 'middle', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(p.target_publish_date)}</td>
                           <td style={{ padding: '8px 0 8px 8px', textAlign: 'right', verticalAlign: 'middle' }}>
                             <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                              <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setReviewPost(p)}>
-                                <ArrowRight size={11} weight="bold" /> {p.status === 'draft_saved' ? 'Edit' : 'Review'}
-                              </button>
+                              {p.status !== 'generating' && (
+                                <button className="btn btn-primary" style={{ fontSize: '0.65rem', padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setReviewPost(p)}>
+                                  <ArrowRight size={11} weight="bold" /> {p.status === 'draft_saved' ? 'Edit' : 'Review'}
+                                </button>
+                              )}
+                              {p.status === 'generating' && (
+                                <span style={{ fontSize: '0.62rem', color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+                                  ⟳ Generating…
+                                </span>
+                              )}
+                              {p.status === 'for_review' && (
+                                <button className="btn btn-secondary" style={{ padding: '2px 6px', display: 'inline-flex', alignItems: 'center' }}
+                                  title="Regenerate post with new topic"
+                                  onClick={() => setRegenConfirm({ postId: p.id })}>
+                                  <ArrowClockwise size={11} weight="bold" />
+                                </button>
+                              )}
                               {siteUrl && <a href={siteUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: '0.65rem', padding: '2px 7px' }}>↗ Live</a>}
                             </div>
                           </td>
@@ -3870,6 +3929,36 @@ function PipelineCalendar({
                 <button type="submit" className="btn btn-primary" disabled={generating}>{generating ? 'Generating…' : 'Generate →'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate confirm modal */}
+      {regenConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) { setRegenConfirm(null); setRegenNotes('') } }}>
+          <div className="card" style={{ maxWidth: 420, width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
+              <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Regenerate Post</h3>
+              <button onClick={() => { setRegenConfirm(null); setRegenNotes('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
+            </div>
+            <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                Picks a new topic and rewrites the post completely — the previous content will be replaced.
+              </p>
+              <div>
+                <Label>Direction (optional)</Label>
+                <textarea className="input" rows={3} value={regenNotes} onChange={e => setRegenNotes(e.target.value)}
+                  placeholder="e.g. Avoid motorcycle content, focus on car detailing instead…"
+                  style={{ width: '100%', resize: 'vertical' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => { setRegenConfirm(null); setRegenNotes('') }}>Cancel</button>
+                <button type="button" className="btn btn-primary" disabled={regenLoading} onClick={handleCalRegenerate}>
+                  {regenLoading ? 'Queuing…' : 'Regenerate →'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

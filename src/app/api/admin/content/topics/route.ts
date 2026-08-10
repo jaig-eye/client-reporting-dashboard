@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   let query = db
     .from('content_topics')
-    .select('*, post:content_posts(id, title, status, published_url)')
+    .select('*, post:content_posts!post_id(id, title, status, published_url)')
     .eq('client_id', clientId)
     .order('created_at', { ascending: false })
 

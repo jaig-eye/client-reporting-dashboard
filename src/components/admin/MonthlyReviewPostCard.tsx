@@ -1,5 +1,6 @@
 'use client'
 
+import { ArrowClockwise } from '@phosphor-icons/react'
 
 export interface MonthlyReviewPost {
   id:                  string
@@ -154,9 +155,10 @@ export default function MonthlyReviewPostCard({
               className="btn btn-sm"
               disabled={isLoading}
               onClick={() => onRegenerate(post.id)}
-              style={{ fontSize: '0.75rem', opacity: 0.8 }}
+              title="Regenerate post with new topic"
+              style={{ padding: '3px 7px', display: 'inline-flex', alignItems: 'center' }}
             >
-              Regenerate
+              <ArrowClockwise size={13} weight="bold" />
             </button>
             <button
               className="btn btn-sm"

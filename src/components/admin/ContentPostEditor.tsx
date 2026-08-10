@@ -173,6 +173,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [regenerating,      setRegenerating]      = useState(false)
   const [fullRegenerating,  setFullRegenerating]  = useState(false)
   const [showEditDirection, setShowEditDirection] = useState(false)
+  const [showRegenConfirm,  setShowRegenConfirm]  = useState(false)
   const [approving,       setApproving]       = useState(false)
   const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
@@ -1230,25 +1231,50 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   </div>
                 ) : (
                   <>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.8125rem' }}
-                        disabled={fullRegenerating || regenerating}
-                        onClick={handleFullRegenerate}
-                      >
-                        {fullRegenerating ? 'Queuing…' : 'Regenerate Post'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={{ fontSize: '0.75rem', opacity: 0.65 }}
-                        onClick={() => setShowEditDirection(v => !v)}
-                      >
-                        {showEditDirection ? 'Hide direction' : 'Add direction…'}
-                      </button>
-                    </div>
+                    {showRegenConfirm ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0.625rem 0.875rem', background: 'var(--bg-subtle)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', flex: 1 }}>
+                          Picks a new topic and rewrites everything — can&apos;t be undone.
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.8125rem' }}
+                          disabled={fullRegenerating || regenerating}
+                          onClick={() => { setShowRegenConfirm(false); handleFullRegenerate() }}
+                        >
+                          {fullRegenerating ? 'Queuing…' : 'Confirm regenerate'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: '0.75rem' }}
+                          onClick={() => setShowRegenConfirm(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.8125rem' }}
+                          disabled={fullRegenerating || regenerating}
+                          onClick={() => setShowRegenConfirm(true)}
+                        >
+                          {fullRegenerating ? 'Queuing…' : 'Regenerate Post'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: '0.75rem', opacity: 0.65 }}
+                          onClick={() => setShowEditDirection(v => !v)}
+                        >
+                          {showEditDirection ? 'Hide direction' : 'Add direction…'}
+                        </button>
+                      </div>
+                    )}
                     {showEditDirection && (
                       <div style={{ marginTop: '0.5rem' }}>
                         <textarea
