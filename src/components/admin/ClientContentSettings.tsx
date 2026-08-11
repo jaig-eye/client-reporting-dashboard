@@ -7,8 +7,11 @@
 // (only the keys a card sends are written), so sections never clobber each other.
 
 import { useState, useEffect, useCallback } from 'react'
+import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
 import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
+
+type SettingsSection = 'brand' | 'publishing' | 'schedule' | 'writing'
 
 interface Author   { id: number; name: string }
 interface WpCategory { id: number; name: string }
@@ -88,6 +91,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   const [pubSave,   setPubSave]   = useState<SaveState>(IDLE)
   const [schedSave, setSchedSave] = useState<SaveState>(IDLE)
   const [writeSave, setWriteSave] = useState<SaveState>(IDLE)
+  const [activeSection, setActiveSection] = useState<SettingsSection>('brand')
 
   const set = useCallback(<K extends keyof ClientScheduleSettings>(key: K, val: ClientScheduleSettings[K]) => {
     setForm(p => ({ ...p, [key]: val }))
@@ -215,13 +219,62 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     return <p className="text-sm" style={{ color: 'var(--text-muted)', padding: '1rem 0' }}>Loading settings…</p>
   }
 
+  const SECTIONS: { id: SettingsSection; label: string; desc: string; icon: React.ReactNode }[] = [
+    { id: 'brand',      label: 'Brand DNA',   desc: 'Business, voice, E-E-A-T', icon: <Fingerprint size={18} weight="duotone" /> },
+    { id: 'publishing', label: 'Publishing',  desc: 'Site, author, categories',  icon: <PaperPlaneTilt size={18} weight="duotone" /> },
+    { id: 'schedule',   label: 'Schedule',    desc: 'Cadence & automation',      icon: <CalendarBlank size={18} weight="duotone" /> },
+    { id: 'writing',    label: 'Writing',     desc: 'Length, structure, limits', icon: <PencilSimpleLine size={18} weight="duotone" /> },
+  ]
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: 760 }}>
+    <>
+    <style>{`
+      .cc-set-grid { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+      .cc-set-rail { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 16px; }
+      .cc-set-navitem { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; background: transparent; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+      .cc-set-navitem:hover:not(.cc-set-navitem--active) { background: var(--bg-subtle); }
+      .cc-set-navitem--active { background: var(--bg-surface); border-color: var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+      .cc-set-navitem:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+      @media (max-width: 720px) {
+        .cc-set-grid { grid-template-columns: 1fr; }
+        .cc-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+        .cc-set-navitem { width: auto; }
+        .cc-set-navitem .cc-set-desc { display: none; }
+      }
+    `}</style>
+    <div className="cc-set-grid">
+      {/* Left sub-nav (progressive disclosure — one section at a time) */}
+      <nav className="cc-set-rail" aria-label="Content settings sections">
+        {SECTIONS.map(s => {
+          const on = activeSection === s.id
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className={`cc-set-navitem${on ? ' cc-set-navitem--active' : ''}`}
+              aria-current={on ? 'page' : undefined}
+              onClick={() => setActiveSection(s.id)}
+            >
+              <span style={{ color: on ? 'var(--blue)' : 'var(--text-faint)', flexShrink: 0, display: 'inline-flex' }}>{s.icon}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: on ? 600 : 500, color: on ? 'var(--text-primary)' : 'var(--text-muted)' }}>{s.label}</span>
+                <span className="cc-set-desc" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-faint)' }}>{s.desc}</span>
+              </span>
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* Right panel — active section */}
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
       {/* Brand DNA — reused as-is (own save + AI auto-fill) */}
-      <ClientContentSettingsForm clientId={clientId} sites={sites} />
+      {activeSection === 'brand' && (
+        <ClientContentSettingsForm clientId={clientId} sites={sites} />
+      )}
 
       {/* ── Publishing ─────────────────────────────────────────────────────── */}
+      {activeSection === 'publishing' && (
       <div className="card p-6 space-y-4">
         <div>
           <h2 className="section-title" style={{ marginBottom: 0 }}>Publishing</h2>
@@ -305,8 +358,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <SaveRow onSave={savePublishing} {...pubSave} />
       </div>
+      )}
 
       {/* ── Schedule & Automation ──────────────────────────────────────────── */}
+      {activeSection === 'schedule' && (
       <div className="card p-6 space-y-4">
         <div>
           <h2 className="section-title" style={{ marginBottom: 0 }}>Schedule &amp; Automation</h2>
@@ -361,8 +416,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <SaveRow onSave={saveSchedule} {...schedSave} />
       </div>
+      )}
 
       {/* ── Writing rules ──────────────────────────────────────────────────── */}
+      {activeSection === 'writing' && (
       <div className="card p-6 space-y-4">
         <div>
           <h2 className="section-title" style={{ marginBottom: 0 }}>Writing rules</h2>
@@ -391,6 +448,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <SaveRow onSave={saveWriting} {...writeSave} />
       </div>
+      )}
+
+      </div>
     </div>
+    </>
   )
 }

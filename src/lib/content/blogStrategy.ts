@@ -49,6 +49,50 @@ UNDERSTAND THE BUSINESS AND ITS SEARCH LANDSCAPE BEFORE PICKING TOPICS:
 export const BLOG_WRITER_INTENT_REMINDER =
   'BLOG INTENT: Write an educational, informational article that answers a real question and builds topical authority. Do NOT write a "near me", location+service landing, or hire-now sales page — this is a blog post that SUPPORTS the money pages via internal links, never competes with them.'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WRITER QUALITY BAR (Tier 1)
+//
+// Anti-"AI-tell" voice rules, punctuation discipline, structure requirements
+// (Key Takeaways box, clean heading hierarchy), evidence/citation honesty, and a
+// silent self-check. Appended to the WRITER system prompt for every post so the
+// output reads like an experienced practitioner, not generic AI filler.
+//
+// Adapted for this app's constraints (HTML output, internal-links-only, no external
+// hyperlinks, no tables). Voice/quality technique inspiration: the open-source
+// claude-blog agent prompts by AgriciDaniel (MIT) — see
+// docs/reference/claude-blog-writer.md and docs/reference/claude-blog-seo.md.
+// ─────────────────────────────────────────────────────────────────────────────
+export const BLOG_WRITER_QUALITY_RULES = `
+WRITER QUALITY BAR — applies to every sentence. These rules separate expert content from generic AI output:
+
+VOICE & ORIGINALITY
+- Lead with substance a reader cannot get from a generic article on this topic: a specific number, a concrete example, a real trade-off, a named tool/material/step, or a first-hand process detail. Do not restate common knowledge as if it were insight.
+- Start every paragraph with its most important sentence. One idea per paragraph. Let the point decide the length — never pad to hit a word count.
+- Active voice. Natural, confident, conversational tone — write the way an experienced practitioner explains something to a customer, not the way a brochure sounds. Do not open two adjacent paragraphs the same way.
+
+BANNED AI-TELL PHRASES — do NOT use these or close variants; rewrite with plainer, specific wording:
+"in today's digital landscape", "in today's fast-paced world", "in the ever-evolving", "when it comes to", "it's important to note", "it's worth noting", "needless to say", "dive into", "delve into", "let's explore", "let's take a look", "game-changer", "navigate the landscape", "navigating the world of", "revolutionize", "seamless"/"seamlessly", "cutting-edge", "state-of-the-art", "harness the power of", "leverage" (as a verb — use "use"), "unlock", "elevate", "empower", "robust", "streamline", "top-notch", "look no further", "rest assured", "at the end of the day", "the world of", "a myriad of", "plethora", "it goes without saying".
+
+PUNCTUATION
+- Do NOT use the em dash character (—, U+2014). Replace it with a comma, colon, period, parentheses, or a plain hyphen where grammatically correct.
+- Avoid the "not only X but also Y" and "whether you're X or Y" constructions and rhetorical-question openers ("Ever wondered…?") — they read as AI filler.
+
+STRUCTURE
+- Exactly one H1 (the title). H2 for main sections, H3 for subsections. Never skip a heading level (no H2 followed directly by H4).
+- Immediately AFTER the introduction, output a Key Takeaways box: an <h2>Key Takeaways</h2> followed by a <ul> of 3–5 self-contained bullets summarizing the post's key findings or recommendations. Each bullet must make sense on its own; include a specific fact or number only when it genuinely helps.
+- Include a real FAQ section (H2 "Frequently Asked Questions" with question H3s) ONLY when the topic naturally raises follow-up questions — never as filler.
+
+EVIDENCE & CLAIMS
+- Support any statistic or factual claim by naming its source in the prose (e.g. "according to the EPA"). Never invent statistics, studies, dates, or quotes. If you are not confident a number is real, make the point qualitatively instead.
+- Mark genuinely original material with an HTML comment the reader never sees, so an editor can spot the value-add: <!-- INSIGHT: ... --> for a non-obvious analysis, <!-- EXPERIENCE: ... --> for a first-hand or process detail. No minimum count; only where the value is real.
+
+SELF-CHECK before returning the JSON — silently verify and fix:
+- Zero em dashes; no banned phrases remain.
+- Every claim has context; every statistic names a source.
+- Clean heading hierarchy (H1 → H2 → H3, no skipped levels); Key Takeaways box present right after the intro.
+- Natural tone throughout; no two adjacent paragraphs open with the same word or structure.
+- Meta description accurately reflects the visible content and reads naturally.`.trim()
+
 const BLOG_INTENT_ALLOWED = new Set(BLOG_INTENT_ENUM.split('|').map(s => s.trim()))
 
 /**

@@ -13,7 +13,9 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
-import { BLOG_WRITER_INTENT_REMINDER } from '@/lib/content/blogStrategy'
+import { BLOG_WRITER_INTENT_REMINDER, BLOG_WRITER_QUALITY_RULES } from '@/lib/content/blogStrategy'
+import { formatCompetitorGap, liveCompetitorGap } from '@/lib/content/competitorResearch'
+import { registerKeyword } from '@/lib/content/seoRankings'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
@@ -63,6 +65,7 @@ type AgencySettings = {
   service_page_master_prompt: string | null
   regular_page_master_prompt: string | null
   discord_bot_token:          string | null
+  serp_api_key:               string | null
 }
 
 // ─── Sitemap fetching ─────────────────────────────────────────────────────────
@@ -446,6 +449,10 @@ function buildSystemPrompt(
   // Appended last so it survives recency bias — keeps a stale near-me topic from
   // producing a near-me article at write time (see blogStrategy.ts).
   const blogIntentNote = blogReminder ? `\n\n${blogReminder}` : ''
+  // Tier 1 writer-quality bar — anti-AI-tell voice, em-dash ban, Key Takeaways box,
+  // clean heading hierarchy, citation honesty. Appended near the end (recency) for
+  // every post so the draft reads like an expert wrote it.
+  const qualityNote = `\n\n${BLOG_WRITER_QUALITY_RULES}`
   const currentYear = new Date().getFullYear()
   const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
 
@@ -483,7 +490,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}${blogIntentNote}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}${qualityNote}${blogIntentNote}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -513,7 +520,7 @@ SEO guidelines:
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
 - AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${blogIntentNote}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${qualityNote}${blogIntentNote}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -898,15 +905,14 @@ LINKING RULES:
       }
     }
 
-    // ── Competitor gap analysis (from topic research) ─────────────────────────
-    const competitorGapSection = (() => {
-      const cr = topicData.competitors_researched
-      if (!cr || Object.keys(cr.headings).length === 0) return ''
-      const sections = Object.entries(cr.headings)
-        .map(([url, hs]) => `  ${url}:\n    ${(hs as string[]).slice(0, 6).map((h: string) => `• ${h}`).join('\n    ')}`)
-        .join('\n')
-      return `\nCompetitor Analysis for "${cr.keyword}" — these competitors rank #1–5. FILL THE GAPS: go deeper, cover what they missed, add unique angles they skipped:\n${sections}`
-    })()
+    // ── Competitor gap analysis ───────────────────────────────────────────────
+    // Prefer the research captured at topic-generation time; if none was stored
+    // (manually-added or older topics), run a live SERP gap analysis at write time
+    // when a serp_api_key is configured. Every generated post competes on coverage.
+    let competitorGapSection = formatCompetitorGap(topicData.competitors_researched)
+    if (!competitorGapSection) {
+      competitorGapSection = await liveCompetitorGap(topicData.target_keyword, agencySettings.serp_api_key)
+    }
 
     // ── Editor direction notes ────────────────────────────────────────────────
     const editNotesSection = topicData.edit_notes?.trim()
@@ -1073,6 +1079,19 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
 
+    // Register the target keyword in the SEO datastream (content → keyword link), so
+    // once OpenSEO is connected, rank checks surface on this post's card and editor.
+    // Soft-fails if the seo_keywords table isn't present yet (migration 189 pending).
+    if (parsed.focusKeyword) {
+      await registerKeyword({
+        clientId:      effectiveClientId,
+        keyword:       parsed.focusKeyword,
+        source:        'topic',
+        contentPostId: savedPost.id,
+        intent:        topicData.search_intent ?? null,
+      })
+    }
+
     logActivity(adminSession ?? null, 'generated', 'post', {
       resourceId: savedPost.id,
       clientId:   effectiveClientId,
@@ -1165,7 +1184,7 @@ export async function POST(request: NextRequest) {
   // ── Load agency settings ─────────────────────────────────────────────────
   const { data: agencySettings, error: agErr } = await db
     .from('agency_settings')
-    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token, notification_config')
+    .select('ai_provider, ai_model, ai_api_key, openai_api_key, agency_name, notification_email, notify_post_generated, notify_post_uploaded, master_writing_prompt, service_page_master_prompt, regular_page_master_prompt, discord_bot_token, serp_api_key, notification_config')
     .limit(1)
     .maybeSingle()
 
@@ -1374,8 +1393,16 @@ export async function POST(request: NextRequest) {
     ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
     : ''
 
+  // Live competitor-gap analysis for the manual path. Use a concise seed from the
+  // prompt (a full instruction makes a poor SERP query) and only when it reads
+  // keyword-like. Soft-fails to '' with no serp_api_key or on error.
+  const manualSeed = (prompt ?? '').trim().replace(/^write\s+(a|an|about|me a)?\s*/i, '').slice(0, 80).trim()
+  const manualCompetitorSection = manualSeed.length >= 3
+    ? await liveCompetitorGap(manualSeed, agencySettings.serp_api_key)
+    : ''
+
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? BLOG_WRITER_INTENT_REMINDER : null)
-    + manualEeatSection + manualRestrictionSection
+    + manualEeatSection + manualRestrictionSection + manualCompetitorSection
 
   let rawText: string
   try {
@@ -1463,6 +1490,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Failed to save post: ${insertError.message}` }, { status: 500 })
     }
     postId = savedPost?.id ?? null
+
+    // Register the target keyword in the SEO datastream (see Path A). Soft-fails if
+    // seo_keywords isn't present yet (migration 189 pending).
+    if (postId && parsed.focusKeyword) {
+      await registerKeyword({
+        clientId:      effectiveClientId,
+        keyword:       parsed.focusKeyword,
+        source:        'manual',
+        contentPostId: postId,
+      })
+    }
 
     // Auto-generate featured image in background
     // Match old behavior: generate unless explicitly disabled (null = not set = generate)

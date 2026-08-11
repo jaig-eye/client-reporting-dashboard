@@ -49,6 +49,7 @@ export interface Post {
   bc_store_hash:       string | null
   published_url:       string | null
   seo_score:           SeoScore | null
+  keyword_rank?:       { current_position: number | null; position_delta: number | null } | null
   generated_at:        string
 }
 
@@ -93,6 +94,18 @@ function scoreColor(s: SeoScore | null): string {
   if (s.overall >= 80) return 'var(--green)'
   if (s.overall >= 60) return 'var(--amber)'
   return 'var(--red)'
+}
+
+// Keyword rank color: top 3 green, top 10 amber, else muted.
+function rankColor(pos: number): string {
+  if (pos <= 3)  return 'var(--green)'
+  if (pos <= 10) return 'var(--amber)'
+  return 'var(--text-muted)'
+}
+// Movement arrow: positive delta = improved (moved toward #1).
+function rankArrow(delta: number | null | undefined): string {
+  if (!delta) return ''
+  return delta > 0 ? ' ▲' : ' ▼'
 }
 
 export function StatusPill({ status, generating }: { status: DisplayStatus; generating?: boolean }) {
@@ -190,6 +203,12 @@ export default function PipelineCard(props: Props) {
             {post.word_count ? ` · ${post.word_count.toLocaleString()}w` : ''}
             {post.bc_post_id ? ' · BC' : post.wp_post_id ? ' · WP' : ''}
             {post.seo_score ? <span style={{ marginLeft: 6, fontWeight: 600, color: scoreColor(post.seo_score) }}>SEO {post.seo_score.overall}</span> : null}
+            {post.keyword_rank?.current_position != null ? (
+              <span style={{ marginLeft: 6, fontWeight: 600, color: rankColor(post.keyword_rank.current_position) }}
+                title="Current keyword rank (OpenSEO)">
+                #{post.keyword_rank.current_position}{rankArrow(post.keyword_rank.position_delta)}
+              </span>
+            ) : null}
           </div>
           {onSite && <LiveLinks post={post} />}
         </div>

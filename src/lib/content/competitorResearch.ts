@@ -34,6 +34,41 @@ export interface CompetitorResearch {
   headings: Record<string, string[]>
 }
 
+/**
+ * Render a CompetitorResearch result into the "fill the gaps" prompt block used by
+ * the writer route. Returns '' when there is nothing useful to inject. Shared by
+ * topic-time research (stored on content_topics.competitors_researched) and the
+ * live write-time fallback so both read identically to the model.
+ */
+export function formatCompetitorGap(cr: CompetitorResearch | null | undefined): string {
+  if (!cr || !cr.headings || Object.keys(cr.headings).length === 0) return ''
+  const sections = Object.entries(cr.headings)
+    .map(([url, hs]) => `  ${url}:\n    ${(hs as string[]).slice(0, 6).map(h => `• ${h}`).join('\n    ')}`)
+    .join('\n')
+  return `\nCompetitor Analysis for "${cr.keyword}" — these pages rank #1–5. FILL THE GAPS: go deeper, cover what they missed, add unique angles they skipped:\n${sections}`
+}
+
+/**
+ * Live competitor-gap fallback for the writer route: when a topic has no stored
+ * research (manually-added topics, older topics, or manual/Path-B generation),
+ * fetch SERP competitor headings on demand. Soft-fails to '' with no key/keyword or
+ * on any error. This is the SERP path today; once OpenSEO is connected its richer
+ * keyword/SERP data can feed the same CompetitorResearch shape with no caller change.
+ */
+export async function liveCompetitorGap(
+  keyword: string | null | undefined,
+  serpApiKey: string | null | undefined,
+): Promise<string> {
+  const kw = keyword?.trim()
+  if (!kw || !serpApiKey) return ''
+  try {
+    const cr = await researchCompetitors(kw, serpApiKey)
+    return formatCompetitorGap(cr)
+  } catch {
+    return ''
+  }
+}
+
 export async function researchCompetitors(
   keyword: string,
   serpApiKey: string,

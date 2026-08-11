@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { getRanksForPosts }          from '@/lib/content/seoRankings'
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -42,5 +43,11 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+
+  // Attach current keyword rank (OpenSEO datastream) per post. Soft-returns {} when
+  // the seo_keywords/seo_rankings tables aren't present yet, so this never fails.
+  const posts   = (data ?? []) as { id: string }[]
+  const rankMap = await getRanksForPosts(posts.map(p => p.id))
+  const enriched = posts.map(p => ({ ...p, keyword_rank: rankMap[p.id] ?? null }))
+  return NextResponse.json(enriched)
 }

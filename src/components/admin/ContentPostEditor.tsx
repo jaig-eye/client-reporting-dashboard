@@ -163,6 +163,42 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
   })
 }
 
+// ─── Tier 1 on-page checks (writer-quality bar) ─────────────────────────────────
+// A "Key Takeaways" H2/H3 immediately reinforced by a list — the summary box the
+// writer prompt now requires after the intro.
+function hasKeyTakeaways(html: string): boolean {
+  return /<h[23][^>]*>\s*key\s*takeaways\b/i.test(html)
+}
+
+// No skipped heading levels. The post title is the H1, so body headings should start
+// at H2 and never jump deeper by more than one level (H2→H4 is a skip). Returns true
+// when there is at least one heading and the sequence is clean.
+function headingHierarchyClean(html: string): boolean {
+  const levels = (html.match(/<h([1-6])[^>]*>/gi) || [])
+    .map(h => parseInt(h.match(/<h([1-6])/i)![1], 10))
+  if (levels.length === 0) return false
+  if (levels.filter(l => l === 1).length > 1) return false  // multiple H1s in body
+  let prev = 1  // the title is the H1 baseline
+  for (const l of levels) {
+    if (l > prev + 1) return false
+    prev = l
+  }
+  return true
+}
+
+const URL_STOP_WORDS = new Set(['the','and','of','a','an','to','in','for','with','on','at','by','or','your','you','is','are'])
+// Clean, keyword-friendly slug: lowercase, hyphen-delimited, ≤6 words, no stop words,
+// no 4-digit year. Mirrors the URL-structure guidance in docs/reference/claude-blog-seo.md.
+function slugQualityClean(slug: string): boolean {
+  if (!slug) return false
+  if (slug !== slug.toLowerCase()) return false
+  if (/\b(19|20)\d{2}\b/.test(slug)) return false
+  const words = slug.split('-').filter(Boolean)
+  if (words.length === 0 || words.length > 6) return false
+  if (words.some(w => URL_STOP_WORDS.has(w))) return false
+  return true
+}
+
 // ─── Category auto-suggestion ───────────────────────────────────────────────────
 // Word-level matching (exact or shared prefix, ≥4 chars, stopwords removed) so a
 // laptop-repair post doesn't match "Business Phone Systems" just because 'business'
@@ -288,6 +324,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
+
+  // Current keyword rank (OpenSEO datastream) — null until loaded, then possibly still null.
+  const [keywordRank, setKeywordRank] = useState<{ current_position: number | null; position_delta: number | null } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/admin/content/keyword-rankings?post_id=${postId}`)
+      .then(r => r.ok ? r.json() : { rank: null })
+      .then(d => { if (!cancelled) setKeywordRank(d.rank ?? null) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [postId])
 
   // Link health scan
   type LinkScanResult = {
@@ -473,6 +520,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
   const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
+  const hasTakeaways       = content ? hasKeyTakeaways(content) : false
+  const headingHierOk      = content ? headingHierarchyClean(content) : false
+  const slugClean          = slugQualityClean(slug)
 
   // ── Tag helpers ─────────────────────────────────────────────────────────────
   function addTag(name: string) {
@@ -1135,7 +1185,22 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
               {/* SEO checklist */}
               <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
-                <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', marginBottom: '0.5rem' }}>SEO Checklist</p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '0.5rem' }}>
+                  <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', margin: 0 }}>SEO Checklist</p>
+                  {keywordRank?.current_position != null && (
+                    <span
+                      title="Current keyword rank (OpenSEO)"
+                      style={{
+                        fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999,
+                        background: keywordRank.current_position <= 3 ? '#dcfce7' : keywordRank.current_position <= 10 ? '#fef3c7' : 'var(--bg-muted)',
+                        color: keywordRank.current_position <= 3 ? '#166534' : keywordRank.current_position <= 10 ? '#92400e' : 'var(--text-muted)',
+                      }}
+                    >
+                      Rank #{keywordRank.current_position}
+                      {keywordRank.position_delta ? (keywordRank.position_delta > 0 ? ` ▲${Math.abs(keywordRank.position_delta)}` : ` ▼${Math.abs(keywordRank.position_delta)}`) : ''}
+                    </span>
+                  )}
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
                   <div><Check ok={keywordInTitle} />Keyword in H1</div>
                   <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
@@ -1152,6 +1217,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <div><Check ok={keywordSlug} />Keyword in slug</div>
                   <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
                   <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
+                  <div><Check ok={hasTakeaways} />Key Takeaways box</div>
+                  <div><Check ok={headingHierOk} warn={liveHeadings > 0 && !headingHierOk} />Heading hierarchy</div>
+                  <div><Check ok={slugClean} warn={slug.length > 0 && !slugClean} />Clean URL slug</div>
                 </div>
 
                 {/* Link Health */}

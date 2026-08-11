@@ -21,6 +21,9 @@ export default function NewConnectionForm({
   const [status,       setStatus]       = useState<'idle' | 'saving' | 'error'>('idle')
   const [errorMsg,     setErrorMsg]     = useState('')
 
+  // Domain-based connectors (Ahrefs, OpenSEO): a single root-domain input, no discovery.
+  const isDomainConnector = connectorType === 'ahrefs' || connectorType === 'openseo'
+
   // Sync name when selecting from discovered dropdown
   function handleSelect(e: React.ChangeEvent<HTMLSelectElement>) {
     const acc = discoveredAccounts.find(a => a.external_id === e.target.value)
@@ -34,8 +37,8 @@ export default function NewConnectionForm({
     setStatus('saving')
     setErrorMsg('')
 
-    // Normalize domain for Ahrefs
-    const normalizedId = connectorType === 'ahrefs'
+    // Normalize domain for domain-based connectors (Ahrefs, OpenSEO)
+    const normalizedId = isDomainConnector
       ? externalId.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
       : externalId.trim()
 
@@ -47,7 +50,7 @@ export default function NewConnectionForm({
           client_id:     clientId,
           connector_id:  connectorId,
           external_id:   normalizedId,
-          external_name: connectorType === 'ahrefs' ? normalizedId : (externalName.trim() || null),
+          external_name: isDomainConnector ? normalizedId : (externalName.trim() || null),
         }),
       })
       if (!res.ok) {
@@ -62,8 +65,8 @@ export default function NewConnectionForm({
     }
   }
 
-  // Ahrefs: just a domain input — no account discovery
-  if (connectorType === 'ahrefs') {
+  // Domain-based connectors (Ahrefs, OpenSEO): just a domain input — no discovery
+  if (isDomainConnector) {
     return (
       <form onSubmit={handleSubmit} className="space-y-4">
         {status === 'error' && errorMsg && (
@@ -84,7 +87,9 @@ export default function NewConnectionForm({
             required
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            Enter the root domain (e.g. example.com). Ahrefs metrics will sync automatically.
+            {connectorType === 'openseo'
+              ? 'Enter the root domain (e.g. example.com) to track keyword rankings for this client.'
+              : 'Enter the root domain (e.g. example.com). Ahrefs metrics will sync automatically.'}
           </p>
         </div>
         <div className="flex items-center gap-3 pt-2">

@@ -19,6 +19,9 @@ import type { Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
+import OpenSeoAgencyCard    from '@/components/admin/OpenSeoAgencyCard'
+import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
+import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
 import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
 
 export const dynamic = 'force-dynamic'
@@ -32,14 +35,24 @@ export default async function ConnectionsPage({
   const db = createAdminClient()
   const [connectorsRes, agencyRes] = await Promise.all([
     db.from('connectors').select('*').order('created_at'),
-    db.from('agency_settings').select('stripe_api_key, stripe_webhook_secret').single(),
+    db.from('agency_settings')
+      .select('stripe_api_key, stripe_webhook_secret, serp_api_key, serp_api_provider, discord_bot_token, discord_ops_channel_id')
+      .single(),
   ])
   const existing = (connectorsRes.data ?? []) as Connector[]
-  const agencySettings = agencyRes.data as { stripe_api_key?: string; stripe_webhook_secret?: string } | null
+  const agencySettings = agencyRes.data as {
+    stripe_api_key?: string; stripe_webhook_secret?: string
+    serp_api_key?: string; serp_api_provider?: string
+    discord_bot_token?: string; discord_ops_channel_id?: string
+  } | null
 
   // Ahrefs connector (if any)
   const ahrefsConnector = existing.find(c => c.type === 'ahrefs')
   const ahrefsApiKey    = ahrefsConnector ? String((ahrefsConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
+
+  // OpenSEO connector (if any)
+  const openseoConnector = existing.find(c => c.type === 'openseo')
+  const openseoApiKey    = openseoConnector ? String((openseoConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
@@ -202,7 +215,7 @@ export default async function ConnectionsPage({
 
         {/* ── Ungrouped flat cards (agency-level only) ───────────────────────── */}
         {UNGROUPED_CONNECTOR_TYPES
-          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs')
+          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs' && type !== 'openseo')
           .map(type => {
             const def         = getConnectorDef(type)
             const connector   = byType.get(type)
@@ -265,6 +278,21 @@ export default async function ConnectionsPage({
         <AhrefsAgencyCard
           initialApiKey={ahrefsApiKey}
           connectorId={ahrefsConnector?.id}
+        />
+        {/* ── OpenSEO (keyword rank tracking) ───────────────────────────────── */}
+        <OpenSeoAgencyCard
+          initialApiKey={openseoApiKey}
+          connectorId={openseoConnector?.id}
+        />
+        {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
+        <SearchApiAgencyCard
+          initialApiKey={agencySettings?.serp_api_key ?? ''}
+          initialProvider={agencySettings?.serp_api_provider ?? 'serpapi'}
+        />
+        {/* ── Discord (agency notifications) ────────────────────────────────── */}
+        <DiscordAgencyCard
+          initialBotToken={agencySettings?.discord_bot_token ?? ''}
+          initialOpsChannelId={agencySettings?.discord_ops_channel_id ?? ''}
         />
         {/* ── Stripe ────────────────────────────────────────────────── */}
         <StripeAgencyCard

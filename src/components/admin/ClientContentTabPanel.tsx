@@ -2,7 +2,7 @@
 
 import { useState, useEffect }                        from 'react'
 import { useRouter, usePathname }                      from 'next/navigation'
-import { SlidersHorizontal, TreeStructure, MagnifyingGlass, CalendarBlank } from '@phosphor-icons/react'
+import { SlidersHorizontal, TreeStructure, ChartLineUp, CalendarBlank } from '@phosphor-icons/react'
 import ClientContentSettings                          from './ClientContentSettings'
 import ClientPipeline                                 from './ClientPipeline'
 import ClientSitemapTab                               from './ClientSitemapTab'
@@ -55,7 +55,7 @@ interface Props {
   initialSubTab?: string
 }
 
-type SubTab = 'pipeline' | 'settings' | 'sitemap' | 'gsc'
+type SubTab = 'pipeline' | 'analytics' | 'sitemap' | 'settings'
 
 interface TabDef { id: SubTab; label: string; icon: React.ReactNode; badge?: number }
 
@@ -67,11 +67,13 @@ export default function ClientContentTabPanel({
   const router       = useRouter()
   const pathname     = usePathname()
 
-  const VALID_TABS: SubTab[] = ['pipeline', 'settings', 'sitemap', 'gsc']
-  // Backward-compat aliases so old deep links (?subtab=overview|schedule|brand-dna) keep working.
+  const VALID_TABS: SubTab[] = ['pipeline', 'analytics', 'sitemap', 'settings']
+  // Backward-compat aliases so old deep links keep working (?subtab=overview|schedule|
+  // brand-dna|gsc). 'gsc' was renamed to 'analytics'.
   const validSubTab = (s: string | undefined | null): SubTab => {
     if (s === 'overview' || s === 'schedule') return 'pipeline'
     if (s === 'brand-dna') return 'settings'
+    if (s === 'gsc') return 'analytics'
     return VALID_TABS.includes(s as SubTab) ? (s as SubTab) : 'pipeline'
   }
 
@@ -104,10 +106,10 @@ export default function ClientContentTabPanel({
   const reviewBadge = overviewStats.forReviewPostsCount + overviewStats.saForReviewPostsCount
 
   const TABS: TabDef[] = [
-    { id: 'pipeline', label: 'Pipeline',     icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
-    { id: 'settings', label: 'Settings',     icon: <SlidersHorizontal size={22} weight="duotone" /> },
-    { id: 'sitemap',  label: 'Sitemap',      icon: <TreeStructure size={22} weight="duotone" /> },
-    { id: 'gsc',      label: 'GSC Insights', icon: <MagnifyingGlass size={22} weight="duotone" /> },
+    { id: 'pipeline',  label: 'Pipeline',  icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
+    { id: 'analytics', label: 'Analytics', icon: <ChartLineUp size={22} weight="duotone" /> },
+    { id: 'sitemap',   label: 'Sitemap',   icon: <TreeStructure size={22} weight="duotone" /> },
+    { id: 'settings',  label: 'Settings',  icon: <SlidersHorizontal size={22} weight="duotone" /> },
   ]
 
   return (
@@ -215,9 +217,9 @@ export default function ClientContentTabPanel({
             <ClientSitemapTab clientId={clientId} />
           </div>
         )}
-        {visited.has('gsc') && (
-          <div style={{ display: activeTab === 'gsc' ? 'block' : 'none' }} className={animatingTab === 'gsc' ? 'cc-tab-content' : ''}>
-            <GscTab data={gscData} isEcom={isEcom} clientId={clientId} />
+        {visited.has('analytics') && (
+          <div style={{ display: activeTab === 'analytics' ? 'block' : 'none' }} className={animatingTab === 'analytics' ? 'cc-tab-content' : ''}>
+            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} isActive={activeTab === 'analytics'} />
           </div>
         )}
       </div>
@@ -345,13 +347,39 @@ function GscSection({
   )
 }
 
-function GscTab({ data, isEcom: _isEcom, clientId }: { data: GscData; isEcom: boolean; clientId: string }) {
+// Keyword rank row from the OpenSEO datastream (/api/admin/content/keyword-rankings).
+interface KeywordRankRow {
+  keyword_id:         string
+  keyword:            string
+  current_position:   number | null
+  previous_position:  number | null
+  position_delta:     number | null
+  current_url:        string | null
+  search_volume:      number | null
+  keyword_difficulty: number | null
+  intent:             string | null
+  content_post_id:    string | null
+}
+
+function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean }) {
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
 
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
+
+  // Lazy-load OpenSEO keyword ranks the first time this tab is opened.
+  useEffect(() => {
+    if (!isActive || ranks !== null) return
+    let cancelled = false
+    fetch(`/api/admin/content/keyword-rankings?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { rankings: [] })
+      .then(d => { if (!cancelled) setRanks((d.rankings ?? []) as KeywordRankRow[]) })
+      .catch(() => { if (!cancelled) setRanks([]) })
+    return () => { cancelled = true }
+  }, [isActive, ranks, clientId])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -367,13 +395,16 @@ function GscTab({ data, isEcom: _isEcom, clientId }: { data: GscData; isEcom: bo
     }
   }
 
+  const filteredRanks = (ranks ?? []).filter(r =>
+    !search || r.keyword.toLowerCase().includes(search.toLowerCase()))
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <div>
-          <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>GSC Insights</h3>
+          <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics</h3>
           <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            28-day data. Keywords ranked below position 20 are the strongest candidates for new articles.
+            Search Console demand signals and OpenSEO keyword rank tracking. Keywords ranked below position 20 are the strongest candidates for new articles.
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -386,27 +417,42 @@ function GscTab({ data, isEcom: _isEcom, clientId }: { data: GscData; isEcom: bo
           >
             {refreshing ? 'Syncing…' : '↻ Refresh'}
           </button>
-          {!isEmpty && (
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Filter keywords or pages…"
-              className="input"
-              style={{ maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
-            />
-          )}
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter keywords or pages…"
+            className="input"
+            style={{ maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+          />
         </div>
       </div>
 
+      {/* ── Keyword Rankings (OpenSEO) ─────────────────────────────────────── */}
+      <div className="card p-5" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            background: '#eef2ff', color: '#4338ca',
+          }}>
+            Keyword Rankings
+          </span>
+          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>OpenSEO</span>
+        </div>
+        <KeywordRankTable ranks={filteredRanks} loading={ranks === null} />
+      </div>
+
+      {/* ── Search Console insights ────────────────────────────────────────── */}
       {isEmpty ? (
         <div className="card p-6" style={{ textAlign: 'center' }}>
           <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            No GSC data yet. Connect Google Search Console and run a sync.
+            No Search Console data yet. Connect Google Search Console and run a sync.
           </p>
         </div>
       ) : (
         <div className="card p-5">
+          <div style={{ marginBottom: 12, fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Search Console Insights</div>
           <GscSection badge="Growth Opportunities" badgeColor="#92400e" badgeBg="#fef3c7" rows={data.growth}     search={search} />
           <GscSection badge="Quick Wins"           badgeColor="#166534" badgeBg="#dcfce7" rows={data.quickWins}  search={search} />
           <GscSection badge="Low CTR"              badgeColor="#1e3a8a" badgeBg="#dbeafe" rows={data.lowCtr}     search={search} />
@@ -414,5 +460,74 @@ function GscTab({ data, isEcom: _isEcom, clientId }: { data: GscData; isEcom: bo
         </div>
       )}
     </div>
+  )
+}
+
+function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading: boolean }) {
+  if (loading) {
+    return <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading rankings…</p>
+  }
+  if (ranks.length === 0) {
+    return (
+      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        No keyword rankings yet. Connect <strong>OpenSEO</strong> on the Integrations page and attach this client&apos;s
+        domain to start tracking. Keywords targeted by generated posts are registered automatically.
+      </p>
+    )
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            {(['Keyword','Position','Change','Volume','Difficulty'] as const).map(h => (
+              <th key={h} style={{
+                padding: '5px 8px', textAlign: h === 'Keyword' ? 'left' : 'right',
+                fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
+                textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ranks.map((r, i) => (
+            <tr key={r.keyword_id} style={{ borderBottom: i < ranks.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500, maxWidth: 260 }}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.keyword}>
+                  {r.keyword}
+                </span>
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                <span style={{
+                  display: 'inline-block', padding: '1px 6px', borderRadius: 4,
+                  fontWeight: 600, fontSize: '0.75rem',
+                  background: posBg(r.current_position), color: posColor(r.current_position),
+                }}>
+                  {r.current_position ?? '—'}
+                </span>
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                <RankDelta delta={r.position_delta} />
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.search_volume)}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>
+                {r.keyword_difficulty == null ? '—' : Math.round(r.keyword_difficulty)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Rank movement pill. Positive delta = improved (moved toward #1) → green ▲.
+function RankDelta({ delta }: { delta: number | null }) {
+  if (delta == null || delta === 0) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  const improved = delta > 0
+  return (
+    <span style={{ color: improved ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: '0.75rem' }}>
+      {improved ? '▲' : '▼'} {Math.abs(delta)}
+    </span>
   )
 }

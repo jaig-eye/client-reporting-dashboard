@@ -38,10 +38,31 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json() as {
     client_id:      string
-    url:            string
+    url?:           string
+    urls?:          string[]
     is_priority?:   boolean
     is_excluded?:   boolean
     is_service_page?: boolean
+  }
+
+  // ── Bulk path: apply the same flag to many URLs at once (e.g. exclude all blogs)
+  if (Array.isArray(body.urls)) {
+    if (!body.client_id) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
+    const urls = body.urls.filter(u => typeof u === 'string' && u.trim())
+    if (urls.length === 0) return NextResponse.json({ ok: true, updated: 0 })
+    const rows = urls.map(url => {
+      const row: Record<string, unknown> = { client_id: body.client_id, url }
+      if (body.is_priority     !== undefined) row.is_priority     = body.is_priority
+      if (body.is_excluded     !== undefined) row.is_excluded     = body.is_excluded
+      if (body.is_service_page !== undefined) row.is_service_page = body.is_service_page
+      return row
+    })
+    const db = createAdminClient()
+    const { error } = await db
+      .from('content_sitemap_pages')
+      .upsert(rows, { onConflict: 'client_id,url' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, updated: rows.length })
   }
 
   if (!body.client_id || !body.url) {
