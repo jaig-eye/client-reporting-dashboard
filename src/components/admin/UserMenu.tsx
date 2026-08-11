@@ -24,7 +24,11 @@ export default function UserMenu({
   const router = useRouter()
   const [open, setOpen]           = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const rootRef    = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  // Escape closes and returns focus to the trigger (keyboard users don't get lost).
+  function closeAndRefocus() { setOpen(false); triggerRef.current?.focus() }
 
   // Close on click-outside and Escape
   useEffect(() => {
@@ -32,7 +36,7 @@ export default function UserMenu({
     function onDocClick(e: MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
     }
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closeAndRefocus() }
     document.addEventListener('mousedown', onDocClick)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -43,9 +47,13 @@ export default function UserMenu({
 
   async function handleLogout() {
     setLoggingOut(true)
-    await fetch('/api/auth/admin-logout', { method: 'POST' })
-    router.push('/admin')
-    router.refresh()
+    try {
+      await fetch('/api/auth/admin-logout', { method: 'POST' })
+      router.push('/admin')
+      router.refresh()
+    } catch {
+      setLoggingOut(false)  // let the user retry rather than hang on "Signing out…"
+    }
   }
 
   const initials = userName.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
@@ -79,11 +87,12 @@ export default function UserMenu({
           </p>
         </div>
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen(o => !o)}
-          aria-haspopup="menu"
+          aria-haspopup="true"
           aria-expanded={open}
-          aria-label="Account menu"
+          aria-label={unreadAlertCount > 0 ? `Account menu, ${unreadAlertCount} unread alert${unreadAlertCount === 1 ? '' : 's'}` : 'Account menu'}
           className="focus-ring flex-shrink-0"
           style={{
             position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -110,24 +119,22 @@ export default function UserMenu({
       {/* Popover */}
       {open && (
         <div
-          role="menu"
           aria-label="Account"
           style={{
             position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
             background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
             boxShadow: '0 8px 28px rgba(0,0,0,0.16)', padding: 6, zIndex: 60,
-            animation: 'badge-pop 0.12s ease',
           }}
         >
           {!isSuperAdmin && (
-            <Link href="/admin/users/me" role="menuitem" className="focus-ring" style={menuItemStyle}
+            <Link href="/admin/users/me" className="focus-ring" style={menuItemStyle}
               onClick={() => setOpen(false)} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
               <UserCircle size={16} aria-hidden />
               Edit profile
             </Link>
           )}
 
-          <Link href="/admin/alerts" role="menuitem" className="focus-ring" style={menuItemStyle}
+          <Link href="/admin/alerts" className="focus-ring" style={menuItemStyle}
             onClick={() => setOpen(false)} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
             <Bell size={16} aria-hidden />
             <span style={{ flex: 1 }}>Alerts</span>
@@ -143,11 +150,11 @@ export default function UserMenu({
           </Link>
 
           {/* Payment sounds toggle (reused; full-width button fits the menu) */}
-          <div role="menuitem"><SoundToggle /></div>
+          <SoundToggle />
 
           <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px' }} />
 
-          <button type="button" role="menuitem" onClick={handleLogout} disabled={loggingOut}
+          <button type="button" onClick={handleLogout} disabled={loggingOut}
             className="focus-ring" style={{ ...menuItemStyle, color: 'var(--text-muted)', cursor: loggingOut ? 'not-allowed' : 'pointer' }}
             onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
             <SignOut size={16} aria-hidden />

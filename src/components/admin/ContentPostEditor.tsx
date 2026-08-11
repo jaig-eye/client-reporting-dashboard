@@ -104,10 +104,18 @@ function seoCheck(field: string | null, keyword: string): boolean {
   const f = field.toLowerCase()
   const k = keyword.toLowerCase()
   if (f.includes(k)) return true
-  // Pass if ≥75% of keyword words appear in field — handles state abbreviations (FL vs Florida)
-  const words = k.split(/\s+/).filter(Boolean)
-  if (words.length === 0) return false
-  return words.filter(w => f.includes(w)).length / words.length >= 0.75
+  // Word-level match so tiny tokens ("in", "fl") can't inflate the score via
+  // substring hits. A keyword word (≥3 chars) counts when a field token equals it,
+  // or bridges an abbreviation — one being a short prefix of the other (fl ↔ florida).
+  const fieldTokens = f.split(/[^a-z0-9]+/).filter(Boolean)
+  const kwWords = k.split(/\s+/).filter(w => w.length >= 3)
+  if (kwWords.length === 0) return false
+  const hit = (w: string) => fieldTokens.some(t =>
+    t === w ||
+    (w.length >= 4 && t.startsWith(w)) ||                            // repair → repairs
+    (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5)   // fl → florida
+  )
+  return kwWords.filter(hit).length / kwWords.length >= 0.75
 }
 
 function countWords(html: string): number {
@@ -176,7 +184,10 @@ function tokenizeForCategory(text: string): string[] {
 // Both inputs are already ≥4 chars: match on equality or a shared prefix
 // (handles system/systems, repair/repairs, cyber/cybersecurity).
 function categoryWordsOverlap(a: string, b: string): boolean {
-  return a === b || a.startsWith(b) || b.startsWith(a)
+  if (a === b) return true
+  // Only treat a shared prefix as a match when both words are long enough that it's
+  // very likely the same term (systems↔system), not a coincidence (care↔career, plan↔planet).
+  return Math.min(a.length, b.length) >= 6 && (a.startsWith(b) || b.startsWith(a))
 }
 
 function suggestCategory(

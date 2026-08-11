@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
+import Link                    from 'next/link'
 import RationaleModal          from '@/components/admin/RationaleModal'
 import NewPostModal            from '@/components/admin/NewPostModal'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
@@ -119,12 +120,12 @@ function ClientGroupHeader({ clientId, clientName, count }: { clientId: string; 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
       <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{clientName}</span>
-      <a
-        href={`/admin/clients/${clientId}?tab=content&subtab=schedule`}
+      <Link
+        href={`/admin/clients/${clientId}?tab=content&subtab=settings`}
         title={`${clientName} content settings`}
         aria-label={`${clientName} content settings`}
         style={{ fontSize: 13, color: 'var(--text-faint)', textDecoration: 'none', lineHeight: 1 }}
-      >⚙</a>
+      >⚙</Link>
       <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{count}</span>
       <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
     </div>

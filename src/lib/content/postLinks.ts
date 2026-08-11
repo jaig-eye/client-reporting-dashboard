@@ -29,7 +29,9 @@ export function viewLiveUrl(p: PostLinkInput): string | null {
  * no permalink — in that case "View live" should not be shown (it'd duplicate the editor link).
  */
 export function isPublicPermalink(url: string | null): boolean {
-  return !!url && !url.includes('/wp-admin/')
+  // Exclude the CMS admin editor fallbacks: WordPress (/wp-admin/) and
+  // BigCommerce (…mybigcommerce.com/manage/…), which are login-gated, not public.
+  return !!url && !url.includes('/wp-admin/') && !url.includes('/manage/')
 }
 
 /** WordPress draft preview — requires the viewer's WP login. WP only. */
@@ -53,9 +55,4 @@ export function bcEditUrl(p: PostLinkInput): string | null {
 /** Whether the post has been pushed to a CMS (has a live/editor destination). */
 export function isOnSite(p: PostLinkInput): boolean {
   return p.status === 'draft_saved' || p.status === 'published' || !!wpId(p) || !!bcId(p)
-}
-
-/** True when this is a WordPress post (vs BigCommerce) — drives which links show. */
-export function isWpPost(p: PostLinkInput): boolean {
-  return !!wpId(p) || (!bcId(p) && !bcHash(p))
 }

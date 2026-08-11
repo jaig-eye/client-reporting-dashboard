@@ -192,7 +192,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     schedule_frequency:      form.schedule_frequency ?? null,
     schedule_day_of_week:    showDayPicker ? (form.schedule_day_of_week ?? 1) : (form.schedule_day_of_week ?? null),
     publish_time:            form.publish_time ?? null,
-    weeks_ahead:             form.weeks_ahead ?? 6,
+    weeks_ahead:             form.weeks_ahead || 6,
     schedule_start_date:     form.schedule_start_date ?? null,
     auto_generate:           form.auto_generate ?? false,
     auto_approve_topics:     form.auto_approve_topics ?? false,
@@ -202,7 +202,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   }, setSchedSave)
 
   const saveWriting = () => putFields({
-    target_length:    form.target_length ?? 1500,
+    target_length:    form.target_length || 1500,
     post_structure:   form.post_structure ?? '',
     topic_guidelines: form.topic_guidelines ?? null,
   }, setWriteSave)
@@ -230,7 +230,16 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <div>
           <Label>Site Connection</Label>
-          <select className="input" value={form.connection_id ?? ''} onChange={e => set('connection_id', e.target.value || null)}>
+          <select
+            className="input"
+            value={form.connection_id ?? ''}
+            onChange={e => {
+              // New site → author/category IDs from the old site no longer apply.
+              set('connection_id', e.target.value || null)
+              set('default_author_id', null)
+              setCategoryIds([])
+            }}
+          >
             <option value="">— Select site —</option>
             {clientSites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName || s.siteUrl}</option>)}
           </select>

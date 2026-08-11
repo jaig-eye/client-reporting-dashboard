@@ -130,7 +130,14 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     showToast('Post generation started — check back shortly', 'info')
     fetch('/api/admin/content/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic_id: topicId, suppress_email: true }),
-    }).catch(e => console.error('[generatePost]', e))
+    })
+      .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`) })
+      .catch(e => {
+        console.error('[generatePost]', e)
+        // Revert the optimistic 'generating' so the card doesn't hang forever.
+        setTopics(prev => prev.map(t => t.id === topicId ? { ...t, status: 'approved' } : t))
+        showToast('Generation failed to start — please try again', 'error')
+      })
   }
 
   function generateForSlot(dateKey: string, approvedIds: string[]) {
@@ -185,10 +192,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       const res = await fetch(url, { method: 'DELETE' })
       if (res.ok) {
         if (kind === 'topic') {
-          const t = topics.find(x => x.id === id)
-          const linked = t?.post?.id
-            ? posts.find(p => p.id === t.post!.id)
-            : posts.find(p => p.target_keyword === t?.target_keyword && p.target_publish_date === t?.target_publish_date)
+          // Use the deduped row-model link so we remove THIS topic's post, not a
+          // different topic that happens to share the same keyword + date.
+          const linked = model.topicIdToPost.get(id)
           if (linked) setPosts(p => p.filter(post => post.id !== linked.id))
           setTopics(p => p.filter(x => x.id !== id))
         } else setPosts(p => p.filter(post => post.id !== id))
@@ -517,7 +523,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           sites={clientSites}
           topicBreakdown={(() => {
             const t = topics.find(t => t.post?.id === reviewPost.id)
-            if (!t) return null
+            // undefined (not null) lets the editor fetch the breakdown by topicId
+            // for posts linked only heuristically (no topic.post FK).
+            if (!t) return undefined
             return {
               keyword_opportunity: t.keyword_opportunity,
               ranking_strategy: t.ranking_strategy,

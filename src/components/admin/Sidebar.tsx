@@ -123,7 +123,7 @@ export default function Sidebar({
           <div key={section.title} style={{ marginTop: si === 0 ? 0 : '1rem' }}>
             <p style={{
               fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.08em',
-              textTransform: 'uppercase', color: 'var(--text-faint)',
+              textTransform: 'uppercase', color: 'var(--text-muted)',
               padding: '0 0.5rem', margin: '0 0 0.25rem',
             }}>
               {section.title}
