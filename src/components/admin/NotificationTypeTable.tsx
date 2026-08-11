@@ -15,43 +15,45 @@ interface NotifRow {
   isBc?:       boolean  // BigCommerce-specific row (visual grouping)
 }
 
+// Each row exposes ONLY the channels that actually have a send wired (verified against
+// every getNotif(...) gate in the codebase) so there are no dead toggles.
 const GROUPS: { title: string; rows: NotifRow[] }[] = [
   {
     title: 'Uptime & SSL',
     rows: [
-      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true  },
-      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
       { key: 'ssl_expiry',       label: 'SSL expiring / expired', description: 'Fires when a certificate is within 30 days of expiry', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
     ],
   },
   {
     title: 'Content',
     rows: [
-      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once per month when posts are generated and ready to approve',  hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_mid_month_check', label: 'Mid-month pending reminder', description: 'After the 10th if posts are still unapproved',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
-      { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
-      { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once per month when posts are generated and ready to approve',  hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_mid_month_check', label: 'Mid-month pending reminder', description: 'After the 10th if posts are still unapproved',                   hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
       { key: 'content_topics_generated', label: 'Topics generated',          description: 'Emailed at most once per day when new topic ideas are ready to approve', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
-      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'Emailed at most once per day when new posts are ready for review', hasAgency: false, hasEmail: true, hasManager: true, hasClient: true },
-      { key: 'content_post_published',  label: 'Content published to WP / BC', description: 'Sent when a post or SA page is approved and uploaded',            hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
+      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'When a new post or SA page is ready for review (email at most once per day; per-client Discord per event)', hasAgency: false, hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'content_post_published',  label: 'Content published to WP / BC', description: 'Sent to the client Discord when a post or SA page is approved and uploaded', hasAgency: false, hasEmail: false, hasManager: false, hasClient: true  },
     ],
   },
   {
     title: 'Ad Management',
     rows: [
-      { key: 'ad_fuel_low',     label: 'Ad Fuel low / depleted',  description: 'Balance dropped below threshold or hit zero',        hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
-      { key: 'ad_fuel_paused',  label: 'Campaigns auto-paused',   description: 'Ad Fuel balance went negative and campaigns paused', hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
-      { key: 'ad_fuel_resumed', label: 'Campaigns auto-resumed',  description: 'Balance restored and campaigns re-enabled',          hasAgency: true,  hasEmail: true,  hasManager: true,  hasClient: true },
+      { key: 'ad_fuel_low',     label: 'Ad Fuel low / depleted',  description: 'Balance dropped below threshold or hit zero',        hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'ad_fuel_paused',  label: 'Campaigns auto-paused',   description: 'Ad Fuel balance went negative and campaigns paused', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'ad_fuel_resumed', label: 'Campaigns auto-resumed',  description: 'Balance restored and campaigns re-enabled',          hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
       { key: 'bc_daily_sales',  label: 'BigCommerce daily sales', description: 'Daily sales summary sent to client channel',         hasAgency: false, hasEmail: false, hasManager: false, hasClient: true, isBc: true },
     ],
   },
   {
     title: 'Email Workflow',
     rows: [
-      { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
-      { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved — includes who approved it', hasAgency: true, hasEmail: true, hasManager: true,  hasClient: true },
-      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved — includes who approved it', hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
     ],
   },
   {

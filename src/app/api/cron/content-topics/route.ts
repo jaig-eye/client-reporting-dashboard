@@ -1086,49 +1086,64 @@ export async function GET(request: NextRequest) {
     if (digestSentToday && digestSentToday.length > 0) {
       // Already emailed today — skip (in-app admin_alerts below still log everything).
     } else if (consolidatedEmail) {
-      // ONE email covering all clients that had activity this run
-      const allTopicClients  = Array.from(topicAccum.entries())
-      const allPostClients   = Array.from(postAccum.entries())
-      const hasTopics        = emailTopics && allTopicClients.length > 0
-      const hasPosts         = emailPosts  && allPostClients.length > 0
+      // ONE comprehensive daily digest — query EVERYTHING still awaiting review that was
+      // generated TODAY (not just this cron run), grouped by client, so the single daily
+      // email covers the whole day no matter how many runs produced content.
+      type PostRowT  = { client_id: string; title: string | null; target_publish_date: string | null }
+      type TopicRowT = { client_id: string; topic: string; target_keyword: string | null; target_publish_date: string | null }
+      const [postRowsRes, topicRowsRes] = await Promise.all([
+        emailPosts
+          ? db.from('content_posts').select('client_id, title, target_publish_date').eq('status', 'for_review').is('wp_post_id', null).is('bc_post_id', null).gte('created_at', dayStartIso)
+          : Promise.resolve({ data: [] as PostRowT[] }),
+        emailTopics
+          ? db.from('content_topics').select('client_id, topic, target_keyword, target_publish_date').in('status', ['pending', 'approved']).gte('created_at', dayStartIso)
+          : Promise.resolve({ data: [] as TopicRowT[] }),
+      ])
+      const dayPosts  = (postRowsRes.data  ?? []) as PostRowT[]
+      const dayTopics = (topicRowsRes.data ?? []) as TopicRowT[]
 
-      if (hasTopics || hasPosts) {
-        const totalTopics = allTopicClients.reduce((s, [, { items }]) => s + items.length, 0)
-        const totalPosts  = allPostClients.reduce((s, [, { items }]) => s + items.length, 0)
-        const reviewLink  = `${appUrl}/admin/content`
+      if (dayPosts.length > 0 || dayTopics.length > 0) {
+        const clientIds = Array.from(new Set([...dayPosts.map(p => p.client_id), ...dayTopics.map(t => t.client_id)]))
+        const { data: clientRows } = await db.from('clients').select('id, name').in('id', clientIds)
+        const nameOf = new Map(((clientRows ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
+        const groupByClient = <T extends { client_id: string }>(rows: T[]) => {
+          const m = new Map<string, T[]>()
+          for (const r of rows) m.set(r.client_id, [...(m.get(r.client_id) ?? []), r])
+          return m
+        }
+        const reviewLink = `${appUrl}/admin/content`
         const sections: string[] = []
 
-        if (hasTopics) {
-          sections.push(`<h2 style="margin:0 0 8px;font-size:16px">New Topics (${totalTopics})</h2>`)
-          for (const [, { clientName, items }] of allTopicClients) {
-            sections.push(`<p style="margin:4px 0"><strong>${clientName}</strong> — ${items.length} topic${items.length === 1 ? '' : 's'}</p>`)
-            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map((t: TopicSummary) => `<li>${t.target_keyword ?? t.topic}${t.target_publish_date ? ` <em>(${t.target_publish_date})</em>` : ''}</li>`).join('')}</ul>`)
+        if (dayTopics.length > 0) {
+          sections.push(`<h2 style="margin:0 0 8px;font-size:16px">New Topics (${dayTopics.length})</h2>`)
+          for (const [cid, items] of Array.from(groupByClient(dayTopics).entries())) {
+            sections.push(`<p style="margin:4px 0"><strong>${nameOf.get(cid) ?? 'Client'}</strong> — ${items.length} topic${items.length === 1 ? '' : 's'}</p>`)
+            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map(t => `<li>${t.target_keyword ?? t.topic}${t.target_publish_date ? ` <em>(${t.target_publish_date})</em>` : ''}</li>`).join('')}</ul>`)
           }
         }
-        if (hasPosts) {
-          sections.push(`<h2 style="margin:16px 0 8px;font-size:16px">Posts Generated (${totalPosts})</h2>`)
-          for (const [, { clientName, items }] of allPostClients) {
-            sections.push(`<p style="margin:4px 0"><strong>${clientName}</strong> — ${items.length} post${items.length === 1 ? '' : 's'}</p>`)
-            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map((p: PostSummary) => `<li>${p.title ?? '(untitled)'}${p.targetPublishDate ? ` <em>(${p.targetPublishDate})</em>` : ''}</li>`).join('')}</ul>`)
+        if (dayPosts.length > 0) {
+          sections.push(`<h2 style="margin:16px 0 8px;font-size:16px">Posts Generated (${dayPosts.length})</h2>`)
+          for (const [cid, items] of Array.from(groupByClient(dayPosts).entries())) {
+            sections.push(`<p style="margin:4px 0"><strong>${nameOf.get(cid) ?? 'Client'}</strong> — ${items.length} post${items.length === 1 ? '' : 's'}</p>`)
+            sections.push(`<ul style="margin:0 0 12px;padding-left:20px">${items.map(p => `<li>${p.title ?? '(untitled)'}${p.target_publish_date ? ` <em>(${p.target_publish_date})</em>` : ''}</li>`).join('')}</ul>`)
           }
         }
 
         const parts: string[] = []
-        if (hasTopics) parts.push(`${totalTopics} topic${totalTopics === 1 ? '' : 's'}`)
-        if (hasPosts)  parts.push(`${totalPosts} post${totalPosts === 1 ? '' : 's'}`)
+        if (dayTopics.length > 0) parts.push(`${dayTopics.length} topic${dayTopics.length === 1 ? '' : 's'}`)
+        if (dayPosts.length > 0)  parts.push(`${dayPosts.length} post${dayPosts.length === 1 ? '' : 's'}`)
         const subjectSummary = parts.join(' + ')
-        const clientCount    = new Set([...allTopicClients.map(([id]) => id), ...allPostClients.map(([id]) => id)]).size
 
         try {
           await sendEmail({
             to:      notifEmail,
-            subject: `${agencyName} | Content Update — ${subjectSummary} across ${clientCount} client${clientCount === 1 ? '' : 's'}`,
+            subject: `${agencyName} | Content Update — ${subjectSummary} across ${clientIds.length} client${clientIds.length === 1 ? '' : 's'}`,
             html:    `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">${sections.join('\n')}<p style="margin-top:16px"><a href="${reviewLink}">Review in dashboard →</a></p></div>`,
           })
+          await recordDigestSent()  // only mark the day done once the email actually sent
         } catch (e) {
           console.error('[content-topics cron] Consolidated email failed:', e)
         }
-        await recordDigestSent()
       }
     } else {
       // Per-client emails
