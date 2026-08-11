@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   let query = db
     .from('content_posts')
-    .select('id, client_id, status, title, seo_title, target_keyword, meta_description, slug, word_count, wp_post_id, bc_post_id, wp_site_url, published_url, target_publish_date, generated_at, seo_score, schema_type, excerpt, content_type, city, state_abbr, service_name')
+    .select('id, client_id, status, title, seo_title, target_keyword, meta_description, slug, word_count, featured_image_url, wp_post_id, bc_post_id, wp_site_url, bc_store_hash, published_url, target_publish_date, generated_at, seo_score, schema_type, excerpt, content_type, city, state_abbr, service_name')
     .eq('client_id', clientId)
     .is('archived_at', null)
     .order('target_publish_date', { ascending: false, nullsFirst: false })

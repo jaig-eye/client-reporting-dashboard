@@ -74,7 +74,7 @@ export async function getMonthlyReviewData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: postsRaw } = await (db as any)
     .from('content_posts')
-    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at')
+    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash')
     .in('status', ['for_review', 'pending', 'approved', 'draft_saved', 'generating'])
     .or('admin_approved_at.not.is.null,wp_post_id.is.null')
     .or('admin_approved_at.not.is.null,bc_post_id.is.null')
@@ -123,6 +123,11 @@ export async function getMonthlyReviewData(
     content_type:        p.content_type ? String(p.content_type) : null,
     connection_id:       p.connection_id ? String(p.connection_id) : null,
     admin_approved_at:   p.admin_approved_at ? String(p.admin_approved_at) : null,
+    wp_post_id:          p.wp_post_id    != null ? Number(p.wp_post_id) : null,
+    wp_site_url:         p.wp_site_url   ? String(p.wp_site_url)   : null,
+    published_url:       p.published_url ? String(p.published_url) : null,
+    bc_post_id:          p.bc_post_id    != null ? Number(p.bc_post_id) : null,
+    bc_store_hash:       p.bc_store_hash ? String(p.bc_store_hash) : null,
     isBc:                !wpClientIds.has(p.client_id as string),
   }))
 

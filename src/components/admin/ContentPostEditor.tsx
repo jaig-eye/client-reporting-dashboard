@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
+import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 
 interface Site {
   connectionId:  string
@@ -794,6 +795,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
   const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
 
+  // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
+  const liveUrl        = post ? viewLiveUrl(post) : null
+  const showLiveLink   = isPublicPermalink(liveUrl)
+  const draftPreview   = post ? wpDraftPreviewUrl(post) : null
+  const wpEdit         = post ? wpEditUrl(post) : null
+  const bcEdit         = post ? bcEditUrl(post) : null
+
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
     h1{font-size:2rem;line-height:1.3;margin-bottom:.5rem;color:#111}
@@ -934,24 +942,23 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             {/* On Site banner */}
             {isOnSite && (
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>✓ On Site</span>
-                  {post?.wpPostId && post?.wpSiteUrl && (
-                    <a href={`${post.wpSiteUrl}/wp-admin/post.php?post=${post.wpPostId}&action=edit`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
-                      Edit in WordPress ↗
-                    </a>
+                  {showLiveLink && liveUrl && (
+                    <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>
                   )}
-                  {post?.bcPostId && post?.bcStoreHash && (
-                    <a href={`https://store-${post.bcStoreHash}.mybigcommerce.com/manage/content/blog`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
-                      Edit in BigCommerce ↗
-                    </a>
+                  {draftPreview && (
+                    <a href={draftPreview} target="_blank" rel="noopener noreferrer" title="Opens the draft on your WordPress site — requires your WordPress login" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Preview draft ↗</a>
                   )}
-                  {post?.publishedUrl && (
-                    <a href={post.publishedUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>View post ↗</a>
+                  {wpEdit && (
+                    <a href={wpEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Open in WordPress ↗</a>
+                  )}
+                  {bcEdit && (
+                    <a href={bcEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>Edit in BigCommerce ↗</a>
                   )}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been saved to your site as a draft. Edit and publish it directly in the CMS.
+                  This post has been saved to your site as a draft. Preview it live, or edit and publish it directly in the CMS.
                 </p>
               </div>
             )}

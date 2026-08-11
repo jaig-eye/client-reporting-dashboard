@@ -1,6 +1,7 @@
 'use client'
 
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
+import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 
 
 export interface MonthlyReviewPost {
@@ -18,6 +19,11 @@ export interface MonthlyReviewPost {
   content_type:        string | null
   connection_id:       string | null
   admin_approved_at:   string | null
+  wp_post_id:          number | null
+  wp_site_url:         string | null
+  published_url:       string | null
+  bc_post_id:          number | null
+  bc_store_hash:       string | null
   isBc:                boolean
 }
 
@@ -119,6 +125,30 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
           </div>
+          {/* Live-post links — shown once the post is on-site */}
+          {(post.status === 'draft_saved' || post.status === 'published') && (() => {
+            const live = viewLiveUrl(post)
+            const draft = wpDraftPreviewUrl(post)
+            const wpe = wpEditUrl(post)
+            const bce = bcEditUrl(post)
+            const linkStyle: React.CSSProperties = { color: 'var(--blue)', textDecoration: 'none' }
+            return (
+              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 11 }}>
+                {isPublicPermalink(live) && live && (
+                  <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
+                )}
+                {draft && (
+                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Preview draft ↗</a>
+                )}
+                {wpe && (
+                  <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Open in WP ↗</a>
+                )}
+                {bce && (
+                  <a href={bce} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit in BigCommerce ↗</a>
+                )}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Status / actions */}

@@ -57,7 +57,7 @@ export default async function ClientDetailPage({
   const { id } = await params
   const sp = await searchParams
   const activeTab     = TABS.find(t => t.id === sp.tab)?.id ?? 'overview'
-  const initialSubTab = sp.subtab ?? 'overview'
+  const initialSubTab = sp.subtab ?? 'pipeline'
   const db = createAdminClient()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
