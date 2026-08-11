@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import {
   Buildings,
   PlugsConnected,
@@ -10,14 +9,12 @@ import {
   UsersThree,
   GearSix,
   HardDrives,
-  SignOut,
-  CaretRight,
   RocketLaunch,
   Bell,
   GlobeSimple,
   EnvelopeSimple,
 } from '@phosphor-icons/react'
-import SoundToggle from './SoundToggle'
+import UserMenu from './UserMenu'
 
 interface NavItem {
   href: string
@@ -28,17 +25,37 @@ interface NavItem {
   beta?: boolean
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { href: '/admin/dashboard',   label: 'Clients',          icon: <Buildings size={16} aria-hidden />,     matchPrefix: true  },
-  { href: '/admin/connections', label: 'Integrations',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true  },
-  { href: '/admin/content',     label: 'Content',          icon: <NotePencil size={16} aria-hidden />,     matchPrefix: true  },
-  { href: '/admin/emails',      label: 'Emails',           icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
-  { href: '/admin/ad-fuel',     label: 'Ad Fuel',          icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true  },
-  { href: '/admin/sites',       label: 'Sites',            icon: <GlobeSimple size={16} aria-hidden />,   matchPrefix: true  },
-  { href: '/admin/alerts',      label: 'Alerts',           icon: <Bell size={16} aria-hidden />,          matchPrefix: true, alertsKey: true },
-  { href: '/admin/users',       label: 'Users',            icon: <UsersThree size={16} aria-hidden />,    matchPrefix: true  },
-  { href: '/admin/settings',    label: 'Agency Settings',  icon: <GearSix size={16} aria-hidden />,       matchPrefix: true  },
-  { href: '/admin/system',      label: 'System',           icon: <HardDrives size={16} aria-hidden />,    matchPrefix: true  },
+interface NavSection {
+  title: string
+  items: NavItem[]
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: 'Operations',
+    items: [
+      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,     matchPrefix: true },
+      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true },
+      { href: '/admin/emails',    label: 'Emails',   icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
+      { href: '/admin/ad-fuel',   label: 'Ad Fuel',  icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true },
+    ],
+  },
+  {
+    title: 'Our Tools',
+    items: [
+      { href: '/admin/sites', label: 'Site Monitoring', icon: <GlobeSimple size={16} aria-hidden />, matchPrefix: true },
+    ],
+  },
+  {
+    title: 'Admin',
+    items: [
+      { href: '/admin/connections', label: 'Integrations',    icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true },
+      { href: '/admin/users',       label: 'Users',           icon: <UsersThree size={16} aria-hidden />,     matchPrefix: true },
+      { href: '/admin/alerts',      label: 'Alerts',          icon: <Bell size={16} aria-hidden />,           matchPrefix: true, alertsKey: true },
+      { href: '/admin/settings',    label: 'Agency Settings', icon: <GearSix size={16} aria-hidden />,        matchPrefix: true },
+      { href: '/admin/system',      label: 'System',          icon: <HardDrives size={16} aria-hidden />,     matchPrefix: true },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -62,16 +79,7 @@ export default function Sidebar({
   isSuperAdmin = false,
   unreadAlertCount = 0,
 }: SidebarProps) {
-  const pathname    = usePathname()
-  const router      = useRouter()
-  const [loggingOut, setLoggingOut] = useState(false)
-
-  async function handleLogout() {
-    setLoggingOut(true)
-    await fetch('/api/auth/admin-logout', { method: 'POST' })
-    router.push('/admin')
-    router.refresh()
-  }
+  const pathname = usePathname()
 
   function isActive(item: NavItem): boolean {
     if (item.matchPrefix === false) {
@@ -79,13 +87,6 @@ export default function Sidebar({
     }
     return pathname === item.href || pathname.startsWith(item.href + '/')
   }
-
-  const initials = userName
-    .split(' ')
-    .map(p => p[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
 
   return (
     <aside
@@ -118,122 +119,75 @@ export default function Sidebar({
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto" style={{ padding: '0.625rem 0.5rem' }}>
-        <div className="space-y-0.5">
-          {NAV_ITEMS.map(item => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`nav-item focus-ring ${isActive(item) ? 'active' : ''}`}
-              style={{ display: 'flex', alignItems: 'center' }}
-            >
-              <span className="flex items-center flex-shrink-0" style={{ width: '1rem', justifyContent: 'center' }}>
-                {item.icon}
-              </span>
-              {item.label}
-              {item.beta && (
-                <span style={{
-                  fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-                  background: 'var(--blue)', color: '#fff',
-                  padding: '1px 4px', borderRadius: 3,
-                  marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
-                }}>
-                  BETA
-                </span>
-              )}
-              {item.alertsKey && unreadAlertCount > 0 && (
-                <span
-                  style={{
-                    marginLeft:     'auto',
-                    minWidth:       18,
-                    height:         18,
-                    background:     'var(--red)',
-                    color:          '#fff',
-                    borderRadius:   9,
-                    fontSize:       '0.625rem',
-                    fontWeight:     700,
-                    display:        'flex',
-                    alignItems:     'center',
-                    justifyContent: 'center',
-                    padding:        '0 5px',
-                    animation:      'badge-pop 0.2s ease',
-                  }}
+        {NAV_SECTIONS.map((section, si) => (
+          <div key={section.title} style={{ marginTop: si === 0 ? 0 : '1rem' }}>
+            <p style={{
+              fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: 'var(--text-faint)',
+              padding: '0 0.5rem', margin: '0 0 0.25rem',
+            }}>
+              {section.title}
+            </p>
+            <div className="space-y-0.5">
+              {section.items.map(item => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={isActive(item) ? 'page' : undefined}
+                  className={`nav-item focus-ring ${isActive(item) ? 'active' : ''}`}
+                  style={{ display: 'flex', alignItems: 'center' }}
                 >
-                  {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
-                </span>
-              )}
-            </Link>
-          ))}
-        </div>
-      </nav>
-
-      {/* User card + logout */}
-      <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
-        <SoundToggle />
-        {isSuperAdmin ? (
-          <div className="flex items-center gap-2.5 p-2 rounded-lg">
-            <div
-              className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
-              style={{ background: 'var(--blue)' }}
-            >
-              SA
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium truncate leading-tight" style={{ color: 'var(--text-primary)' }}>Super Admin</p>
-              <p className="text-xs truncate leading-tight" style={{ color: 'var(--text-faint)' }}>Master account</p>
+                  <span className="flex items-center flex-shrink-0" style={{ width: '1rem', justifyContent: 'center' }}>
+                    {item.icon}
+                  </span>
+                  {item.label}
+                  {item.beta && (
+                    <span style={{
+                      fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+                      background: 'var(--blue)', color: '#fff',
+                      padding: '1px 4px', borderRadius: 3,
+                      marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+                    }}>
+                      BETA
+                    </span>
+                  )}
+                  {item.alertsKey && unreadAlertCount > 0 && (
+                    <span
+                      style={{
+                        marginLeft:     'auto',
+                        minWidth:       18,
+                        height:         18,
+                        background:     'var(--red)',
+                        color:          '#fff',
+                        borderRadius:   9,
+                        fontSize:       '0.625rem',
+                        fontWeight:     700,
+                        display:        'flex',
+                        alignItems:     'center',
+                        justifyContent: 'center',
+                        padding:        '0 5px',
+                        animation:      'badge-pop 0.2s ease',
+                      }}
+                    >
+                      {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+                    </span>
+                  )}
+                </Link>
+              ))}
             </div>
           </div>
-        ) : (
-          <Link
-            href="/admin/users/me"
-            className="flex items-center gap-2.5 p-2 rounded-lg focus-ring group"
-            style={{ textDecoration: 'none', transition: 'background 0.1s' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
-            onMouseLeave={e => (e.currentTarget.style.background = '')}
-          >
-            {userAvatarUrl ? (
-              <img src={userAvatarUrl} alt={userName} className="h-8 w-8 rounded-full object-cover flex-shrink-0" />
-            ) : (
-              <div
-                className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
-                style={{ background: 'var(--blue)' }}
-              >
-                {initials}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium truncate leading-tight" style={{ color: 'var(--text-primary)' }}>{userName}</p>
-              <p className="text-xs truncate leading-tight" style={{ color: 'var(--text-faint)' }}>{userEmail}</p>
-            </div>
-            <CaretRight
-              size={12}
-              aria-hidden
-              className="flex-shrink-0 opacity-0 group-hover:opacity-100"
-              style={{ color: 'var(--text-faint)', transition: 'opacity 0.15s' }}
-            />
-          </Link>
-        )}
+        ))}
+      </nav>
 
-        <button
-          onClick={handleLogout}
-          disabled={loggingOut}
-          aria-label="Sign out"
-          className="focus-ring w-full mt-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm"
-          style={{
-            color: 'var(--text-muted)',
-            textAlign: 'left',
-            background: 'transparent',
-            border: 'none',
-            cursor: loggingOut ? 'not-allowed' : 'pointer',
-            transition: 'background 0.1s, color 0.1s',
-          }}
-          onMouseEnter={e => { if (!loggingOut) e.currentTarget.style.background = 'var(--bg-subtle)' }}
-          onMouseLeave={e => { e.currentTarget.style.background = '' }}
-        >
-          <span className="flex items-center" style={{ width: '1rem', justifyContent: 'center' }}>
-            <SignOut size={15} aria-hidden />
-          </span>
-          {loggingOut ? 'Signing out…' : 'Sign out'}
-        </button>
+      {/* Account row + three-dot menu */}
+      <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
+        <UserMenu
+          userName={userName}
+          userEmail={userEmail}
+          userAvatarUrl={userAvatarUrl}
+          isSuperAdmin={isSuperAdmin}
+          unreadAlertCount={unreadAlertCount}
+        />
       </div>
     </aside>
   )
