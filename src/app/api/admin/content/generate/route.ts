@@ -1102,7 +1102,8 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
         discordChannelId = (cl as { discord_channel_id?: string | null } | null)?.discord_channel_id ?? null
       } catch {}
 
-      if (agencySettings.notification_email && agencySettings.notify_post_generated) {
+      const notifConfig = ((agencySettings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
+      if (agencySettings.notification_email && getNotif(notifConfig, 'content_post_generated').email) {
         try {
           await sendEmail({
             to:      agencySettings.notification_email,
@@ -1115,8 +1116,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
         }
       }
 
-      const _notifConfig = ((agencySettings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
-      if (agencySettings.discord_bot_token && discordChannelId && getNotif(_notifConfig, 'content_post_generated').client) {
+      if (agencySettings.discord_bot_token && discordChannelId && getNotif(notifConfig, 'content_post_generated').client) {
         void sendDiscordMessage(
           agencySettings.discord_bot_token,
           discordChannelId,

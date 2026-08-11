@@ -32,7 +32,8 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
       { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
       { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
       { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false, isBc: true },
-      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'Sent when a new post or service area page is ready for review', hasAgency: false, hasEmail: true, hasManager: true, hasClient: true },
+      { key: 'content_topics_generated', label: 'Topics generated',          description: 'Emailed at most once per day when new topic ideas are ready to approve', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'Emailed at most once per day when new posts are ready for review', hasAgency: false, hasEmail: true, hasManager: true, hasClient: true },
       { key: 'content_post_published',  label: 'Content published to WP / BC', description: 'Sent when a post or SA page is approved and uploaded',            hasAgency: false, hasEmail: true,  hasManager: true,  hasClient: true  },
     ],
   },
@@ -51,6 +52,12 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
       { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
       { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved — includes who approved it', hasAgency: true, hasEmail: true, hasManager: true,  hasClient: true },
       { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: true, hasManager: false, hasClient: true },
+    ],
+  },
+  {
+    title: 'Metrics',
+    rows: [
+      { key: 'metric_alerts', label: 'Metric alerts', description: 'Daily / weekly ad-metric change digest', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
   {

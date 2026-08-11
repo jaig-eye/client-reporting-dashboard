@@ -16,6 +16,7 @@ import {
   isAllowedBlogIntent,
   isForbiddenBlogKeyword,
 } from '@/lib/content/blogStrategy'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 
 interface TopicIdea {
   topic:               string
@@ -140,7 +141,7 @@ export async function generateTopicsForClient(
     gscRawRes,
   ] = await Promise.all([
     db.from('agency_settings')
-      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key')
+      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
       .single(),
     db.from('clients').select('id, name').eq('id', clientId).single(),
     db.from('content_settings')
@@ -640,7 +641,8 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   // ── Email notification (skipped when called from the cron batch flow) ───────
   if (!opts?.suppressEmail) {
     const notifEmail = settings.notification_email as string | null
-    if (notifEmail && (settings.notify_topics_created || settings.notify_topic_ready)) {
+    const notifConfig = ((settings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
+    if (notifEmail && getNotif(notifConfig, 'content_topics_generated').email) {
       const agencyName = settings.agency_name ?? 'Agency Dashboard'
       try {
         const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')

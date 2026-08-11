@@ -1067,14 +1067,30 @@ export async function GET(request: NextRequest) {
 
   // ── Batch emails — consolidated or per-client based on agency setting ────────
   if (notifEmail) {
-    const shouldEmailTopics = agencySettings?.notify_topics_created || agencySettings?.notify_topic_ready
+    // Gated by the Notifications panel (notification_config) — NOT legacy notify_* columns.
+    const emailTopics = getNotif(notifConfig, 'content_topics_generated').email
+    const emailPosts  = getNotif(notifConfig, 'content_post_generated').email
 
-    if (consolidatedEmail) {
+    // At most ONE content digest email per day, no matter how many times the cron runs —
+    // mirrors the monthly-once admin_alerts dedup used for the Discord message below.
+    const dayStartIso = (() => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.toISOString() })()
+    const { data: digestSentToday } = await db.from('admin_alerts')
+      .select('id').eq('type', 'content')
+      .filter('meta->>content_type', 'eq', 'content_email_digest')
+      .gte('created_at', dayStartIso).limit(1)
+    const recordDigestSent = () => db.from('admin_alerts').insert({
+      type: 'content', severity: 'info', title: 'Content digest email sent',
+      meta: { content_type: 'content_email_digest', day: dayStartIso },
+    }).then(null, () => {})
+
+    if (digestSentToday && digestSentToday.length > 0) {
+      // Already emailed today — skip (in-app admin_alerts below still log everything).
+    } else if (consolidatedEmail) {
       // ONE email covering all clients that had activity this run
       const allTopicClients  = Array.from(topicAccum.entries())
       const allPostClients   = Array.from(postAccum.entries())
-      const hasTopics        = shouldEmailTopics && allTopicClients.length > 0
-      const hasPosts         = agencySettings?.notify_post_generated && allPostClients.length > 0
+      const hasTopics        = emailTopics && allTopicClients.length > 0
+      const hasPosts         = emailPosts  && allPostClients.length > 0
 
       if (hasTopics || hasPosts) {
         const totalTopics = allTopicClients.reduce((s, [, { items }]) => s + items.length, 0)
@@ -1112,10 +1128,11 @@ export async function GET(request: NextRequest) {
         } catch (e) {
           console.error('[content-topics cron] Consolidated email failed:', e)
         }
+        await recordDigestSent()
       }
     } else {
-      // Legacy: one email per client
-      if (shouldEmailTopics) {
+      // Per-client emails
+      if (emailTopics) {
         for (const [clientId, { clientName, items }] of Array.from(topicAccum.entries())) {
           const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
           try {
@@ -1129,7 +1146,7 @@ export async function GET(request: NextRequest) {
           }
         }
       }
-      if (agencySettings?.notify_post_generated) {
+      if (emailPosts) {
         for (const [clientId, { clientName, items }] of Array.from(postAccum.entries())) {
           const clientLink = `${appUrl}/admin/clients/${clientId}?tab=content&subtab=schedule`
           try {
@@ -1143,6 +1160,7 @@ export async function GET(request: NextRequest) {
           }
         }
       }
+      if ((emailTopics && topicAccum.size > 0) || (emailPosts && postAccum.size > 0)) await recordDigestSent()
     }
   }
 
