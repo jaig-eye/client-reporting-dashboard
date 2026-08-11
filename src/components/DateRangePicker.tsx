@@ -91,6 +91,36 @@ const COMPARE_OPTIONS = [
   { value: 'none',         label: 'No comparison'         },
 ]
 
+// Resolve the comparison window from the selected range + mode. Mirrors the
+// server-side math in the report pages (prior period = the equal-length window
+// immediately before `from`; last year = the same dates shifted back a year),
+// using UTC methods so it matches regardless of the viewer's timezone.
+function compareRangeFor(from: string, to: string, compare?: string): [string, string] | null {
+  if (!compare || compare === 'none') return null
+  const fromDate = new Date(from)
+  const toDate   = new Date(to)
+  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) return null
+  if (compare === 'last_year') {
+    const pf = new Date(fromDate); pf.setUTCFullYear(pf.getUTCFullYear() - 1)
+    const pt = new Date(toDate);   pt.setUTCFullYear(pt.getUTCFullYear() - 1)
+    return [fmtD(pf), fmtD(pt)]
+  }
+  const periodMs = toDate.getTime() - fromDate.getTime()
+  const pt = new Date(fromDate.getTime() - 86_400_000)      // day before `from`
+  const pf = new Date(pt.getTime() - periodMs)
+  return [fmtD(pf), fmtD(pt)]
+}
+
+// "Jul 21 – Jul 31, 2026" (drops the year on the left when both dates share it).
+function fmtCompareRange(a: string, b: string): string {
+  const da = new Date(a + 'T00:00:00Z')
+  const db = new Date(b + 'T00:00:00Z')
+  const withYear: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
+  const noYear:   Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', timeZone: 'UTC' }
+  const sameYear = da.getUTCFullYear() === db.getUTCFullYear()
+  return `${da.toLocaleDateString('en-US', sameYear ? noYear : withYear)} – ${db.toLocaleDateString('en-US', withYear)}`
+}
+
 export default function DateRangePicker({
   from,
   to,
@@ -143,7 +173,8 @@ export default function DateRangePicker({
     startTransition(() => router.push(buildUrl(from, to, value)))
   }
 
-  const presetLabel = activePreset ? PRESETS.find(p => p.id === activePreset)?.label : null
+  const presetLabel  = activePreset ? PRESETS.find(p => p.id === activePreset)?.label : null
+  const compareRange = compareRangeFor(from, to, cmp)
 
   return (
     <div style={{ position: 'relative' }}>
@@ -167,13 +198,18 @@ export default function DateRangePicker({
         ) : (
           <CalendarBlank size={14} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         )}
-        <span style={{ fontSize: '0.8125rem' }}>{presetLabel ?? `${from} – ${to}`}</span>
-        {cmp && cmp !== 'none' && (
-          <span style={{
-            background: 'var(--blue)', color: '#fff',
-            fontSize: '0.6875rem', fontWeight: 600,
-            padding: '0.1rem 0.35rem', borderRadius: 3,
-          }}>vs</span>
+        <span style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{presetLabel ?? `${from} – ${to}`}</span>
+        {compareRange && (
+          <>
+            <span style={{
+              background: 'var(--blue)', color: '#fff',
+              fontSize: '0.6875rem', fontWeight: 600,
+              padding: '0.1rem 0.35rem', borderRadius: 3, flexShrink: 0,
+            }}>vs</span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              {fmtCompareRange(compareRange[0], compareRange[1])}
+            </span>
+          </>
         )}
         <CaretDown size={10} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
       </button>
@@ -277,6 +313,14 @@ export default function DateRangePicker({
                   <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{opt.label}</span>
                 </label>
               ))}
+              {compareRange && (
+                <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px solid var(--border-subtle)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Comparing against{' '}
+                  <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
+                    {fmtCompareRange(compareRange[0], compareRange[1])}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </>
