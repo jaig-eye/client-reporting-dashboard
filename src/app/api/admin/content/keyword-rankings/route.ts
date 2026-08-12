@@ -1,5 +1,5 @@
 // /api/admin/content/keyword-rankings?client_id=…
-// Returns the tracked keyword ranks for a client (from the OpenSEO datastream).
+// Returns the tracked keyword ranks for a client (from the DataForSEO datastream).
 // Soft-returns [] when the seo_keywords/seo_rankings tables aren't present yet.
 
 import { NextRequest, NextResponse } from 'next/server'

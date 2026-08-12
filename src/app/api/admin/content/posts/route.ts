@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Attach current keyword rank (OpenSEO datastream) per post. Soft-returns {} when
+  // Attach current keyword rank (DataForSEO datastream) per post. Soft-returns {} when
   // the seo_keywords/seo_rankings tables aren't present yet, so this never fails.
   const posts   = (data ?? []) as { id: string }[]
   const rankMap = await getRanksForPosts(posts.map(p => p.id))

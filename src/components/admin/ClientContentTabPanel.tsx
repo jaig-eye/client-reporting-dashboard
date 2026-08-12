@@ -347,7 +347,7 @@ function GscSection({
   )
 }
 
-// Keyword rank row from the OpenSEO datastream (/api/admin/content/keyword-rankings).
+// Keyword rank row from the DataForSEO datastream (/api/admin/content/keyword-rankings).
 interface KeywordRankRow {
   keyword_id:         string
   keyword:            string
@@ -359,6 +359,7 @@ interface KeywordRankRow {
   keyword_difficulty: number | null
   intent:             string | null
   content_post_id:    string | null
+  movement?:          string
 }
 
 function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean }) {
@@ -370,7 +371,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
 
-  // Lazy-load OpenSEO keyword ranks the first time this tab is opened.
+  // Lazy-load DataForSEO keyword ranks the first time this tab is opened.
   useEffect(() => {
     if (!isActive || ranks !== null) return
     let cancelled = false
@@ -404,7 +405,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics</h3>
           <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Search Console demand signals and OpenSEO keyword rank tracking. Keywords ranked below position 20 are the strongest candidates for new articles.
+            Search Console demand signals and DataForSEO keyword rank tracking. Keywords ranked below position 20 are the strongest candidates for new articles.
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -428,7 +429,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
         </div>
       </div>
 
-      {/* ── Keyword Rankings (OpenSEO) ─────────────────────────────────────── */}
+      {/* ── Keyword Rankings (DataForSEO) ──────────────────────────────────── */}
       <div className="card p-5" style={{ marginBottom: 16 }}>
         <div style={{ marginBottom: 10 }}>
           <span style={{
@@ -438,7 +439,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
           }}>
             Keyword Rankings
           </span>
-          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>OpenSEO</span>
+          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>DataForSEO</span>
         </div>
         <KeywordRankTable ranks={filteredRanks} loading={ranks === null} />
       </div>
@@ -470,7 +471,7 @@ function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading
   if (ranks.length === 0) {
     return (
       <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-        No keyword rankings yet. Connect <strong>OpenSEO</strong> on the Integrations page and attach this client&apos;s
+        No keyword rankings yet. Connect <strong>DataForSEO</strong> on the Integrations page and attach this client&apos;s
         domain to start tracking. Keywords targeted by generated posts are registered automatically.
       </p>
     )
@@ -507,7 +508,11 @@ function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading
                 </span>
               </td>
               <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                <RankDelta delta={r.position_delta} />
+                {r.movement === 'dropped'
+                  ? <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }} title={r.previous_position != null ? `was #${r.previous_position}` : undefined}>dropped</span>
+                  : r.movement === 'entered'
+                  ? <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
+                  : <RankDelta delta={r.position_delta} />}
               </td>
               <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.search_volume)}</td>
               <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>

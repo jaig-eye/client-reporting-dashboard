@@ -49,7 +49,7 @@ export interface Post {
   bc_store_hash:       string | null
   published_url:       string | null
   seo_score:           SeoScore | null
-  keyword_rank?:       { current_position: number | null; position_delta: number | null } | null
+  keyword_rank?:       { current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null
   generated_at:        string
 }
 
@@ -205,8 +205,13 @@ export default function PipelineCard(props: Props) {
             {post.seo_score ? <span style={{ marginLeft: 6, fontWeight: 600, color: scoreColor(post.seo_score) }}>SEO {post.seo_score.overall}</span> : null}
             {post.keyword_rank?.current_position != null ? (
               <span style={{ marginLeft: 6, fontWeight: 600, color: rankColor(post.keyword_rank.current_position) }}
-                title="Current keyword rank (OpenSEO)">
+                title="Current keyword rank (DataForSEO)">
                 #{post.keyword_rank.current_position}{rankArrow(post.keyword_rank.position_delta)}
+              </span>
+            ) : post.keyword_rank?.movement === 'dropped' ? (
+              <span style={{ marginLeft: 6, fontWeight: 600, color: 'var(--red)' }}
+                title={`Dropped out of the tracked results${post.keyword_rank.previous_position != null ? ` (was #${post.keyword_rank.previous_position})` : ''}`}>
+                ⚠ dropped
               </span>
             ) : null}
           </div>

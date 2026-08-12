@@ -19,8 +19,9 @@ import type { Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
-import OpenSeoAgencyCard    from '@/components/admin/OpenSeoAgencyCard'
+import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
 import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
+import type { SeoDevice }   from '@/lib/connectors/dataforseo'
 import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
 import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
 
@@ -50,9 +51,13 @@ export default async function ConnectionsPage({
   const ahrefsConnector = existing.find(c => c.type === 'ahrefs')
   const ahrefsApiKey    = ahrefsConnector ? String((ahrefsConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
 
-  // OpenSEO connector (if any)
-  const openseoConnector = existing.find(c => c.type === 'openseo')
-  const openseoApiKey    = openseoConnector ? String((openseoConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
+  // DataForSEO connector (if any)
+  const dfsConnector = existing.find(c => c.type === 'dataforseo')
+  const dfsAuth      = (dfsConnector?.auth as Record<string, unknown> | undefined) ?? {}
+  const dfsConfig    = (dfsConnector?.config as Record<string, unknown> | undefined) ?? {}
+  const dfsHasCreds  = !!(dfsAuth.dataforseo_login || dfsAuth.dataforseo_api_key)
+  const dfsDevices   = Array.isArray(dfsConfig.devices) ? (dfsConfig.devices as SeoDevice[]) : undefined
+  const dfsDepth     = typeof dfsConfig.rank_depth === 'number' ? dfsConfig.rank_depth : undefined
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
@@ -215,7 +220,7 @@ export default async function ConnectionsPage({
 
         {/* ── Ungrouped flat cards (agency-level only) ───────────────────────── */}
         {UNGROUPED_CONNECTOR_TYPES
-          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs' && type !== 'openseo')
+          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs' && type !== 'dataforseo')
           .map(type => {
             const def         = getConnectorDef(type)
             const connector   = byType.get(type)
@@ -279,10 +284,13 @@ export default async function ConnectionsPage({
           initialApiKey={ahrefsApiKey}
           connectorId={ahrefsConnector?.id}
         />
-        {/* ── OpenSEO (keyword rank tracking) ───────────────────────────────── */}
-        <OpenSeoAgencyCard
-          initialApiKey={openseoApiKey}
-          connectorId={openseoConnector?.id}
+        {/* ── DataForSEO (keyword rank tracking) ────────────────────────────── */}
+        <DataForSeoAgencyCard
+          connectorId={dfsConnector?.id}
+          connected={dfsConnector?.status === 'active'}
+          hasCreds={dfsHasCreds}
+          initialDepth={dfsDepth}
+          initialDevices={dfsDevices}
         />
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard

@@ -40,6 +40,10 @@ export function scoreSeoPost(params: {
 
   if (overOptimised) warnings.push(`Keyword density ${(density * 100).toFixed(1)}% may appear over-optimised`)
 
+  // ── Punctuation (writer quality bar bans em/en dashes) ───────────────────────
+  const emDashCount = (html.match(/[—–]/g) ?? []).length
+  if (emDashCount > 0) warnings.push(`${emDashCount} em/en dash(es) present — the writer style bans them`)
+
   // ── Heading structure ──────────────────────────────────────────────────────
   const h1Count = (html.match(/<h1[^>]*>/gi) ?? []).length
   const h2Count = (html.match(/<h2[^>]*>/gi) ?? []).length
@@ -135,6 +139,7 @@ export function scoreSeoPost(params: {
   if (wordCountOnTarget) score += 5
 
   if (overOptimised) score = Math.max(0, score - 10)
+  if (emDashCount > 0) score = Math.max(0, score - Math.min(6, emDashCount))
 
   return {
     overall:              Math.min(100, score),

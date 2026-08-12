@@ -20,9 +20,16 @@ export default function NewConnectionForm({
   const [useManual,    setUseManual]    = useState(discoveredAccounts.length === 0)
   const [status,       setStatus]       = useState<'idle' | 'saving' | 'error'>('idle')
   const [errorMsg,     setErrorMsg]     = useState('')
+  // Per-client DataForSEO tracking overrides (blank depth = inherit agency default).
+  const [depthOverride, setDepthOverride] = useState('')
+  const [devices,       setDevices]       = useState<('desktop' | 'mobile')[]>(['desktop', 'mobile'])
 
-  // Domain-based connectors (Ahrefs, OpenSEO): a single root-domain input, no discovery.
-  const isDomainConnector = connectorType === 'ahrefs' || connectorType === 'openseo'
+  // Domain-based connectors (Ahrefs, DataForSEO): a single root-domain input, no discovery.
+  const isDomainConnector = connectorType === 'ahrefs' || connectorType === 'dataforseo'
+  const isDfs = connectorType === 'dataforseo'
+  function toggleDevice(d: 'desktop' | 'mobile') {
+    setDevices(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])
+  }
 
   // Sync name when selecting from discovered dropdown
   function handleSelect(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -37,10 +44,18 @@ export default function NewConnectionForm({
     setStatus('saving')
     setErrorMsg('')
 
-    // Normalize domain for domain-based connectors (Ahrefs, OpenSEO)
+    // Normalize domain for domain-based connectors (Ahrefs, DataForSEO)
     const normalizedId = isDomainConnector
       ? externalId.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
       : externalId.trim()
+
+    // Per-client DataForSEO tracking config (only the fields set as overrides).
+    const config = isDfs
+      ? {
+          ...(depthOverride.trim() ? { rank_depth: Math.max(10, Math.min(100, Number(depthOverride) || 100)) } : {}),
+          devices: devices.length ? devices : ['desktop'],
+        }
+      : undefined
 
     try {
       const res = await fetch('/api/admin/connections', {
@@ -51,6 +66,7 @@ export default function NewConnectionForm({
           connector_id:  connectorId,
           external_id:   normalizedId,
           external_name: isDomainConnector ? normalizedId : (externalName.trim() || null),
+          ...(config ? { config } : {}),
         }),
       })
       if (!res.ok) {
@@ -65,7 +81,7 @@ export default function NewConnectionForm({
     }
   }
 
-  // Domain-based connectors (Ahrefs, OpenSEO): just a domain input — no discovery
+  // Domain-based connectors (Ahrefs, DataForSEO): just a domain input — no discovery
   if (isDomainConnector) {
     return (
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -87,11 +103,35 @@ export default function NewConnectionForm({
             required
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            {connectorType === 'openseo'
+            {isDfs
               ? 'Enter the root domain (e.g. example.com) to track keyword rankings for this client.'
               : 'Enter the root domain (e.g. example.com). Ahrefs metrics will sync automatically.'}
           </p>
         </div>
+
+        {isDfs && (
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
+                Rank depth <span style={{ color: 'var(--text-faint)' }}>— blank = inherit</span>
+              </label>
+              <input className="input" type="number" min={10} max={100} step={10} style={{ width: 120 }}
+                placeholder="inherit" value={depthOverride} onChange={e => setDepthOverride(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Devices</label>
+              <div style={{ display: 'flex', gap: 14, paddingTop: 6 }}>
+                {(['desktop', 'mobile'] as const).map(d => (
+                  <label key={d} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={devices.includes(d)} onChange={() => toggleDevice(d)} />
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-3 pt-2">
           <button type="submit" className="btn btn-primary" disabled={status === 'saving' || !externalId.trim()}>
             {status === 'saving' ? 'Connecting…' : 'Connect Domain'}

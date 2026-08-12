@@ -14,7 +14,8 @@ import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
 import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES } from '@/lib/content/blogStrategy'
-import { formatCompetitorGap, liveCompetitorGap } from '@/lib/content/competitorResearch'
+import { formatCompetitorGap } from '@/lib/content/competitorResearch'
+import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
 import { registerKeyword } from '@/lib/content/seoRankings'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
@@ -938,7 +939,14 @@ LINKING RULES:
     // when a serp_api_key is configured. Every generated post competes on coverage.
     let competitorGapSection = formatCompetitorGap(topicData.competitors_researched)
     if (!competitorGapSection) {
-      competitorGapSection = await liveCompetitorGap(topicData.target_keyword, agencySettings.serp_api_key)
+      // Provider chain: DataForSEO → SerpAPI → GSC. Skip the SerpAPI tier if topic-time
+      // research already attempted it (competitors_researched is a non-null object), so
+      // we don't repeat the same failed SERP work.
+      const serpAlreadyTried = topicData.competitors_researched != null
+      competitorGapSection = await gatherCompetitorGap({
+        db, clientId: effectiveClientId, keyword: topicData.target_keyword,
+        serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
+      })
     }
 
     // ── Editor direction notes ────────────────────────────────────────────────
@@ -1107,7 +1115,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       .eq('id', topicId)
 
     // Register the target keyword in the SEO datastream (content → keyword link), so
-    // once OpenSEO is connected, rank checks surface on this post's card and editor.
+    // once DataForSEO is connected, rank checks surface on this post's card and editor.
     // Soft-fails if the seo_keywords table isn't present yet (migration 189 pending).
     if (parsed.focusKeyword) {
       await registerKeyword({
@@ -1427,7 +1435,9 @@ export async function POST(request: NextRequest) {
   // SERP gap to a 5s deadline and only run it when the seed reads like a real keyword.
   const manualSeed = extractManualSeed(prompt)
   const manualCompetitorSection = looksKeywordLike(manualSeed)
-    ? await withDeadline(liveCompetitorGap(manualSeed, agencySettings.serp_api_key), 5000, '')
+    ? await withDeadline(
+        gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key }),
+        5000, '')
     : ''
 
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)

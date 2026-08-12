@@ -329,8 +329,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
 
-  // Current keyword rank (OpenSEO datastream) — null until loaded, then possibly still null.
-  const [keywordRank, setKeywordRank] = useState<{ current_position: number | null; position_delta: number | null } | null>(null)
+  // Current keyword rank (DataForSEO datastream) — null until loaded, then possibly still null.
+  const [keywordRank, setKeywordRank] = useState<{ current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null>(null)
   useEffect(() => {
     let cancelled = false
     fetch(`/api/admin/content/keyword-rankings?post_id=${postId}`)
@@ -1191,9 +1191,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '0.5rem' }}>
                   <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', margin: 0 }}>SEO Checklist</p>
-                  {keywordRank?.current_position != null && (
+                  {keywordRank?.current_position != null ? (
                     <span
-                      title="Current keyword rank (OpenSEO)"
+                      title="Current keyword rank (DataForSEO)"
                       style={{
                         fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999,
                         background: keywordRank.current_position <= 3 ? '#dcfce7' : keywordRank.current_position <= 10 ? '#fef3c7' : 'var(--bg-muted)',
@@ -1203,7 +1203,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       Rank #{keywordRank.current_position}
                       {keywordRank.position_delta ? (keywordRank.position_delta > 0 ? ` ▲${Math.abs(keywordRank.position_delta)}` : ` ▼${Math.abs(keywordRank.position_delta)}`) : ''}
                     </span>
-                  )}
+                  ) : keywordRank?.movement === 'dropped' ? (
+                    <span
+                      title={`Dropped out of the tracked results${keywordRank.previous_position != null ? ` (was #${keywordRank.previous_position})` : ''} (DataForSEO)`}
+                      style={{ fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999, background: 'var(--red-subtle)', color: 'var(--red)' }}
+                    >
+                      Rank dropped
+                    </span>
+                  ) : null}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
                   <div><Check ok={keywordInTitle} />Keyword in H1</div>

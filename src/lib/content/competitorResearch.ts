@@ -73,7 +73,7 @@ ${sections}
  * Live competitor-gap fallback for the writer route: when a topic has no stored
  * research (manually-added topics, older topics, or manual/Path-B generation),
  * fetch SERP competitor headings on demand. Soft-fails to '' with no key/keyword or
- * on any error. This is the SERP path today; once OpenSEO is connected its richer
+ * on any error. This is the SERP path today; once DataForSEO is connected its richer
  * keyword/SERP data can feed the same CompetitorResearch shape with no caller change.
  */
 export async function liveCompetitorGap(
@@ -106,15 +106,24 @@ export async function researchCompetitors(
       .slice(0, 5)
 
     if (!urls.length) return { keyword, urls: [], headings: {} }
-
-    const results = await Promise.allSettled(urls.map(u => fetchCompetitorHeadings(u)))
-    const headings: Record<string, string[]> = {}
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled' && r.value.length > 0) headings[urls[i]] = r.value
-    })
-
-    return { keyword, urls, headings }
+    return buildCompetitorResearch(keyword, urls)
   } catch {
     return { keyword, urls: [], headings: {} }
   }
+}
+
+/**
+ * Scrape H1–H3 headings for a set of already-resolved competitor URLs. Shared by the
+ * SerpAPI path (researchCompetitors) and the DataForSEO path (which resolves the top
+ * organic URLs itself), so both produce the same CompetitorResearch shape.
+ */
+export async function buildCompetitorResearch(keyword: string, urls: string[]): Promise<CompetitorResearch> {
+  const clean = urls.filter(Boolean).slice(0, 5)
+  if (!clean.length) return { keyword, urls: [], headings: {} }
+  const results = await Promise.allSettled(clean.map(u => fetchCompetitorHeadings(u)))
+  const headings: Record<string, string[]> = {}
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value.length > 0) headings[clean[i]] = r.value
+  })
+  return { keyword, urls: clean, headings }
 }

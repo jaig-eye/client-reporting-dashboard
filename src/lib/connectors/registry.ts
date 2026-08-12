@@ -24,7 +24,7 @@ import { ghlConnector } from './ghl'
 import { wordpressConnector } from './wordpress'
 import { ahrefsConnector } from './ahrefs'
 import { bigcommerceConnector } from './bigcommerce'
-import { openSeoConnector } from './openseo'
+import { dataForSeoConnector } from './dataforseo'
 import { GoogleAdsLogo, MetaAdsLogo, GALogo, GSCLogo, GhlLogo, WpLogo } from '@/components/ConnectorLogo'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,13 +112,13 @@ const CONNECTOR_DEFINITIONS: Record<ConnectorType, ConnectorTypeDef> = {
     color: '#34313F',
     authFlow: 'credentials',
   },
-  openseo: {
-    type: 'openseo',
-    label: 'OpenSEO',
-    description: 'Track keyword rankings and pull search volume, difficulty, and SERP data.',
-    icon: 'O',
+  dataforseo: {
+    type: 'dataforseo',
+    label: 'DataForSEO',
+    description: 'Track keyword rankings and pull search volume, difficulty, intent, and SERP data.',
+    icon: 'D',
     color: '#6366f1',
-    authFlow: 'token',
+    authFlow: 'credentials',
   },
 }
 
@@ -138,7 +138,7 @@ const CONNECTOR_ADAPTERS: Partial<Record<ConnectorType, ConnectorAdapter>> = {
   wordpress:               wordpressConnector,
   ahrefs:                  ahrefsConnector,
   bigcommerce:             bigcommerceConnector,
-  openseo:                 openSeoConnector,
+  dataforseo:              dataForSeoConnector,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ export const ALL_CONNECTOR_TYPES: ConnectorType[] = [
   'wordpress',
   'ahrefs',
   'bigcommerce',
-  'openseo',
+  'dataforseo',
 ]
 
 /** The four Google connector types that share a single OAuth token. */
@@ -174,7 +174,7 @@ export const UNGROUPED_CONNECTOR_TYPES: ConnectorType[] = [
   'wordpress',
   'ahrefs',
   'bigcommerce',
-  'openseo',
+  'dataforseo',
 ]
 
 /** Returns the UI definition for a connector type. */
