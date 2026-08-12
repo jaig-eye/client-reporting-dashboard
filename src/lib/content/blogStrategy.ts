@@ -104,9 +104,6 @@ BLOG STRUCTURE (blog posts only):
 - Include a real FAQ section (H2 "Frequently Asked Questions" with question H3s) ONLY when the topic naturally raises follow-up questions — never as filler.
 - Before returning, confirm the Key Takeaways box is present right after the intro.`.trim()
 
-/** @deprecated Use WRITER_QUALITY_RULES (universal) + BLOG_STRUCTURE_RULES (blog only). */
-export const BLOG_WRITER_QUALITY_RULES = WRITER_QUALITY_RULES
-
 const BLOG_INTENT_ALLOWED = new Set(BLOG_INTENT_ENUM.split('|').map(s => s.trim()))
 
 /**

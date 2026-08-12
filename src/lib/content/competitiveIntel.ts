@@ -19,9 +19,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { createAdminClient } from '@/lib/supabase/server'
-import { formatCompetitorGap, buildCompetitorResearch, researchCompetitors } from './competitorResearch'
+import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors } from './competitorResearch'
 import { recordDfsUsage } from './dataforseoUsage'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpTopUrls, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
 
 type Db = ReturnType<typeof createAdminClient>
 
@@ -67,20 +67,22 @@ export async function gatherCompetitorGap(params: {
   const keyword = params.keyword?.trim()
   if (!keyword) return ''
 
-  // Tier 1 — DataForSEO
+  // Tier 1 — DataForSEO: ONE SERP call yields competitor coverage AND SERP intelligence
+  // (People-Also-Ask + AI-Overview cited sources). Both fenced blocks are returned together.
   try {
     const dfs = await getClientDfsContext(params.db, params.clientId)
     if (dfs) {
-      const urls = await dfsSerpTopUrls(keyword, dfs.creds, {
+      const intel = await dfsSerpIntel(keyword, dfs.creds, {
         locationCode: dfs.config.location_code,
         languageCode: dfs.config.language_code,
         limit:        5,
-        onCost:       c => { void recordDfsUsage({ operation: 'serp_research', cost: c, clientId: params.clientId || null }) },
+        aiOverview:   true,
+        onCost:       c => { void recordDfsUsage({ operation: 'serp_intel', cost: c, clientId: params.clientId || null }) },
       })
-      if (urls.length) {
-        const gap = formatCompetitorGap(await buildCompetitorResearch(keyword, urls))
-        if (gap) return gap
-      }
+      const gap = formatCompetitorGap(await buildCompetitorResearch(keyword, intel.organicUrls))
+      const si  = formatSerpIntel(intel, keyword)
+      const combined = [gap, si].filter(Boolean).join('\n')
+      if (combined) return combined
     }
   } catch { /* fall through */ }
 

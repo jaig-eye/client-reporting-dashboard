@@ -35,7 +35,7 @@ export interface SeoTrackingConfig {
   language_code: string       // e.g. 'en'
 }
 
-export const DEFAULT_SEO_CONFIG: SeoTrackingConfig = {
+const DEFAULT_SEO_CONFIG: SeoTrackingConfig = {
   rank_depth:    100,
   devices:       ['desktop', 'mobile'],
   location_code: 2840,
@@ -135,10 +135,10 @@ function readTopCost(json: Record<string, unknown> | null): number {
   return typeof c === 'number' && c > 0 ? c : 0
 }
 /** Estimated live/advanced SERP cost (priced per 10 results) when the response omits cost. */
-export function estimateSerpCost(depth: number): number {
+function estimateSerpCost(depth: number): number {
   return Math.max(1, Math.ceil((depth || 100) / 10)) * 0.002
 }
-export const DFS_LABS_COST_ESTIMATE = 0.01
+const DFS_LABS_COST_ESTIMATE = 0.01
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -158,6 +158,16 @@ export interface DfsRankResult {
   rank_absolute:  number | null   // position across all SERP elements
   url:            string | null
   serp_features:  string[]
+}
+
+interface DfsSerpSource { url: string; domain: string; title: string }
+export interface DfsSerpIntel {
+  paa:             string[]                                              // People-Also-Ask questions
+  related:         string[]                                             // related_searches strings
+  aiOverview:      { present: boolean; sources: DfsSerpSource[] } | null // AI Overview citations (text intentionally omitted — untrusted)
+  featuredSnippet: DfsSerpSource | null
+  organicUrls:     string[]                                             // reused for competitor-heading scrape (avoids a 2nd SERP call)
+  features:        string[]                                            // element types present (ai_overview, featured_snippet, …)
 }
 
 // ── Keyword overview (volume + difficulty + intent in one Labs call) ──────────
@@ -187,36 +197,6 @@ export async function dfsKeywordOverview(
       competition:        num(info.competition),
       intent:             si.main_intent ? String(si.main_intent) : null,
       monthly_searches:   Array.isArray(info.monthly_searches) ? info.monthly_searches as unknown[] : null,
-    }
-  }).filter(k => k.keyword)
-}
-
-// ── Keyword ideas (discovery) ─────────────────────────────────────────────────
-
-export async function dfsKeywordIdeas(
-  seed: string,
-  creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
-): Promise<DfsKeywordData[]> {
-  if (!seed.trim()) return []
-  const json = await dfsPost('/v3/dataforseo_labs/google/keyword_ideas/live', creds, {
-    keywords:      [seed.trim()],
-    location_code: opts.locationCode ?? 2840,
-    language_code: opts.languageCode ?? 'en',
-    limit:         opts.limit ?? 50,
-  })
-  if (json) opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
-  return firstResultItems(json).map(it => {
-    const info  = (it.keyword_info as Record<string, unknown>) ?? {}
-    const props = (it.keyword_properties as Record<string, unknown>) ?? {}
-    return {
-      keyword:            String(it.keyword ?? ''),
-      search_volume:      num(info.search_volume),
-      keyword_difficulty: num(props.keyword_difficulty),
-      cpc:                num(info.cpc),
-      competition:        num(info.competition),
-      intent:             null,
-      monthly_searches:   null,
     }
   }).filter(k => k.keyword)
 }
@@ -267,28 +247,78 @@ export async function dfsSerpRank(
   }
 }
 
-// ── SERP organic URLs (for competitor-gap research, replacing SerpAPI when connected) ──
+// ── SERP intelligence (one call → PAA + AI-Overview sources + related + organic) ──
+// The creation engine's data source: what real questions searchers ask (PAA) and which
+// pages Google's AI Overview cites. `load_async_ai_overview` surfaces the AIO element
+// (a small surcharge, refunded when it doesn't fire). Soft-fails to an empty shape.
 
-export async function dfsSerpTopUrls(
+function toSource(r: Record<string, unknown>): DfsSerpSource | null {
+  const url = r.url ? String(r.url) : ''
+  if (!url) return null
+  return { url, domain: r.domain ? String(r.domain) : normalizeDomain(url), title: String(r.title ?? '') }
+}
+
+// Nested DataForSEO arrays (item.items, item.references) may be absent or non-array;
+// coerce defensively so extraction can't throw.
+function asArr(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : []
+}
+
+export async function dfsSerpIntel(
   keyword: string,
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
-): Promise<string[]> {
-  if (!keyword.trim()) return []
+  opts: { locationCode?: number; languageCode?: string; limit?: number; aiOverview?: boolean; onCost?: CostSink } = {},
+): Promise<DfsSerpIntel> {
+  const empty: DfsSerpIntel = { paa: [], related: [], aiOverview: null, featuredSnippet: null, organicUrls: [], features: [] }
+  if (!keyword.trim()) return empty
   const depth = Math.max(10, opts.limit ?? 10)
   const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
-    keyword:       keyword.trim(),
-    location_code: opts.locationCode ?? 2840,
-    language_code: opts.languageCode ?? 'en',
-    device:        'desktop',
+    keyword:                keyword.trim(),
+    location_code:          opts.locationCode ?? 2840,
+    language_code:          opts.languageCode ?? 'en',
+    device:                 'desktop',
     depth,
-  }, 12_000)
-  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))
-  return firstResultItems(json)
+    load_async_ai_overview: opts.aiOverview ?? true,
+  }, 15_000)
+  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth) + 0.002)
+  const items = firstResultItems(json)
+  if (!items.length) return empty
+
+  const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
+
+  // People Also Ask → nested items[].title
+  const paa = items
+    .filter(i => i.type === 'people_also_ask')
+    .flatMap(i => asArr(i.items).map(q => String(q.title ?? '')))
+    .filter(Boolean).slice(0, 12)
+
+  // related_searches → nested items[] (plain strings)
+  const related = items
+    .filter(i => i.type === 'related_searches')
+    .flatMap(i => (Array.isArray(i.items) ? i.items : []).map(String))
+    .filter(Boolean).slice(0, 12)
+
+  // AI Overview → cited source references (text intentionally NOT extracted — untrusted prose)
+  let aiOverview: DfsSerpIntel['aiOverview'] = null
+  const ao = items.find(i => i.type === 'ai_overview')
+  if (ao) {
+    const refs = asArr(ao.references).length
+      ? asArr(ao.references)
+      : asArr(ao.items).flatMap(it => asArr(it.references))
+    const sources = refs.map(toSource).filter((s): s is DfsSerpSource => !!s).slice(0, 8)
+    aiOverview = { present: true, sources }
+  }
+
+  const fs = items.find(i => i.type === 'featured_snippet')
+  const featuredSnippet = fs ? toSource(fs) : null
+
+  const organicUrls = items
     .filter(i => i.type === 'organic' && i.url)
     .map(i => String(i.url))
     .filter(u => !u.includes('youtube.com') && !u.includes('wikipedia.org'))
     .slice(0, opts.limit ?? 5)
+
+  return { paa, related, aiOverview, featuredSnippet, organicUrls, features }
 }
 
 // ── Account balance (free) — used by testConnection ───────────────────────────

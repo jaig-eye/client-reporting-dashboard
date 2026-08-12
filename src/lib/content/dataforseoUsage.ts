@@ -8,7 +8,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 
-export type DfsOperation = 'rank_check' | 'serp_research' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
+export type DfsOperation = 'rank_check' | 'serp_research' | 'serp_intel' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
 
 export async function recordDfsUsage(params: {
   operation: DfsOperation

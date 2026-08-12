@@ -937,16 +937,20 @@ LINKING RULES:
     // Prefer the research captured at topic-generation time; if none was stored
     // (manually-added or older topics), run a live SERP gap analysis at write time
     // when a serp_api_key is configured. Every generated post competes on coverage.
+    // Use the topic-time SerpAPI research first — it's already captured, so there's no
+    // per-write cost and it can't be shadowed by the weaker GSC fallback. Only when it's
+    // absent do we run the live provider chain (DataForSEO → SerpAPI → GSC), which is where
+    // DataForSEO's PAA + AI-Overview intelligence enriches posts. Bounded so a slow SERP
+    // can't stall the background job. Skip the SerpAPI tier if topic-time research already ran.
     let competitorGapSection = formatCompetitorGap(topicData.competitors_researched)
     if (!competitorGapSection) {
-      // Provider chain: DataForSEO → SerpAPI → GSC. Skip the SerpAPI tier if topic-time
-      // research already attempted it (competitors_researched is a non-null object), so
-      // we don't repeat the same failed SERP work.
       const serpAlreadyTried = topicData.competitors_researched != null
-      competitorGapSection = await gatherCompetitorGap({
-        db, clientId: effectiveClientId, keyword: topicData.target_keyword,
-        serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
-      })
+      competitorGapSection = await withDeadline(
+        gatherCompetitorGap({
+          db, clientId: effectiveClientId, keyword: topicData.target_keyword,
+          serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
+        }),
+        8000, '')
     }
 
     // ── Editor direction notes ────────────────────────────────────────────────

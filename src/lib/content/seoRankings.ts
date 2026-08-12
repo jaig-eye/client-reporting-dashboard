@@ -14,7 +14,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { countryToLocationCode } from '@/lib/connectors/dataforseo'
 import type { SeoDevice } from '@/lib/connectors/dataforseo'
 
-export type KeywordMovement = 'up' | 'down' | 'entered' | 'dropped' | 'flat' | 'none'
+type KeywordMovement = 'up' | 'down' | 'entered' | 'dropped' | 'flat' | 'none'
 
 export interface KeywordRank {
   keyword_id:            string
@@ -266,28 +266,6 @@ export async function upsertRanking(params: {
     console.error('[seoRankings] upsertRanking threw:', e)
     return false
   }
-}
-
-/** Update a keyword's enrichment (volume/difficulty/cpc/intent) after a keyword refresh. */
-export async function updateKeywordEnrichment(keywordId: string, data: {
-  search_volume?:      number | null
-  keyword_difficulty?: number | null
-  cpc?:                number | null
-  competition?:        number | null
-  intent?:             string | null
-  monthly_searches?:   unknown[] | null
-}): Promise<void> {
-  try {
-    const db = createAdminClient()
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (data.search_volume      !== undefined) patch.search_volume      = data.search_volume
-    if (data.keyword_difficulty !== undefined) patch.keyword_difficulty = data.keyword_difficulty
-    if (data.cpc                !== undefined) patch.cpc                = data.cpc
-    if (data.competition        !== undefined) patch.competition        = data.competition
-    if (data.intent             !== undefined && data.intent) patch.intent = data.intent
-    if (data.monthly_searches   !== undefined) patch.monthly_searches   = data.monthly_searches
-    await db.from('seo_keywords').update(patch).eq('id', keywordId)
-  } catch { /* soft-fail */ }
 }
 
 function betterPosition(a: number | null, b: number | null): boolean {

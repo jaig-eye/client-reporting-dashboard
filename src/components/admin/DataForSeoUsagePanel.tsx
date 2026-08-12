@@ -21,6 +21,7 @@ interface UsageResponse {
 const OP_LABELS: Record<string, string> = {
   rank_check:       'Rank checks',
   serp_research:    'Competitor research',
+  serp_intel:       'SERP intelligence',
   keyword_overview: 'Keyword data',
   keyword_ideas:    'Keyword ideas',
   search_volume:    'Search volume',

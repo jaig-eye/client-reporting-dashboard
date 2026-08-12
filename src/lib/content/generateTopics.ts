@@ -17,6 +17,9 @@ import {
   isForbiddenBlogKeyword,
 } from '@/lib/content/blogStrategy'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
+import { getClientDfsContext } from '@/lib/content/competitiveIntel'
+import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/dataforseo'
+import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 interface TopicIdea {
   topic:               string
@@ -256,6 +259,24 @@ export async function generateTopicsForClient(
     }
   }
 
+  // ── Keyword demand/difficulty/intent enrichment (DataForSEO — dormant if unconnected) ──
+  // Real figures replace the model's guesswork when selecting/prioritising keywords.
+  const kwDataMap = new Map<string, DfsKeywordData>()
+  try {
+    const dfsCtx = await getClientDfsContext(db, clientId)
+    if (dfsCtx) {
+      const seeds = Array.from(new Set([...growthTargets, ...quickWins].map(t => t.query))).slice(0, 200)
+      if (seeds.length) {
+        const enriched = await dfsKeywordOverview(seeds, dfsCtx.creds, {
+          locationCode: dfsCtx.config.location_code,
+          languageCode: dfsCtx.config.language_code,
+          onCost: c => { void recordDfsUsage({ operation: 'keyword_overview', cost: c, clientId }) },
+        })
+        for (const r of enriched) kwDataMap.set(r.keyword.toLowerCase(), r)
+      }
+    }
+  } catch { /* soft-fail: enrichment absent, prompt renders without it */ }
+
   // ── Sitemap pages ──────────────────────────────────────────────────────────
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -360,16 +381,58 @@ export async function generateTopicsForClient(
     ? `\nTop-performing pages:\n${topPages.slice(0, 8).map(p => `  - "${p.query}" → ${stripDomain(p.page)} (${p.totalClicks} clicks, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
+  // Append real DataForSEO demand/difficulty/intent to a keyword line when available.
+  const kwSuffix = (q: string): string => {
+    const d = kwDataMap.get(q.toLowerCase())
+    if (!d) return ''
+    const parts: string[] = []
+    if (d.search_volume != null)      parts.push(`vol ${d.search_volume}`)
+    if (d.keyword_difficulty != null) parts.push(`KD ${Math.round(d.keyword_difficulty)}`)
+    if (d.intent)                     parts.push(`intent ${d.intent}`)
+    return parts.length ? ` | ${parts.join(', ')}` : ''
+  }
+
   const gscGrowthText = growthTargets.length > 0
-    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article and internally link it to that page.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article and internally link it to that page.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
   const gscQuickWinsText = quickWins.length > 0
-    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
   const gscCtrText = ctrIssues.length > 0
     ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
+    : ''
+
+  // ── Cannibalization guardrails from real GSC data (first-party — no fencing needed) ──
+  // Split on the FIRST '||' (page is a URL with no '||'), so a query containing '||' stays intact.
+  const gscRows = Array.from(gscMap.entries()).map(([k, v]) => {
+    const i = k.indexOf('||')
+    return { page: k.slice(0, i), query: k.slice(i + 2), ...v }
+  })
+  const bucketedQueries = new Set([...growthTargets, ...quickWins, ...ctrIssues].map(t => t.query))
+
+  // Already winning (pos 1–4, has clicks) and not already surfaced above → do not create competing content.
+  // weightedPos >= 1 excludes rows with an unset/zero position that would render a misleading "#0".
+  const alreadyWinning = gscRows
+    .filter(r => r.weightedPos >= 1 && r.weightedPos <= 4 && r.totalClicks > 0 && !bucketedQueries.has(r.query))
+    .sort((a, b) => a.weightedPos - b.weightedPos)
+    .slice(0, 12)
+  const alreadyWinningText = alreadyWinning.length > 0
+    ? `\nALREADY RANKING TOP-5 — DO NOT CANNIBALIZE (live Google positions). Do NOT propose a new primary page for any of these; at most a support/cluster article that internally links to the exact ranking URL:\n${alreadyWinning.map(r => `  - "${r.query}" is already #${Math.round(r.weightedPos)} at ${stripDomain(r.page)}`).join('\n')}`
+    : ''
+
+  // Self-cannibalization: the same query ranks 2+ of the client's own URLs.
+  const byQuery = new Map<string, Set<string>>()
+  for (const r of gscRows) {
+    if (r.totalImpr <= 0) continue
+    const set = byQuery.get(r.query) ?? new Set<string>()
+    set.add(r.page)
+    byQuery.set(r.query, set)
+  }
+  const cannibalized = Array.from(byQuery.entries()).filter(([, pages]) => pages.size >= 2).slice(0, 10)
+  const cannibalizationText = cannibalized.length > 0
+    ? `\n⚠ SELF-CANNIBALIZATION — the same query already ranks multiple of this client's own URLs. Do NOT add another competing page; only propose content that reinforces the single strongest URL:\n${cannibalized.map(([q, pages]) => `  - "${q}" is split across ${pages.size} URLs: ${Array.from(pages).map(stripDomain).slice(0, 4).join(', ')}`).join('\n')}`
     : ''
 
   const sitemapText = sitemapPages.length > 0
@@ -509,7 +572,7 @@ Return ONLY a JSON array of exactly ${count} objects:
     "target_keyword": "primary keyword phrase",
     "search_intent": "${intentEnumText}",
     "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
-    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. Estimated volume and difficulty context. Any seasonal or trending component to the opportunity.",
+    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. When real search volume / keyword difficulty (KD 0–100) / intent figures are shown for the source keyword above, cite them and prefer lower-difficulty, higher-volume, intent-matching keywords. Any seasonal or trending component.",
     "ranking_strategy": "3–5 sentences: Which competitor gaps this article fills. What unique angle or depth will outperform existing page-1 results. Specific linking strategy (which existing site page this supports and why). Why this approach wins for this client over generic competitors.",
     "audience_intent": "2–3 sentences: Who specifically is searching this (describe the person, their situation, and what they are trying to decide or do). What stage of the buyer/research journey they are in. What outcome they need from the content.",
     "why_now": "2–3 sentences: Specific seasonal or trending timing reason with data context if available. Competitor activity or content gap timing. Why generating this topic now versus later maximises the ranking window.",
@@ -527,6 +590,8 @@ ${gscQuickWinsText}
 ${gscCtrText}
 ${competitorText}
 ${gscTopText}
+${alreadyWinningText}
+${cannibalizationText}
 ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
