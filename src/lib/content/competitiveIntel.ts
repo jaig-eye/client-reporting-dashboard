@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { createAdminClient } from '@/lib/supabase/server'
-import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors } from './competitorResearch'
+import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors, type CompetitorResearch } from './competitorResearch'
 import { recordDfsUsage } from './dataforseoUsage'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
 
@@ -27,12 +27,13 @@ type Db = ReturnType<typeof createAdminClient>
 
 interface DfsContext { creds: DfsCreds; domain: string | null; config: SeoTrackingConfig }
 
-/** Resolve DataForSEO credentials + tracking config for a client (connector or env). */
+/**
+ * Resolve DataForSEO credentials + tracking config for a client. Requires an actual
+ * DataForSEO client_connection to exist (explicit per-client enrolment) — env-level
+ * DATAFORSEO_* creds alone do NOT auto-enroll every client into paid SERP/keyword calls;
+ * they only fill in the password for a client that IS connected.
+ */
 export async function getClientDfsContext(db: Db, clientId: string): Promise<DfsContext | null> {
-  let auth: Record<string, unknown> = {}
-  let connConfig: Record<string, unknown> | null = null
-  let clientConfig: Record<string, unknown> | null = null
-  let domain: string | null = null
   try {
     const { data } = await db
       .from('client_connections')
@@ -40,35 +41,34 @@ export async function getClientDfsContext(db: Db, clientId: string): Promise<Dfs
       .eq('client_id', clientId)
     const rows = (data ?? []) as Array<{ external_id?: string; config?: Record<string, unknown>; connector?: { type?: string; auth?: Record<string, unknown>; config?: Record<string, unknown> } }>
     const dfsRow = rows.find(r => r.connector?.type === 'dataforseo')
-    if (dfsRow) {
-      auth         = dfsRow.connector?.auth ?? {}
-      connConfig   = dfsRow.connector?.config ?? null
-      clientConfig = dfsRow.config ?? null
-      domain       = dfsRow.external_id ?? null
-    }
-  } catch { /* fall through to env-only creds */ }
-
-  const creds = resolveDfsCreds(auth)   // also falls back to DATAFORSEO_* env
-  if (!creds) return null
-  return { creds, domain, config: resolveSeoConfig(connConfig, clientConfig) }
+    if (!dfsRow) return null   // client not connected to DataForSEO → dormant
+    const creds = resolveDfsCreds(dfsRow.connector?.auth ?? {})   // env fills the password if absent
+    if (!creds) return null
+    return { creds, domain: dfsRow.external_id ?? null, config: resolveSeoConfig(dfsRow.connector?.config, dfsRow.config) }
+  } catch {
+    return null
+  }
 }
 
 /**
- * Build the competitor-gap prompt block for a keyword using the best available
- * provider. Pass `serpApiKey: null` to skip the SerpAPI tier (e.g. when topic-time
- * research already tried it) — DataForSEO and GSC are still attempted.
+ * Build the competitor-gap prompt block for a keyword using the best available provider,
+ * in priority order: DataForSEO (when the client is connected) → topic-time stored SerpAPI
+ * research → live SerpAPI → GSC demand signals. Pass `serpApiKey: null` to skip the live
+ * SerpAPI tier (e.g. topic-time research already tried it); pass `storedResearch` so a
+ * populated capture is preferred over the weaker GSC fallback.
  */
 export async function gatherCompetitorGap(params: {
-  db:          Db
-  clientId:    string
-  keyword:     string | null | undefined
-  serpApiKey?: string | null
+  db:              Db
+  clientId:        string
+  keyword:         string | null | undefined
+  serpApiKey?:     string | null
+  storedResearch?: CompetitorResearch | null
 }): Promise<string> {
   const keyword = params.keyword?.trim()
   if (!keyword) return ''
 
-  // Tier 1 — DataForSEO: ONE SERP call yields competitor coverage AND SERP intelligence
-  // (People-Also-Ask + AI-Overview cited sources). Both fenced blocks are returned together.
+  // Tier 1 — DataForSEO (only when the client is connected): ONE SERP call yields competitor
+  // coverage AND SERP intelligence (People-Also-Ask + AI-Overview cited sources), together.
   try {
     const dfs = await getClientDfsContext(params.db, params.clientId)
     if (dfs) {
@@ -86,7 +86,13 @@ export async function gatherCompetitorGap(params: {
     }
   } catch { /* fall through */ }
 
-  // Tier 2 — SerpAPI
+  // Tier 1.5 — topic-time stored SerpAPI research (already captured; beats the GSC fallback).
+  if (params.storedResearch) {
+    const gap = formatCompetitorGap(params.storedResearch)
+    if (gap) return gap
+  }
+
+  // Tier 2 — live SerpAPI
   if (params.serpApiKey) {
     try {
       const gap = formatCompetitorGap(await researchCompetitors(keyword, params.serpApiKey))

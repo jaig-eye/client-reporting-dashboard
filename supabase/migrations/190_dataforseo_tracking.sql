@@ -53,10 +53,14 @@ ALTER TABLE seo_rankings DROP CONSTRAINT IF EXISTS seo_rankings_keyword_date_dev
 ALTER TABLE seo_rankings ADD CONSTRAINT seo_rankings_keyword_date_device_key
   UNIQUE (keyword_id, date, device);
 
--- 4. Rewrite the current-rank view: latest DESKTOP snapshot per keyword (fallback to any
---    device), with previous same-device position and an explicit movement label so the UI
---    can distinguish "never ranked" from "dropped out of the tracked window".
-CREATE OR REPLACE VIEW seo_keyword_current AS
+-- 4. Rewrite the current-rank view: newest snapshot per keyword (desktop breaks a same-date
+--    tie), with previous same-device position and an explicit movement label so the UI can
+--    distinguish "never ranked" from "dropped out of the tracked window".
+--    DROP first (not CREATE OR REPLACE): 189 created this view with a different column order,
+--    and Postgres forbids reordering columns via CREATE OR REPLACE. The view is only read by
+--    soft-failing helpers, so a drop/recreate is safe.
+DROP VIEW IF EXISTS seo_keyword_current;
+CREATE VIEW seo_keyword_current AS
 SELECT
   k.id                  AS keyword_id,
   k.client_id,
@@ -98,7 +102,7 @@ LEFT JOIN LATERAL (
   SELECT r.position, r.rank_absolute, r.url, r.date, r.device
   FROM seo_rankings r
   WHERE r.keyword_id = k.id
-  ORDER BY (r.device = 'desktop') DESC, r.date DESC   -- prefer desktop, then most recent
+  ORDER BY r.date DESC, (r.device = 'desktop') DESC   -- newest first; desktop breaks a same-date tie
   LIMIT 1
 ) latest ON TRUE
 LEFT JOIN LATERAL (

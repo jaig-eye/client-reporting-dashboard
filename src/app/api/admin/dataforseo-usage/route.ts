@@ -15,18 +15,19 @@ export async function GET(req: NextRequest) {
   const from = req.nextUrl.searchParams.get('from') ?? undefined
   const to   = req.nextUrl.searchParams.get('to') ?? undefined
 
-  // Live balance from the DataForSEO connector (or env) — free call, soft-fails to null.
-  let balance: number | null = null
-  let configured = false
+  // Resolve DataForSEO creds (connector auth or env) — a cheap DB lookup.
+  let creds: ReturnType<typeof resolveDfsCreds> = null
   try {
     const db = createAdminClient()
     const { data } = await db.from('connectors').select('auth').eq('type', 'dataforseo').maybeSingle()
-    const auth = ((data as { auth?: Record<string, unknown> } | null)?.auth) ?? {}
-    const creds = resolveDfsCreds(auth)
-    configured = !!creds
-    if (creds) balance = await dfsAccountBalance(creds)
+    creds = resolveDfsCreds(((data as { auth?: Record<string, unknown> } | null)?.auth) ?? {})
   } catch { /* soft-fail */ }
 
-  const summary = await getDfsUsageSummary({ from, to })
-  return NextResponse.json({ configured, balance, currency: 'USD', summary })
+  // Run the live balance probe (up to 8s) and the usage aggregation concurrently, so the
+  // panel renders after max(balance, summary) rather than their sum.
+  const [balance, summary] = await Promise.all([
+    creds ? dfsAccountBalance(creds).catch(() => null) : Promise.resolve(null),
+    getDfsUsageSummary({ from, to }),
+  ])
+  return NextResponse.json({ configured: !!creds, balance, currency: 'USD', summary })
 }

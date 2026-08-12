@@ -23,11 +23,13 @@ export default function NewConnectionForm({
   // Per-client DataForSEO tracking overrides (blank depth = inherit agency default).
   const [depthOverride, setDepthOverride] = useState('')
   const [devices,       setDevices]       = useState<('desktop' | 'mobile')[]>(['desktop', 'mobile'])
+  const [devicesTouched, setDevicesTouched] = useState(false)   // false = inherit agency default
 
   // Domain-based connectors (Ahrefs, DataForSEO): a single root-domain input, no discovery.
   const isDomainConnector = connectorType === 'ahrefs' || connectorType === 'dataforseo'
   const isDfs = connectorType === 'dataforseo'
   function toggleDevice(d: 'desktop' | 'mobile') {
+    setDevicesTouched(true)
     setDevices(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])
   }
 
@@ -53,7 +55,8 @@ export default function NewConnectionForm({
     const config = isDfs
       ? {
           ...(depthOverride.trim() ? { rank_depth: Math.max(10, Math.min(100, Number(depthOverride) || 100)) } : {}),
-          devices: devices.length ? devices : ['desktop'],
+          // Only override devices when the user actually changed them; otherwise inherit the agency default.
+          ...(devicesTouched ? { devices: devices.length ? devices : ['desktop'] } : {}),
         }
       : undefined
 

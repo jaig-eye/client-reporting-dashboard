@@ -57,6 +57,8 @@ export default async function ConnectionsPage({
   const dfsAuth      = (dfsConnector?.auth as Record<string, unknown> | undefined) ?? {}
   const dfsConfig    = (dfsConnector?.config as Record<string, unknown> | undefined) ?? {}
   const dfsHasCreds  = !!(dfsAuth.dataforseo_login || dfsAuth.dataforseo_api_key)
+    || !!(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD)
+    || !!process.env.DATAFORSEO_API_KEY
   const dfsDevices   = Array.isArray(dfsConfig.devices) ? (dfsConfig.devices as SeoDevice[]) : undefined
   const dfsDepth     = typeof dfsConfig.rank_depth === 'number' ? dfsConfig.rank_depth : undefined
 

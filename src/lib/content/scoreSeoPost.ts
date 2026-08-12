@@ -40,9 +40,9 @@ export function scoreSeoPost(params: {
 
   if (overOptimised) warnings.push(`Keyword density ${(density * 100).toFixed(1)}% may appear over-optimised`)
 
-  // ── Punctuation (writer quality bar bans em/en dashes) ───────────────────────
-  const emDashCount = (html.match(/[—–]/g) ?? []).length
-  if (emDashCount > 0) warnings.push(`${emDashCount} em/en dash(es) present — the writer style bans them`)
+  // ── Punctuation (writer quality bar bans the em dash; en dash in numeric ranges is fine) ──
+  const emDashCount = (html.match(/—/g) ?? []).length
+  if (emDashCount > 0) warnings.push(`${emDashCount} em dash(es) present — the writer style bans them`)
 
   // ── Heading structure ──────────────────────────────────────────────────────
   const h1Count = (html.match(/<h1[^>]*>/gi) ?? []).length

@@ -230,12 +230,12 @@ export async function dfsSerpRank(
   const items = firstResultItems(json)
   if (!items.length) return empty
   const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
-  // First organic item whose domain/url matches the target.
+  // First organic item whose HOST is the target or a subdomain of it. Must be a host-
+  // boundary match — a raw substring test would let "supercars.com" match target "cars.com".
   const match = items.find(i => {
     if (i.type !== 'organic') return false
-    const d = String(i.domain ?? '')
-    const u = String(i.url ?? '')
-    return normalizeDomain(d || u) === target || u.toLowerCase().includes(target)
+    const host = normalizeDomain(String(i.domain ?? '') || String(i.url ?? ''))
+    return host === target || host.endsWith('.' + target)
   })
   if (!match) return { ...empty, serp_features: features }
   return {

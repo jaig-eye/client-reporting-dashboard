@@ -6,20 +6,21 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice } from '@/lib/connectors/dataforseo'
+import { timingSafeCompare } from '@/lib/auth'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 export const maxDuration = 300
 
-// Cap a single run so a large keyword universe can't overrun the function timeout;
-// remaining keywords are picked up on the next run. Logged, never silent.
+// Cap a single run so a large keyword universe can't overrun the function timeout.
+// getTrackedKeywords orders by last_checked_at (oldest first), so each capped run rotates
+// through the whole universe instead of re-checking the same prefix. Logged, never silent.
 const MAX_CHECKS_PER_RUN = 600
 const CONCURRENCY = 6
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization')
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !timingSafeCompare(req.headers.get('authorization'), `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -47,45 +48,49 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, dormant: true, checked: 0 })
   }
 
-  // Build the flat work list (keyword × device) across all clients.
+  // Resolve per-connection creds/domain/config once; drop unusable connections.
+  const usable = connections
+    .map(conn => {
+      const creds  = resolveDfsCreds(conn.connector?.auth ?? {})
+      const domain = (conn.external_id ?? '').trim()
+      if (!creds || !domain) return null
+      return { clientId: conn.client_id, creds, domain, cfg: resolveSeoConfig(conn.connector?.config, conn.config) }
+    })
+    .filter(Boolean) as Array<{ clientId: string; creds: DfsCreds; domain: string; cfg: ReturnType<typeof resolveSeoConfig> }>
+
+  // Fetch every client's tracked keywords concurrently (one round-trip each, in parallel).
+  const keywordLists = await Promise.all(usable.map(u => getTrackedKeywords(u.clientId)))
+
   type Job = {
     clientId: string; domain: string; keywordId: string; keyword: string
-    locationCode: number; languageCode: string; device: SeoDevice
-    creds: ReturnType<typeof resolveDfsCreds>
+    locationCode: number; languageCode: string; device: SeoDevice; depth: number; creds: DfsCreds
   }
   const jobs: Job[] = []
-  for (const conn of connections) {
-    const creds = resolveDfsCreds(conn.connector?.auth ?? {})
-    const domain = (conn.external_id ?? '').trim()
-    if (!creds || !domain) continue
-    const cfg = resolveSeoConfig(conn.connector?.config, conn.config)
-    const keywords = await getTrackedKeywords(conn.client_id)
-    for (const kw of keywords) {
-      for (const device of cfg.devices) {
+  usable.forEach((u, i) => {
+    for (const kw of keywordLists[i]) {
+      for (const device of u.cfg.devices) {
         jobs.push({
-          clientId: conn.client_id, domain, keywordId: kw.id, keyword: kw.keyword,
-          locationCode: kw.location_code || cfg.location_code,
-          languageCode: kw.language_code || cfg.language_code,
-          device, creds,
+          clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
+          locationCode: kw.location_code || u.cfg.location_code,
+          languageCode: kw.language_code || u.cfg.language_code,
+          device, depth: u.cfg.rank_depth, creds: u.creds,
         })
       }
     }
-  }
+  })
 
   const capped = jobs.length > MAX_CHECKS_PER_RUN
   const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)
   let checked = 0, written = 0
-  // Accumulate real per-request cost per client (recorded once per client after the run).
-  const usage = new Map<string, { cost: number; units: number }>()
+  const usage = new Map<string, { cost: number; units: number }>()   // real per-request cost per client
+  const checkedKeywordIds = new Set<string>()                        // for a single batched last_checked_at write
 
   // Bounded-concurrency pool.
   async function worker(slice: Job[]) {
     for (const job of slice) {
-      if (!job.creds) continue
       checked++
       const rank = await dfsSerpRank(job.domain, job.keyword, job.creds, {
-        locationCode: job.locationCode, languageCode: job.languageCode,
-        device: job.device, depth: resolveDepthForClient(connections, job.clientId),
+        locationCode: job.locationCode, languageCode: job.languageCode, device: job.device, depth: job.depth,
         onCost: c => {
           const u = usage.get(job.clientId) ?? { cost: 0, units: 0 }
           u.cost += c; u.units += 1; usage.set(job.clientId, u)
@@ -96,12 +101,19 @@ export async function GET(req: NextRequest) {
         position: rank.position, rankAbsolute: rank.rank_absolute, url: rank.url,
         serpFeatures: rank.serp_features,
       })
-      if (ok) written++
+      if (ok) { written++; checkedKeywordIds.add(job.keywordId) }
     }
   }
   const chunks: Job[][] = Array.from({ length: CONCURRENCY }, () => [])
   runJobs.forEach((j, i) => chunks[i % CONCURRENCY].push(j))
   await Promise.all(chunks.map(worker))
+
+  // One batched last_checked_at write for every keyword actually checked (drives rotation).
+  if (checkedKeywordIds.size) {
+    try {
+      await db.from('seo_keywords').update({ last_checked_at: new Date().toISOString() }).in('id', Array.from(checkedKeywordIds))
+    } catch (e) { console.warn('[cron/dataforseo-rankings] last_checked_at batch failed:', e) }
+  }
 
   // Record aggregated spend (one row per client per run).
   let cost = 0
@@ -111,16 +123,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (capped) {
-    console.warn(`[cron/dataforseo-rankings] capped at ${MAX_CHECKS_PER_RUN}/${jobs.length} checks this run`)
+    console.warn(`[cron/dataforseo-rankings] capped at ${MAX_CHECKS_PER_RUN}/${jobs.length} checks this run (rotates by last_checked_at)`)
   }
-  return NextResponse.json({ ok: true, clients: connections.length, checked, written, cost: Number(cost.toFixed(4)), total: jobs.length, capped })
-}
-
-// Depth is per-client-configurable; resolve it from the client's connection config.
-function resolveDepthForClient(
-  connections: Array<{ client_id: string; config?: Record<string, unknown> | null; connector?: { config?: Record<string, unknown> } }>,
-  clientId: string,
-): number {
-  const conn = connections.find(c => c.client_id === clientId)
-  return resolveSeoConfig(conn?.connector?.config, conn?.config).rank_depth
+  return NextResponse.json({ ok: true, clients: usable.length, checked, written, cost: Number(cost.toFixed(4)), total: jobs.length, capped })
 }

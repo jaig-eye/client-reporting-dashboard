@@ -73,8 +73,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { auth: _auth, ...safeData } = data
       return NextResponse.json({ ...safeData, status: testStatus, config: testConfig })
-    } catch (e) {
+    } catch {
       await db.from('connectors').update({ status: 'error' }).eq('id', id)
+      const { auth: _errAuth, ...errData } = data as typeof data & { auth?: unknown }
+      return NextResponse.json({ ...errData, status: 'error' })
     }
   }
 

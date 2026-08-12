@@ -219,6 +219,9 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
       .select('id, keyword, location_code, language_code')
       .eq('client_id', clientId)
       .eq('is_tracked', true)
+      // Least-recently-checked (and never-checked) first, so a capped cron run rotates
+      // through the whole keyword universe instead of re-checking the same prefix.
+      .order('last_checked_at', { ascending: true, nullsFirst: true })
     if (error || !Array.isArray(data)) return []
     return (data as Record<string, unknown>[]).map(k => ({
       id:            String(k.id),
@@ -259,8 +262,6 @@ export async function upsertRanking(params: {
       provider:      params.provider ?? 'dataforseo',
     }, { onConflict: 'keyword_id,date,device' })
     if (error) { console.error('[seoRankings] upsertRanking:', error.message); return false }
-    // Touch the keyword's last_checked_at.
-    await db.from('seo_keywords').update({ last_checked_at: new Date().toISOString() }).eq('id', params.keywordId)
     return true
   } catch (e) {
     console.error('[seoRankings] upsertRanking threw:', e)
