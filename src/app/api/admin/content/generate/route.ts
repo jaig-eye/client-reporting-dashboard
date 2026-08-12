@@ -13,7 +13,7 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
-import { BLOG_WRITER_INTENT_REMINDER, BLOG_WRITER_QUALITY_RULES } from '@/lib/content/blogStrategy'
+import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES } from '@/lib/content/blogStrategy'
 import { formatCompetitorGap, liveCompetitorGap } from '@/lib/content/competitorResearch'
 import { registerKeyword } from '@/lib/content/seoRankings'
 import type { SeoBrief } from '@/lib/content/types'
@@ -438,6 +438,33 @@ function extractNonNegotiableRules(masterPrompt: string): string {
   return m ? m[1].trim() : ''
 }
 
+// Extract a concise, keyword-like seed from a free-form manual prompt for SERP
+// research. Strips instruction verbs and "blog post about" scaffolding.
+function extractManualSeed(prompt: string | null | undefined): string {
+  return (prompt ?? '').trim()
+    .replace(/^(please\s+)?(write|create|generate|draft|compose|produce|make|build)\s+(me\s+)?(a|an|the)?\s*/i, '')
+    .replace(/^(blog\s+post|article|guide|page|post|piece|write[- ]up)\s+(about|on|covering|for|regarding)\s+/i, '')
+    .replace(/["'.\s]+$/, '')
+    .slice(0, 80)
+    .trim()
+}
+
+// True only when the seed reads like a search query, not a leftover instruction
+// sentence — prevents wasting a SERP call on "create a comprehensive guide comparing…".
+function looksKeywordLike(seed: string): boolean {
+  if (seed.length < 3) return false
+  const words = seed.split(/\s+/).filter(Boolean)
+  if (words.length > 8) return false
+  if (/\b(write|create|generate|draft|explain|describe|compare|list|discuss|include|ensure|should|make sure)\b/i.test(seed)) return false
+  return true
+}
+
+// Bound a promise so it can never add more than `ms` of latency to a request path;
+// resolves to `fallback` if it overruns (the underlying fetch self-aborts via its own timeout).
+function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))])
+}
+
 function buildSystemPrompt(
   agency: string,
   clientContext: string,
@@ -449,10 +476,10 @@ function buildSystemPrompt(
   // Appended last so it survives recency bias — keeps a stale near-me topic from
   // producing a near-me article at write time (see blogStrategy.ts).
   const blogIntentNote = blogReminder ? `\n\n${blogReminder}` : ''
-  // Tier 1 writer-quality bar — anti-AI-tell voice, em-dash ban, Key Takeaways box,
-  // clean heading hierarchy, citation honesty. Appended near the end (recency) for
-  // every post so the draft reads like an expert wrote it.
-  const qualityNote = `\n\n${BLOG_WRITER_QUALITY_RULES}`
+  // Tier 1 writer-quality bar — anti-AI-tell voice, em-dash ban, clean heading
+  // hierarchy, citation honesty. Universal (all content types). Blog-only structure
+  // (Key Takeaways box, FAQ) is carried by blogReminder, gated at the call sites.
+  const qualityNote = `\n\n${WRITER_QUALITY_RULES}`
   const currentYear = new Date().getFullYear()
   const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
 
@@ -768,7 +795,7 @@ async function runTopicGeneration({
       ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
       : ''
 
-    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, contentType === 'blog' ? BLOG_WRITER_INTENT_REMINDER : null)
+    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, contentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)
       + eeatSection + restrictionSection
 
     // ── Build user prompt ──────────────────────────────────────────────────────
@@ -1396,12 +1423,14 @@ export async function POST(request: NextRequest) {
   // Live competitor-gap analysis for the manual path. Use a concise seed from the
   // prompt (a full instruction makes a poor SERP query) and only when it reads
   // keyword-like. Soft-fails to '' with no serp_api_key or on error.
-  const manualSeed = (prompt ?? '').trim().replace(/^write\s+(a|an|about|me a)?\s*/i, '').slice(0, 80).trim()
-  const manualCompetitorSection = manualSeed.length >= 3
-    ? await liveCompetitorGap(manualSeed, agencySettings.serp_api_key)
+  // Manual path is synchronous (the editor waits on the response), so bound the live
+  // SERP gap to a 5s deadline and only run it when the seed reads like a real keyword.
+  const manualSeed = extractManualSeed(prompt)
+  const manualCompetitorSection = looksKeywordLike(manualSeed)
+    ? await withDeadline(liveCompetitorGap(manualSeed, agencySettings.serp_api_key), 5000, '')
     : ''
 
-  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? BLOG_WRITER_INTENT_REMINDER : null)
+  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)
     + manualEeatSection + manualRestrictionSection + manualCompetitorSection
 
   let rawText: string

@@ -181,7 +181,9 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       const res = await fetch('/api/admin/content/sitemap-pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: clientId, urls, is_excluded: true }),
+        // Clear is_priority too (priority + excluded are mutually exclusive), matching
+        // the optimistic update and the single-toggle path.
+        body: JSON.stringify({ client_id: clientId, urls, is_excluded: true, is_priority: false }),
       })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to exclude')
     } catch (err) {

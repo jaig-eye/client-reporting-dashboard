@@ -62,7 +62,11 @@ export const BLOG_WRITER_INTENT_REMINDER =
 // claude-blog agent prompts by AgriciDaniel (MIT) — see
 // docs/reference/claude-blog-writer.md and docs/reference/claude-blog-seo.md.
 // ─────────────────────────────────────────────────────────────────────────────
-export const BLOG_WRITER_QUALITY_RULES = `
+// Universal quality bar — applies to EVERY content type (blog, service page, regular
+// page). Voice, banned phrases, punctuation, heading hierarchy, citation honesty,
+// self-check. (Blog-only structure like the Key Takeaways box lives in
+// BLOG_STRUCTURE_RULES below so it is not forced onto service/landing pages.)
+export const WRITER_QUALITY_RULES = `
 WRITER QUALITY BAR — applies to every sentence. These rules separate expert content from generic AI output:
 
 VOICE & ORIGINALITY
@@ -79,8 +83,6 @@ PUNCTUATION
 
 STRUCTURE
 - Exactly one H1 (the title). H2 for main sections, H3 for subsections. Never skip a heading level (no H2 followed directly by H4).
-- Immediately AFTER the introduction, output a Key Takeaways box: an <h2>Key Takeaways</h2> followed by a <ul> of 3–5 self-contained bullets summarizing the post's key findings or recommendations. Each bullet must make sense on its own; include a specific fact or number only when it genuinely helps.
-- Include a real FAQ section (H2 "Frequently Asked Questions" with question H3s) ONLY when the topic naturally raises follow-up questions — never as filler.
 
 EVIDENCE & CLAIMS
 - Support any statistic or factual claim by naming its source in the prose (e.g. "according to the EPA"). Never invent statistics, studies, dates, or quotes. If you are not confident a number is real, make the point qualitatively instead.
@@ -89,9 +91,21 @@ EVIDENCE & CLAIMS
 SELF-CHECK before returning the JSON — silently verify and fix:
 - Zero em dashes; no banned phrases remain.
 - Every claim has context; every statistic names a source.
-- Clean heading hierarchy (H1 → H2 → H3, no skipped levels); Key Takeaways box present right after the intro.
+- Clean heading hierarchy (H1 → H2 → H3, no skipped levels).
 - Natural tone throughout; no two adjacent paragraphs open with the same word or structure.
 - Meta description accurately reflects the visible content and reads naturally.`.trim()
+
+// Blog-ONLY structure. Appended to the writer prompt only for content_type 'blog'
+// (via BLOG_WRITER_INTENT_REMINDER's gating) so service/landing pages are not forced
+// to carry a Key Takeaways box or FAQ.
+export const BLOG_STRUCTURE_RULES = `
+BLOG STRUCTURE (blog posts only):
+- Immediately AFTER the introduction, output a Key Takeaways box: an <h2>Key Takeaways</h2> followed by a <ul> of 3–5 self-contained bullets summarizing the post's key findings or recommendations. Each bullet must make sense on its own; include a specific fact or number only when it genuinely helps.
+- Include a real FAQ section (H2 "Frequently Asked Questions" with question H3s) ONLY when the topic naturally raises follow-up questions — never as filler.
+- Before returning, confirm the Key Takeaways box is present right after the intro.`.trim()
+
+/** @deprecated Use WRITER_QUALITY_RULES (universal) + BLOG_STRUCTURE_RULES (blog only). */
+export const BLOG_WRITER_QUALITY_RULES = WRITER_QUALITY_RULES
 
 const BLOG_INTENT_ALLOWED = new Set(BLOG_INTENT_ENUM.split('|').map(s => s.trim()))
 

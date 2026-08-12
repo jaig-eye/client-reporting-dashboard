@@ -167,7 +167,9 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
 // A "Key Takeaways" H2/H3 immediately reinforced by a list — the summary box the
 // writer prompt now requires after the intro.
 function hasKeyTakeaways(html: string): boolean {
-  return /<h[23][^>]*>\s*key\s*takeaways\b/i.test(html)
+  // Allow optional inline tags/entities between the heading tag and the text, e.g.
+  // <h2><strong>Key Takeaways</strong></h2>.
+  return /<h[23][^>]*>(?:\s|<[^>]+>|&nbsp;)*key\s*takeaways/i.test(html)
 }
 
 // No skipped heading levels. The post title is the H1, so body headings should start
@@ -186,7 +188,9 @@ function headingHierarchyClean(html: string): boolean {
   return true
 }
 
-const URL_STOP_WORDS = new Set(['the','and','of','a','an','to','in','for','with','on','at','by','or','your','you','is','are'])
+// 'to'/'you'/'your' deliberately excluded: they appear in perfectly clean slugs
+// (how-to-clean-gutters, protect-your-home) and flagging them is noise.
+const URL_STOP_WORDS = new Set(['the','and','of','a','an','in','for','with','on','at','by','or','is','are'])
 // Clean, keyword-friendly slug: lowercase, hyphen-delimited, ≤6 words, no stop words,
 // no 4-digit year. Mirrors the URL-structure guidance in docs/reference/claude-blog-seo.md.
 function slugQualityClean(slug: string): boolean {

@@ -268,10 +268,12 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       {/* Right panel — active section */}
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-      {/* Brand DNA — reused as-is (own save + AI auto-fill) */}
-      {activeSection === 'brand' && (
+      {/* Brand DNA — reused as-is (own save + AI auto-fill). Kept MOUNTED and hidden
+          (not conditionally rendered) so unsaved edits survive a sub-nav switch —
+          it holds its own internal form state, unlike the parent-owned sections below. */}
+      <div style={{ display: activeSection === 'brand' ? 'block' : 'none' }}>
         <ClientContentSettingsForm clientId={clientId} sites={sites} />
-      )}
+      </div>
 
       {/* ── Publishing ─────────────────────────────────────────────────────── */}
       {activeSection === 'publishing' && (

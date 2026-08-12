@@ -48,13 +48,22 @@ export async function PATCH(request: NextRequest) {
   // ── Bulk path: apply the same flag to many URLs at once (e.g. exclude all blogs)
   if (Array.isArray(body.urls)) {
     if (!body.client_id) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
-    const urls = body.urls.filter(u => typeof u === 'string' && u.trim())
+    const MAX_BULK = 2000
+    // Dedupe (a repeated URL makes ON CONFLICT DO UPDATE fail the whole batch) and cap
+    // to keep the single upsert within Postgres' statement timeout / body limits.
+    const urls = Array.from(new Set(
+      body.urls.filter(u => typeof u === 'string' && u.trim()).map(u => u.trim())
+    )).slice(0, MAX_BULK)
     if (urls.length === 0) return NextResponse.json({ ok: true, updated: 0 })
+    // Coerce flags to real booleans (a stray non-boolean would otherwise reach Postgres).
+    const priority = body.is_priority     !== undefined ? Boolean(body.is_priority)     : undefined
+    const excluded = body.is_excluded     !== undefined ? Boolean(body.is_excluded)     : undefined
+    const service  = body.is_service_page !== undefined ? Boolean(body.is_service_page) : undefined
     const rows = urls.map(url => {
       const row: Record<string, unknown> = { client_id: body.client_id, url }
-      if (body.is_priority     !== undefined) row.is_priority     = body.is_priority
-      if (body.is_excluded     !== undefined) row.is_excluded     = body.is_excluded
-      if (body.is_service_page !== undefined) row.is_service_page = body.is_service_page
+      if (priority !== undefined) row.is_priority     = priority
+      if (excluded !== undefined) row.is_excluded     = excluded
+      if (service  !== undefined) row.is_service_page = service
       return row
     })
     const db = createAdminClient()
