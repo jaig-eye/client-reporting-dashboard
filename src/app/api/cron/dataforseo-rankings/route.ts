@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice } from '@/lib/connectors/dataforseo'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
+import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 export const maxDuration = 300
 
@@ -74,6 +75,8 @@ export async function GET(req: NextRequest) {
   const capped = jobs.length > MAX_CHECKS_PER_RUN
   const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)
   let checked = 0, written = 0
+  // Accumulate real per-request cost per client (recorded once per client after the run).
+  const usage = new Map<string, { cost: number; units: number }>()
 
   // Bounded-concurrency pool.
   async function worker(slice: Job[]) {
@@ -83,6 +86,10 @@ export async function GET(req: NextRequest) {
       const rank = await dfsSerpRank(job.domain, job.keyword, job.creds, {
         locationCode: job.locationCode, languageCode: job.languageCode,
         device: job.device, depth: resolveDepthForClient(connections, job.clientId),
+        onCost: c => {
+          const u = usage.get(job.clientId) ?? { cost: 0, units: 0 }
+          u.cost += c; u.units += 1; usage.set(job.clientId, u)
+        },
       })
       const ok = await upsertRanking({
         keywordId: job.keywordId, clientId: job.clientId, date: today, device: job.device,
@@ -96,10 +103,17 @@ export async function GET(req: NextRequest) {
   runJobs.forEach((j, i) => chunks[i % CONCURRENCY].push(j))
   await Promise.all(chunks.map(worker))
 
+  // Record aggregated spend (one row per client per run).
+  let cost = 0
+  for (const [clientId, u] of Array.from(usage.entries())) {
+    cost += u.cost
+    await recordDfsUsage({ operation: 'rank_check', clientId, cost: u.cost, units: u.units, date: today })
+  }
+
   if (capped) {
     console.warn(`[cron/dataforseo-rankings] capped at ${MAX_CHECKS_PER_RUN}/${jobs.length} checks this run`)
   }
-  return NextResponse.json({ ok: true, clients: connections.length, checked, written, total: jobs.length, capped })
+  return NextResponse.json({ ok: true, clients: connections.length, checked, written, cost: Number(cost.toFixed(4)), total: jobs.length, capped })
 }
 
 // Depth is per-client-configurable; resolve it from the client's connection config.

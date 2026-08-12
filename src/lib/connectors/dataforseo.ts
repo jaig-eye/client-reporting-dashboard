@@ -127,6 +127,19 @@ function num(v: unknown): number | null {
   return typeof v === 'number' && !Number.isNaN(v) ? v : null
 }
 
+// DataForSEO returns the REAL cost of each request in the top-level `cost` field.
+// Read it; fall back to a per-operation estimate when absent so metering still works.
+export type CostSink = (cost: number) => void
+function readTopCost(json: Record<string, unknown> | null): number {
+  const c = json?.cost
+  return typeof c === 'number' && c > 0 ? c : 0
+}
+/** Estimated live/advanced SERP cost (priced per 10 results) when the response omits cost. */
+export function estimateSerpCost(depth: number): number {
+  return Math.max(1, Math.ceil((depth || 100) / 10)) * 0.002
+}
+export const DFS_LABS_COST_ESTIMATE = 0.01
+
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
 export interface DfsKeywordData {
@@ -152,7 +165,7 @@ export interface DfsRankResult {
 export async function dfsKeywordOverview(
   keywords: string[],
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string } = {},
+  opts: { locationCode?: number; languageCode?: string; onCost?: CostSink } = {},
 ): Promise<DfsKeywordData[]> {
   const kws = keywords.map(k => k.trim()).filter(Boolean).slice(0, 700)
   if (!kws.length) return []
@@ -161,6 +174,7 @@ export async function dfsKeywordOverview(
     location_code: opts.locationCode ?? 2840,
     language_code: opts.languageCode ?? 'en',
   })
+  if (json) opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
   return firstResultItems(json).map(it => {
     const info  = (it.keyword_info as Record<string, unknown>) ?? {}
     const props = (it.keyword_properties as Record<string, unknown>) ?? {}
@@ -182,7 +196,7 @@ export async function dfsKeywordOverview(
 export async function dfsKeywordIdeas(
   seed: string,
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number } = {},
+  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
 ): Promise<DfsKeywordData[]> {
   if (!seed.trim()) return []
   const json = await dfsPost('/v3/dataforseo_labs/google/keyword_ideas/live', creds, {
@@ -191,6 +205,7 @@ export async function dfsKeywordIdeas(
     language_code: opts.languageCode ?? 'en',
     limit:         opts.limit ?? 50,
   })
+  if (json) opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
   return firstResultItems(json).map(it => {
     const info  = (it.keyword_info as Record<string, unknown>) ?? {}
     const props = (it.keyword_properties as Record<string, unknown>) ?? {}
@@ -219,7 +234,7 @@ export async function dfsSerpRank(
   domain: string,
   keyword: string,
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; device?: SeoDevice; depth?: number } = {},
+  opts: { locationCode?: number; languageCode?: string; device?: SeoDevice; depth?: number; onCost?: CostSink } = {},
 ): Promise<DfsRankResult> {
   const empty: DfsRankResult = { keyword, position: null, rank_absolute: null, url: null, serp_features: [] }
   const target = normalizeDomain(domain)
@@ -231,6 +246,7 @@ export async function dfsSerpRank(
     device:        opts.device ?? 'desktop',
     depth:         opts.depth ?? 100,
   })
+  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(opts.depth ?? 100))
   const items = firstResultItems(json)
   if (!items.length) return empty
   const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
@@ -256,16 +272,18 @@ export async function dfsSerpRank(
 export async function dfsSerpTopUrls(
   keyword: string,
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number } = {},
+  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
 ): Promise<string[]> {
   if (!keyword.trim()) return []
+  const depth = Math.max(10, opts.limit ?? 10)
   const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
     keyword:       keyword.trim(),
     location_code: opts.locationCode ?? 2840,
     language_code: opts.languageCode ?? 'en',
     device:        'desktop',
-    depth:         Math.max(10, opts.limit ?? 10),
+    depth,
   }, 12_000)
+  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))
   return firstResultItems(json)
     .filter(i => i.type === 'organic' && i.url)
     .map(i => String(i.url))

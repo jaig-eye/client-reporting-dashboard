@@ -20,6 +20,7 @@
 
 import type { createAdminClient } from '@/lib/supabase/server'
 import { formatCompetitorGap, buildCompetitorResearch, researchCompetitors } from './competitorResearch'
+import { recordDfsUsage } from './dataforseoUsage'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpTopUrls, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
 
 type Db = ReturnType<typeof createAdminClient>
@@ -74,6 +75,7 @@ export async function gatherCompetitorGap(params: {
         locationCode: dfs.config.location_code,
         languageCode: dfs.config.language_code,
         limit:        5,
+        onCost:       c => { void recordDfsUsage({ operation: 'serp_research', cost: c, clientId: params.clientId || null }) },
       })
       if (urls.length) {
         const gap = formatCompetitorGap(await buildCompetitorResearch(keyword, urls))

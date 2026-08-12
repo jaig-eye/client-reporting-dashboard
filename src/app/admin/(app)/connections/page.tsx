@@ -20,6 +20,7 @@ import type { ConnectorType } from '@/lib/types'
 import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
 import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
+import DataForSeoUsagePanel from '@/components/admin/DataForSeoUsagePanel'
 import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
 import type { SeoDevice }   from '@/lib/connectors/dataforseo'
 import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
@@ -292,6 +293,8 @@ export default async function ConnectionsPage({
           initialDepth={dfsDepth}
           initialDevices={dfsDevices}
         />
+        {/* DataForSEO usage + spend (only once credentials exist) */}
+        {dfsHasCreds && <DataForSeoUsagePanel />}
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard
           initialApiKey={agencySettings?.serp_api_key ?? ''}
