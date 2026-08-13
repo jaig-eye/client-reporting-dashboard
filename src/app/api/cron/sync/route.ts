@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
           }
 
           // Email alert
-          if (settings?.notify_connector_errors && settings?.notification_email) {
+          if (getNotif(notifConfig, 'sync_connector_error').email && settings?.notification_email) {
             try {
               await sendEmail({
                 to:      String(settings.notification_email),

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { buildRewriteSystemPrompt } from '@/lib/content/rewritePrompt'
+import { styleTables } from '@/lib/content/contentHtml'
 
 /**
  * POST /api/admin/content/regenerate
@@ -42,6 +44,19 @@ export async function POST(request: NextRequest) {
   const apiKey   = settings.ai_api_key
   const agency   = settings.agency_name || 'the agency'
 
+  // Load the internal-link allow-list BEFORE generation so the rewrite prompt can carry it
+  // (without it the model can't produce valid internal links — they'd all get stripped).
+  const allowedUrls = new Set<string>()
+  if (post.client_id) {
+    const [{ data: contentSettingsData }, { data: sitemapData }] = await Promise.all([
+      db.from('content_settings').select('manual_link_urls').eq('client_id', post.client_id).maybeSingle(),
+      db.from('content_sitemap_pages').select('url').eq('client_id', post.client_id).eq('is_excluded', false).limit(100),
+    ])
+    ;(sitemapData ?? []).forEach((r: { url: string }) => allowedUrls.add(r.url))
+    parseManualLinks((contentSettingsData?.manual_link_urls as string[] | null) ?? [])
+      .forEach(l => allowedUrls.add(l.url))
+  }
+
   // Build the revised prompt
   const originalPrompt = post.prompt_used || `Write a blog post titled: ${post.title}`
   const safeEditNotes  = edit_notes?.slice(0, 2000)
@@ -50,7 +65,13 @@ export async function POST(request: NextRequest) {
     : ''
   const finalPrompt = `${originalPrompt}${editInstruction}`
 
-  const systemPrompt = `You are a professional SEO content writer for ${agency}. Revise or rewrite the blog post as instructed. Return ONLY a JSON object with these fields: { "title": "...", "content": "Full HTML body", "metaDescription": "SEO meta 150-160 chars", "slug": "url-slug" }. Do not include markdown fences.`
+  // Rich system prompt (allow-list + external-source rule + E-E-A-T + writer-quality + FAQ/structure)
+  // — parity with fresh generation, so the rewrite keeps internal links, named sources and a FAQ.
+  const systemPrompt = buildRewriteSystemPrompt({
+    agency,
+    allowedUrls: Array.from(allowedUrls),
+    isBlog: ((post.content_type as string | null) ?? 'blog') === 'blog',
+  })
 
   function sanitizeEmDashes(html: string): string {
     return html.replace(/(<[^>]*>)|([^<]+)/g, (_, tag, text) => {
@@ -175,19 +196,10 @@ export async function POST(request: NextRequest) {
 
     const parsed = parseResponse(rawText)
 
-    // Build allowed URL set and strip any hallucinated internal links the AI invented
-    const allowedUrls = new Set<string>()
-    if (post.client_id) {
-      const [{ data: contentSettingsData }, { data: sitemapData }] = await Promise.all([
-        db.from('content_settings').select('manual_link_urls').eq('client_id', post.client_id).maybeSingle(),
-        db.from('content_sitemap_pages').select('url').eq('client_id', post.client_id).eq('is_excluded', false).limit(100),
-      ])
-      ;(sitemapData ?? []).forEach((r: { url: string }) => allowedUrls.add(r.url))
-      parseManualLinks((contentSettingsData?.manual_link_urls as string[] | null) ?? [])
-        .forEach(l => allowedUrls.add(l.url))
-    }
+    // Strip any hallucinated internal links the AI invented (allow-list loaded above).
     parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
     parsed.content = stripDangerousHtml(parsed.content)
+    parsed.content = styleTables(parsed.content)
 
     // Update the post in the database
     await db.from('content_posts').update({

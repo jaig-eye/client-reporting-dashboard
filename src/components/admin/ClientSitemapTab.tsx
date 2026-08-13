@@ -13,6 +13,19 @@ type SitemapPage = {
 
 type ManualLink = { url: string; label: string }
 
+// Heuristic: does this URL look like a blog/news/article post (vs. a money page)?
+const BLOG_PATH_RE = /\/(blog|blogs|news|article|articles|post|posts)(\/|$)/i
+function isBlogUrl(url: string): boolean {
+  try {
+    const path = new URL(url).pathname.toLowerCase()
+    if (BLOG_PATH_RE.test(path)) return true
+    if (/\/(19|20)\d{2}\/\d{1,2}\//.test(path)) return true  // dated permalinks e.g. /2024/05/
+    return false
+  } catch {
+    return BLOG_PATH_RE.test(url.toLowerCase())
+  }
+}
+
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -29,6 +42,8 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [error,   setError]   = useState('')
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
+  const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   // Sitemap config state
   const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
@@ -154,6 +169,31 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
     }
   }
 
+  // Bulk-exclude every detected blog/post URL that isn't already excluded.
+  const blogCandidates = pages.filter(p => !p.isExcluded && isBlogUrl(p.url))
+  async function bulkExcludeBlogs() {
+    if (blogCandidates.length === 0) return
+    const urls = blogCandidates.map(p => p.url)
+    setBulkBusy(true); setError('')
+    // Optimistic
+    setPages(prev => prev.map(p => urls.includes(p.url) ? { ...p, isExcluded: true, isPriority: false } : p))
+    try {
+      const res = await fetch('/api/admin/content/sitemap-pages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        // Clear is_priority too (priority + excluded are mutually exclusive), matching
+        // the optimistic update and the single-toggle path.
+        body: JSON.stringify({ client_id: clientId, urls, is_excluded: true, is_priority: false }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to exclude')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to exclude blogs')
+      loadPages()  // revert on error
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const filtered = pages.filter(p =>
     !search || p.url.toLowerCase().includes(search.toLowerCase()) ||
     (p.title ?? '').toLowerCase().includes(search.toLowerCase())
@@ -238,9 +278,22 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
             )}
           </p>
         </div>
-        <button onClick={fetchFromSitemap} disabled={fetching} className="btn btn-secondary" style={{ fontSize: '0.8125rem', flexShrink: 0 }}>
-          {fetching ? 'Fetching…' : '↻ Refresh from Sitemap'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {blogCandidates.length > 0 && (
+            <button
+              onClick={bulkExcludeBlogs}
+              disabled={bulkBusy}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8125rem' }}
+              title="Exclude all detected blog/news/article URLs from AI linking context"
+            >
+              {bulkBusy ? 'Excluding…' : `Exclude ${blogCandidates.length} blog${blogCandidates.length !== 1 ? 's' : ''}`}
+            </button>
+          )}
+          <button onClick={fetchFromSitemap} disabled={fetching} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+            {fetching ? 'Fetching…' : '↻ Refresh from Sitemap'}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -299,11 +352,17 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
             </thead>
             <tbody>
               {sorted.map((page, i) => (
-                <tr key={page.url} style={{
-                  borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
-                  opacity: page.isExcluded ? 0.45 : 1,
-                  background: page.isPriority ? 'rgba(99,102,241,0.04)' : 'transparent',
-                }}>
+                <tr key={page.url}
+                  onMouseEnter={() => setHoveredUrl(page.url)}
+                  onMouseLeave={() => setHoveredUrl(null)}
+                  style={{
+                    borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
+                    opacity: page.isExcluded ? 0.45 : 1,
+                    background: hoveredUrl === page.url
+                      ? 'var(--bg-subtle)'
+                      : page.isPriority ? 'rgba(99,102,241,0.04)' : 'transparent',
+                    transition: 'background 0.1s',
+                  }}>
                   <td style={{ padding: '7px 10px', color: 'var(--text-primary)', maxWidth: 0 }}>
                     <a href={page.url} target="_blank" rel="noopener noreferrer"
                       style={{ color: 'var(--blue)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>

@@ -38,10 +38,40 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json() as {
     client_id:      string
-    url:            string
+    url?:           string
+    urls?:          string[]
     is_priority?:   boolean
     is_excluded?:   boolean
     is_service_page?: boolean
+  }
+
+  // ── Bulk path: apply the same flag to many URLs at once (e.g. exclude all blogs)
+  if (Array.isArray(body.urls)) {
+    if (!body.client_id) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
+    const MAX_BULK = 2000
+    // Dedupe (a repeated URL makes ON CONFLICT DO UPDATE fail the whole batch) and cap
+    // to keep the single upsert within Postgres' statement timeout / body limits.
+    const urls = Array.from(new Set(
+      body.urls.filter(u => typeof u === 'string' && u.trim()).map(u => u.trim())
+    )).slice(0, MAX_BULK)
+    if (urls.length === 0) return NextResponse.json({ ok: true, updated: 0 })
+    // Coerce flags to real booleans (a stray non-boolean would otherwise reach Postgres).
+    const priority = body.is_priority     !== undefined ? Boolean(body.is_priority)     : undefined
+    const excluded = body.is_excluded     !== undefined ? Boolean(body.is_excluded)     : undefined
+    const service  = body.is_service_page !== undefined ? Boolean(body.is_service_page) : undefined
+    const rows = urls.map(url => {
+      const row: Record<string, unknown> = { client_id: body.client_id, url }
+      if (priority !== undefined) row.is_priority     = priority
+      if (excluded !== undefined) row.is_excluded     = excluded
+      if (service  !== undefined) row.is_service_page = service
+      return row
+    })
+    const db = createAdminClient()
+    const { error } = await db
+      .from('content_sitemap_pages')
+      .upsert(rows, { onConflict: 'client_id,url' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, updated: rows.length })
   }
 
   if (!body.client_id || !body.url) {

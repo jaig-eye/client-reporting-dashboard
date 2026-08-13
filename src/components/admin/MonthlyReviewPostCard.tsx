@@ -1,5 +1,8 @@
 'use client'
 
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
+import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+
 
 export interface MonthlyReviewPost {
   id:                  string
@@ -16,6 +19,11 @@ export interface MonthlyReviewPost {
   content_type:        string | null
   connection_id:       string | null
   admin_approved_at:   string | null
+  wp_post_id:          number | null
+  wp_site_url:         string | null
+  published_url:       string | null
+  bc_post_id:          number | null
+  bc_store_hash:       string | null
   isBc:                boolean
 }
 
@@ -32,6 +40,7 @@ interface Props {
   onReject:         (id: string, discard?: boolean) => void
   onOpenEditor:     (id: string) => void
   onRestore:        (id: string) => void
+  onRegenerate:     (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -46,7 +55,7 @@ function fmtDate(iso: string): string {
 }
 
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
@@ -97,7 +106,7 @@ export default function MonthlyReviewPostCard({
             {post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}
             {post.content ? ` · ${wordCount(post.content).toLocaleString()}w` : ''}
             {post.isBc ? ' · BC' : ' · WP'}
-            {post.content_type && (
+            {SHOW_NON_BLOG_CONTENT_TYPES && post.content_type && (
               <span style={{
                 marginLeft: 6,
                 fontSize: 10,
@@ -116,6 +125,30 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
           </div>
+          {/* Live-post links — shown once the post is on-site */}
+          {(post.status === 'draft_saved' || post.status === 'published') && (() => {
+            const live = viewLiveUrl(post)
+            const draft = wpDraftPreviewUrl(post)
+            const wpe = wpEditUrl(post)
+            const bce = bcEditUrl(post)
+            const linkStyle: React.CSSProperties = { color: 'var(--blue)', textDecoration: 'none' }
+            return (
+              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 11 }}>
+                {isPublicPermalink(live) && live && (
+                  <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
+                )}
+                {draft && (
+                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Preview draft ↗</a>
+                )}
+                {wpe && (
+                  <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Open in WP ↗</a>
+                )}
+                {bce && (
+                  <a href={bce} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit in BigCommerce ↗</a>
+                )}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Status / actions */}
@@ -141,31 +174,13 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onOpenEditor(post.id)}
-            >
-              Review
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onReject(post.id, true)}
-              style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
-            >
-              Discard
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={isLoading}
-              onClick={() => onApprove(post.id)}
-              style={{ background: isLoading ? undefined : '#16a34a', borderColor: '#16a34a' }}
-            >
-              {isLoading ? '…' : 'Approve →'}
-            </button>
-          </div>
+          <button
+            className="btn btn-sm"
+            disabled={isLoading}
+            onClick={() => onOpenEditor(post.id)}
+          >
+            Review →
+          </button>
         )}
       </div>
     </div>

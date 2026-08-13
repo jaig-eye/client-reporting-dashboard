@@ -4,8 +4,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
+import { dataForSeoConnector } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
+
+// Connectors whose credentials should be live-tested on create.
+const TESTABLE = {
+  ahrefs:     ahrefsConnector,
+  dataforseo: dataForSeoConnector,
+} as const
 
 // GET — list all connectors
 export async function GET(req: NextRequest) {
@@ -40,12 +47,13 @@ export async function POST(req: NextRequest) {
     meta: { type: data.type, label: data.label },
   })
 
-  // For Ahrefs: auto-test API key and update status immediately
-  if (type === 'ahrefs' && data) {
+  // For token/credential connectors: auto-test credentials and update status immediately
+  const createAdapter = TESTABLE[type as keyof typeof TESTABLE]
+  if (createAdapter && data) {
     try {
-      const ok = await ahrefsConnector.testConnection!(auth ?? {}, {})
+      const ok = await createAdapter.testConnection!(auth ?? {}, {})
       const newStatus = ok ? 'active' : 'error'
-      const newConfig = ok ? (config ?? {}) : { ...(config ?? {}), error: 'API key invalid or request failed' }
+      const newConfig = ok ? (config ?? {}) : { ...(config ?? {}), error: 'Credentials invalid or request failed' }
       await db.from('connectors').update({ status: newStatus, config: newConfig }).eq('id', data.id)
       return NextResponse.json({ ...data, status: newStatus, config: newConfig }, { status: 201 })
     } catch (e) {

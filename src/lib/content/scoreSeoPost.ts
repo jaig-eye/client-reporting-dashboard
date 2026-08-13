@@ -3,6 +3,24 @@
 
 import type { SeoBrief, SeoScore } from './types'
 
+// Fuzzy word-level keyword presence (mirrors the editor's seoCheck): passes on the exact
+// phrase OR when ≥75% of the keyword's significant words appear (so natural variations of a
+// multi-word keyword count, instead of demanding robotic exact-phrase repetition).
+function keywordPresent(field: string, keyword: string): boolean {
+  if (!field || !keyword) return false
+  const f = field.toLowerCase()
+  const k = keyword.toLowerCase()
+  if (f.includes(k)) return true
+  const fieldTokens = f.split(/[^a-z0-9]+/).filter(Boolean)
+  const kwWords = k.split(/\s+/).filter(w => w.length >= 3)
+  if (kwWords.length === 0) return false
+  const hit = (w: string) => fieldTokens.some(t =>
+    t === w ||
+    (w.length >= 4 && t.startsWith(w)) ||
+    (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5))
+  return kwWords.filter(hit).length / kwWords.length >= 0.75
+}
+
 export function scoreSeoPost(params: {
   html:         string
   title:        string
@@ -20,12 +38,12 @@ export function scoreSeoPost(params: {
   const warnings: string[] = []
 
   // ── Keyword checks ─────────────────────────────────────────────────────────
-  const keywordInTitle    = keyword ? title.toLowerCase().includes(keyword) : false
+  const keywordInTitle    = keywordPresent(title, keyword)
   const first500          = textLower.slice(0, 500)
-  const keywordInIntro    = keyword ? first500.includes(keyword) : false
+  const keywordInIntro    = keywordPresent(first500, keyword)
   const headingMatches    = html.match(/<h[1-6][^>]*>([^<]+)<\/h[1-6]>/gi) ?? []
   const headingText       = headingMatches.map(h => h.replace(/<[^>]+>/g, '').toLowerCase()).join(' ')
-  const keywordInHeadings = keyword ? headingText.includes(keyword) : false
+  const keywordInHeadings = keywordPresent(headingText, keyword)
 
   if (keyword && !keywordInTitle)    issues.push(`Primary keyword "${keyword}" not in title`)
   if (keyword && !keywordInIntro)    issues.push(`Primary keyword not in opening paragraph`)
@@ -39,6 +57,10 @@ export function scoreSeoPost(params: {
   const overOptimised = density > 0.03
 
   if (overOptimised) warnings.push(`Keyword density ${(density * 100).toFixed(1)}% may appear over-optimised`)
+
+  // ── Punctuation (writer quality bar bans the em dash; en dash in numeric ranges is fine) ──
+  const emDashCount = (html.match(/—/g) ?? []).length
+  if (emDashCount > 0) warnings.push(`${emDashCount} em dash(es) present — the writer style bans them`)
 
   // ── Heading structure ──────────────────────────────────────────────────────
   const h1Count = (html.match(/<h1[^>]*>/gi) ?? []).length
@@ -135,6 +157,7 @@ export function scoreSeoPost(params: {
   if (wordCountOnTarget) score += 5
 
   if (overOptimised) score = Math.max(0, score - 10)
+  if (emDashCount > 0) score = Math.max(0, score - Math.min(6, emDashCount))
 
   return {
     overall:              Math.min(100, score),

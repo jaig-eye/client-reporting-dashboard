@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
 import MonthlyReviewComplete   from './MonthlyReviewComplete'
@@ -18,19 +19,26 @@ interface Site {
 }
 
 interface Props {
-  posts:    MonthlyReviewPost[]
-  allSites: Site[]
-  month:    string
-  prevUrl?: string | null
-  nextUrl?: string | null
+  posts:     MonthlyReviewPost[]
+  allSites:  Site[]
+  month:     string
+  prevUrl?:  string | null
+  nextUrl?:  string | null
+  embedded?: boolean   // rendered inside the content page (softer chrome, no takeover)
 }
 
 function getMonth(): string {
   return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
-  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set())
+export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl, embedded }: Props) {
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(() => {
+    const pre = new Set<string>()
+    for (const p of initialPosts) {
+      if (p.status === 'generating') pre.add(p.id)
+    }
+    return pre
+  })
   const [approvedIds,    setApprovedIds]    = useState<Set<string>>(() => {
     // Pre-populate only from posts actually pushed to a CMS (draft_saved).
     // approve_only posts (status='approved') have admin_approved_at but no platform ID —
@@ -45,6 +53,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [toastError, setToastError] = useState(false)
+  const router = useRouter()
+  const [regenModal,      setRegenModal]      = useState<{ postId: string } | null>(null)
+  const [regenModalNotes, setRegenModalNotes] = useState('')
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
   const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
 
@@ -146,10 +159,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [editorPostId])
 
-  const handleRegenerateDone = useCallback(() => {
+  const handleRegenerateDone = useCallback((updatedPost?: { title?: string | null }) => {
     if (editorPostId) {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
     }
+    setToastError(false)
+    setToastMsg(`Post regenerated: ${updatedPost?.title ?? 'Done'} — ready for review`)
     setEditorPostId(null)
   }, [editorPostId])
 
@@ -160,12 +175,92 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     // Keep the editor open so the user can see the error message
   }, [editorPostId])
 
+  // Direct-from-card full-regenerate — opens confirm modal first
+  const handleCardRegenerate = useCallback((postId: string) => {
+    setRegenModal({ postId })
+  }, [])
+
+  // Editor-initiated actions (monthly review mode)
+  const handleEditorApprove = useCallback(() => {
+    if (editorPostId) handleApprove(editorPostId)
+    // editor calls onClose() itself after this
+  }, [editorPostId, handleApprove])
+
+  const handleEditorDiscard = useCallback(() => {
+    if (editorPostId) handleReject(editorPostId, true)
+    // editor calls onClose() itself after this
+  }, [editorPostId, handleReject])
+
+  const handleEditorRegenerate = useCallback(() => {
+    if (editorPostId) {
+      const postId = editorPostId
+      setEditorPostId(null)
+      setRegenModal({ postId })
+    }
+  }, [editorPostId])
+
+  const handleRegenModalConfirm = useCallback(async () => {
+    if (!regenModal) return
+    const { postId } = regenModal
+    const notes = regenModalNotes
+    setRegenModal(null)
+    setRegenModalNotes('')
+    setRegeneratingIds(prev => { const next = new Set(prev); next.add(postId); return next })
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ edit_notes: notes.trim() || undefined }),
+      })
+      if (!res.ok) {
+        setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+        setToastError(true)
+        setToastMsg('Failed to start regeneration — please try again')
+      }
+      // Session-level polling picks up completion
+    } catch {
+      setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+      setToastError(true)
+      setToastMsg('Failed to start regeneration — please try again')
+    }
+  }, [regenModal, regenModalNotes])
+
+  // Toast auto-clear
+  useEffect(() => {
+    if (!toastMsg) return
+    const t = setTimeout(() => setToastMsg(null), 5000)
+    return () => clearTimeout(t)
+  }, [toastMsg])
+
+  // Session-level polling for posts regenerating without an open editor
+  useEffect(() => {
+    const orphaned = Array.from(regeneratingIds).filter(id => id !== editorPostId)
+    if (orphaned.length === 0) return
+    const timer = setInterval(async () => {
+      for (const postId of orphaned) {
+        try {
+          const res = await fetch(`/api/admin/content/post?id=${postId}`)
+          if (!res.ok) continue
+          const updated = await res.json()
+          if (updated.status !== 'generating') {
+            setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
+            setToastError(false)
+            setToastMsg(`Post regenerated: ${updated.title ?? 'Done'} — ready for review`)
+            router.refresh()
+          }
+        } catch { /* retry next tick */ }
+      }
+    }, 10_000)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regeneratingIds.size, editorPostId])
+
   const displayMonth = month || getMonth()
   const editorPost = editorPostId ? initialPosts.find(p => p.id === editorPostId) : null
 
   return (
     <>
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+    <div style={embedded ? undefined : { minHeight: '100vh', background: 'var(--bg-base)' }}>
       <MonthlyReviewProgress
         approvedCount={approvedCount}
         totalPosts={totalPosts}
@@ -173,6 +268,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         clientsDone={clientsDone}
         onExit={() => window.location.href = '/admin/content'}
         month={displayMonth}
+        embedded={embedded}
       />
 
       {isComplete ? (
@@ -216,6 +312,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
               return (
                 <MonthlyReviewClientSection
                   key={clientId}
+                  clientId={clientId}
                   clientName={posts[0]?.clientName ?? clientId}
                   posts={posts}
                   approvedIds={approvedIds}
@@ -227,6 +324,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   onReject={handleReject}
                   onOpenEditor={handleOpenEditor}
                   onRestore={handleRestore}
+                  onRegenerate={handleCardRegenerate}
                 />
               )
             })
@@ -244,8 +342,50 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
         onRegenerateError={handleRegenerateError}
+        onMonthlyApprove={handleEditorApprove}
+        onMonthlyDiscard={handleEditorDiscard}
+        onMonthlyRegenerate={handleEditorRegenerate}
         autoScanLinks
       />
+    )}
+    {toastMsg && (
+      <div style={{ position: 'fixed', bottom: 24, right: 24, background: toastError ? '#dc2626' : '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        {toastError ? '✗' : '✓'} {toastMsg}
+        <button onClick={() => { setToastMsg(null); setToastError(false) }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+      </div>
+    )}
+    {regenModal && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        onClick={e => { if (e.target === e.currentTarget) { setRegenModal(null); setRegenModalNotes('') } }}>
+        <div className="card" style={{ maxWidth: 420, width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Regenerate Post</h3>
+            <button onClick={() => { setRegenModal(null); setRegenModalNotes('') }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
+          </div>
+          <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              Picks a new topic and rewrites the post completely — the previous content will be replaced.
+            </p>
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                Direction (optional)
+              </label>
+              <textarea
+                rows={3}
+                value={regenModalNotes}
+                onChange={e => setRegenModalNotes(e.target.value)}
+                placeholder="e.g. Focus on residential services, avoid commercial content…"
+                style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', resize: 'vertical', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => { setRegenModal(null); setRegenModalNotes('') }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleRegenModalConfirm}>Regenerate →</button>
+            </div>
+          </div>
+        </div>
+      </div>
     )}
     </>
   )

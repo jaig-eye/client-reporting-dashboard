@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
+import Link                    from 'next/link'
 import RationaleModal          from '@/components/admin/RationaleModal'
+import NewPostModal            from '@/components/admin/NewPostModal'
+import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 
 export type CalendarItem = {
   id:               string
@@ -99,6 +102,52 @@ function previewText(item: CalendarItem): string {
   return raw.length > 120 ? raw.slice(0, 118) + '…' : raw
 }
 
+// Group calendar items by client, ordered by client name — used to sub-group
+// each month section so the timeline is easier to scan per client.
+function groupByClient(items: CalendarItem[]): [string, CalendarItem[]][] {
+  const m = new Map<string, CalendarItem[]>()
+  for (const it of items) {
+    const arr = m.get(it.clientId) ?? []
+    arr.push(it)
+    m.set(it.clientId, arr)
+  }
+  return Array.from(m.entries()).sort((a, b) =>
+    (a[1][0]?.clientName ?? '').localeCompare(b[1][0]?.clientName ?? '')
+  )
+}
+
+function ClientGroupHeader({ clientId, clientName, count }: { clientId: string; clientName: string; count: number }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{clientName}</span>
+      <Link
+        href={`/admin/clients/${clientId}?tab=content&subtab=settings`}
+        title={`${clientName} content settings`}
+        aria-label={`${clientName} content settings`}
+        style={{ fontSize: 13, color: 'var(--text-faint)', textDecoration: 'none', lineHeight: 1 }}
+      >⚙</Link>
+      <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{count}</span>
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+    </div>
+  )
+}
+
+// Renders a month's cards grouped into per-client subsections.
+function ClientGroupedCards({ items, onViewRationale }: { items: CalendarItem[]; onViewRationale: (i: CalendarItem) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {groupByClient(items).map(([cid, clientItems]) => (
+        <div key={cid}>
+          <ClientGroupHeader clientId={cid} clientName={clientItems[0]?.clientName ?? 'Unknown'} count={clientItems.length} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+            {clientItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={onViewRationale} />)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function ContentCalendar({
   items: initialItems,
   clients,
@@ -115,6 +164,7 @@ export default function ContentCalendar({
   const [items,          setItems]          = useState(initialItems)
   const [rationaleFor,   setRationaleFor]   = useState<CalendarItem | null>(null)
   const [activeCalView,  setActiveCalView]  = useState<'blog' | 'service'>('blog')
+  const [showNewPost,    setShowNewPost]    = useState(false)
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => {
     // Auto-collapse fully-published past months
     const nowKey = `${today.getFullYear()}-${String(today.getMonth()).padStart(2, '0')}`
@@ -304,10 +354,17 @@ export default function ContentCalendar({
             </button>
           ))}
         </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Manual "pick a day + prompt" single-post generation */}
+        <button onClick={() => setShowNewPost(true)} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '5px 12px', whiteSpace: 'nowrap' }}>
+          + New Post
+        </button>
       </div>
 
-      {/* ── View switcher pill (only when SA content exists) ────────────────── */}
-      {(saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
+      {/* ── View switcher pill (only when SA content exists and non-blog types enabled) ── */}
+      {SHOW_NON_BLOG_CONTENT_TYPES && (saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
         <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)', marginBottom: 20 }}>
           {(['blog', 'service'] as const).map(view => {
             const count = view === 'blog'
@@ -402,9 +459,7 @@ export default function ContentCalendar({
                         </div>
                       </button>
                       {!isCollapsed && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                          {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                        </div>
+                        <ClientGroupedCards items={monthItems} onViewRationale={setRationaleFor} />
                       )}
                     </div>
                   )
@@ -417,9 +472,7 @@ export default function ContentCalendar({
                       <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled</span>
                       <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                      {unscheduled.filter(i => !i.contentType || i.contentType === 'blog').map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                    </div>
+                    <ClientGroupedCards items={unscheduled.filter(i => !i.contentType || i.contentType === 'blog')} onViewRationale={setRationaleFor} />
                   </div>
                 )}
               </div>
@@ -472,6 +525,15 @@ export default function ContentCalendar({
 
       {/* ── Rationale modal ───────────────────────────────────────────────────── */}
       <RationaleModal item={rationaleFor} onClose={() => setRationaleFor(null)} />
+
+      {/* ── New Post modal (manual pick-a-day generation) ─────────────────────── */}
+      {showNewPost && (
+        <NewPostModal
+          clients={clients}
+          onClose={() => setShowNewPost(false)}
+          onCreated={() => router.refresh()}
+        />
+      )}
     </div>
   )
 }

@@ -13,8 +13,33 @@ type PostRow = {
 }
 
 type ClientSettings = {
-  services:          string | null
-  geographic_focus:  string | null
+  services:             string | null
+  geographic_focus:     string | null
+  content_image_prompt: string | null
+}
+
+// Intent → concrete scene direction, so the image reflects the article's angle
+// rather than a generic "service work" stock shot.
+const INTENT_SCENE: Record<string, string> = {
+  how_to:           'the task being performed up close — hands and the relevant tools mid-action',
+  cost_pricing:     'a planning and estimating scene — documents, a calculator, or materials laid out on a work surface',
+  comparison:       'two contrasting options or materials placed side by side for comparison',
+  faq:              'a clean, approachable establishing shot of the real work environment',
+  problem_solution: 'the problem condition shown clearly in context (e.g. the item that needs repair or attention)',
+  buyer_education:  'a considered, well-lit detail shot of the product or material being explained',
+  informational:    'an editorial establishing shot of the subject in its real-world setting',
+}
+
+// PostRow carries no search_intent, so infer the angle from the title/keyword.
+function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
+  const s = t.toLowerCase()
+  if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
+  if (/\b(cost|price|pricing|budget|\$)\b/.test(s))               return 'cost_pricing'
+  if (/\bvs\b|\bversus\b|\bcompare|\bcomparison\b/.test(s))        return 'comparison'
+  if (s.includes('?'))                                            return 'faq'
+  if (/\bsigns?\b|\bproblem|\bfix\b|\brepair|\bavoid\b/.test(s))   return 'problem_solution'
+  if (/\bbest\b|\bchoosing|\bchoose|\bbuyer|\btypes? of\b/.test(s)) return 'buyer_education'
+  return 'informational'
 }
 
 export function buildImagePrompt(
@@ -24,26 +49,32 @@ export function buildImagePrompt(
 ): string {
   const title    = post.seo_title?.trim() || post.title?.trim() || ''
   const keyword  = post.target_keyword?.trim() || ''
-  const service  = settings?.services?.split(',')[0]?.trim() ?? 'local service'
-  const location = settings?.geographic_focus?.trim() ?? ''
+  const industry = settings?.services?.split(',')[0]?.trim() || 'local service'
+  const location = settings?.geographic_focus?.trim() || ''
 
-  const contextParts = [
-    title    && `for a post titled "${title}"`,
-    keyword  && `about "${keyword}"`,
-    location && `in ${location}`,
-  ].filter(Boolean)
-  const context = contextParts.length ? ' ' + contextParts.join(', ') : ''
+  // Derive a concrete subject from what we actually know about the post.
+  const subject = post.image_concept?.trim() || keyword || title || `${industry} work`
+  const scene   = INTENT_SCENE[inferIntentFromTitle(title || keyword)]
+  const context = title ? ` for a blog article titled "${title}"` : ''
+  const setting = `real-world ${industry} setting${location ? ` in ${location}` : ''}`
 
-  const base  = `Professional blog header image for a local ${service} business${context}.`
-  const style = 'Natural lighting, photorealistic, no text overlays, no faces. Wide landscape format.'
+  // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
+  // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
+  // (the visual equivalent of the banned-phrase list for copy) counters it.
+  const realism =
+    'Photojournalistic realism — an authentic candid photograph taken on location, shot on a full-frame camera with a 35mm lens, natural available light with soft directional shadows, true-to-life muted color and neutral white balance, subtle natural film grain, real textures and worn, lived-in materials, unstaged with slight natural asymmetry.'
+  const avoid =
+    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details.'
+  const constraints =
+    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. No text, words, letters, numbers, logos, watermarks, or signage. No human faces (crop, shoot from behind, or focus on hands and the work instead). 16:9 wide landscape.'
 
   if (promptOverride?.trim()) {
-    // User guidance is creative direction; post context anchors it to the topic.
-    return `${base} ${promptOverride.trim()}. ${style}`
+    // Client creative direction leads; post context anchors it to the topic, and the
+    // realism + anti-AI direction still applies so their brief doesn't come back looking AI.
+    return `Candid documentary photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${realism} ${avoid} ${constraints}`
   }
 
-  const subject = post.image_concept?.trim() || keyword || 'professional service work'
-  return `${base} ${subject}. ${style}`
+  return `Candid documentary photograph${context}. Scene: ${scene}, showing "${subject}", on location in a ${setting}. ${realism} ${avoid} ${constraints}`
 }
 
 export type ImageGenResult =
@@ -72,11 +103,12 @@ export async function generatePostImage(
 
   const { data: clientSettings } = await db
     .from('content_settings')
-    .select('services, geographic_focus')
+    .select('services, geographic_focus, content_image_prompt')
     .eq('client_id', post.client_id)
     .maybeSingle()
 
-  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, promptOverride)
+  const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt)
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
@@ -106,7 +138,7 @@ export async function generatePostImage(
         if (item?.b64_json) {
           // gpt-image-1 returns base64 — decode and upload to Supabase directly
           const buffer   = Buffer.from(item.b64_json, 'base64')
-          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
             .upload(filename, buffer, { contentType: 'image/png', upsert: true })
@@ -151,7 +183,7 @@ export async function generatePostImage(
         const b64 = gemData.predictions?.[0]?.bytesBase64Encoded
         if (b64) {
           const buffer   = Buffer.from(b64, 'base64')
-          const filename = `content-images/${post.client_id}/${postId}-ai.png`
+          const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
             .upload(filename, buffer, { contentType: 'image/png', upsert: true })
@@ -181,7 +213,7 @@ export async function generatePostImage(
       const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
       if (imgRes.ok) {
         const buffer   = Buffer.from(await imgRes.arrayBuffer())
-        const filename = `content-images/${post.client_id}/${postId}-ai.png`
+        const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
         const { error: upErr } = await db.storage
           .from('uploads')
           .upload(filename, buffer, { contentType: 'image/png', upsert: true })

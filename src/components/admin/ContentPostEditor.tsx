@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowCircleRight } from '@phosphor-icons/react'
+import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
+import CollapsibleSection from '@/components/admin/CollapsibleSection'
+import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 
 interface Site {
   connectionId:  string
@@ -31,17 +33,21 @@ interface Props {
   sites:               Site[]
   onClose:             () => void
   onUpdate:            (post: UpdatedPost) => void
-  onRegenerateStart?:  () => void
-  onRegenerateDone?:   (post: Partial<UpdatedPost>) => void
-  onRegenerateError?:  () => void
-  autoScanLinks?:      boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
-  topicBreakdown?:     TopicBreakdown | null
+  onRegenerateStart?:   () => void
+  onRegenerateDone?:    (post: Partial<UpdatedPost>) => void
+  onRegenerateError?:   () => void
+  onMonthlyApprove?:    () => void
+  onMonthlyDiscard?:    () => void
+  onMonthlyRegenerate?: () => void
+  autoScanLinks?:       boolean  // auto-trigger link scan on mount (e.g. when opened from monthly review)
+  topicBreakdown?:      TopicBreakdown | null
 }
 
 interface PostDetail {
   id:               string
   clientId:         string
   status:           string
+  contentType:      string
   targetKeyword:    string | null
   title:            string | null
   seoTitle:         string | null
@@ -96,7 +102,21 @@ type WpPublishStatus = 'draft' | 'publish' | 'future'
 
 function seoCheck(field: string | null, keyword: string): boolean {
   if (!field || !keyword) return false
-  return field.toLowerCase().includes(keyword.toLowerCase())
+  const f = field.toLowerCase()
+  const k = keyword.toLowerCase()
+  if (f.includes(k)) return true
+  // Word-level match so tiny tokens ("in", "fl") can't inflate the score via
+  // substring hits. A keyword word (≥3 chars) counts when a field token equals it,
+  // or bridges an abbreviation — one being a short prefix of the other (fl ↔ florida).
+  const fieldTokens = f.split(/[^a-z0-9]+/).filter(Boolean)
+  const kwWords = k.split(/\s+/).filter(w => w.length >= 3)
+  if (kwWords.length === 0) return false
+  const hit = (w: string) => fieldTokens.some(t =>
+    t === w ||
+    (w.length >= 4 && t.startsWith(w)) ||                            // repair → repairs
+    (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5)   // fl → florida
+  )
+  return kwWords.filter(hit).length / kwWords.length >= 0.75
 }
 
 function countWords(html: string): number {
@@ -118,7 +138,8 @@ function countExternalLinks(html: string): number {
 function keywordInSubheadings(html: string, keyword: string): boolean {
   if (!keyword) return false
   const headings = html.match(/<h[2-4][^>]*>[\s\S]*?<\/h[2-4]>/gi) || []
-  return headings.some(h => h.replace(/<[^>]+>/g, '').toLowerCase().includes(keyword.toLowerCase()))
+  // Fuzzy word-level match (same as title checks) so natural variations count, not just the exact phrase.
+  return headings.some(h => seoCheck(h.replace(/<[^>]+>/g, ' '), keyword))
 }
 
 function keywordInSlug(slug: string, keyword: string): boolean {
@@ -128,10 +149,12 @@ function keywordInSlug(slug: string, keyword: string): boolean {
 
 function computeKeywordDensity(html: string, keyword: string): number {
   if (!keyword || !html) return 0
-  const text  = html.replace(/<[^>]+>/g, ' ').toLowerCase()
-  const words = text.split(/\s+/).filter(Boolean).length
+  // Collapse whitespace (tags become spaces) so a phrase split across tag boundaries still matches.
+  const text  = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase()
+  const words = text.split(' ').filter(Boolean).length
   if (words === 0) return 0
-  const regex = new RegExp(keyword.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+  const kw    = keyword.toLowerCase().replace(/\s+/g, ' ').trim()
+  const regex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
   return ((text.match(regex) || []).length / words) * 100
 }
 
@@ -140,20 +163,101 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
   const imgs = html.match(/<img [^>]+>/gi) || []
   return imgs.some(img => {
     const m = img.match(/alt=["']([^"']*)["']/i)
-    return m ? m[1].toLowerCase().includes(keyword.toLowerCase()) : false
+    // Fuzzy match so "powersports financing" alt counts for keyword "Canada Powersports Financing".
+    return m ? seoCheck(m[1], keyword) : false
   })
+}
+
+// ─── Tier 1 on-page checks (writer-quality bar) ─────────────────────────────────
+// A "Key Takeaways" H2/H3 immediately reinforced by a list — the summary box the
+// writer prompt now requires after the intro.
+function hasKeyTakeaways(html: string): boolean {
+  // Allow optional inline tags/entities between the heading tag and the text, e.g.
+  // <h2><strong>Key Takeaways</strong></h2>.
+  return /<h[23][^>]*>(?:\s|<[^>]+>|&nbsp;)*key\s*takeaways/i.test(html)
+}
+
+// No skipped heading levels. The post title is the H1, so body headings should start
+// at H2 and never jump deeper by more than one level (H2→H4 is a skip). Returns true
+// when there is at least one heading and the sequence is clean.
+function headingHierarchyClean(html: string): boolean {
+  const levels = (html.match(/<h([1-6])[^>]*>/gi) || [])
+    .map(h => parseInt(h.match(/<h([1-6])/i)![1], 10))
+  if (levels.length === 0) return false
+  if (levels.filter(l => l === 1).length > 1) return false  // multiple H1s in body
+  let prev = 1  // the title is the H1 baseline
+  for (const l of levels) {
+    if (l > prev + 1) return false
+    prev = l
+  }
+  return true
+}
+
+// 'to'/'you'/'your' deliberately excluded: they appear in perfectly clean slugs
+// (how-to-clean-gutters, protect-your-home) and flagging them is noise.
+const URL_STOP_WORDS = new Set(['the','and','of','a','an','in','for','with','on','at','by','or','is','are'])
+// Clean, keyword-friendly slug: lowercase, hyphen-delimited, ≤6 words, no stop words,
+// no 4-digit year. Mirrors the URL-structure guidance in docs/reference/claude-blog-seo.md.
+function slugQualityClean(slug: string): boolean {
+  if (!slug) return false
+  if (slug !== slug.toLowerCase()) return false
+  if (/\b(19|20)\d{2}\b/.test(slug)) return false
+  const words = slug.split('-').filter(Boolean)
+  if (words.length === 0 || words.length > 6) return false
+  if (words.some(w => URL_STOP_WORDS.has(w))) return false
+  return true
+}
+
+// ─── Category auto-suggestion ───────────────────────────────────────────────────
+// Word-level matching (exact or shared prefix, ≥4 chars, stopwords removed) so a
+// laptop-repair post doesn't match "Business Phone Systems" just because 'business'
+// contains 'in' and 'phone' contains 'on'. Precision over recall — a bad guess is
+// worse than falling back to a Blog category the user can override.
+const CATEGORY_STOPWORDS = new Set([
+  'the','and','for','with','your','you','our','are','was','how','why','what','when','where','who',
+  'will','from','into','out','off','not','but','all','any','has','have','had','get','got','this',
+  'that','these','those','before','after','about','over','than','then','they','them','been','does',
+  'done','just','like','more','most','some','such','only','also','very','much','many','each','every',
+  'their','there','here','would','could','should','while','which','shop','call','calling','turn','need',
+])
+
+function tokenizeForCategory(text: string): string[] {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length >= 4 && !CATEGORY_STOPWORDS.has(w))
+}
+
+// Both inputs are already ≥4 chars: match on equality or a shared prefix
+// (handles system/systems, repair/repairs, cyber/cybersecurity).
+function categoryWordsOverlap(a: string, b: string): boolean {
+  if (a === b) return true
+  // Only treat a shared prefix as a match when both words are long enough that it's
+  // very likely the same term (systems↔system), not a coincidence (care↔career, plan↔planet).
+  return Math.min(a.length, b.length) >= 6 && (a.startsWith(b) || b.startsWith(a))
+}
+
+function suggestCategory(
+  cats: WpCategory[],
+  keyword: string | null | undefined,
+  title: string | null | undefined,
+): CategorySuggestion {
+  const kwWords    = tokenizeForCategory([keyword, title].filter(Boolean).join(' '))
+  const nonDefault = cats.filter(c => c.name.toLowerCase() !== 'uncategorized')
+  const scored = nonDefault
+    .map(c => ({ c, score: tokenizeForCategory(c.name).filter(cw => kwWords.some(kw => categoryWordsOverlap(cw, kw))).length }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  if (scored.length > 0) {
+    return { id: scored[0].c.id, name: scored[0].c.name, isNew: false }
+  }
+  // No meaningful keyword match — fall back to a Blog category rather than guessing.
+  const blogCat = nonDefault.find(c => ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()))
+  return blogCat ? { id: blogCat.id, name: blogCat.name, isNew: false } : { id: null, name: 'Blog', isNew: true }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-type EditorTab = 'content' | 'seo' | 'settings' | 'strategy'
-
-const EDITOR_TABS: { id: EditorTab; label: string }[] = [
-  { id: 'content',  label: 'Content'    },
-  { id: 'seo',      label: 'SEO & Meta' },
-  { id: 'settings', label: 'Settings'   },
-  { id: 'strategy', label: 'Strategy'   },
-]
+type SectionId = 'content' | 'seo' | 'publish'
 
 interface TopicBreakdown {
   keyword_opportunity?:    string | null
@@ -165,18 +269,29 @@ interface TopicBreakdown {
   competitors_researched?: string[] | null
 }
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, autoScanLinks, topicBreakdown }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
   const [savedFlash,      setSavedFlash]      = useState(false)
-  const [regenerating,    setRegenerating]    = useState(false)
+  const [regenerating,      setRegenerating]      = useState(false)
+  const [fullRegenerating,  setFullRegenerating]  = useState(false)
+  const [showEditDirection, setShowEditDirection] = useState(false)
+  const [showRegenConfirm,  setShowRegenConfirm]  = useState(false)
   const [approving,       setApproving]       = useState(false)
   const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
   const [isDirty,         setIsDirty]         = useState(false)
-  const [activeEditorTab, setActiveEditorTab] = useState<EditorTab>('content')
   const [fetchedBreakdown, setFetchedBreakdown] = useState<TopicBreakdown | null>(null)
+
+  // Two-pane tabless layout: collapsible right-column sections + header strategy panel
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content', 'seo', 'publish']))
+  const toggleSection = (id: SectionId) =>
+    setOpenSections(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  const openSection = (id: SectionId) =>
+    setOpenSections(prev => new Set(prev).add(id))
+  const [showStrategy, setShowStrategy] = useState(false)
+  const [isNarrow,     setIsNarrow]     = useState(false)
 
   // Image generation
   const [generatingImage,   setGeneratingImage]   = useState(false)
@@ -219,6 +334,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
 
+  // Current keyword rank (DataForSEO datastream) — null until loaded, then possibly still null.
+  const [keywordRank, setKeywordRank] = useState<{ current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/admin/content/keyword-rankings?post_id=${postId}`)
+      .then(r => r.ok ? r.json() : { rank: null })
+      .then(d => { if (!cancelled) setKeywordRank(d.rank ?? null) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [postId])
+
   // Link health scan
   type LinkScanResult = {
     links:  { url: string; status: number | null; ok: boolean; redirected: boolean; finalUrl: string | null; error?: string }[]
@@ -229,6 +355,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [showBrokenLinks, setShowBrokenLinks] = useState(false)
 
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Responsive: below 880px the panes stack and the left preview collapses to the overlay
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 880px)')
+    const on = () => setIsNarrow(mq.matches)
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
 
   // Mark dirty on any field change after initial load
   const loadedRef = useRef(false)
@@ -290,6 +425,28 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postId])
 
+  // Poll every 10 s while a full-regenerate background job is running so the editor
+  // unlocks and notifies the user as soon as the new content lands.
+  useEffect(() => {
+    if (post?.status !== 'generating') return
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/admin/content/post?id=${postId}`)
+        if (!res.ok) return
+        const updated: PostDetail = await res.json()
+        if (updated.status !== 'generating') {
+          setPost(updated)
+          setTitle(updated.title ?? '')
+          setContent(updated.content ?? '')
+          clearInterval(timer)
+          onRegenerateDone?.({ title: updated.title })
+        }
+      } catch { /* network blip — will retry */ }
+    }, 10_000)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post?.status, postId])
+
   // ── Load authors + WP tags when connectionId changes ───────────────────────
   const loadSiteData = useCallback(async (connId: string) => {
     if (!connId) return
@@ -308,32 +465,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setCategories(fetchedCats)
         // Only suggest if the post has no explicit category selected yet
         if (!post?.wpCategoryIds || post.wpCategoryIds.length === 0) {
-          const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
-          const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
-          const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
-          const scored = nonDefault
-            .map(c => {
-              const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
-              const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
-              return { ...c, score }
-            })
-            .filter(c => c.score > 0)
-            .sort((a, b) => b.score - a.score)
-
-          if (scored.length > 0) {
-            setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
-          } else {
-            // No keyword match — suggest "Blog" as a safe default rather than deriving
-            // a name from the post title (which produces nonsensical category names).
-            const blogCat = nonDefault.find(c =>
-              ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase())
-            )
-            if (blogCat) {
-              setCategorySuggestion({ id: blogCat.id, name: blogCat.name, isNew: false })
-            } else {
-              setCategorySuggestion({ id: null, name: 'Blog', isNew: true })
-            }
-          }
+          setCategorySuggestion(suggestCategory(fetchedCats, post?.targetKeyword, post?.title))
         }
       }
       if (settingsRes?.ok) {
@@ -364,26 +496,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setCategories(fetchedCats)
       // Re-run suggestion only if the user hasn't pinned a category
       if (categoryIds.length === 0) {
-        const kwText = [post?.targetKeyword, post?.title].filter(Boolean).join(' ').toLowerCase()
-        const kwWords = kwText.split(/\s+/).filter(w => w.length >= 2)
-        const nonDefault = fetchedCats.filter(c => c.name.toLowerCase() !== 'uncategorized')
-        const scored = nonDefault
-          .map(c => {
-            const catWords = c.name.toLowerCase().split(/\s+/).filter(w => w.length >= 2)
-            const score = catWords.filter(cw => kwWords.some(kw => kw.includes(cw) || cw.includes(kw))).length
-            return { ...c, score }
-          })
-          .filter(c => c.score > 0)
-          .sort((a, b) => b.score - a.score)
-        if (scored.length > 0) {
-          setCategorySuggestion({ id: scored[0].id, name: scored[0].name, isNew: false })
-        } else {
-          const blogCat = nonDefault.find(c => ['blog', 'articles', 'news', 'posts'].includes(c.name.toLowerCase()))
-          setCategorySuggestion(blogCat
-            ? { id: blogCat.id, name: blogCat.name, isNew: false }
-            : { id: null, name: 'Blog', isNew: true }
-          )
-        }
+        setCategorySuggestion(suggestCategory(fetchedCats, post?.targetKeyword, post?.title))
       }
     } catch { /* non-fatal */ } finally {
       setCategoriesLoading(false)
@@ -408,7 +521,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const keywordSlug        = keywordInSlug(slug, targetKeyword)
   const slugLenOk          = slug.length > 0 && slug.length < 130
   const keywordInFirst     = targetKeyword && content
-    ? content.replace(/<[^>]+>/g, ' ').slice(0, 500).toLowerCase().includes(targetKeyword.toLowerCase())
+    ? seoCheck(content.replace(/<[^>]+>/g, ' ').slice(0, 500), targetKeyword)
     : false
   const keywordInSubhd     = content ? keywordInSubheadings(content, targetKeyword) : false
   const densityPct         = computeKeywordDensity(content, targetKeyword)
@@ -416,6 +529,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
   const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
+  const isBlogPost         = (post?.contentType ?? 'blog') === 'blog'
+  const hasTakeaways       = content ? hasKeyTakeaways(content) : false
+  const headingHierOk      = content ? headingHierarchyClean(content) : false
+  const slugClean          = slugQualityClean(slug)
 
   // ── Tag helpers ─────────────────────────────────────────────────────────────
   function addTag(name: string) {
@@ -448,8 +565,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     const tagEnd   = content.indexOf('>', hrefMatch.index) + 1
     const selStart = tagStart >= 0 ? tagStart : hrefMatch.index
     const selEnd   = tagEnd > selStart ? tagEnd : selStart + url.length
-    setActiveEditorTab('content')
-    // setTimeout(50) gives the tab-switch re-render time to complete.
+    openSection('content')
+    // setTimeout(50) gives the section-open re-render time to complete.
     // HTML has very few newlines so line-counting is unreliable — use a character-position
     // proportion against scrollHeight to center the match in the visible viewport.
     setTimeout(() => {
@@ -486,6 +603,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     } finally {
       setSaving(false)
     }
+  }
+
+  // ── Monthly Review actions ───────────────────────────────────────────────────
+  async function handleMonthlyApprove() {
+    if (isDirty) await handleSave()
+    onMonthlyApprove?.()
+    onClose()
+  }
+
+  function handleMonthlyDiscard() {
+    onMonthlyDiscard?.()
+    onClose()
   }
 
   // ── Approve ─────────────────────────────────────────────────────────────────
@@ -636,6 +765,33 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
+  // Full-regenerate: picks a brand-new topic + keyword, generates fresh content.
+  // Runs async in the background — the post status flips to 'generating' immediately.
+  async function handleFullRegenerate() {
+    setFullRegenerating(true)
+    setError('')
+    onRegenerateStart?.()
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ edit_notes: editNotes.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to start regeneration')
+      // Reload post to pick up status='generating' for the polling effect
+      const postRes = await fetch(`/api/admin/content/post?id=${postId}`)
+      if (postRes.ok) setPost(await postRes.json())
+      setShowEditDirection(false)
+      setEditNotes('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start regeneration')
+      onRegenerateError?.()
+    } finally {
+      setFullRegenerating(false)
+    }
+  }
+
   async function handleScanLinks() {
     setLinkScan('scanning')
     setShowBrokenLinks(false)
@@ -710,6 +866,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
   const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
 
+  // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
+  const liveUrl        = post ? viewLiveUrl(post) : null
+  const showLiveLink   = isPublicPermalink(liveUrl)
+  const draftPreview   = post ? wpDraftPreviewUrl(post) : null
+  const wpEdit         = post ? wpEditUrl(post) : null
+  const bcEdit         = post ? bcEditUrl(post) : null
+
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
     h1{font-size:2rem;line-height:1.3;margin-bottom:.5rem;color:#111}
@@ -720,7 +883,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     li{margin-bottom:.4rem}strong{font-weight:700}a{color:#2563eb;text-decoration:underline}
     img{max-width:100%;height:auto;border-radius:4px}
     blockquote{border-left:4px solid #e5e7eb;margin:1.5rem 0;padding:.75rem 1rem;color:#555;font-style:italic}
-  </style></head><body><h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
+  </style></head><body>${featuredImageUrl ? `<img src="${featuredImageUrl.replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
 
   return (
     <>
@@ -743,7 +906,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       {/* Drawer */}
       <div style={{
         position: 'fixed', top: 0, right: 0, bottom: 0,
-        width: 'min(720px, 100vw)',
+        width: 'min(1120px, 100vw)',
         background: 'var(--bg-surface)',
         boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
         zIndex: 51, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -764,9 +927,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {post.status === 'draft_saved' ? 'Scheduled' : post.status === 'for_review' ? 'For Review' : post.status}
             </span>
           )}
-          <button type="button" onClick={() => setShowPreview(true)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
-            Preview
-          </button>
+          {(topicBreakdown ?? fetchedBreakdown) && (
+            <button type="button" onClick={() => setShowStrategy(v => !v)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+              Strategy {showStrategy ? '▴' : '▾'}
+            </button>
+          )}
+          {isNarrow && (
+            <button type="button" onClick={() => setShowPreview(true)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+              Preview
+            </button>
+          )}
           {isOnSite && !post?.wpPostId && !post?.bcPostId && (
             <button type="button" onClick={handleRetry} disabled={retrying} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
               {retrying ? 'Pushing…' : 'Retry Push'}
@@ -777,31 +947,45 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           </button>
         </div>
 
-        {/* Tab navigation */}
-        {!loading && (
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 1.25rem' }}>
-            {EDITOR_TABS.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveEditorTab(tab.id)}
-                style={{
-                  padding: '0.5rem 0.875rem',
-                  fontSize: '0.75rem',
-                  fontWeight: activeEditorTab === tab.id ? 600 : 400,
-                  color: activeEditorTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: `2px solid ${activeEditorTab === tab.id ? 'var(--accent, #2563eb)' : 'transparent'}`,
-                  cursor: 'pointer',
-                  letterSpacing: '0.02em',
-                  marginBottom: -1,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {/* Strategy context — collapsible header panel */}
+        {!loading && showStrategy && (topicBreakdown ?? fetchedBreakdown) && (
+          <div style={{ borderBottom: '1px solid var(--border)', padding: '0.75rem 1.25rem', maxHeight: 260, overflowY: 'auto', background: 'var(--bg-subtle)' }}>
+            {(() => {
+              const bd = topicBreakdown ?? fetchedBreakdown
+              if (!bd) return null
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {([
+                    { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
+                    { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
+                    { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
+                    { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
+                    { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+                  ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
+                    const val = bd[key]
+                    if (!val || typeof val !== 'string') return null
+                    return (
+                      <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.625rem 0.875rem' }}>
+                        <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
+                      </div>
+                    )
+                  })}
+                  {bd.page_to_support && (
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                      <strong>Page to support:</strong>{' '}
+                      <a href={bd.page_to_support} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{bd.page_to_support}</a>
+                    </div>
+                  )}
+                  {bd.competitors_researched && bd.competitors_researched.length > 0 && (
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                      <strong>Competitors researched:</strong>{' '}
+                      {bd.competitors_researched.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 
@@ -810,7 +994,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
           </div>
         ) : (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem' }}>
+          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            {/* Left: live rendered preview (wide screens only) */}
+            {!isNarrow && (
+              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: '#fff' }}>
+                <iframe srcDoc={previewSrcdoc} title="Live preview" style={{ width: '100%', height: '100%', border: 'none' }} />
+              </div>
+            )}
+
+            {/* Right: single-scroll collapsible edit column */}
+            <div style={{ flex: isNarrow ? '1 1 100%' : '1 1 45%', overflowY: 'auto', padding: '1.25rem', minWidth: 0 }}>
             {error && (
               <p className="text-xs mb-3" style={{ color: 'var(--red)', background: 'rgba(220,38,38,0.06)', padding: '0.5rem 0.75rem', borderRadius: 6 }}>
                 {error}
@@ -820,30 +1013,29 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             {/* On Site banner */}
             {isOnSite && (
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>✓ On Site</span>
-                  {post?.wpPostId && post?.wpSiteUrl && (
-                    <a href={`${post.wpSiteUrl}/wp-admin/post.php?post=${post.wpPostId}&action=edit`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
-                      Edit in WordPress ↗
-                    </a>
+                  {showLiveLink && liveUrl && (
+                    <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>
                   )}
-                  {post?.bcPostId && post?.bcStoreHash && (
-                    <a href={`https://store-${post.bcStoreHash}.mybigcommerce.com/manage/content/blog`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>
-                      Edit in BigCommerce ↗
-                    </a>
+                  {draftPreview && (
+                    <a href={draftPreview} target="_blank" rel="noopener noreferrer" title="Opens the draft on your WordPress site — requires your WordPress login" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Preview draft ↗</a>
                   )}
-                  {post?.publishedUrl && (
-                    <a href={post.publishedUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>View post ↗</a>
+                  {wpEdit && (
+                    <a href={wpEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Open in WordPress ↗</a>
+                  )}
+                  {bcEdit && (
+                    <a href={bcEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>Edit in BigCommerce ↗</a>
                   )}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been saved to your site as a draft. Edit and publish it directly in the CMS.
+                  This post has been saved to your site as a draft. Preview it live, or edit and publish it directly in the CMS.
                 </p>
               </div>
             )}
 
-            {/* ── TAB: Content ──────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'content' ? 'block' : 'none' }}>
+            {/* ── SECTION: Content ──────────────────────────────────────────── */}
+            <CollapsibleSection title="Content" open={openSections.has('content')} onToggle={() => toggleSection('content')}>
               {/* H1 Title */}
               <div className="mb-4">
                 <label style={labelStyle}>H1 Title</label>
@@ -928,10 +1120,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
 
-            {/* ── TAB: SEO & Meta ───────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'seo' ? 'block' : 'none' }}>
+            {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
+            <CollapsibleSection title="SEO & Meta" open={openSections.has('seo')} onToggle={() => toggleSection('seo')}>
               {/* SEO Title */}
               <div className="mb-4">
                 <label style={labelStyle}>
@@ -1003,7 +1195,29 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
               {/* SEO checklist */}
               <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
-                <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', marginBottom: '0.5rem' }}>SEO Checklist</p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '0.5rem' }}>
+                  <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', margin: 0 }}>SEO Checklist</p>
+                  {keywordRank?.current_position != null ? (
+                    <span
+                      title="Current keyword rank (DataForSEO)"
+                      style={{
+                        fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999,
+                        background: keywordRank.current_position <= 3 ? '#dcfce7' : keywordRank.current_position <= 10 ? '#fef3c7' : 'var(--bg-muted)',
+                        color: keywordRank.current_position <= 3 ? '#166534' : keywordRank.current_position <= 10 ? '#92400e' : 'var(--text-muted)',
+                      }}
+                    >
+                      Rank #{keywordRank.current_position}
+                      {keywordRank.position_delta ? (keywordRank.position_delta > 0 ? ` ▲${Math.abs(keywordRank.position_delta)}` : ` ▼${Math.abs(keywordRank.position_delta)}`) : ''}
+                    </span>
+                  ) : keywordRank?.movement === 'dropped' ? (
+                    <span
+                      title={`Dropped out of the tracked results${keywordRank.previous_position != null ? ` (was #${keywordRank.previous_position})` : ''} (DataForSEO)`}
+                      style={{ fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999, background: 'var(--red-subtle)', color: 'var(--red)' }}
+                    >
+                      Rank dropped
+                    </span>
+                  ) : null}
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
                   <div><Check ok={keywordInTitle} />Keyword in H1</div>
                   <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
@@ -1020,6 +1234,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <div><Check ok={keywordSlug} />Keyword in slug</div>
                   <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
                   <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
+                  {isBlogPost && <div><Check ok={hasTakeaways} />Key Takeaways box</div>}
+                  <div><Check ok={headingHierOk} warn={liveHeadings > 0 && !headingHierOk} />Heading hierarchy</div>
+                  <div><Check ok={slugClean} warn={slug.length > 0 && !slugClean} />Clean URL slug</div>
                 </div>
 
                 {/* Link Health */}
@@ -1070,10 +1287,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   )}
                 </div>
               </div>
-            </div>
+            </CollapsibleSection>
 
-            {/* ── TAB: Settings ─────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'settings' ? 'block' : 'none' }}>
+            {/* ── SECTION: Publish ──────────────────────────────────────────── */}
+            <CollapsibleSection title="Publish" open={openSections.has('publish')} onToggle={() => toggleSection('publish')}>
               {/* Site connection selector */}
               <div className="mb-4">
                 <label style={labelStyle}>Site Connection</label>
@@ -1170,101 +1387,165 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 </div>
               )}
 
-              {/* AI re-edit */}
+              {/* Regeneration */}
               <div className="mb-4">
-                {!showEditNotes ? (
-                  <button type="button" onClick={() => setShowEditNotes(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                    Editor Notes for Regeneration…
-                  </button>
-                ) : (
-                  <div>
-                    <label style={labelStyle}>Editor Notes for Regeneration</label>
-                    <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }} placeholder="e.g. Make the tone more conversational and add a FAQ section at the end" autoFocus />
-                    <div className="flex gap-2">
-                      <button type="button" disabled={regenerating} onClick={handleRegenerate} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-                        {regenerating ? 'Regenerating…' : 'Regenerate with AI'}
-                      </button>
-                      <button type="button" onClick={() => { setShowEditNotes(false); setEditNotes('') }} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Cancel</button>
-                    </div>
+                {post?.status === 'generating' ? (
+                  <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                    <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }}>⟳</span>
+                    Generating new topic and content — this takes about a minute…
                   </div>
+                ) : (
+                  <>
+                    {showRegenConfirm ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0.625rem 0.875rem', background: 'var(--bg-subtle)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', flex: 1 }}>
+                          Picks a new topic and rewrites everything — can&apos;t be undone.
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.8125rem' }}
+                          disabled={fullRegenerating || regenerating}
+                          onClick={() => { setShowRegenConfirm(false); handleFullRegenerate() }}
+                        >
+                          {fullRegenerating ? 'Queuing…' : 'Confirm regenerate'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: '0.75rem' }}
+                          onClick={() => setShowRegenConfirm(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.8125rem' }}
+                          disabled={fullRegenerating || regenerating}
+                          onClick={() => setShowRegenConfirm(true)}
+                        >
+                          {fullRegenerating ? 'Queuing…' : 'Regenerate Post'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: '0.75rem', opacity: 0.65 }}
+                          onClick={() => setShowEditDirection(v => !v)}
+                        >
+                          {showEditDirection ? 'Hide direction' : 'Add direction…'}
+                        </button>
+                      </div>
+                    )}
+                    {showEditDirection && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <textarea
+                          value={editNotes}
+                          onChange={e => setEditNotes(e.target.value)}
+                          rows={3}
+                          style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }}
+                          placeholder="e.g. Avoid motorcycle content, focus on car detailing instead…"
+                          autoFocus
+                        />
+                        <div className="flex gap-2" style={{ marginBottom: '0.25rem' }}>
+                          <button
+                            type="button"
+                            disabled={regenerating || fullRegenerating}
+                            onClick={handleRegenerate}
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.8125rem' }}
+                          >
+                            {regenerating ? 'Rewriting…' : 'Rewrite with Notes'}
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-faint)', margin: 0 }}>
+                          "Regenerate Post" picks a fresh topic. "Rewrite with Notes" keeps the topic but rewrites using your direction above.
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
-            </div>
-
-            {/* ── TAB: Strategy ────────────────────────────────────────────── */}
-            <div style={{ display: activeEditorTab === 'strategy' ? 'block' : 'none', padding: '0.5rem 0' }}>
-              {(() => {
-                const bd = topicBreakdown ?? fetchedBreakdown
-                if (!bd) return null
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {([
-                      { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-                      { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-                      { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
-                      { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-                      { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-                    ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
-                      const val = bd[key]
-                      if (!val || typeof val !== 'string') return null
-                      return (
-                        <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.75rem 1rem' }}>
-                          <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-                          <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
-                        </div>
-                      )
-                    })}
-                    {bd.page_to_support && (
-                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
-                        <strong>Page to support:</strong>{' '}
-                        <a href={bd.page_to_support} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{bd.page_to_support}</a>
-                      </div>
-                    )}
-                    {bd.competitors_researched && bd.competitors_researched.length > 0 && (
-                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
-                        <strong>Competitors researched:</strong>{' '}
-                        {bd.competitors_researched.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-              {!(topicBreakdown ?? fetchedBreakdown) && (
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-faint)', textAlign: 'center', paddingTop: 32 }}>
-                  No strategy data available for this post.
-                </p>
-              )}
+            </CollapsibleSection>
             </div>
           </div>
         )}
 
         {/* Footer actions */}
         {!loading && (
-          <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            {/* Save Changes */}
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || !isDirty}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
-            >
-              {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
-            </button>
-
-            {/* Approve — push to site */}
-            {!isOnSite && (
-              <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                <ArrowCircleRight size={15} weight="bold" />
-                {approving ? 'Saving…' : 'Approve'}
+          onMonthlyApprove ? (
+            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !isDirty}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
               </button>
-            )}
+              <div style={{ flex: 1 }} />
+              {onMonthlyRegenerate && (
+                <button
+                  type="button"
+                  title="Regenerate — picks a new topic and rewrites the post"
+                  onClick={onMonthlyRegenerate}
+                  className="btn btn-sm"
+                  disabled={saving}
+                  style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center' }}
+                >
+                  <ArrowClockwise size={13} weight="bold" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleMonthlyDiscard}
+                disabled={saving}
+                className="btn btn-sm"
+                style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleMonthlyApprove}
+                disabled={saving}
+                className="btn btn-sm btn-primary"
+                style={{ background: saving ? undefined : '#16a34a', borderColor: '#16a34a' }}
+              >
+                {saving ? '…' : 'Approve →'}
+              </button>
+            </div>
+          ) : (
+            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Save Changes */}
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !isDirty}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
+              </button>
 
-            <div style={{ flex: 1 }} />
-            <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
-              Reject
-            </button>
-          </div>
+              {/* Approve — push to site */}
+              {!isOnSite && (
+                <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <ArrowCircleRight size={15} weight="bold" />
+                  {approving ? 'Saving…' : 'Approve'}
+                </button>
+              )}
+
+              <div style={{ flex: 1 }} />
+              <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
+                Reject
+              </button>
+            </div>
+          )
         )}
       </div>
     </>

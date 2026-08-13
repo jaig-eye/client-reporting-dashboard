@@ -4,8 +4,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { ahrefsConnector } from '@/lib/connectors/ahrefs'
+import { dataForSeoConnector } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
+
+// Connectors whose credentials should be live-tested when created / rotated.
+const TESTABLE = {
+  ahrefs:     ahrefsConnector,
+  dataforseo: dataForSeoConnector,
+} as const
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -53,10 +60,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     meta: { label: (data as { label?: string } | null)?.label ?? '' },
   })
 
-  // For Ahrefs: re-test connection whenever auth is patched
-  if (data?.type === 'ahrefs' && body.auth_patch) {
+  // For token/credential connectors: re-test connection whenever auth is patched
+  const patchAdapter = data?.type ? TESTABLE[data.type as keyof typeof TESTABLE] : undefined
+  if (patchAdapter && body.auth_patch) {
     try {
-      const ok = await ahrefsConnector.testConnection!(data.auth as Record<string, unknown>, {})
+      const ok = await patchAdapter.testConnection!(data.auth as Record<string, unknown>, {})
       const testStatus = ok ? 'active' : 'error'
       const testConfig = ok
         ? { ...(data.config as object ?? {}) }
@@ -65,8 +73,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { auth: _auth, ...safeData } = data
       return NextResponse.json({ ...safeData, status: testStatus, config: testConfig })
-    } catch (e) {
+    } catch {
       await db.from('connectors').update({ status: 'error' }).eq('id', id)
+      const { auth: _errAuth, ...errData } = data as typeof data & { auth?: unknown }
+      return NextResponse.json({ ...errData, status: 'error' })
     }
   }
 

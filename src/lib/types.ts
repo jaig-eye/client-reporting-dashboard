@@ -28,6 +28,7 @@ export type ConnectorType =
   | 'wordpress'
   | 'ahrefs'
   | 'bigcommerce'
+  | 'dataforseo'
 
 /** Display metadata for each connector type — used in the UI. */
 export interface ConnectorTypeDef {

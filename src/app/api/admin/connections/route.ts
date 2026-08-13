@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { client_id, connector_id, external_id, external_name } = body
+  const { client_id, connector_id, external_id, external_name, config } = body
 
   if (!client_id || !connector_id || !external_id) {
     return NextResponse.json({ error: 'client_id, connector_id, and external_id are required' }, { status: 400 })
@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
       external_id: String(external_id).trim(),
       external_name: external_name ?? null,
       status: 'active',
+      // Per-client overrides (e.g. DataForSEO rank depth / devices). Omitted → DB default {}.
+      ...(config && typeof config === 'object' ? { config } : {}),
     })
     .select('id, client_id, connector_id, external_id, external_name, status')
     .single()

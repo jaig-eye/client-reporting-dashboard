@@ -5,30 +5,27 @@ import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
 import { cookies }             from 'next/headers'
 import { redirect }            from 'next/navigation'
-import GlobalContentSettings   from './ContentSettingsPanel'
 import ContentCalendar         from './ContentCalendar'
 import type { CalendarItem }   from './ContentCalendar'
-import PostReviewList           from '@/components/admin/PostReviewList'
-import type { PostReviewItem }  from '@/components/admin/PostReviewModal'
+import MonthlyReviewSession    from '@/components/admin/MonthlyReviewSession'
+import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ContentPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; view?: string; highlight?: string }>
+  searchParams: Promise<{ tab?: string; view?: string; month?: string; highlight?: string }>
 }) {
   const cookieStore = await cookies()
   const session     = cookieStore.get('admin_session')?.value
   if (!isAdminAuthed(session)) redirect('/admin/login')
 
   const params      = await searchParams
-  const activeTab   = params.tab  ?? 'calendar'
-  const activeView  = params.view ?? 'calendar'
+  // Monthly Review is the default landing view; Calendar + Silos are secondary views.
+  const activeView  = params.view ?? 'review'
 
   const db = createAdminClient()
-
-  const today = new Date().toISOString().slice(0, 10)
 
   // Existing 5-element query (typing must stay intact — adding to this array breaks TS tuple inference)
   const [
@@ -51,64 +48,17 @@ export default async function ContentPage({
     db.from('content_posts').select('silo_id, status').not('silo_id', 'is', null).limit(2000),
   ])
 
-  // Separate awaits: avoids Supabase inner-join type inference contaminating the main Promise.all tuple
-  const reviewQueueRes = await db.from('content_posts')
-    .select('id, client_id, status, title, content, featured_image_url, target_keyword, target_publish_date, seo_title, meta_description, seo_score, admin_approved_at')
-    .in('status', ['for_review', 'pending', 'approved'])
-    .gte('target_publish_date', today)
-    .is('wp_post_id', null)
-    .is('bc_post_id', null)
-    .order('target_publish_date', { ascending: true })
-    .limit(100)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wpConnectionsRes = await (db as any).from('client_connections')
-    .select('id, client_id, external_id, connectors!inner(type, config)')
-    .eq('status', 'active')
+  // Monthly-review window data — only fetched when the Review view is active.
+  const reviewData = activeView === 'review'
+    ? await getMonthlyReviewData(
+        db,
+        typeof params.month === 'string' ? params.month : null,
+        mp => `/admin/content?view=review&month=${mp}`,
+      )
+    : null
 
   const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
   const allClients    = (allClientsRes.data ?? []) as { id: string; name: string }[]
-
-  // Review queue for the list view
-  type ReviewRow = {
-    id: string; client_id: string; status: string; title: string | null; content: string | null
-    featured_image_url: string | null; target_keyword: string | null; target_publish_date: string | null
-    seo_title: string | null; meta_description: string | null; seo_score: number | null
-    admin_approved_at: string | null
-  }
-  const reviewQueue: PostReviewItem[] = ((reviewQueueRes.data ?? []) as unknown as ReviewRow[]).map(r => ({
-    id:                  r.id,
-    clientId:            r.client_id,
-    clientName:          allClientsMap.get(r.client_id) ?? 'Unknown',
-    title:               r.title,
-    content:             r.content,
-    featured_image_url:  r.featured_image_url,
-    target_keyword:      r.target_keyword,
-    target_publish_date: r.target_publish_date,
-    seo_title:           r.seo_title,
-    meta_description:    r.meta_description,
-    seo_score:           r.seo_score,
-    status:              r.status,
-    admin_approved_at:   r.admin_approved_at,
-  }))
-
-  // WP/BC site list for the inline editor in PostReviewList
-  type ConnRow = {
-    id: string; client_id: string; external_id: string | null
-    connectors: { type: string; config: Record<string, unknown> } | null
-  }
-  const allSites = ((wpConnectionsRes.data ?? []) as unknown as ConnRow[])
-    .filter(c => c.connectors?.type === 'wordpress' || c.connectors?.type === 'bigcommerce')
-    .map(c => ({
-      connectionId:   c.id,
-      siteUrl:        c.connectors?.type === 'wordpress'
-        ? (String(c.connectors.config?.site_url ?? c.external_id ?? ''))
-        : (String(c.connectors?.config?.store_hash ?? '')),
-      siteName:       allClientsMap.get(c.client_id) ?? 'Unknown',
-      clientId:       c.client_id,
-      clientName:     allClientsMap.get(c.client_id) ?? 'Unknown',
-      connectorType:  c.connectors?.type,
-    }))
 
   // Build calendar items
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,104 +143,66 @@ export default async function ContentPage({
     silos.reduce((m, s) => { if (!m.has(s.client_id)) m.set(s.client_id, []); m.get(s.client_id)!.push(s); return m }, new Map<string, SiloRow[]>())
   )
 
-  const tabs = [
-    { id: 'calendar', label: 'Pipeline' },
+  const views = [
+    { id: 'review',   label: 'Review' },
+    { id: 'calendar', label: 'Calendar' },
     { id: 'silos',    label: 'Silos' },
-    { id: 'settings', label: 'Settings' },
   ]
-
-  const pendingReviewCount = reviewQueue.filter(p => p.status !== 'approved').length
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Content</h1>
-      </div>
+      {/* Header: title + gear settings on the left, view switcher on the right */}
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h1 className="page-title" style={{ margin: 0 }}>Content</h1>
+        <a
+          href="/admin/content/settings"
+          title="Content settings"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8125rem', color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)' }}
+        >
+          ⚙ Settings
+        </a>
 
-      {/* Monthly Review banner */}
-      {pendingReviewCount > 0 && (
-        <div style={{
-          display:      'flex',
-          alignItems:   'center',
-          gap:          12,
-          padding:      '12px 16px',
-          marginBottom: 16,
-          background:   'var(--blue-subtle)',
-          border:       '1px solid var(--blue-border)',
-          borderRadius: 8,
-        }}>
-          <span style={{ fontSize: 13, color: 'var(--blue)', flex: 1 }}>
-            <strong>Monthly Review Ready</strong> — {pendingReviewCount} post{pendingReviewCount === 1 ? '' : 's'} across your clients need approval
-          </span>
-          <a
-            href="/admin/content/monthly-review"
-            className="btn btn-primary btn-sm"
-          >
-            Start Monthly Review →
-          </a>
+        <div style={{ flex: 1 }} />
+
+        {/* View switcher */}
+        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3 }}>
+          {views.map(v => (
+            <a
+              key={v.id}
+              href={`?view=${v.id}`}
+              style={{
+                display:        'inline-block',
+                padding:        '5px 14px',
+                borderRadius:   6,
+                fontSize:       '0.8125rem',
+                fontWeight:     activeView === v.id ? 600 : 400,
+                color:          activeView === v.id ? '#fff' : 'var(--text-muted)',
+                background:     activeView === v.id ? 'var(--blue, #2563eb)' : 'transparent',
+                textDecoration: 'none',
+              }}
+            >
+              {v.label}
+            </a>
+          ))}
         </div>
-      )}
-
-      {/* Tab nav */}
-      <div className="flex gap-1 mb-6" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-        {tabs.map(tab => (
-          <a
-            key={tab.id}
-            href={`?tab=${tab.id}`}
-            style={{
-              padding: '0.5rem 1rem',
-              fontSize: '0.875rem',
-              fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--blue)' : 'var(--text-muted)',
-              textDecoration: 'none',
-              borderBottom: activeTab === tab.id ? '2px solid var(--blue)' : '2px solid transparent',
-              marginBottom: -1,
-              transition: 'color 0.15s, border-color 0.15s',
-            }}
-          >
-            {tab.label}
-          </a>
-        ))}
       </div>
 
-      {activeTab === 'calendar' && (
-        <>
-          {/* Calendar / List view toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: '1.25rem' }}>
-            {(['calendar', 'list'] as const).map(v => (
-              <a
-                key={v}
-                href={`?tab=calendar&view=${v}`}
-                style={{
-                  display:        'inline-block',
-                  padding:        '5px 14px',
-                  borderRadius:   6,
-                  fontSize:       '0.8125rem',
-                  fontWeight:     activeView === v ? 600 : 400,
-                  color:          activeView === v ? '#fff' : 'var(--text-muted)',
-                  background:     activeView === v ? 'var(--blue, #2563eb)' : 'var(--bg-subtle)',
-                  textDecoration: 'none',
-                  textTransform:  'capitalize',
-                }}
-              >
-                {v === 'list' ? 'Review Queue' : 'Timeline'}
-              </a>
-            ))}
-            {activeView === 'list' && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginLeft: '0.5rem' }}>
-                {reviewQueue.filter(p => p.status !== 'approved').length} pending approval
-              </span>
-            )}
-          </div>
-
-          {activeView === 'list'
-            ? <PostReviewList initialPosts={reviewQueue} allSites={allSites} />
-            : <ContentCalendar items={calendarItems} clients={allClients} />
-          }
-        </>
+      {activeView === 'review' && reviewData && (
+        <MonthlyReviewSession
+          posts={reviewData.posts}
+          allSites={reviewData.allSites}
+          month={reviewData.month}
+          prevUrl={reviewData.prevUrl}
+          nextUrl={reviewData.nextUrl}
+          embedded
+        />
       )}
 
-      {activeTab === 'silos' && (
+      {activeView === 'calendar' && (
+        <ContentCalendar items={calendarItems} clients={allClients} />
+      )}
+
+      {activeView === 'silos' && (
         <div>
           {silos.length === 0 ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
@@ -351,9 +263,6 @@ export default async function ContentPage({
         </div>
       )}
 
-      {activeTab === 'settings' && (
-        <GlobalContentSettings clients={allClients} />
-      )}
     </div>
   )
 }

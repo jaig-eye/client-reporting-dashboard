@@ -19,6 +19,12 @@ import type { Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
+import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
+import DataForSeoUsagePanel from '@/components/admin/DataForSeoUsagePanel'
+import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
+import { resolveDfsCreds }  from '@/lib/connectors/dataforseo'
+import type { SeoDevice }   from '@/lib/connectors/dataforseo'
+import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
 import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
 
 export const dynamic = 'force-dynamic'
@@ -32,14 +38,31 @@ export default async function ConnectionsPage({
   const db = createAdminClient()
   const [connectorsRes, agencyRes] = await Promise.all([
     db.from('connectors').select('*').order('created_at'),
-    db.from('agency_settings').select('stripe_api_key, stripe_webhook_secret').single(),
+    db.from('agency_settings')
+      .select('stripe_api_key, stripe_webhook_secret, serp_api_key, serp_api_provider, discord_bot_token, discord_ops_channel_id')
+      .single(),
   ])
   const existing = (connectorsRes.data ?? []) as Connector[]
-  const agencySettings = agencyRes.data as { stripe_api_key?: string; stripe_webhook_secret?: string } | null
+  const agencySettings = agencyRes.data as {
+    stripe_api_key?: string; stripe_webhook_secret?: string
+    serp_api_key?: string; serp_api_provider?: string
+    discord_bot_token?: string; discord_ops_channel_id?: string
+  } | null
 
   // Ahrefs connector (if any)
   const ahrefsConnector = existing.find(c => c.type === 'ahrefs')
   const ahrefsApiKey    = ahrefsConnector ? String((ahrefsConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
+
+  // DataForSEO connector (if any)
+  const dfsConnector = existing.find(c => c.type === 'dataforseo')
+  const dfsAuth      = (dfsConnector?.auth as Record<string, unknown> | undefined) ?? {}
+  const dfsConfig    = (dfsConnector?.config as Record<string, unknown> | undefined) ?? {}
+  // Must match resolveDfsCreds exactly (login AND password, or a decodable api_key; env fills
+  // gaps). A login-only save is NOT usable, so don't render "Credentials set" + the usage panel
+  // for creds that resolveDfsCreds would reject everywhere they're actually used.
+  const dfsHasCreds  = resolveDfsCreds(dfsAuth) !== null
+  const dfsDevices   = Array.isArray(dfsConfig.devices) ? (dfsConfig.devices as SeoDevice[]) : undefined
+  const dfsDepth     = typeof dfsConfig.rank_depth === 'number' ? dfsConfig.rank_depth : undefined
 
   // Map type → existing connector for quick lookup
   const byType = new Map(existing.map(c => [c.type, c]))
@@ -202,7 +225,7 @@ export default async function ConnectionsPage({
 
         {/* ── Ungrouped flat cards (agency-level only) ───────────────────────── */}
         {UNGROUPED_CONNECTOR_TYPES
-          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs')
+          .filter(type => type !== 'ghl' && type !== 'wordpress' && type !== 'bigcommerce' && type !== 'ahrefs' && type !== 'dataforseo')
           .map(type => {
             const def         = getConnectorDef(type)
             const connector   = byType.get(type)
@@ -265,6 +288,26 @@ export default async function ConnectionsPage({
         <AhrefsAgencyCard
           initialApiKey={ahrefsApiKey}
           connectorId={ahrefsConnector?.id}
+        />
+        {/* ── DataForSEO (keyword rank tracking) ────────────────────────────── */}
+        <DataForSeoAgencyCard
+          connectorId={dfsConnector?.id}
+          connected={dfsConnector?.status === 'active'}
+          hasCreds={dfsHasCreds}
+          initialDepth={dfsDepth}
+          initialDevices={dfsDevices}
+        />
+        {/* DataForSEO usage + spend (only once credentials exist) */}
+        {dfsHasCreds && <DataForSeoUsagePanel />}
+        {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
+        <SearchApiAgencyCard
+          initialApiKey={agencySettings?.serp_api_key ?? ''}
+          initialProvider={agencySettings?.serp_api_provider ?? 'serpapi'}
+        />
+        {/* ── Discord (agency notifications) ────────────────────────────────── */}
+        <DiscordAgencyCard
+          initialBotToken={agencySettings?.discord_bot_token ?? ''}
+          initialOpsChannelId={agencySettings?.discord_ops_channel_id ?? ''}
         />
         {/* ── Stripe ────────────────────────────────────────────────── */}
         <StripeAgencyCard

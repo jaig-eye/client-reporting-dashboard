@@ -8,6 +8,18 @@ import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors }            from '@/lib/content/competitorResearch'
 import type { CompetitorResearch }        from '@/lib/content/competitorResearch'
+import {
+  BLOG_INTENT_ENUM,
+  NON_BLOG_INTENT_ENUM,
+  BLOG_INTENT_GUARDRAIL,
+  BLOG_LANDSCAPE_INSTRUCTION,
+  isAllowedBlogIntent,
+  isForbiddenBlogKeyword,
+} from '@/lib/content/blogStrategy'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
+import { getClientDfsContext } from '@/lib/content/competitiveIntel'
+import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/dataforseo'
+import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 interface TopicIdea {
   topic:               string
@@ -106,6 +118,23 @@ export async function generateTopicsForClient(
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
+  // Build avoid-list queries scoped to the same content_type when one is provided.
+  // Blog generation avoids blog posts/topics only; SA generation avoids SA only —
+  // so neither wastes avoid-list slots on the other content type.
+  let existingTopicsQ = db.from('content_topics')
+    .select('topic, target_keyword')
+    .eq('client_id', clientId)
+    .not('status', 'eq', 'rejected')
+  if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
+
+  // No date cap — include all posts ever generated for this client so nothing is recycled.
+  let existingPostsQ = db.from('content_posts')
+    .select('title, focus_topic, target_keyword')
+    .eq('client_id', clientId)
+    .order('generated_at', { ascending: false })
+    .limit(500)
+  if (opts?.contentType) existingPostsQ = existingPostsQ.eq('content_type', opts.contentType)
+
   const [
     settingsRes,
     clientRes,
@@ -115,23 +144,15 @@ export async function generateTopicsForClient(
     gscRawRes,
   ] = await Promise.all([
     db.from('agency_settings')
-      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key')
+      .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
       .single(),
     db.from('clients').select('id, name').eq('id', clientId).single(),
     db.from('content_settings')
       .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data, topic_guidelines')
       .eq('client_id', clientId)
       .maybeSingle(),
-    db.from('content_topics')
-      .select('topic, target_keyword')
-      .eq('client_id', clientId)
-      .not('status', 'eq', 'rejected'),
-    db.from('content_posts')
-      .select('title, focus_topic, target_keyword')
-      .eq('client_id', clientId)
-      .gte('generated_at', new Date(Date.now() - 90 * 86_400_000).toISOString())
-      .order('generated_at', { ascending: false })
-      .limit(50),
+    existingTopicsQ,
+    existingPostsQ,
     db.from('gsc_metrics')
       .select('page, query, clicks, impressions, position, ctr')
       .eq('client_id', clientId)
@@ -238,6 +259,24 @@ export async function generateTopicsForClient(
     }
   }
 
+  // ── Keyword demand/difficulty/intent enrichment (DataForSEO — dormant if unconnected) ──
+  // Real figures replace the model's guesswork when selecting/prioritising keywords.
+  const kwDataMap = new Map<string, DfsKeywordData>()
+  try {
+    const dfsCtx = await getClientDfsContext(db, clientId)
+    if (dfsCtx) {
+      const seeds = Array.from(new Set([...growthTargets, ...quickWins].map(t => t.query))).slice(0, 200)
+      if (seeds.length) {
+        const enriched = await dfsKeywordOverview(seeds, dfsCtx.creds, {
+          locationCode: dfsCtx.config.location_code,
+          languageCode: dfsCtx.config.language_code,
+          onCost: c => { void recordDfsUsage({ operation: 'keyword_overview', cost: c, clientId }) },
+        })
+        for (const r of enriched) kwDataMap.set(r.keyword.toLowerCase(), r)
+      }
+    }
+  } catch { /* soft-fail: enrichment absent, prompt renders without it */ }
+
   // ── Sitemap pages ──────────────────────────────────────────────────────────
   const sitemapUrls: string[] = (() => {
     const urls = clientSettings?.sitemap_urls
@@ -329,6 +368,8 @@ export async function generateTopicsForClient(
   }
 
   // ── Prompt ─────────────────────────────────────────────────────────────────
+  // Requested content type (silo may refine this later; used here for GSC copy only).
+  const requestedIsBlog = (opts?.contentType ?? 'blog') === 'blog'
   const contextLines: string[] = []
   if (clientSettings?.business_background) contextLines.push(`Business: ${clientSettings.business_background}`)
   if (clientSettings?.services)            contextLines.push(`Services: ${clientSettings.services}`)
@@ -340,16 +381,58 @@ export async function generateTopicsForClient(
     ? `\nTop-performing pages:\n${topPages.slice(0, 8).map(p => `  - "${p.query}" → ${stripDomain(p.page)} (${p.totalClicks} clicks, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
     : ''
 
+  // Append real DataForSEO demand/difficulty/intent to a keyword line when available.
+  const kwSuffix = (q: string): string => {
+    const d = kwDataMap.get(q.toLowerCase())
+    if (!d) return ''
+    const parts: string[] = []
+    if (d.search_volume != null)      parts.push(`vol ${d.search_volume}`)
+    if (d.keyword_difficulty != null) parts.push(`KD ${Math.round(d.keyword_difficulty)}`)
+    if (d.intent)                     parts.push(`intent ${d.intent}`)
+    return parts.length ? ` | ${parts.join(', ')}` : ''
+  }
+
   const gscGrowthText = growthTargets.length > 0
-    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article targeting the keyword and internally link it to that page:\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nPage-2 opportunities (pos 10–20) — PRIORITISE these. Each "Existing page" ALREADY EXISTS on the site; write a new SUPPORT article and internally link it to that page.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${growthTargets.slice(0, 12).map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
   const gscQuickWinsText = quickWins.length > 0
-    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these:\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})`).join('\n')}`
+    ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
   const gscCtrText = ctrIssues.length > 0
     ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
+    : ''
+
+  // ── Cannibalization guardrails from real GSC data (first-party — no fencing needed) ──
+  // Split on the FIRST '||' (page is a URL with no '||'), so a query containing '||' stays intact.
+  const gscRows = Array.from(gscMap.entries()).map(([k, v]) => {
+    const i = k.indexOf('||')
+    return { page: k.slice(0, i), query: k.slice(i + 2), ...v }
+  })
+  const bucketedQueries = new Set([...growthTargets, ...quickWins, ...ctrIssues].map(t => t.query))
+
+  // Already winning (pos 1–4, has clicks) and not already surfaced above → do not create competing content.
+  // weightedPos >= 1 excludes rows with an unset/zero position that would render a misleading "#0".
+  const alreadyWinning = gscRows
+    .filter(r => r.weightedPos >= 1 && r.weightedPos <= 4 && r.totalClicks > 0 && !bucketedQueries.has(r.query))
+    .sort((a, b) => a.weightedPos - b.weightedPos)
+    .slice(0, 12)
+  const alreadyWinningText = alreadyWinning.length > 0
+    ? `\nALREADY RANKING TOP-5 — DO NOT CANNIBALIZE (live Google positions). Do NOT propose a new primary page for any of these; at most a support/cluster article that internally links to the exact ranking URL:\n${alreadyWinning.map(r => `  - "${r.query}" is already #${Math.round(r.weightedPos)} at ${stripDomain(r.page)}`).join('\n')}`
+    : ''
+
+  // Self-cannibalization: the same query ranks 2+ of the client's own URLs.
+  const byQuery = new Map<string, Set<string>>()
+  for (const r of gscRows) {
+    if (r.totalImpr <= 0) continue
+    const set = byQuery.get(r.query) ?? new Set<string>()
+    set.add(r.page)
+    byQuery.set(r.query, set)
+  }
+  const cannibalized = Array.from(byQuery.entries()).filter(([, pages]) => pages.size >= 2).slice(0, 10)
+  const cannibalizationText = cannibalized.length > 0
+    ? `\n⚠ SELF-CANNIBALIZATION — the same query already ranks multiple of this client's own URLs. Do NOT add another competing page; only propose content that reinforces the single strongest URL:\n${cannibalized.map(([q, pages]) => `  - "${q}" is split across ${pages.size} URLs: ${Array.from(pages).map(stripDomain).slice(0, 4).join(', ')}`).join('\n')}`
     : ''
 
   const sitemapText = sitemapPages.length > 0
@@ -445,6 +528,13 @@ SILO RULES (override any conflicting instructions above):
   }
 
   const effectiveContentType = siloContentType ?? opts?.contentType ?? 'blog'
+  const isBlog = effectiveContentType === 'blog'
+
+  // Blogs are constrained to informational/educational intent (see blogStrategy.ts).
+  // Service/regular pages keep the broader intent enum (local_service, commercial, etc.).
+  const intentEnumText      = isBlog ? BLOG_INTENT_ENUM : NON_BLOG_INTENT_ENUM
+  const blogIntentGuardrail = isBlog ? `\n${BLOG_INTENT_GUARDRAIL}\n` : ''
+  const blogLandscapeInstr  = isBlog ? `\n${BLOG_LANDSCAPE_INSTRUCTION}\n` : ''
 
   const contentTypeLabel = effectiveContentType === 'service_page'
     ? 'service landing page'
@@ -462,7 +552,7 @@ SILO RULES (override any conflicting instructions above):
 Suggest ${contentTypeLabel} topic ideas for a client based on their business context and Google Search Console data.
 
 ${contentTypeInstructions}
-
+${blogLandscapeInstr}
 CLUSTERING RULE: Before finalising your list, check if any two topics target the same search intent. If two proposed topics would compete for the same searcher (e.g. "how to finance a car" and "best auto financing options"), COMBINE them into one stronger comprehensive article and return only one. Each topic must target a clearly distinct audience need. This prevents keyword cannibalization where Google gets confused about which page to rank.
 
 ANGLE DIVERSIFICATION RULE: Every topic in your list must use a different content ANGLE. Never suggest variations of the same angle (e.g. "best roofers in Dallas" and "top-rated roofing companies in Dallas" are the same angle). Vary the angle across your full list — draw from these angle types: how-to guide, cost/pricing breakdown, comparison (A vs B), local case study, FAQ, seasonal tip, problem/solution, buyer's guide, checklist, myth-busting, behind-the-scenes. Aim to cover at least 3 distinct angle types in any list of 5 or more topics.
@@ -474,15 +564,15 @@ NICHE DISCOVERY RULE: At least 1 of your ${count} topics MUST be a genuinely new
 Strictly follow any Content Guidelines & Restrictions provided. Never generate topics, target keywords, or angles the client has explicitly asked to avoid.
 
 IMPORTANT: When GSC data lists an "Existing page to support", the suggested topic MUST be a cluster or support article — NOT a new primary page competing with that URL. Target a long-tail or adjacent angle designed to internally link to the existing core page.
-${siloPromptBlock ? `\n${siloPromptBlock.trim()}\n` : ''}
+${blogIntentGuardrail}${siloPromptBlock ? `\n${siloPromptBlock.trim()}\n` : ''}
 Return ONLY a JSON array of exactly ${count} objects:
 [
   {
     "topic": "Full blog post title",
     "target_keyword": "primary keyword phrase",
-    "search_intent": "informational | commercial | local_service | comparison | cost_pricing | how_to | faq | emergency",
+    "search_intent": "${intentEnumText}",
     "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
-    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. Estimated volume and difficulty context. Any seasonal or trending component to the opportunity.",
+    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. When real search volume / keyword difficulty (KD 0–100) / intent figures are shown for the source keyword above, cite them and prefer lower-difficulty, higher-volume, intent-matching keywords. Any seasonal or trending component.",
     "ranking_strategy": "3–5 sentences: Which competitor gaps this article fills. What unique angle or depth will outperform existing page-1 results. Specific linking strategy (which existing site page this supports and why). Why this approach wins for this client over generic competitors.",
     "audience_intent": "2–3 sentences: Who specifically is searching this (describe the person, their situation, and what they are trying to decide or do). What stage of the buyer/research journey they are in. What outcome they need from the content.",
     "why_now": "2–3 sentences: Specific seasonal or trending timing reason with data context if available. Competitor activity or content gap timing. Why generating this topic now versus later maximises the ranking window.",
@@ -500,6 +590,8 @@ ${gscQuickWinsText}
 ${gscCtrText}
 ${competitorText}
 ${gscTopText}
+${alreadyWinningText}
+${cannibalizationText}
 ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
@@ -553,6 +645,22 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     return { topics: [], clientName, count: 0, error: 'No topics returned from AI' }
   }
 
+  // ── Blog-intent safety net ──────────────────────────────────────────────────
+  // The guardrail prompt is primary enforcement; this drops transactional/near-me
+  // leaks and relabels any non-informational intent the model slipped through. A
+  // short valid list beats a padded transactional one (mirrors the uniqueness rule).
+  if (isBlog) {
+    const before = topics.length
+    topics = topics.filter(t => !isForbiddenBlogKeyword(t.target_keyword))
+    topics.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
+    if (topics.length < before) {
+      console.warn(`[generateTopics] dropped ${before - topics.length} transactional/near-me blog topic(s) for client ${clientId}`)
+    }
+    if (!topics.length) {
+      return { topics: [], clientName, count: 0, error: 'All generated topics were transactional/near-me intent — none suitable for a blog. Try again.' }
+    }
+  }
+
   // ── Save ───────────────────────────────────────────────────────────────────
   const rows = topics.map(t => ({
     client_id:            clientId,
@@ -598,7 +706,8 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   // ── Email notification (skipped when called from the cron batch flow) ───────
   if (!opts?.suppressEmail) {
     const notifEmail = settings.notification_email as string | null
-    if (notifEmail && (settings.notify_topics_created || settings.notify_topic_ready)) {
+    const notifConfig = ((settings as Record<string, unknown>).notification_config as NotifConfig | null) ?? {}
+    if (notifEmail && getNotif(notifConfig, 'content_topics_generated').email) {
       const agencyName = settings.agency_name ?? 'Agency Dashboard'
       try {
         const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')

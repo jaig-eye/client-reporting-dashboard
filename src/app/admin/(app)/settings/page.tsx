@@ -4,6 +4,7 @@
 // Tabbed: Branding / Benchmarks / Colors / AI / Sync / Notifications
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
@@ -168,10 +169,10 @@ export default function AgencySettingsPage() {
   const [soundTesting,     setSoundTesting]     = useState(false)
   const [testingEmail,   setTestingEmail]   = useState(false)
   const [testEmailMsg,   setTestEmailMsg]   = useState('')
-  const [testingSerp,    setTestingSerp]    = useState(false)
-  const [testSerpMsg,    setTestSerpMsg]    = useState('')
 
-  // ── Integration modals (AI + Discord) ─────────────────────────────────
+  // ── Integration modals (AI) ───────────────────────────────────────────
+  // Note: Search API (SerpAPI) and Discord are configured on the Integrations
+  // page (/admin/connections) — not here.
   const [aiModalOpen,        setAiModalOpen]        = useState(false)
   const [aiModalProvider,    setAiModalProvider]    = useState('')
   const [aiModalModel,       setAiModalModel]       = useState('')
@@ -182,13 +183,8 @@ export default function AgencySettingsPage() {
   const [imgModalKey,        setImgModalKey]        = useState('')
   const [imgJustSaved,       setImgJustSaved]       = useState(false)
 
-  const [discordModalOpen,   setDiscordModalOpen]   = useState(false)
-  const [discordModalToken,  setDiscordModalToken]  = useState('')
-  const [discordJustSaved,   setDiscordJustSaved]   = useState(false)
-
   function openAiModal()      { setAiModalProvider(form.ai_provider); setAiModalModel(form.ai_model); setAiModalKey(form.ai_api_key);    setAiModalOpen(true) }
   function openImgModal()     { setImgModalKey(form.openai_api_key);                                                                      setImgModalOpen(true) }
-  function openDiscordModal() { setDiscordModalToken(form.discord_bot_token);                                                             setDiscordModalOpen(true) }
 
   async function saveAiCredential() {
     const res = await fetch('/api/admin/settings', {
@@ -206,15 +202,6 @@ export default function AgencySettingsPage() {
     })
     if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
     setForm(f => ({ ...f, openai_api_key: imgModalKey }))
-  }
-
-  async function saveDiscordCredential() {
-    const res = await fetch('/api/admin/settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ discord_bot_token: discordModalToken }),
-    })
-    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
-    setForm(f => ({ ...f, discord_bot_token: discordModalToken }))
   }
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -330,10 +317,18 @@ export default function AgencySettingsPage() {
     e.preventDefault()
     setSaving(true)
     setError('')
+    // SerpAPI + Discord credentials are now edited on the Integrations page. Strip
+    // them from this whole-form save so a stale copy here can never overwrite a value
+    // set there.
+    const saveForm = { ...form } as Record<string, unknown>
+    delete saveForm.serp_api_key
+    delete saveForm.serp_api_provider
+    delete saveForm.discord_bot_token
+    delete saveForm.discord_ops_channel_id
     const res = await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(saveForm),
     })
     const data = await res.json()
     if (data.error) { setError(data.error); setSaving(false) }
@@ -365,30 +360,6 @@ export default function AgencySettingsPage() {
       setTestEmailMsg('Failed to send test email')
     } finally {
       setTestingEmail(false)
-    }
-  }
-
-  async function handleTestSerp() {
-    if (!form.serp_api_key) return
-    setTestingSerp(true)
-    setTestSerpMsg('')
-    try {
-      const res = await fetch('/api/admin/settings/test-serp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: form.serp_api_key }),
-        signal: AbortSignal.timeout(10000),
-      })
-      const data = await res.json() as { ok?: boolean; error?: string }
-      if (!res.ok || data.error) {
-        setTestSerpMsg(`Error: ${data.error ?? res.statusText}`)
-      } else {
-        setTestSerpMsg('Connected ✓')
-      }
-    } catch {
-      setTestSerpMsg('Failed to reach SerpAPI — check key or network')
-    } finally {
-      setTestingSerp(false)
     }
   }
 
@@ -716,42 +687,16 @@ export default function AgencySettingsPage() {
             </div>
           </IntegrationModal>
 
-          <div className="card p-6 space-y-4">
+          <div className="card p-6" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div>
               <h2 className="section-title">Search API <span className="section-desc" style={{ fontWeight: 400 }}>(competitor research)</span></h2>
-              <p className="section-desc">
-                Used to find top-ranking competitor pages during topic generation. SerpAPI free plan: 250 searches/month.
-                Only the top 3 growth-target keywords per run are researched.
+              <p className="section-desc" style={{ margin: 0 }}>
+                Moved to <strong>Integrations</strong>. Manage the SerpAPI key alongside your other connections.
               </p>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr auto', gap: 8, alignItems: 'end' }}>
-              <FormField label="Provider">
-                <select className="input" value={form.serp_api_provider}
-                  onChange={e => field('serp_api_provider', e.target.value)}>
-                  <option value="serpapi">SerpAPI</option>
-                </select>
-              </FormField>
-              <FormField label="API Key" hint="stored securely, never exposed to clients">
-                <input className="input" type="password"
-                  value={form.serp_api_key}
-                  onChange={e => field('serp_api_key', e.target.value)}
-                  placeholder={form.serp_api_key ? '••••••••••' : 'Enter SerpAPI key…'} />
-              </FormField>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={!form.serp_api_key || testingSerp}
-                onClick={handleTestSerp}
-                style={{ whiteSpace: 'nowrap', marginBottom: 0 }}
-              >
-                {testingSerp ? 'Testing…' : 'Test'}
-              </button>
-            </div>
-            {testSerpMsg && (
-              <p className="text-xs" style={{ color: testSerpMsg.startsWith('Error') || testSerpMsg.startsWith('Failed') ? 'var(--red)' : 'var(--green)' }}>
-                {testSerpMsg}
-              </p>
-            )}
+            <Link href="/admin/connections" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}>
+              Open Integrations
+            </Link>
           </div>
           </div>
         </div>}
@@ -861,62 +806,17 @@ export default function AgencySettingsPage() {
         {visitedTabs.has('notifications') && <div style={{ display: activeTab === 'notifications' ? 'block' : 'none' }}>
           <div className="space-y-5">
 
-          {/* Discord bot — prerequisite for channel notifications */}
-          <div className="card p-6 space-y-4">
+          {/* Discord bot config now lives on the Integrations page */}
+          <div className="card p-6" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div>
               <h2 className="section-title">Discord Bot</h2>
-              <p className="section-desc">Shared bot for all channel notifications. Each client&apos;s channel ID is configured in their Integrations tab.</p>
-            </div>
-            <IntegrationCard
-              icon="🤖"
-              name="Discord Bot"
-              description="Shared bot for all client channels. Each client's Channel ID is configured in their Integrations tab."
-              isConnected={!!form.discord_bot_token}
-              connectedLabel={form.discord_bot_token ? 'Bot token configured' : undefined}
-              onConfigure={openDiscordModal}
-              justConnected={discordJustSaved}
-            />
-            <IntegrationModal
-              open={discordModalOpen}
-              onClose={() => setDiscordModalOpen(false)}
-              onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
-              title="Discord Bot"
-              icon="🤖"
-              isConnected={!!form.discord_bot_token}
-              howTo={
-                <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                  <li>Go to <strong>discord.com/developers/applications</strong> and create a new application.</li>
-                  <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
-                  <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
-                  <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
-                  <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
-                </ol>
-              }
-              onSave={saveDiscordCredential}
-            >
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
-                <input className="input" type="password" value={discordModalToken} onChange={e => setDiscordModalToken(e.target.value)}
-                  placeholder="Bot token from Discord Developer Portal…" autoComplete="off" style={{ width: '100%' }} />
-              </div>
-            </IntegrationModal>
-            {/* Agency ops Discord channel — inline (not sensitive, no need for modal) */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>
-                Agency Discord Channel ID
-              </label>
-              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                Internal ops channel that receives agency-side alerts (uptime, SSL, content review, etc.). Right-click the channel in Discord → Copy Channel ID.
+              <p className="section-desc" style={{ margin: 0 }}>
+                The shared bot token and agency ops channel moved to <strong>Integrations</strong>. The notification toggles below still control what gets sent.
               </p>
-              <input
-                className="input"
-                type="text"
-                value={form.discord_ops_channel_id}
-                onChange={e => field('discord_ops_channel_id', e.target.value)}
-                placeholder="e.g. 1234567890123456789"
-                style={{ maxWidth: 340 }}
-              />
             </div>
+            <Link href="/admin/connections" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}>
+              Open Integrations
+            </Link>
           </div>
 
           {/* Notification type table */}

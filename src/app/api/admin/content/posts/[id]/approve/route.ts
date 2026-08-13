@@ -13,6 +13,7 @@ import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
+import { styleTables }          from '@/lib/content/contentHtml'
 
 export async function POST(
   request: NextRequest,
@@ -241,7 +242,7 @@ export async function POST(
       })()
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
-        body:             String((p as Record<string, unknown>).content ?? ''),
+        body:             styleTables(String((p as Record<string, unknown>).content ?? '')),
         author:           bcAuthor,
         url:              blogUrl,
         is_published:     false,
@@ -394,7 +395,7 @@ export async function POST(
 
       result = await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
-        content: String(p.content ?? ''),
+        content: styleTables(String(p.content ?? '')),
         status:  saStatus,
         date:    saDate,
         slug:    wpSlug,
@@ -477,7 +478,7 @@ export async function POST(
 
       result = await publishPost(siteUrl, auth, {
         title:          String(p.title ?? ''),
-        content:        String(p.content ?? ''),
+        content:        styleTables(String(p.content ?? '')),
         status:         wpPublishStatus,
         date:           wpDate,
         slug:           p.slug ? String(p.slug) : undefined,

@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+import { ArrowSquareOut } from '@phosphor-icons/react'
 import MonthlyReviewPostCard, { type MonthlyReviewPost } from './MonthlyReviewPostCard'
 
 interface Props {
+  clientId:        string
   clientName:      string
   posts:           MonthlyReviewPost[]
   approvedIds:     Set<string>
@@ -15,12 +17,13 @@ interface Props {
   onReject:        (id: string, discard?: boolean) => void
   onOpenEditor:    (id: string) => void
   onRestore:       (id: string) => void
+  onRegenerate:    (id: string) => void
 }
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
 export default function MonthlyReviewClientSection({
-  clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore,
+  clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
@@ -79,8 +82,19 @@ export default function MonthlyReviewClientSection({
           marginBottom: effectivelyCollapsed ? 0 : 8,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600, color: isComplete ? '#15803d' : 'var(--text-primary)', flex: 1 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: 13, fontWeight: 600, color: isComplete ? '#15803d' : 'var(--text-primary)' }}>
           {isComplete ? '✓ ' : ''}{clientName}
+          <span
+            role="link"
+            tabIndex={0}
+            title={`Open ${clientName} content settings`}
+            aria-label={`Open ${clientName} content settings`}
+            onClick={e => { e.stopPropagation(); window.open(`/admin/clients/${clientId}?tab=content&subtab=settings`, '_blank', 'noopener') }}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); window.open(`/admin/clients/${clientId}?tab=content&subtab=settings`, '_blank', 'noopener') } }}
+            style={{ display: 'inline-flex', color: 'var(--text-faint)', cursor: 'pointer' }}
+          >
+            <ArrowSquareOut size={13} weight="bold" aria-hidden />
+          </span>
         </span>
         {/* Link health chip */}
         {scanState === 'idle' && (
@@ -128,6 +142,7 @@ export default function MonthlyReviewClientSection({
               onReject={onReject}
               onOpenEditor={onOpenEditor}
               onRestore={onRestore}
+              onRegenerate={onRegenerate}
             />
           ))}
         </div>

@@ -10,6 +10,7 @@ import { timingSafeCompare }              from '@/lib/auth'
 import { summarizeMetrics }               from '@/lib/metrics'
 import { resolveMetaConversions }         from '@/lib/metrics'
 import { sendEmail }                      from '@/lib/email'
+import { getNotif, type NotifConfig }     from '@/lib/notificationConfig'
 
 export const maxDuration = 120
 
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
   const [agencyRes, clientsRes] = await Promise.all([
     db.from('agency_settings')
       .select([
-        'notify_metric_alerts', 'notification_email', 'agency_name',
+        'notify_metric_alerts', 'notification_email', 'agency_name', 'notification_config',
         'metric_alert_threshold', 'daily_alert_threshold',
         'daily_alert_metrics', 'weekly_alert_metrics',
         'default_lead_action', 'default_lead_action_fallback',
@@ -355,7 +356,8 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Email digest ──────────────────────────────────────────────────────────
-  if (newAlerts.length > 0 && agency?.notify_metric_alerts && agency?.notification_email) {
+  const metricNotifConfig = (agency?.notification_config as NotifConfig | null) ?? {}
+  if (newAlerts.length > 0 && getNotif(metricNotifConfig, 'metric_alerts').email && agency?.notification_email) {
     const agencyName = String(agency.agency_name || 'Agency Dashboard')
     const appUrl     = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 

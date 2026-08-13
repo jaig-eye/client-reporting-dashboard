@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
-import { PLATFORM_BOT_UA } from '@/lib/platformBot'
+import { BROWSER_BOT_UA } from '@/lib/platformBot'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API helpers
@@ -46,7 +46,7 @@ async function wpGet(
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
-      'User-Agent':   PLATFORM_BOT_UA,
+      'User-Agent':   BROWSER_BOT_UA,
     },
   })
   if (!res.ok) {
@@ -67,7 +67,7 @@ async function wpPost(
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
-      'User-Agent':   PLATFORM_BOT_UA,
+      'User-Agent':   BROWSER_BOT_UA,
     },
     body: JSON.stringify(body),
   })
@@ -314,7 +314,7 @@ export async function uploadMediaToWordPress(
   imageUrl: string,
   altText?: string
 ): Promise<number> {
-  const imgRes = await fetch(imageUrl, { headers: { 'User-Agent': PLATFORM_BOT_UA } })
+  const imgRes = await fetch(imageUrl, { headers: { 'User-Agent': BROWSER_BOT_UA } })
   if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`)
   const buffer  = Buffer.from(await imgRes.arrayBuffer())
   const mime    = imgRes.headers.get('content-type') ?? 'image/jpeg'
@@ -326,7 +326,7 @@ export async function uploadMediaToWordPress(
 
   const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
     method:  'POST',
-    headers: { Authorization: authHeader(auth.username, auth.app_password), 'User-Agent': PLATFORM_BOT_UA },
+    headers: { Authorization: authHeader(auth.username, auth.app_password), 'User-Agent': BROWSER_BOT_UA },
     body:    formData,
   })
   if (!res.ok) throw new Error(`WP media upload failed: ${await res.text()}`)

@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
-import { PLATFORM_BOT_UA }           from '@/lib/platformBot'
+import { BROWSER_BOT_UA }            from '@/lib/platformBot'
 import { isPublicUrl }               from '@/lib/ssrf'
 
 function extractLocs(xml: string): string[] {
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
   const pageMap    = new Map<string, string>()
   const fetchErrors: string[] = []
   const headers = {
-    'User-Agent':                PLATFORM_BOT_UA,
+    'User-Agent':                BROWSER_BOT_UA,
     'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language':           'en-US,en;q=0.5',
     'Accept-Encoding':           'gzip, deflate, br',
