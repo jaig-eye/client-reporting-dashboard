@@ -13,9 +13,10 @@ import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 export const maxDuration = 300
 
-// Cap a single run so a large keyword universe can't overrun the function timeout.
-// getTrackedKeywords orders by last_checked_at (oldest first), so each capped run rotates
-// through the whole universe instead of re-checking the same prefix. Logged, never silent.
+// Cap a single run so a large keyword universe can't overrun the function timeout. Jobs are
+// sorted GLOBALLY by last_checked_at (oldest / never-checked first) BEFORE the cap, so each run
+// rotates through the whole cross-client universe instead of starving later clients (per-client
+// ordering alone let one big client monopolize the cap). Logged, never silent.
 const MAX_CHECKS_PER_RUN = 600
 const CONCURRENCY = 6
 
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
   type Job = {
     clientId: string; domain: string; keywordId: string; keyword: string
     locationCode: number; languageCode: string; device: SeoDevice; depth: number; creds: DfsCreds
+    lastChecked: string | null
   }
   const jobs: Job[] = []
   usable.forEach((u, i) => {
@@ -71,13 +73,22 @@ export async function GET(req: NextRequest) {
       for (const device of u.cfg.devices) {
         jobs.push({
           clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
-          locationCode: kw.location_code || u.cfg.location_code,
-          languageCode: kw.language_code || u.cfg.language_code,
+          // The connection's tracking config is the client's authoritative market. (The keyword's
+          // stored location_code is only a registration default — always US, so the old
+          // `kw.location_code || cfg` fallback never reached cfg and non-US clients were checked
+          // against the US SERP.)
+          locationCode: u.cfg.location_code,
+          languageCode: u.cfg.language_code,
           device, depth: u.cfg.rank_depth, creds: u.creds,
+          lastChecked: kw.last_checked_at,
         })
       }
     }
   })
+
+  // Global rotation across ALL clients before the cap. Empty string sorts before any ISO
+  // timestamp, so never-checked keywords go first, then the least-recently-checked.
+  jobs.sort((a, b) => (a.lastChecked ?? '').localeCompare(b.lastChecked ?? ''))
 
   const capped = jobs.length > MAX_CHECKS_PER_RUN
   const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)

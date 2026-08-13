@@ -22,6 +22,7 @@ import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
 import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
 import DataForSeoUsagePanel from '@/components/admin/DataForSeoUsagePanel'
 import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
+import { resolveDfsCreds }  from '@/lib/connectors/dataforseo'
 import type { SeoDevice }   from '@/lib/connectors/dataforseo'
 import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
 import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
@@ -56,9 +57,10 @@ export default async function ConnectionsPage({
   const dfsConnector = existing.find(c => c.type === 'dataforseo')
   const dfsAuth      = (dfsConnector?.auth as Record<string, unknown> | undefined) ?? {}
   const dfsConfig    = (dfsConnector?.config as Record<string, unknown> | undefined) ?? {}
-  const dfsHasCreds  = !!(dfsAuth.dataforseo_login || dfsAuth.dataforseo_api_key)
-    || !!(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD)
-    || !!process.env.DATAFORSEO_API_KEY
+  // Must match resolveDfsCreds exactly (login AND password, or a decodable api_key; env fills
+  // gaps). A login-only save is NOT usable, so don't render "Credentials set" + the usage panel
+  // for creds that resolveDfsCreds would reject everywhere they're actually used.
+  const dfsHasCreds  = resolveDfsCreds(dfsAuth) !== null
   const dfsDevices   = Array.isArray(dfsConfig.devices) ? (dfsConfig.devices as SeoDevice[]) : undefined
   const dfsDepth     = typeof dfsConfig.rank_depth === 'number' ? dfsConfig.rank_depth : undefined
 

@@ -267,11 +267,14 @@ function asArr(v: unknown): Record<string, unknown>[] {
 export async function dfsSerpIntel(
   keyword: string,
   creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number; aiOverview?: boolean; onCost?: CostSink } = {},
+  opts: { locationCode?: number; languageCode?: string; limit?: number; aiOverview?: boolean; onCost?: CostSink; timeoutMs?: number } = {},
 ): Promise<DfsSerpIntel> {
   const empty: DfsSerpIntel = { paa: [], related: [], aiOverview: null, featuredSnippet: null, organicUrls: [], features: [] }
   if (!keyword.trim()) return empty
   const depth = Math.max(10, opts.limit ?? 10)
+  // timeoutMs lets a synchronous caller bound the call so its result is USED (not raced-and-
+  // discarded by an outer deadline while the request still completes and bills). On timeout
+  // dfsPost returns null → onCost never fires → no wasted spend.
   const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
     keyword:                keyword.trim(),
     location_code:          opts.locationCode ?? 2840,
@@ -279,7 +282,7 @@ export async function dfsSerpIntel(
     device:                 'desktop',
     depth,
     load_async_ai_overview: opts.aiOverview ?? true,
-  }, 15_000)
+  }, opts.timeoutMs ?? 15_000)
   if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth) + 0.002)
   const items = firstResultItems(json)
   if (!items.length) return empty

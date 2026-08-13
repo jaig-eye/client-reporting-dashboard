@@ -460,12 +460,6 @@ function looksKeywordLike(seed: string): boolean {
   return true
 }
 
-// Bound a promise so it can never add more than `ms` of latency to a request path;
-// resolves to `fallback` if it overruns (the underlying fetch self-aborts via its own timeout).
-function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))])
-}
-
 function buildSystemPrompt(
   agency: string,
   clientContext: string,
@@ -1432,13 +1426,12 @@ export async function POST(request: NextRequest) {
   // Live competitor-gap analysis for the manual path. Use a concise seed from the
   // prompt (a full instruction makes a poor SERP query) and only when it reads
   // keyword-like. Soft-fails to '' with no serp_api_key or on error.
-  // Manual path is synchronous (the editor waits on the response), so bound the live
-  // SERP gap to a 5s deadline and only run it when the seed reads like a real keyword.
+  // Manual path is synchronous (the editor waits), so bound the DataForSEO SERP call via
+  // serpTimeoutMs — NOT an outer deadline race, which would abandon the result while the
+  // paid call still completes and bills (the scrape/SerpAPI tiers self-bound already).
   const manualSeed = extractManualSeed(prompt)
   const manualCompetitorSection = looksKeywordLike(manualSeed)
-    ? await withDeadline(
-        gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key }),
-        5000, '')
+    ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000 })
     : ''
 
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)

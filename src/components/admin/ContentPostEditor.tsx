@@ -47,6 +47,7 @@ interface PostDetail {
   id:               string
   clientId:         string
   status:           string
+  contentType:      string
   targetKeyword:    string | null
   title:            string | null
   seoTitle:         string | null
@@ -528,6 +529,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
   const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
+  const isBlogPost         = (post?.contentType ?? 'blog') === 'blog'
   const hasTakeaways       = content ? hasKeyTakeaways(content) : false
   const headingHierOk      = content ? headingHierarchyClean(content) : false
   const slugClean          = slugQualityClean(slug)
@@ -1232,7 +1234,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <div><Check ok={keywordSlug} />Keyword in slug</div>
                   <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
                   <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
-                  <div><Check ok={hasTakeaways} />Key Takeaways box</div>
+                  {isBlogPost && <div><Check ok={hasTakeaways} />Key Takeaways box</div>}
                   <div><Check ok={headingHierOk} warn={liveHeadings > 0 && !headingHierOk} />Heading hierarchy</div>
                   <div><Check ok={slugClean} warn={slug.length > 0 && !slugClean} />Clean URL slug</div>
                 </div>

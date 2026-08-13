@@ -63,6 +63,7 @@ export async function gatherCompetitorGap(params: {
   keyword:         string | null | undefined
   serpApiKey?:     string | null
   storedResearch?: CompetitorResearch | null
+  serpTimeoutMs?:  number   // bound the DataForSEO SERP call for synchronous callers (see dfsSerpIntel)
 }): Promise<string> {
   const keyword = params.keyword?.trim()
   if (!keyword) return ''
@@ -77,6 +78,7 @@ export async function gatherCompetitorGap(params: {
         languageCode: dfs.config.language_code,
         limit:        5,
         aiOverview:   true,
+        timeoutMs:    params.serpTimeoutMs,
         onCost:       c => { void recordDfsUsage({ operation: 'serp_intel', cost: c, clientId: params.clientId || null }) },
       })
       const gap = formatCompetitorGap(await buildCompetitorResearch(keyword, intel.organicUrls))

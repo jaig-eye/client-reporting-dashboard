@@ -203,31 +203,32 @@ export async function getClientKeywordRankings(clientId: string, limit = 200): P
 // ── Write helpers used by the rank-sync cron ──────────────────────────────────
 
 export interface TrackedKeyword {
-  id:            string
-  keyword:       string
-  location_code: number
-  language_code: string
+  id:              string
+  keyword:         string
+  location_code:   number
+  language_code:   string
+  last_checked_at: string | null
 }
 
-/** Tracked keywords for a client (the cron rank-checks these). */
+/** Tracked keywords for a client (the cron rank-checks these). Carries last_checked_at so the
+ *  cron can rotate GLOBALLY across all clients (per-client ordering alone starves later clients). */
 export async function getTrackedKeywords(clientId: string): Promise<TrackedKeyword[]> {
   if (!clientId) return []
   try {
     const db = createAdminClient()
     const { data, error } = await db
       .from('seo_keywords')
-      .select('id, keyword, location_code, language_code')
+      .select('id, keyword, location_code, language_code, last_checked_at')
       .eq('client_id', clientId)
       .eq('is_tracked', true)
-      // Least-recently-checked (and never-checked) first, so a capped cron run rotates
-      // through the whole keyword universe instead of re-checking the same prefix.
       .order('last_checked_at', { ascending: true, nullsFirst: true })
     if (error || !Array.isArray(data)) return []
     return (data as Record<string, unknown>[]).map(k => ({
-      id:            String(k.id),
-      keyword:       String(k.keyword ?? ''),
-      location_code: numOrNull(k.location_code) ?? 2840,
-      language_code: String(k.language_code ?? 'en'),
+      id:              String(k.id),
+      keyword:         String(k.keyword ?? ''),
+      location_code:   numOrNull(k.location_code) ?? 2840,
+      language_code:   String(k.language_code ?? 'en'),
+      last_checked_at: k.last_checked_at ? String(k.last_checked_at) : null,
     }))
   } catch {
     return []
