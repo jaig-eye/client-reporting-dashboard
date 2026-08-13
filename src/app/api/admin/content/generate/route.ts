@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
+import { styleTables } from '@/lib/content/contentHtml'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -1020,6 +1021,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     parsed.content = stripH1FromContent(parsed.content)
     // Remove links with generic filler anchor text ("click here", "learn more", etc.)
     parsed.content = stripGenericAnchorText(parsed.content)
+    parsed.content = styleTables(parsed.content)
 
     // ── Minimum quality gate ──────────────────────────────────────────────────
     // Word count must be computed BEFORE FAQ schema injection so the JSON
@@ -1454,6 +1456,7 @@ export async function POST(request: NextRequest) {
   parsed.content = stripDangerousHtml(parsed.content)
   parsed.content = stripH1FromContent(parsed.content)
   parsed.content = stripGenericAnchorText(parsed.content)
+  parsed.content = styleTables(parsed.content)
 
   // ── Minimum quality gate ────────────────────────────────────────────────────
   // Word count before FAQ schema injection to avoid counting JSON text as words.

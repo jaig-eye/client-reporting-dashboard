@@ -58,15 +58,23 @@ export function buildImagePrompt(
   const context = title ? ` for a blog article titled "${title}"` : ''
   const setting = `real-world ${industry} setting${location ? ` in ${location}` : ''}`
 
-  // Composition + hard constraints, stated explicitly for gpt-image-1 / Imagen.
-  const style = 'Natural daylight, photorealistic, muted professional color grade, shallow depth of field. Rule-of-thirds composition with generous negative space in the upper third for a headline. No text, words, letters, numbers, logos, watermarks, or signage. No human faces. 16:9 wide landscape.'
+  // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
+  // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
+  // (the visual equivalent of the banned-phrase list for copy) counters it.
+  const realism =
+    'Photojournalistic realism — an authentic candid photograph taken on location, shot on a full-frame camera with a 35mm lens, natural available light with soft directional shadows, true-to-life muted color and neutral white balance, subtle natural film grain, real textures and worn, lived-in materials, unstaged with slight natural asymmetry.'
+  const avoid =
+    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details.'
+  const constraints =
+    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. No text, words, letters, numbers, logos, watermarks, or signage. No human faces (crop, shoot from behind, or focus on hands and the work instead). 16:9 wide landscape.'
 
   if (promptOverride?.trim()) {
-    // Client creative direction leads; post context anchors it to the topic.
-    return `Editorial photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${style}`
+    // Client creative direction leads; post context anchors it to the topic, and the
+    // realism + anti-AI direction still applies so their brief doesn't come back looking AI.
+    return `Candid documentary photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${realism} ${avoid} ${constraints}`
   }
 
-  return `Editorial photograph${context}. Scene: ${scene}, visually representing "${subject}". Documentary, ${setting}. ${style}`
+  return `Candid documentary photograph${context}. Scene: ${scene}, showing "${subject}", on location in a ${setting}. ${realism} ${avoid} ${constraints}`
 }
 
 export type ImageGenResult =

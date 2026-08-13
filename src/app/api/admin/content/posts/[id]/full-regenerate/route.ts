@@ -18,6 +18,8 @@ import { createAdminClient }              from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
+import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
+import { styleTables }                    from '@/lib/content/contentHtml'
 
 export const maxDuration = 300
 
@@ -248,7 +250,13 @@ Requirements:
 - Specific, practical information a local reader would act on
 - Professional but conversational tone`
 
-      const systemPrompt = `You are a professional SEO content writer for ${agency}. Write the requested blog post. Return ONLY a JSON object: { "title": "...", "content": "Full HTML body (no doctype, just body content)", "metaDescription": "SEO meta 150-160 chars", "slug": "url-slug" }. No markdown fences.`
+      // Rich system prompt (internal-link allow-list + external-source rule + E-E-A-T +
+      // writer-quality bar + FAQ/Key-Takeaways structure) — parity with fresh generation.
+      const systemPrompt = buildRewriteSystemPrompt({
+        agency,
+        allowedUrls: Array.from(allowedUrls),
+        isBlog: ((post.content_type as string | null) ?? 'blog') === 'blog',
+      })
 
       // 6. Call AI
       let rawText = ''
@@ -277,6 +285,7 @@ Requirements:
       if (!parsed.title || !parsed.slug) throw new Error('AI returned invalid content: missing title or slug')
       parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
       parsed.content = stripDangerousHtml(parsed.content)
+      parsed.content = styleTables(parsed.content)
 
       // 8. Update post in-place with new content + mark new topic as fully generated
       const { error: saveErr } = await db.from('content_posts').update({

@@ -312,6 +312,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
               return (
                 <MonthlyReviewClientSection
                   key={clientId}
+                  clientId={clientId}
                   clientName={posts[0]?.clientName ?? clientId}
                   posts={posts}
                   approvedIds={approvedIds}

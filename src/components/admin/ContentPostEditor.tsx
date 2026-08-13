@@ -137,7 +137,8 @@ function countExternalLinks(html: string): number {
 function keywordInSubheadings(html: string, keyword: string): boolean {
   if (!keyword) return false
   const headings = html.match(/<h[2-4][^>]*>[\s\S]*?<\/h[2-4]>/gi) || []
-  return headings.some(h => h.replace(/<[^>]+>/g, '').toLowerCase().includes(keyword.toLowerCase()))
+  // Fuzzy word-level match (same as title checks) so natural variations count, not just the exact phrase.
+  return headings.some(h => seoCheck(h.replace(/<[^>]+>/g, ' '), keyword))
 }
 
 function keywordInSlug(slug: string, keyword: string): boolean {
@@ -147,10 +148,12 @@ function keywordInSlug(slug: string, keyword: string): boolean {
 
 function computeKeywordDensity(html: string, keyword: string): number {
   if (!keyword || !html) return 0
-  const text  = html.replace(/<[^>]+>/g, ' ').toLowerCase()
-  const words = text.split(/\s+/).filter(Boolean).length
+  // Collapse whitespace (tags become spaces) so a phrase split across tag boundaries still matches.
+  const text  = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase()
+  const words = text.split(' ').filter(Boolean).length
   if (words === 0) return 0
-  const regex = new RegExp(keyword.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+  const kw    = keyword.toLowerCase().replace(/\s+/g, ' ').trim()
+  const regex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
   return ((text.match(regex) || []).length / words) * 100
 }
 
@@ -159,7 +162,8 @@ function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
   const imgs = html.match(/<img [^>]+>/gi) || []
   return imgs.some(img => {
     const m = img.match(/alt=["']([^"']*)["']/i)
-    return m ? m[1].toLowerCase().includes(keyword.toLowerCase()) : false
+    // Fuzzy match so "powersports financing" alt counts for keyword "Canada Powersports Financing".
+    return m ? seoCheck(m[1], keyword) : false
   })
 }
 
@@ -516,7 +520,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const keywordSlug        = keywordInSlug(slug, targetKeyword)
   const slugLenOk          = slug.length > 0 && slug.length < 130
   const keywordInFirst     = targetKeyword && content
-    ? content.replace(/<[^>]+>/g, ' ').slice(0, 500).toLowerCase().includes(targetKeyword.toLowerCase())
+    ? seoCheck(content.replace(/<[^>]+>/g, ' ').slice(0, 500), targetKeyword)
     : false
   const keywordInSubhd     = content ? keywordInSubheadings(content, targetKeyword) : false
   const densityPct         = computeKeywordDensity(content, targetKeyword)
