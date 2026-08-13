@@ -198,7 +198,7 @@ export default function DateRangePicker({
         ) : (
           <CalendarBlank size={14} aria-hidden style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         )}
-        <span style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{presetLabel ?? `${from} – ${to}`}</span>
+        <span style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{presetLabel ?? fmtCompareRange(from, to)}</span>
         {compareRange && (
           <>
             <span style={{
