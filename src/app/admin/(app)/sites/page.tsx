@@ -685,7 +685,7 @@ export default function SitesPage() {
 
                           {/* Footer */}
                           <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.75rem 0 0', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
-                            Cloudflare users: whitelist User-Agent <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border)' }}>AgencyBot/1.0</code> in WAF custom rules.
+                            Cloudflare users: whitelist User-Agent <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border)' }}>GoLaunchLocal</code> in a WAF custom rule (Skip WAF + Bot Fight Mode).
                             {site.audit_enabled && ' Runs weekly (Mon 3 AM UTC).'}
                           </p>
                         </div>
