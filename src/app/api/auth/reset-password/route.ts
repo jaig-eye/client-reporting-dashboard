@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashPassword } from '@/lib/auth'
+import { hashPasswordSecure } from '@/lib/auth'
 import { createHash } from 'crypto'
 
 function hashCode(code: string): string {
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
   await db
     .from('users')
-    .update({ password_hash: hashPassword(password) })
+    .update({ password_hash: hashPasswordSecure(password) })
     .eq('id', user.id)
 
   await db

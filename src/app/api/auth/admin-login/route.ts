@@ -1,12 +1,14 @@
 // Admin login — supports two modes:
 //   1. Super admin: email blank, password = ADMIN_PASSWORD env var + email OTP
-//   2. Regular admin: email + password verified against users table
+//   2. Regular admin: email + password verified against users table (bcrypt)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashPassword, timingSafeCompare } from '@/lib/auth'
+import { timingSafeCompare, verifyPassword, hashPasswordSecure } from '@/lib/auth'
+import { signAdminSession } from '@/lib/session'
 import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 
 const COOKIE_OPTS = {
@@ -17,25 +19,33 @@ const COOKIE_OPTS = {
   path: '/',
 }
 
-// In-memory rate limit: 5 attempts per IP per 15 minutes
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+// Durable per-IP rate limit (5 attempts / 15 min) backed by the login_attempts table,
+// so it holds across serverless instances (an in-memory Map did not). Fails open only
+// if the table is unreachable, logging loudly.
 const RATE_LIMIT_MAX = 5
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
 
-function checkRateLimit(ip: string): boolean {
-  const now   = Date.now()
-  const entry = rateLimitMap.get(ip)
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+async function checkRateLimit(db: SupabaseClient, ip: string): Promise<boolean> {
+  try {
+    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString()
+    const { count } = await db
+      .from('login_attempts')
+      .select('*', { count: 'exact', head: true })
+      .eq('ip', ip)
+      .gte('created_at', windowStart)
+    if ((count ?? 0) >= RATE_LIMIT_MAX) return false
+    await db.from('login_attempts').insert({ ip })
+    return true
+  } catch (e) {
+    console.error('[admin-login] rate-limit store unavailable, failing open:', e)
     return true
   }
-  if (entry.count >= RATE_LIMIT_MAX) return false
-  entry.count++
-  return true
 }
 
-function resetRateLimit(ip: string): void {
-  rateLimitMap.delete(ip)
+async function resetRateLimit(db: SupabaseClient, ip: string): Promise<void> {
+  try {
+    await db.from('login_attempts').delete().eq('ip', ip)
+  } catch { /* best-effort */ }
 }
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
@@ -51,14 +61,16 @@ function generateOtp(): string {
 
 function superAdminSessionResponse(): NextResponse {
   const res = NextResponse.json({ ok: true, role: 'super_admin' })
-  res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
+  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: true }), COOKIE_OPTS)
   res.cookies.delete('admin_user_id')
   return res
 }
 
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
-  if (!checkRateLimit(ip)) {
+  const db = createAdminClient()
+
+  if (!(await checkRateLimit(db, ip))) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }
@@ -76,8 +88,6 @@ export async function POST(request: NextRequest) {
     if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
-
-    const db = createAdminClient()
 
     // Step 2 — verify OTP
     if (code) {
@@ -104,7 +114,7 @@ export async function POST(request: NextRequest) {
         super_admin_otp_expires_at: null,
       })
 
-      resetRateLimit(ip)
+      await resetRateLimit(db, ip)
       return superAdminSessionResponse()
     }
 
@@ -165,7 +175,6 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Regular user path: email or username + password ───────────────────────
-  const db         = createAdminClient()
   const identifier = email.toLowerCase().trim()
   const isEmail    = identifier.includes('@')
 
@@ -175,14 +184,15 @@ export async function POST(request: NextRequest) {
     : await db.from('users').select('id, role, password_hash, is_active, email, name')
         .ilike('username', identifier).eq('is_active', true).maybeSingle()
 
-  // Always compute both hashes before comparing — prevents timing-based user enumeration
-  const inputHash  = hashPassword(password)
-  const storedHash = user?.password_hash ?? '0'.repeat(64)
-  const inputBuf   = Buffer.from(inputHash,  'hex')
-  const storedBuf  = Buffer.from(storedHash, 'hex')
-  const hashMatch  = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf)
+  // verifyPassword equalizes timing when no user/hash exists (dummy bcrypt compare).
+  const { ok: hashMatch, needsUpgrade } = verifyPassword(password, user?.password_hash)
   if (!user || !hashMatch) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
+
+  // Upgrade legacy SHA-256 hashes to bcrypt on successful login (fire-and-forget).
+  if (needsUpgrade) {
+    db.from('users').update({ password_hash: hashPasswordSecure(password) }).eq('id', user.id)
   }
 
   // Record login time (fire-and-forget)
@@ -193,9 +203,11 @@ export async function POST(request: NextRequest) {
     'logged_in', 'user', { resourceId: user.id, meta: { email: user.email, ip } }
   )
 
-  resetRateLimit(ip)
+  await resetRateLimit(db, ip)
   const res = NextResponse.json({ ok: true, role: user.role })
-  res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
+  // admin_session carries the SIGNED identity; admin_user_id remains only as a
+  // non-authoritative display hint (authorization no longer trusts it).
+  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: false, userId: user.id, role: user.role }), COOKIE_OPTS)
   res.cookies.set('admin_user_id', user.id, COOKIE_OPTS)
   return res
 }

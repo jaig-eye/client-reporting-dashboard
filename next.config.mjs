@@ -15,32 +15,29 @@ const nextConfig = {
   // serves a stale HTML response. API routes are unaffected (they set their
   // own Cache-Control or default to no-store already).
   async headers() {
+    // Clickjacking policy: only the app itself and the GoHighLevel CRM may frame us.
+    // Applied to EVERY authenticated surface (previously only the exact /admin login
+    // page carried it, leaving /admin/* and /dashboard/* framable by any site).
+    const frameAncestors = {
+      key: 'Content-Security-Policy',
+      value: "frame-ancestors 'self' https://golaunchlocal.com https://*.golaunchlocal.com",
+    }
+    const noStore = { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' }
+    const noSniff = { key: 'X-Content-Type-Options', value: 'nosniff' }
+
     return [
+      // Baseline hardening for all routes (nosniff + a default same-origin frame policy).
       {
-        source: '/admin',
+        source: '/:path*',
         headers: [
-          { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
+          noSniff,
           { key: 'Content-Security-Policy', value: "frame-ancestors 'self' https://golaunchlocal.com https://*.golaunchlocal.com" },
         ],
       },
-      {
-        source: '/admin/:path*',
-        headers: [
-          { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
-        ],
-      },
-      {
-        source: '/dashboard/:path*',
-        headers: [
-          { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
-        ],
-      },
-      {
-        source: '/dashboard',
-        headers: [
-          { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
-        ],
-      },
+      { source: '/admin',              headers: [noStore, frameAncestors] },
+      { source: '/admin/:path*',       headers: [noStore, frameAncestors] },
+      { source: '/dashboard',          headers: [noStore, frameAncestors] },
+      { source: '/dashboard/:path*',   headers: [noStore, frameAncestors] },
     ]
   },
 }
