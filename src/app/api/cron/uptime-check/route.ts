@@ -10,9 +10,16 @@ export const maxDuration = 300
 
 const TIMEOUT_MS          = 15_000
 const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site already has a failure
-const FLAP_THRESHOLD      = 3       // consecutive failed check-runs before declaring DOWN
 const RETRY_DELAY_MS      = 3_000   // delay between the first and second attempt within one check
 const MAX_ATTEMPTS        = 2       // attempts per check (1 retry); both must fail to count as DOWN
+
+// Two-tier flap threshold: unambiguous causes (DNS failure, connection refused/reset, TLS,
+// host unreachable, 5xx) declare DOWN at the same 3-check bar as before. Ambiguous causes
+// (timeout, unclassified) could just mean the host is slow — those get double the runway
+// before a hard DOWN + @everyone page; see `investigating` below for what happens in between.
+const FLAP_THRESHOLD_CONFIRMED = 3   // 6 min at the current 2-min cron interval
+const FLAP_THRESHOLD_AMBIGUOUS = 6   // 12 min — timeout/other only
+const CONFIRMED_CAUSES = new Set(['dns', 'connection_refused', 'connection_reset', 'tls', 'host_unreachable', '5xx'])
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Clients can whitelist by UA string: http.user_agent contains "GoLaunchLocal"
@@ -37,12 +44,46 @@ interface CheckResult {
   responseMs:   number | null
   finalUrl:     string | null
   error:        string | null
+  errorDetail:  string | null
+}
+
+// Node's fetch (undici) throws `TypeError: fetch failed` at the top level — the real cause
+// (ECONNRESET, EHOSTUNREACH, TLS errors, etc.) lives on `err.cause` (sometimes one level
+// deeper), which a plain `err.message` check never sees. This inspects the wrapped cause and
+// falls back to message-text matching only when no structured code is available.
+function classifyError(err: unknown): { cause: string; detail: string } {
+  const e       = err as { name?: string; message?: string; cause?: unknown }
+  const message = e?.message ?? String(err)
+
+  // AbortSignal.timeout() rejects with a DOMException named 'TimeoutError' — robust,
+  // unlike matching the word "timeout" in a message that may not contain it.
+  if (e?.name === 'TimeoutError') {
+    return { cause: 'timeout', detail: message }
+  }
+
+  const inner  = (e?.cause ?? {}) as { code?: string; message?: string; cause?: { code?: string; message?: string } }
+  const code   = inner.code ?? inner.cause?.code ?? null
+  const detail = inner.message ?? inner.cause?.message ?? message
+
+  const cause =
+    code === 'ENOTFOUND' || code === 'EAI_AGAIN'                                ? 'dns'
+    : code === 'ECONNREFUSED'                                                   ? 'connection_refused'
+    : code === 'ECONNRESET' || code === 'EPIPE'                                 ? 'connection_reset'
+    : code === 'EHOSTUNREACH' || code === 'ENETUNREACH'                         ? 'host_unreachable'
+    : code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT'
+      || code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT'  ? 'timeout'
+    : code && /^(CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? 'tls'
+    : /socket hang up/i.test(detail)                                            ? 'connection_reset'
+    : /timeout|timed out/i.test(message) || /timeout|timed out/i.test(detail)   ? 'timeout'
+    : 'other'
+
+  return { cause, detail }
 }
 
 async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckResult, 'siteId'>> {
   // Any 4xx means the server IS responding (auth wall, rate limit, not-found, etc.) = UP.
   // Only 5xx server errors = genuinely broken. 499 (nginx client disconnect) is 4xx → UP.
-  let last: Omit<CheckResult, 'siteId'> = { isUp: false, statusCode: null, responseMs: null, finalUrl: null, error: 'other' }
+  let last: Omit<CheckResult, 'siteId'> = { isUp: false, statusCode: null, responseMs: null, finalUrl: null, error: 'other', errorDetail: null }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
@@ -61,16 +102,12 @@ async function pingUrl(url: string, timeoutMs = TIMEOUT_MS): Promise<Omit<CheckR
       })
       const responseMs = Date.now() - start
       const isUp = res.status < 500
-      last = { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null }
+      last = { isUp, statusCode: res.status, responseMs, finalUrl: res.url, error: null, errorDetail: null }
       if (isUp) return last   // UP on any attempt → stop immediately
     } catch (err) {
       const responseMs = Date.now() - start
-      const msg = err instanceof Error ? err.message : String(err)
-      const cause = msg.includes('timeout') ? 'timeout'
-        : msg.includes('ENOTFOUND') ? 'dns'
-        : msg.includes('ECONNREFUSED') ? 'connection_refused'
-        : 'other'
-      last = { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause }
+      const { cause, detail } = classifyError(err)
+      last = { isUp: false, statusCode: null, responseMs, finalUrl: null, error: cause, errorDetail: detail }
     }
   }
 
@@ -127,7 +164,7 @@ export async function GET(request: NextRequest) {
   )
 
   // Batch site_checks inserts — collect all records then insert once after the loop.
-  type SiteCheckRow = { site_id: string; checked_at: string; is_up: boolean; status_code: number | null; response_ms: number | null; final_url: string | null; error: string | null }
+  type SiteCheckRow = { site_id: string; checked_at: string; is_up: boolean; status_code: number | null; response_ms: number | null; final_url: string | null; error: string | null; error_detail: string | null }
   const siteChecksToInsert: SiteCheckRow[] = []
 
   const today = checkedAt.slice(0, 10)
@@ -140,7 +177,7 @@ export async function GET(request: NextRequest) {
     const result = results[i]
     if (result.status === 'rejected') continue
 
-    const { isUp, statusCode, responseMs, finalUrl, error } = result.value
+    const { isUp, statusCode, responseMs, finalUrl, error, errorDetail } = result.value
 
     siteChecksToInsert.push({
       site_id:     site.id,
@@ -150,6 +187,7 @@ export async function GET(request: NextRequest) {
       response_ms: responseMs,
       final_url:   finalUrl,
       error,
+      error_detail: errorDetail,
     })
 
     const wasDown = site.is_up === false
@@ -158,9 +196,20 @@ export async function GET(request: NextRequest) {
 
     if (!isUp) {
       const newFailCount = (site.consecutive_failures ?? 0) + 1
+
+      // Resolve the final cause for this check: pingUrl's `error` covers thrown exceptions;
+      // a non-throwing 5xx/4xx response has error=null and is resolved from statusCode here.
+      const cause = error ?? (statusCode && statusCode >= 500 ? '5xx' : statusCode && statusCode >= 400 ? '4xx' : 'other')
+      const isConfirmed       = CONFIRMED_CAUSES.has(cause)
+      const requiredThreshold = isConfirmed ? FLAP_THRESHOLD_CONFIRMED : FLAP_THRESHOLD_AMBIGUOUS
+
       // Only flip is_up to false when the threshold is first crossed; the is_up !== false guard
       // prevents re-alerting on every subsequent check while the site stays down.
-      const thresholdCrossed = newFailCount >= FLAP_THRESHOLD && site.is_up !== false
+      const thresholdCrossed = newFailCount >= requiredThreshold && site.is_up !== false
+      // Ambiguous cause (timeout/other) hit the point where a confirmed cause would already
+      // have escalated — send one quiet, non-paging heads-up instead of declaring DOWN.
+      const investigating = !thresholdCrossed && !isConfirmed
+        && newFailCount === FLAP_THRESHOLD_CONFIRMED && site.is_up !== false
 
       await db.from('sites').update({
         ...(thresholdCrossed ? { is_up: false } : {}),
@@ -173,20 +222,14 @@ export async function GET(request: NextRequest) {
 
       // Flap threshold crossed — declare DOWN and alert
       if (thresholdCrossed) {
-        const cause = error === 'timeout' ? 'timeout'
-          : error === 'dns' ? 'dns'
-          : error === 'connection_refused' ? 'connection_refused'
-          : statusCode && statusCode >= 500 ? '5xx'
-          : statusCode && statusCode >= 400 ? '4xx'
-          : 'other'
-
         // Open incident — guard against duplicate open incidents on overlapping cron runs
         const existingIncident = openIncidentBySiteId.get(site.id)
         if (!existingIncident) {
           await db.from('site_incidents').insert({
-            site_id:    site.id,
-            started_at: checkedAt,
+            site_id:      site.id,
+            started_at:   checkedAt,
             cause,
+            error_detail: errorDetail,
           })
           // Track the new incident so recovery logic in this same run can find it
           openIncidentBySiteId.set(site.id, { id: 'pending', site_id: site.id, started_at: checkedAt })
@@ -200,7 +243,7 @@ export async function GET(request: NextRequest) {
           client_name: site.clients?.name ?? null,
           title:       `${site.name} is DOWN`,
           body:        `${site.url} returned ${statusCode ?? error ?? 'error'}`,
-          meta:        { site_id: site.id, url: site.url, status_code: statusCode, error, cause },
+          meta:        { site_id: site.id, url: site.url, status_code: statusCode, error, cause, error_detail: errorDetail },
           link_url:    `/admin/sites`,
         })
 
@@ -219,11 +262,21 @@ export async function GET(request: NextRequest) {
         }
 
         downtimeAlerts++
+      } else if (investigating) {
+        // Quiet, non-paging heads-up only — no @everyone, no incident, no is_up flip.
+        // Escalates to the DOWN path above if it keeps failing past FLAP_THRESHOLD_AMBIGUOUS,
+        // or immediately if a subsequent check comes back with a confirmed cause.
+        const msg = `🟡 **${site.name} may be having issues** — ${cause}, monitoring closely (will alert if it persists) | ${site.url}`
+        const notifInvestigating = getNotif(notifConfig, 'uptime_investigating')
+        if (notifInvestigating.agency && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+        if (notifInvestigating.client && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
       }
     } else {
       // Site is up. Always reset the failure streak — any passing check breaks it.
-      // This means a site alternating fail/pass never accumulates toward FLAP_THRESHOLD,
+      // This means a site alternating fail/pass never accumulates toward the flap threshold,
       // which is the correct flap-suppression behaviour.
+      const wasInvestigating = !wasDown && (site.consecutive_failures ?? 0) >= FLAP_THRESHOLD_CONFIRMED
+
       await db.from('sites').update({
         is_up:                true,
         last_checked_at:      checkedAt,
@@ -232,6 +285,15 @@ export async function GET(request: NextRequest) {
         consecutive_failures: 0,
         updated_at:           checkedAt,
       }).eq('id', site.id)
+
+      // Was flagged "investigating" (ambiguous cause, ≥3 failures) but never crossed into a
+      // confirmed DOWN — close the loop with a quiet resolved note instead of silence.
+      if (wasInvestigating) {
+        const msg = `✅ **${site.name} back to normal** — was a brief blip | ${site.url}`
+        const notifInvestigating = getNotif(notifConfig, 'uptime_investigating')
+        if (notifInvestigating.agency && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
+        if (notifInvestigating.client && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
+      }
 
       // Recovery — was down, now up
       if (wasDown) {
