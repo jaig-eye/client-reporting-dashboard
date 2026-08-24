@@ -23,7 +23,7 @@ import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import DateRangePicker from '@/components/DateRangePicker'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 import {
-  resolvePaidAdsLayout, resolvePlatformLayout, resolveMetaMediaLayout,
+  resolvePaidAdsLayout, resolvePlatformLayout, resolveMetaMediaLayout, resolveGoogleSearchLayout,
   METRIC_LABELS, type MetricLayouts, type MetricKey,
 } from '@/lib/metric-layouts'
 
@@ -642,7 +642,7 @@ export default async function CampaignDetailPage({
   const clientOverride = client.metric_layout_override as MetricLayouts | null | undefined
   const isMetaMedia    = source === 'meta_ads' && (displayMode === 'awareness' || displayMode === 'engagement')
   const campaignLayout = isGoogleSearch
-    ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_search')
+    ? resolveGoogleSearchLayout(agencyLayouts, clientOverride, isEcom)
     : isGoogleShop
     ? resolvePlatformLayout(agencyLayouts, clientOverride, 'google_shopping')
     : isMetaMedia
