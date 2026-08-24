@@ -19,14 +19,35 @@ const MAX_ATTEMPTS        = 2       // attempts per check (1 retry); both must f
 // slow or congested, NOT offline — a busy site under load produces these constantly. They get
 // a long runway: a quiet internal heads-up at 10 min, and a hard DOWN + @everyone only after
 // 30 min of continuous failure.
+const CHECK_INTERVAL_MIN        = 2    // must match the cron schedule in vercel.json (*/2)
 const FLAP_THRESHOLD_CONFIRMED  = 3    // 6 min  — confirmed cause → DOWN
-const INVESTIGATING_THRESHOLD   = 5    // 10 min — ambiguous cause → quiet, agency-only notice
-const FLAP_THRESHOLD_AMBIGUOUS  = 15   // 30 min — ambiguous cause → DOWN
+const INVESTIGATING_THRESHOLD   = 5    // 10 min — ambiguous cause → quiet degradation notice
+const FLAP_THRESHOLD_CONNECT    = 10   // 20 min — cannot open a connection at all → DOWN
+const FLAP_THRESHOLD_AMBIGUOUS  = 15   // 30 min — slow-but-reachable / unclassified → DOWN
+
+// A passing check DECAYS the streak rather than zeroing it. With a 15-check ladder a hard
+// reset meant a site failing 90% of probes but passing occasionally could never reach the
+// threshold — it would sit invisible forever. Decay keeps genuine flap suppression (an
+// isolated blip nets out) while letting sustained degradation still climb to a page.
+const FAILURE_DECAY_PER_PASS    = 3
+
+// Split by what the failure actually proves:
+//   CONFIRMED  — the host answered and rejected us (or DNS/TLS failed). It is broken. 3 checks.
+//   connect_timeout — we could not open a TCP connection. Could be a stopped instance or a
+//     DROP firewall rule (both look identical to congestion), so it sits between the two. 10 checks.
+//   timeout / other — connected but slow to respond, i.e. demonstrably still serving. 15 checks.
 const CONFIRMED_CAUSES = new Set(['dns', 'connection_refused', 'connection_reset', 'tls', 'host_unreachable', '5xx'])
+
+function thresholdFor(cause: string): number {
+  if (CONFIRMED_CAUSES.has(cause))   return FLAP_THRESHOLD_CONFIRMED
+  if (cause === 'connect_timeout')   return FLAP_THRESHOLD_CONNECT
+  return FLAP_THRESHOLD_AMBIGUOUS
+}
 
 // Human-readable cause for alert text — "connection timeout" beats "other"/"timeout".
 const CAUSE_LABELS: Record<string, string> = {
-  timeout:            'connection timeout',
+  connect_timeout:    'could not connect (timed out)',
+  timeout:            'response timeout (host reachable but slow)',
   dns:                'DNS lookup failed',
   connection_refused: 'connection refused',
   connection_reset:   'connection reset',
@@ -81,21 +102,48 @@ function classifyError(err: unknown): { cause: string; detail: string } {
     return { cause: 'timeout', detail: message }
   }
 
-  const inner  = (e?.cause ?? {}) as { code?: string; message?: string; cause?: { code?: string; message?: string } }
-  const code   = inner.code ?? inner.cause?.code ?? null
-  const detail = inner.message ?? inner.cause?.message ?? message
+  const inner = (e?.cause ?? {}) as {
+    code?: string; message?: string
+    cause?: { code?: string; message?: string }
+    errors?: { code?: string; message?: string }[]
+  }
 
-  const cause =
-    code === 'ENOTFOUND' || code === 'EAI_AGAIN'                                ? 'dns'
-    : code === 'ECONNREFUSED'                                                   ? 'connection_refused'
-    : code === 'ECONNRESET' || code === 'EPIPE'                                 ? 'connection_reset'
-    : code === 'EHOSTUNREACH' || code === 'ENETUNREACH'                         ? 'host_unreachable'
+  // A dual-stack host produces an AggregateError whose top-level code is whichever address
+  // family was tried first — so a blackholed AAAA could mask a refused IPv4. Inspect every
+  // sub-error and prefer the most actionable (confirmed) classification.
+  const subErrors = Array.isArray(inner.errors) ? inner.errors : []
+  const codes = [inner.code, inner.cause?.code, ...subErrors.map(x => x?.code)].filter(Boolean) as string[]
+
+  // `||` not `??` — an AggregateError's top-level message is often an EMPTY STRING, which
+  // `??` would keep, leaving error_detail blank (and the alert's detail suffix suppressed).
+  const detail =
+    (inner.message || inner.cause?.message || subErrors.map(x => x?.message).filter(Boolean).join('; ') || message || '').trim()
+    || 'no detail'
+
+  const classify = (code: string): string | null =>
+    code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'EAI_FAIL'          ? 'dns'
+    : code === 'ECONNREFUSED'                                                    ? 'connection_refused'
+    : code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNABORTED'
+      || code === 'UND_ERR_SOCKET'                                               ? 'connection_reset'
+    : code === 'EHOSTUNREACH' || code === 'ENETUNREACH' || code === 'EHOSTDOWN'  ? 'host_unreachable'
+    // Broad TLS match — the old anchored list missed SELF_SIGNED_CERT_IN_CHAIN,
+    // UNABLE_TO_GET_ISSUER_CERT_LOCALLY, HOSTNAME_MISMATCH, EPROTO and ERR_SSL_*, each of
+    // which demoted a genuinely broken cert to the slow ambiguous ladder.
+    : /CERT|SSL|TLS|EPROTO/i.test(code)                                          ? 'tls'
+    // Connection could not be established at all — distinct from a slow response.
     : code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT'
-      || code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT'  ? 'timeout'
-    : code && /^(CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? 'tls'
-    : /socket hang up/i.test(detail)                                            ? 'connection_reset'
-    : /timeout|timed out/i.test(message) || /timeout|timed out/i.test(detail)   ? 'timeout'
-    : 'other'
+      || code === 'ERR_SOCKET_CONNECTION_TIMEOUT'                                ? 'connect_timeout'
+    // Connected, but the host was slow to send headers/body — it IS serving, just degraded.
+    : code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT'      ? 'timeout'
+    : null
+
+  const mapped = codes.map(classify).filter(Boolean) as string[]
+  const cause =
+    mapped.find(c => CONFIRMED_CAUSES.has(c))            // prefer an actionable, confirmed cause
+    ?? mapped[0]
+    ?? (/socket hang up|other side closed/i.test(detail)  ? 'connection_reset'
+      : /timeout|timed out/i.test(message) || /timeout|timed out/i.test(detail) ? 'timeout'
+      : 'other')
 
   return { cause, detail }
 }
@@ -221,7 +269,7 @@ export async function GET(request: NextRequest) {
       // a non-throwing 5xx/4xx response has error=null and is resolved from statusCode here.
       const cause = error ?? (statusCode && statusCode >= 500 ? '5xx' : statusCode && statusCode >= 400 ? '4xx' : 'other')
       const isConfirmed       = CONFIRMED_CAUSES.has(cause)
-      const requiredThreshold = isConfirmed ? FLAP_THRESHOLD_CONFIRMED : FLAP_THRESHOLD_AMBIGUOUS
+      const requiredThreshold = thresholdFor(cause)
 
       // Only flip is_up to false when the threshold is first crossed; the is_up !== false guard
       // prevents re-alerting on every subsequent check while the site stays down.
@@ -270,7 +318,7 @@ export async function GET(request: NextRequest) {
 
         // Ambiguous causes only reach here after the long grace window — say so, so the reader
         // knows this is a sustained failure and not an instant trip.
-        const forMins = newFailCount * 2
+        const forMins = newFailCount * CHECK_INTERVAL_MIN
         const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\n`
           + `Cause: ${describeCause(cause, statusCode)} | Failing for ~${forMins} min | Detected: ${new Date(checkedAt).toUTCString()}`
         const notifDown = getNotif(notifConfig, 'uptime_down')
@@ -294,7 +342,7 @@ export async function GET(request: NextRequest) {
         // Goes to the same channels as a DOWN alert (ops + the per-client channel) so it lands
         // where that site's chatter already lives — just without the @everyone page. Toggle
         // either channel off under Notifications → "Performance degradation".
-        const mins = INVESTIGATING_THRESHOLD * 2
+        const mins = INVESTIGATING_THRESHOLD * CHECK_INTERVAL_MIN
         const msg = `🟡 **${site.name} — performance degradation** (not down)\n${describeCause(cause, statusCode)} for ~${mins} min. Monitoring; will page only if it persists. | ${site.url}`
         const notifInvestigating = getNotif(notifConfig, 'uptime_investigating')
         if (notifInvestigating.agency && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
@@ -304,14 +352,25 @@ export async function GET(request: NextRequest) {
       // Site is up. Always reset the failure streak — any passing check breaks it.
       // This means a site alternating fail/pass never accumulates toward the flap threshold,
       // which is the correct flap-suppression behaviour.
-      const wasInvestigating = !wasDown && (site.consecutive_failures ?? 0) >= INVESTIGATING_THRESHOLD
+      // DECAY, don't zero. A hard reset meant one passing probe wiped a 15-deep streak, so a
+      // site failing most checks but passing occasionally could never reach the ambiguous
+      // threshold and stayed invisible. Decaying keeps flap suppression (an isolated blip
+      // nets out) while sustained degradation still climbs.
+      const prevFailures = site.consecutive_failures ?? 0
+      const decayed      = Math.max(0, prevFailures - FAILURE_DECAY_PER_PASS)
+
+      // Edge-trigger the "recovered" note on the downward crossing of the degradation line,
+      // so it fires exactly once even though the counter no longer snaps straight to 0.
+      const wasInvestigating = !wasDown
+        && prevFailures >= INVESTIGATING_THRESHOLD
+        && decayed      <  INVESTIGATING_THRESHOLD
 
       await db.from('sites').update({
         is_up:                true,
         last_checked_at:      checkedAt,
         last_status_code:     statusCode,
         last_response_ms:     responseMs,
-        consecutive_failures: 0,
+        consecutive_failures: decayed,
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
