@@ -58,10 +58,18 @@ const nextConfig = {
       { source: '/admin/:path*',     headers: [noStore, csp(ADMIN_FRAME_ANCESTORS)] },
 
       // Client-facing — lenient, must keep working via magic link + inside the CRM iframe.
+      // ⚠️ ORDER MATTERS: Next applies every matching rule and the LAST one wins per header
+      // key. These must stay AFTER the baseline above. Never append a global frame-ancestors
+      // rule below this block — it would silently override these and blank the CRM iframe
+      // with no build or runtime error.
       { source: '/dashboard',        headers: [noStore, csp(CLIENT_FRAME_ANCESTORS)] },
       { source: '/dashboard/:path*', headers: [noStore, csp(CLIENT_FRAME_ANCESTORS)] },
-      { source: '/share/:path*',     headers: [csp(CLIENT_FRAME_ANCESTORS)] },
       { source: '/access',           headers: [csp(CLIENT_FRAME_ANCESTORS)] },
+
+      // NOTE: /share/* deliberately gets NO frame policy. Those pages are unauthenticated,
+      // read-only, carry no session cookie, and perform no privileged action — a frame
+      // restriction buys zero security there while risking breakage for clients who have
+      // already embedded a public share link on their own site. main had no policy here.
     ]
   },
 }

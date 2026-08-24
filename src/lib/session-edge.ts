@@ -23,7 +23,11 @@ function bytesToB64url(bytes: Uint8Array): string {
 function b64urlToString(b64url: string): string {
   const pad  = b64url.length % 4 === 0 ? '' : '='.repeat(4 - (b64url.length % 4))
   const norm = b64url.replace(/-/g, '+').replace(/_/g, '/') + pad
-  return atob(norm)
+  // Decode as UTF-8 to stay byte-equivalent with the Node verifier
+  // (Buffer.from(...).toString('utf8')). Bare atob() yields latin1, which would silently
+  // corrupt any multi-byte claim value rather than failing loudly.
+  const bin = atob(norm)
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)))
 }
 
 /** Constant-time-ish string compare (both strings are attacker-influenced HMACs of equal expected length). */

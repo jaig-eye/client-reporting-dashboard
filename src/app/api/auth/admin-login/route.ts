@@ -28,18 +28,33 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
 async function checkRateLimit(db: SupabaseClient, ip: string): Promise<boolean> {
   try {
     const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString()
-    const { count } = await db
+    const { count, error } = await db
       .from('login_attempts')
       .select('*', { count: 'exact', head: true })
       .eq('ip', ip)
       .gte('created_at', windowStart)
-    if ((count ?? 0) >= RATE_LIMIT_MAX) return false
-    await db.from('login_attempts').insert({ ip })
-    return true
+    // supabase-js RESOLVES with an { error } instead of throwing, so without this check a
+    // missing table (i.e. migration 194 not applied yet) silently made the limiter inert:
+    // count would be null, `0 >= MAX` false, and the insert would fail unnoticed.
+    if (error) {
+      console.error('[admin-login] rate-limit store unavailable, failing open:', error.message)
+      return true
+    }
+    return (count ?? 0) < RATE_LIMIT_MAX
   } catch (e) {
-    console.error('[admin-login] rate-limit store unavailable, failing open:', e)
+    console.error('[admin-login] rate-limit store threw, failing open:', e)
     return true
   }
+}
+
+/** Record a FAILED attempt. Only failures consume the budget — counting every request meant
+ *  a clean super-admin login (password + OTP = 2 POSTs) burned 2 of 5 slots, and admins
+ *  sharing an office NAT could lock each other out without ever mistyping a password. */
+async function recordFailedAttempt(db: SupabaseClient, ip: string): Promise<void> {
+  try {
+    const { error } = await db.from('login_attempts').insert({ ip })
+    if (error) console.error('[admin-login] rate-limit insert failed:', error.message)
+  } catch { /* never block a login response on the limiter */ }
 }
 
 async function resetRateLimit(db: SupabaseClient, ip: string): Promise<void> {
@@ -86,6 +101,7 @@ export async function POST(request: NextRequest) {
   // ── Super admin path ────────────────────────────────────────────────────────
   if (!email || email.trim() === '') {
     if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
+      await recordFailedAttempt(db, ip)
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
 
@@ -105,6 +121,7 @@ export async function POST(request: NextRequest) {
         new Date(expiresAt) < new Date() ||
         !crypto.timingSafeEqual(Buffer.from(hashOtp(String(code)), 'hex'), Buffer.from(storedHash, 'hex'))
       ) {
+        await recordFailedAttempt(db, ip)
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }
 
@@ -187,6 +204,7 @@ export async function POST(request: NextRequest) {
   // verifyPassword equalizes timing when no user/hash exists (dummy bcrypt compare).
   const { ok: hashMatch, needsUpgrade } = verifyPassword(password, user?.password_hash)
   if (!user || !hashMatch) {
+    await recordFailedAttempt(db, ip)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 

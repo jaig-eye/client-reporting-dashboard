@@ -105,9 +105,20 @@ export function getVerifiedUserId(session: string | undefined): string | null {
 // accepts both and callers upgrade the stored hash to bcrypt on successful login.
 
 const BCRYPT_ROUNDS = 12
-// A valid bcrypt hash of a throwaway string, compared against when no user is found
-// so the response time doesn't reveal whether the account exists. Computed once at load.
-const DUMMY_BCRYPT_HASH = bcrypt.hashSync('dummy-password-for-timing-equalization', BCRYPT_ROUNDS)
+
+// A valid bcrypt hash of a throwaway string, compared against when no user is found so the
+// response time doesn't reveal whether the account exists.
+//
+// Computed LAZILY on first use, never at module load: lib/auth.ts is imported by ~152 files
+// (including the client dashboard and /access, purely for the synchronous isAdminAuthed
+// check), and a cost-12 hashSync is ~0.5-1.5s of blocking CPU. At module scope that lands on
+// the cold start of nearly every serverless function — including the /dashboard render right
+// after a client clicks their magic link.
+let _dummyHash: string | null = null
+function dummyBcryptHash(): string {
+  if (_dummyHash === null) _dummyHash = bcrypt.hashSync('dummy-password-for-timing-equalization', BCRYPT_ROUNDS)
+  return _dummyHash
+}
 
 /** SHA-256 hash — LEGACY only. Kept for verifying pre-existing rows; do not use for new hashes. */
 export function hashPassword(password: string): string {
@@ -127,7 +138,7 @@ export function verifyPassword(
 ): { ok: boolean; needsUpgrade: boolean } {
   if (!storedHash) {
     // Spend comparable time to avoid user-enumeration via timing.
-    bcrypt.compareSync(input, DUMMY_BCRYPT_HASH)
+    bcrypt.compareSync(input, dummyBcryptHash())
     return { ok: false, needsUpgrade: false }
   }
   if (storedHash.startsWith('$2')) {
@@ -137,5 +148,9 @@ export function verifyPassword(
   const a = Buffer.from(hashPassword(input), 'hex')
   const b = Buffer.from(storedHash, 'hex')
   const ok = a.length === b.length && timingSafeEqual(a, b)
+  // Burn comparable time on the legacy path too. Without this, a ~5ms response (vs ~1s for
+  // bcrypt/no-user) is a precise oracle marking exactly which accounts still hold an
+  // unsalted SHA-256 hash — i.e. the ones worth attacking offline.
+  bcrypt.compareSync(input, dummyBcryptHash())
   return { ok, needsUpgrade: ok }
 }

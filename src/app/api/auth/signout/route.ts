@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server'
+import { clearSessionCookies } from '@/lib/clearSession'
 
 export async function POST() {
-  const response = NextResponse.redirect(
+  // Attributes must mirror how the cookies were set, or the browser drops the deletion
+  // inside the cross-origin CRM iframe and the session silently survives.
+  return clearSessionCookies(NextResponse.redirect(
     new URL('/access', process.env.NEXT_PUBLIC_APP_URL!)
-  )
-  // Clear every session cookie so nothing survives on a shared machine.
-  for (const name of ['client_token', 'admin_session', 'admin_user_id', 'admin_raw_mode']) {
-    response.cookies.set(name, '', { maxAge: 0, path: '/' })
-  }
-  return response
+  ))
 }

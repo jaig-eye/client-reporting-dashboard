@@ -30,8 +30,17 @@ export interface AdminSessionToken extends AdminSessionClaims {
 
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14   // 14 days — matches cookie maxAge
 
-/** HMAC key. Prefer a dedicated SESSION_SECRET; fall back to ADMIN_PASSWORD so the
- *  feature works with no new env var (rotating ADMIN_PASSWORD then also rotates sessions). */
+/**
+ * HMAC key.
+ *
+ * ⚠️ SET A DEDICATED `SESSION_SECRET` IN PRODUCTION. The ADMIN_PASSWORD fallback exists only
+ * so the feature works without a new env var, but it is NOT safe long-term: until this change
+ * shipped, `admin_session` literally WAS the raw ADMIN_PASSWORD and was sent on every admin
+ * request — so that value may sit in HAR exports, proxy/WAF logs, Vercel request logs and
+ * support screenshots. Anyone holding an old cookie value could use it as the signing key to
+ * forge `{ isSuperAdmin: true }` and bypass both the password and the OTP. Generate one with
+ * `openssl rand -hex 32` and set it BEFORE deploying.
+ */
 function sessionSecret(): string {
   return process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD || ''
 }
@@ -42,6 +51,12 @@ function hmac(body: string): string {
 
 /** Sign a session token (Node). */
 export function signAdminSession(claims: AdminSessionClaims): string {
+  // Both verifiers return null on an empty secret, so signing with one would mint a cookie
+  // that can never verify — login returns 200, middleware bounces back to /admin, and the
+  // admin is stuck in a silent redirect loop with no error anywhere. Fail loudly instead.
+  if (!sessionSecret()) {
+    throw new Error('[session] Cannot sign admin session: set SESSION_SECRET (or ADMIN_PASSWORD).')
+  }
   const nowSec = Math.floor(Date.now() / 1000)
   const payload: AdminSessionToken = {
     v: 1,

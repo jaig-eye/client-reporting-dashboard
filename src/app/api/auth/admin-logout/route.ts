@@ -3,15 +3,12 @@
 import { NextResponse }    from 'next/server'
 import { getAdminSession } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
+import { clearSessionCookies } from '@/lib/clearSession'
 
 export async function POST() {
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'logged_out', 'user', { meta: {} })
-  const response = NextResponse.json({ ok: true })
-  // Clear the entire session cookie set so nothing survives on a shared machine —
-  // including any preview client_token and the raw-cost view flag.
-  for (const name of ['admin_session', 'admin_user_id', 'client_token', 'admin_raw_mode']) {
-    response.cookies.set(name, '', { maxAge: 0, path: '/' })
-  }
-  return response
+  // Clears the whole session set with attributes matching how they were set, so the
+  // deletion isn't dropped by the browser inside the cross-origin CRM iframe.
+  return clearSessionCookies(NextResponse.json({ ok: true }))
 }
