@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
-import { timingSafeCompare } from '@/lib/auth'
+import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
 import { sendEmail } from '@/lib/email'
@@ -32,7 +32,7 @@ function shouldRunSync(
 // Called hourly by Vercel Cron (vercel.json). shouldRunSync gates each connector type per agency settings.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  if (!verifyCronAuth(authHeader)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

@@ -14,7 +14,7 @@ export const maxDuration = 300
 
 import { internalAdminCookie } from '@/lib/session'
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeCompare } from '@/lib/auth'
+import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { generateTopicsForClient }   from '@/lib/content/generateTopics'
 import type { TopicSummary }         from '@/lib/content/generateTopics'
@@ -86,7 +86,7 @@ interface PostSummary {
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  if (!verifyCronAuth(authHeader)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

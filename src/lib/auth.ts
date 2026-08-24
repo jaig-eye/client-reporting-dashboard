@@ -40,6 +40,24 @@ export function timingSafeCompare(
   }
 }
 
+/**
+ * Verify a cron/webhook `Authorization: Bearer <CRON_SECRET>` header.
+ *
+ * Call sites previously did `timingSafeCompare(header, \`Bearer ${process.env.CRON_SECRET}\`)`.
+ * When CRON_SECRET is UNSET that template evaluates to the literal string "Bearer undefined",
+ * which is truthy — so timingSafeCompare's `!expected` guard never fires and anyone sending
+ * `Authorization: Bearer undefined` authenticates as the cron. This helper fails closed on a
+ * missing secret instead, and logs loudly so a misconfigured env is visible.
+ */
+export function verifyCronAuth(authHeader: string | null | undefined): boolean {
+  const secret = process.env.CRON_SECRET
+  if (!secret) {
+    console.error('[auth] CRON_SECRET is not set — refusing all cron requests')
+    return false
+  }
+  return timingSafeCompare(authHeader, `Bearer ${secret}`)
+}
+
 export interface AdminSession {
   isSuperAdmin: boolean
   userId?: string

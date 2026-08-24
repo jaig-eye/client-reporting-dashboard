@@ -7,6 +7,7 @@ import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { verifyCronAuth } from '@/lib/auth'
 import type { SeoBrief }             from '@/lib/content/types'
 
 export const maxDuration = 120
@@ -16,7 +17,7 @@ type Params = { params: Promise<{ id: string }> }
 export async function POST(request: NextRequest, { params }: Params) {
   const cookieStore = await cookies()
   const authHeader  = request.headers.get('authorization')
-  const isCron      = authHeader === `Bearer ${process.env.CRON_SECRET}`
+  const isCron      = verifyCronAuth(authHeader)
   if (!isCron && !isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

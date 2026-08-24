@@ -3,7 +3,7 @@
 // submitted in the past 7 days, send a Discord reminder to the ops channel.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeCompare }         from '@/lib/auth'
+import { verifyCronAuth }         from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -12,7 +12,7 @@ export const maxDuration = 60
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  if (!verifyCronAuth(authHeader)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

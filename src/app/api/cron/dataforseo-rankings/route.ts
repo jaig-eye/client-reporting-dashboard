@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { timingSafeCompare } from '@/lib/auth'
+import { verifyCronAuth } from '@/lib/auth'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
@@ -21,7 +21,7 @@ const MAX_CHECKS_PER_RUN = 600
 const CONCURRENCY = 6
 
 export async function GET(req: NextRequest) {
-  if (!process.env.CRON_SECRET || !timingSafeCompare(req.headers.get('authorization'), `Bearer ${process.env.CRON_SECRET}`)) {
+  if (!verifyCronAuth(req.headers.get("authorization"))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
