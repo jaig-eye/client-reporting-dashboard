@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { syncClient } from '@/lib/sync'
+import { isAdminAuthed } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
-  const session = cookieStore.get('admin_session')?.value
-  if (!session || session !== process.env.ADMIN_PASSWORD) {
+  // Verify the signed session token — a raw ADMIN_PASSWORD comparison no longer matches
+  // now that admin_session holds a signed token.
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

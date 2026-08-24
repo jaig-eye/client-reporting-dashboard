@@ -12,6 +12,7 @@
 
 export const maxDuration = 300
 
+import { internalAdminCookie } from '@/lib/session'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeCompare } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
@@ -354,7 +355,7 @@ export async function GET(request: NextRequest) {
       try {
         const res = await fetch(`${appUrl}/api/admin/content/topics/${topic.id}/brief`, {
           method:  'POST',
-          headers: { 'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}` },
+          headers: { 'Cookie': internalAdminCookie() },
         })
         if (res.ok) briefsGenerated.push(topic.id)
         else console.error(`[content-topics cron] brief ${topic.id} returned ${res.status}: ${await res.text().catch(() => '')}`)
@@ -433,7 +434,7 @@ export async function GET(request: NextRequest) {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+              'Cookie': internalAdminCookie(),
             },
             body: JSON.stringify({ auto: true }),
           })
@@ -840,7 +841,7 @@ export async function GET(request: NextRequest) {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+              'Cookie': internalAdminCookie(),
             },
             body: JSON.stringify({ topic_id: t.id }),
           })
@@ -881,7 +882,7 @@ export async function GET(request: NextRequest) {
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+                'Cookie': internalAdminCookie(),
               },
               body: JSON.stringify({ auto: true }),
             })
@@ -1021,7 +1022,7 @@ export async function GET(request: NextRequest) {
             : JSON.stringify({ topic_id: job.topicId, suppress_email: true })
           const generateHeaders = {
             'Content-Type': 'application/json',
-            'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+            'Cookie': internalAdminCookie(),
           }
 
           let res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })

@@ -2,13 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import { getAdminSession, timingSafeCompare } from '@/lib/auth'
+import { getAdminSession, isAdminAuthed } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
-
-function isAdminAuthed(session: string | undefined) {
-  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
-}
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()

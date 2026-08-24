@@ -55,6 +55,19 @@ export function signAdminSession(claims: AdminSessionClaims): string {
   return `${body}.${hmac(body)}`
 }
 
+/**
+ * Cookie header value for INTERNAL server-to-server calls that need to authenticate as
+ * admin (cron jobs and admin routes that fetch our own /api/admin endpoints).
+ *
+ * These previously sent the raw ADMIN_PASSWORD as the cookie value, which only worked while
+ * `admin_session` WAS the password. Now that the cookie holds a signed token, they must mint
+ * a real one — otherwise every internal call 401s. Server-side fetches send no Origin header,
+ * so the middleware CSRF guard allows them.
+ */
+export function internalAdminCookie(): string {
+  return `admin_session=${signAdminSession({ isSuperAdmin: true })}`
+}
+
 /** Verify + decode a session token (Node, synchronous). Returns null when invalid/expired. */
 export function verifyAdminSessionNode(token: string | undefined | null): AdminSessionToken | null {
   if (!token || !sessionSecret()) return null
