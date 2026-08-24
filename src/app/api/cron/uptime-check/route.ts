@@ -13,13 +13,33 @@ const EXTENDED_TIMEOUT_MS = 30_000  // used on the 2nd+ check when a site alread
 const RETRY_DELAY_MS      = 3_000   // delay between the first and second attempt within one check
 const MAX_ATTEMPTS        = 2       // attempts per check (1 retry); both must fail to count as DOWN
 
-// Two-tier flap threshold: unambiguous causes (DNS failure, connection refused/reset, TLS,
-// host unreachable, 5xx) declare DOWN at the same 3-check bar as before. Ambiguous causes
-// (timeout, unclassified) could just mean the host is slow — those get double the runway
-// before a hard DOWN + @everyone page; see `investigating` below for what happens in between.
-const FLAP_THRESHOLD_CONFIRMED = 3   // 6 min at the current 2-min cron interval
-const FLAP_THRESHOLD_AMBIGUOUS = 6   // 12 min — timeout/other only
+// Escalation ladder (cron runs every 2 min). Unambiguous causes (DNS failure, connection
+// refused/reset, TLS, host unreachable, 5xx) mean the host actively rejected us — those still
+// declare DOWN at 3 checks. Ambiguous causes (timeout, unclassified) usually mean the host is
+// slow or congested, NOT offline — a busy site under load produces these constantly. They get
+// a long runway: a quiet internal heads-up at 10 min, and a hard DOWN + @everyone only after
+// 30 min of continuous failure.
+const FLAP_THRESHOLD_CONFIRMED  = 3    // 6 min  — confirmed cause → DOWN
+const INVESTIGATING_THRESHOLD   = 5    // 10 min — ambiguous cause → quiet, agency-only notice
+const FLAP_THRESHOLD_AMBIGUOUS  = 15   // 30 min — ambiguous cause → DOWN
 const CONFIRMED_CAUSES = new Set(['dns', 'connection_refused', 'connection_reset', 'tls', 'host_unreachable', '5xx'])
+
+// Human-readable cause for alert text — "connection timeout" beats "other"/"timeout".
+const CAUSE_LABELS: Record<string, string> = {
+  timeout:            'connection timeout',
+  dns:                'DNS lookup failed',
+  connection_refused: 'connection refused',
+  connection_reset:   'connection reset',
+  host_unreachable:   'host unreachable',
+  tls:                'TLS / certificate error',
+  '5xx':              'server error',
+  '4xx':              'client error',
+  other:              'unknown network error',
+}
+function describeCause(cause: string, statusCode: number | null): string {
+  if (statusCode) return `HTTP ${statusCode}`
+  return CAUSE_LABELS[cause] ?? cause
+}
 
 // Browser-impersonating UA reduces WAF/Cloudflare false blocks.
 // Clients can whitelist by UA string: http.user_agent contains "GoLaunchLocal"
@@ -206,10 +226,11 @@ export async function GET(request: NextRequest) {
       // Only flip is_up to false when the threshold is first crossed; the is_up !== false guard
       // prevents re-alerting on every subsequent check while the site stays down.
       const thresholdCrossed = newFailCount >= requiredThreshold && site.is_up !== false
-      // Ambiguous cause (timeout/other) hit the point where a confirmed cause would already
-      // have escalated — send one quiet, non-paging heads-up instead of declaring DOWN.
+      // Ambiguous cause (timeout/other) has persisted long enough to be worth a look, but not
+      // long enough to call the site down — one quiet, internal heads-up, no page, no incident.
+      // Fires exactly once (consecutive_failures increments by 1 per run, so === can't be skipped).
       const investigating = !thresholdCrossed && !isConfirmed
-        && newFailCount === FLAP_THRESHOLD_CONFIRMED && site.is_up !== false
+        && newFailCount === INVESTIGATING_THRESHOLD && site.is_up !== false
 
       await db.from('sites').update({
         ...(thresholdCrossed ? { is_up: false } : {}),
@@ -242,12 +263,16 @@ export async function GET(request: NextRequest) {
           client_id:   site.client_id,
           client_name: site.clients?.name ?? null,
           title:       `${site.name} is DOWN`,
-          body:        `${site.url} returned ${statusCode ?? error ?? 'error'}`,
+          body:        `${site.url} — ${describeCause(cause, statusCode)}${errorDetail ? ` (${errorDetail})` : ''}`,
           meta:        { site_id: site.id, url: site.url, status_code: statusCode, error, cause, error_detail: errorDetail },
           link_url:    `/admin/sites`,
         })
 
-        const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\nStatus: ${statusCode ?? error ?? 'no response'} | Detected: ${new Date(checkedAt).toUTCString()}`
+        // Ambiguous causes only reach here after the long grace window — say so, so the reader
+        // knows this is a sustained failure and not an instant trip.
+        const forMins = newFailCount * 2
+        const msg = `@everyone 🔴 **${site.name} is DOWN** — ${site.url}\n`
+          + `Cause: ${describeCause(cause, statusCode)} | Failing for ~${forMins} min | Detected: ${new Date(checkedAt).toUTCString()}`
         const notifDown = getNotif(notifConfig, 'uptime_down')
         if (notifDown.agency  && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
         if (notifDown.client  && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
@@ -256,7 +281,7 @@ export async function GET(request: NextRequest) {
           await sendEmail({
             to:      alertEmail,
             subject: `[${agencyName}] Site DOWN: ${site.name}`,
-            html:    `<p><strong>${site.name}</strong> is down.</p><p>URL: ${site.url}<br>Status: ${statusCode ?? error ?? 'no response'}<br>Time: ${new Date(checkedAt).toUTCString()}</p>`,
+            html:    `<p><strong>${site.name}</strong> is down.</p><p>URL: ${site.url}<br>Cause: ${describeCause(cause, statusCode)}${errorDetail ? ` (${errorDetail})` : ''}<br>Failing for: ~${forMins} min<br>Time: ${new Date(checkedAt).toUTCString()}</p>`,
             text:    msg,
           }).catch(() => {})
         }
@@ -266,7 +291,11 @@ export async function GET(request: NextRequest) {
         // Quiet, non-paging heads-up only — no @everyone, no incident, no is_up flip.
         // Escalates to the DOWN path above if it keeps failing past FLAP_THRESHOLD_AMBIGUOUS,
         // or immediately if a subsequent check comes back with a confirmed cause.
-        const msg = `🟡 **${site.name} may be having issues** — ${cause}, monitoring closely (will alert if it persists) | ${site.url}`
+        // Goes to the same channels as a DOWN alert (ops + the per-client channel) so it lands
+        // where that site's chatter already lives — just without the @everyone page. Toggle
+        // either channel off under Notifications → "Performance degradation".
+        const mins = INVESTIGATING_THRESHOLD * 2
+        const msg = `🟡 **${site.name} — performance degradation** (not down)\n${describeCause(cause, statusCode)} for ~${mins} min. Monitoring; will page only if it persists. | ${site.url}`
         const notifInvestigating = getNotif(notifConfig, 'uptime_investigating')
         if (notifInvestigating.agency && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
         if (notifInvestigating.client && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})
@@ -275,7 +304,7 @@ export async function GET(request: NextRequest) {
       // Site is up. Always reset the failure streak — any passing check breaks it.
       // This means a site alternating fail/pass never accumulates toward the flap threshold,
       // which is the correct flap-suppression behaviour.
-      const wasInvestigating = !wasDown && (site.consecutive_failures ?? 0) >= FLAP_THRESHOLD_CONFIRMED
+      const wasInvestigating = !wasDown && (site.consecutive_failures ?? 0) >= INVESTIGATING_THRESHOLD
 
       await db.from('sites').update({
         is_up:                true,
@@ -286,10 +315,10 @@ export async function GET(request: NextRequest) {
         updated_at:           checkedAt,
       }).eq('id', site.id)
 
-      // Was flagged "investigating" (ambiguous cause, ≥3 failures) but never crossed into a
-      // confirmed DOWN — close the loop with a quiet resolved note instead of silence.
+      // Was flagged "performance degradation" but never crossed into a confirmed DOWN —
+      // close the loop with a quiet resolved note instead of silence, on the same channels.
       if (wasInvestigating) {
-        const msg = `✅ **${site.name} back to normal** — was a brief blip | ${site.url}`
+        const msg = `✅ **${site.name} recovered** — degradation cleared, site responding normally | ${site.url}`
         const notifInvestigating = getNotif(notifConfig, 'uptime_investigating')
         if (notifInvestigating.agency && botToken && opsChannelId)    await sendDiscordMessage(botToken, opsChannelId,    msg).catch(() => {})
         if (notifInvestigating.client && botToken && clientChannelId) await sendDiscordMessage(botToken, clientChannelId, msg).catch(() => {})

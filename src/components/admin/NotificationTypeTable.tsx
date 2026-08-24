@@ -21,8 +21,9 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
   {
     title: 'Uptime & SSL',
     rows: [
-      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
-      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'uptime_down',          label: 'Site DOWN alert',          description: 'Confirmed outage: 6 min for a rejected connection, 30 min for a sustained timeout', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'uptime_recovered',     label: 'Site recovered',           description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'uptime_investigating', label: 'Performance degradation',  description: 'Quiet heads-up when a site is slow / timing out for ~10 min but is still up (no @everyone page)', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true  },
       { key: 'ssl_expiry',       label: 'SSL expiring / expired', description: 'Fires when a certificate is within 30 days of expiry', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
     ],
   },
