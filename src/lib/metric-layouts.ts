@@ -119,6 +119,11 @@ export interface MetricLayouts {
   google_search?:   PlatformMetricLayout
   google_shopping?: PlatformMetricLayout
   meta_media?:      PlatformMetricLayout
+  // Google Search split by conversion type. Search drives revenue for ecom advertisers just
+  // as much as Shopping does, so it needs the same lead-gen/ecom split Meta already has —
+  // otherwise an ecom client's Search page shows CPA where it should show ROAS/revenue.
+  google_search_lead_gen?: PlatformMetricLayout
+  google_search_ecom?:     PlatformMetricLayout
   // Meta media split by conversion type
   meta_media_lead_gen?: PlatformMetricLayout
   meta_media_ecom?:     PlatformMetricLayout
@@ -251,6 +256,27 @@ export const DEFAULT_GOOGLE_SEARCH_LAYOUT: PlatformMetricLayout = {
   ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
 }
 
+// Search — lead gen: cost-per-lead shaped (CPA, conversions, impression share).
+export const DEFAULT_GOOGLE_SEARCH_LEAD_GEN: PlatformMetricLayout = {
+  kpi_cards:             ['spend', 'conversions', 'impression_share', 'cpa'],
+  top_metrics:           ['clicks', 'impressions', 'cpc', 'conv_rate'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'conversions', 'cpa'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+}
+
+// Search — ecom: revenue shaped. Search campaigns absolutely produce purchase revenue, so an
+// ecom client should see revenue/ROAS here rather than CPA.
+export const DEFAULT_GOOGLE_SEARCH_ECOM: PlatformMetricLayout = {
+  kpi_cards:             ['spend', 'revenue', 'roas', 'impression_share'],
+  top_metrics:           ['clicks', 'impressions', 'cpc', 'conv_rate'],
+  table_columns:         ['campaign_name', 'status', 'spend', 'revenue', 'roas', 'conversions', 'cpa'],
+  adgroup_table_columns: ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'roas', 'revenue'],
+  ads_table_columns:     ['spend', 'impressions', 'clicks', 'ctr', 'conversions', 'conv_rate', 'cpa'],
+}
+
+// Shopping is inherently ecom — it requires a Merchant Center product feed, so there is no
+// meaningful lead-gen variant. Kept as a single revenue-shaped layout by design.
 export const DEFAULT_GOOGLE_SHOPPING_LAYOUT: PlatformMetricLayout = {
   kpi_cards:             ['spend', 'revenue', 'roas', 'conversions'],
   top_metrics:           ['clicks', 'impressions', 'ctr', 'cpa'],
@@ -374,6 +400,24 @@ export function resolvePlatformLayout(
  * Returns the active PlatformMetricLayout for Meta Media, split by lead gen vs ecom.
  * Falls back through client override → agency settings → built-in defaults.
  */
+/**
+ * Returns the active Google Search layout, split by conversion type.
+ * Falls back to the legacy single `google_search` layout so existing saved configs keep working.
+ */
+export function resolveGoogleSearchLayout(
+  agencyLayouts: MetricLayouts | null | undefined,
+  clientOverride: MetricLayouts | null | undefined,
+  isEcom: boolean,
+): PlatformMetricLayout {
+  const key = isEcom ? 'google_search_ecom' : 'google_search_lead_gen'
+  const def = isEcom ? DEFAULT_GOOGLE_SEARCH_ECOM : DEFAULT_GOOGLE_SEARCH_LEAD_GEN
+  return clientOverride?.[key]
+    ?? agencyLayouts?.[key]
+    ?? clientOverride?.google_search
+    ?? agencyLayouts?.google_search
+    ?? def
+}
+
 export function resolveMetaMediaLayout(
   agencyLayouts: MetricLayouts | null | undefined,
   clientOverride: MetricLayouts | null | undefined,

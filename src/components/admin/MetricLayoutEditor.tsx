@@ -3,8 +3,9 @@
 // MetricLayoutEditor — editor for all dashboard metric layouts.
 // Used in Admin → Settings → Layouts tab.
 //
-// Outer tabs: Summary Page | Paid Ads | Search Ads | Shopping | Meta Media
-// Inner sub-tabs (Summary + Paid Ads only): Lead Gen | Ecom
+// Outer tabs: Summary Page | Platform Metrics | Google · Search | Google · Shopping | Facebook / Meta
+// Inner sub-tabs (Lead Gen | Ecom) on every tab EXCEPT Shopping — Shopping requires a
+// Merchant Center product feed, so it is inherently ecom and has no lead-gen variant.
 // Sections per tab:
 //   - KPI Cards, Top Metrics, Table Columns (all tabs)
 //   - Platform Cards (Summary tab only — Google Ads card + Meta Ads card)
@@ -24,6 +25,8 @@ import {
   DEFAULT_PAID_ADS_LEAD_GEN,
   DEFAULT_PAID_ADS_ECOM,
   DEFAULT_GOOGLE_SEARCH_LAYOUT,
+  DEFAULT_GOOGLE_SEARCH_LEAD_GEN,
+  DEFAULT_GOOGLE_SEARCH_ECOM,
   DEFAULT_GOOGLE_SHOPPING_LAYOUT,
   DEFAULT_META_MEDIA_LEAD_GEN,
   DEFAULT_META_MEDIA_ECOM,
@@ -51,18 +54,21 @@ interface Props {
 type OuterTab = 'summary' | 'paid_ads' | 'google_search' | 'google_shopping' | 'meta_media'
 type InnerTab = 'lead_gen' | 'ecom'
 
-const OUTER_TABS: { id: OuterTab; label: string }[] = [
-  { id: 'summary',         label: 'Summary Page' },
-  { id: 'paid_ads',        label: 'Paid Ads' },
-  { id: 'google_search',   label: 'Search Ads' },
-  { id: 'google_shopping', label: 'Shopping' },
-  { id: 'meta_media',      label: 'Meta Media' },
+// Labels are written for someone opening this page for the first time: say WHICH platform and
+// WHICH surface each layout drives, rather than internal shorthand ("Paid Ads", "Meta Media").
+const OUTER_TABS: { id: OuterTab; label: string; hint: string }[] = [
+  { id: 'summary',         label: 'Summary Page',      hint: 'The client dashboard landing page' },
+  { id: 'paid_ads',        label: 'Platform Metrics',  hint: 'Combined view across all ad platforms' },
+  { id: 'google_search',   label: 'Google · Search',   hint: 'Google Search campaign pages' },
+  { id: 'google_shopping', label: 'Google · Shopping', hint: 'Shopping + Performance Max pages' },
+  { id: 'meta_media',      label: 'Facebook / Meta',   hint: 'Facebook & Instagram campaign pages' },
 ]
 
 export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }: Props) {
   const [outerTab, setOuterTab] = useState<OuterTab>('summary')
   const [innerTab, setInnerTab] = useState<InnerTab>(defaultInnerTab ?? 'lead_gen')
   const [metaInnerTab, setMetaInnerTab] = useState<InnerTab>('lead_gen')
+  const [searchInnerTab, setSearchInnerTab] = useState<InnerTab>('lead_gen')
 
   const layouts: MetricLayouts = value ?? DEFAULT_METRIC_LAYOUTS
 
@@ -100,19 +106,31 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
     onChange({ ...layouts, [key]: { ...current, ...patch } })
   }
 
+  function updateGoogleSearchLayout(type: InnerTab, patch: Partial<PlatformMetricLayout>) {
+    const key = type === 'ecom' ? 'google_search_ecom' : 'google_search_lead_gen'
+    const def = type === 'ecom' ? DEFAULT_GOOGLE_SEARCH_ECOM : DEFAULT_GOOGLE_SEARCH_LEAD_GEN
+    // Fall back to the legacy single google_search layout so previously saved config carries over.
+    const current = layouts[key] ?? layouts.google_search ?? def
+    onChange({ ...layouts, [key]: { ...current, ...patch } })
+  }
+
   // ── Derived state for current tab ────────────────────────────────────────
 
   const summaryLayout  = layouts[innerTab]
   const paidAdsLayout  = (innerTab === 'ecom' ? layouts.paid_ads_ecom : layouts.paid_ads_lead_gen)
                        ?? (innerTab === 'ecom' ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN)
 
-  const googleSearchLayout   = layouts.google_search   ?? DEFAULT_GOOGLE_SEARCH_LAYOUT
+  const googleSearchLayout   = searchInnerTab === 'ecom'
+    ? (layouts.google_search_ecom     ?? layouts.google_search ?? DEFAULT_GOOGLE_SEARCH_ECOM)
+    : (layouts.google_search_lead_gen ?? layouts.google_search ?? DEFAULT_GOOGLE_SEARCH_LEAD_GEN)
   const googleShoppingLayout = layouts.google_shopping ?? DEFAULT_GOOGLE_SHOPPING_LAYOUT
   const metaMediaLayout      = metaInnerTab === 'ecom'
     ? (layouts.meta_media_ecom   ?? DEFAULT_META_MEDIA_ECOM)
     : (layouts.meta_media_lead_gen ?? DEFAULT_META_MEDIA_LEAD_GEN)
 
-  const hasInnerTabs = outerTab === 'summary' || outerTab === 'paid_ads' || outerTab === 'meta_media'
+  // Shopping has no inner tabs by design — it requires a product feed, so it is always ecom.
+  const hasInnerTabs = outerTab === 'summary' || outerTab === 'paid_ads'
+                    || outerTab === 'meta_media' || outerTab === 'google_search'
 
   return (
     <div>
@@ -122,6 +140,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
           <button
             key={t.id}
             type="button"
+            title={t.hint}
             onClick={() => setOuterTab(t.id)}
             style={{
               padding: '0.375rem 0.875rem', border: 'none', background: 'transparent',
@@ -136,12 +155,18 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
         ))}
       </div>
 
-      {/* Inner sub-tabs (Summary, Paid Ads, Meta Media) */}
+      {/* Inner sub-tabs (Summary, Platform Metrics, Google Search, Facebook/Meta) */}
       {hasInnerTabs && (
         <div style={{ display: 'flex', gap: 4, marginBottom: '1rem' }}>
           {(['lead_gen', 'ecom'] as InnerTab[]).map(t => {
-            const active = outerTab === 'meta_media' ? metaInnerTab === t : innerTab === t
-            const onClick = outerTab === 'meta_media' ? () => setMetaInnerTab(t) : () => setInnerTab(t)
+            const active =
+              outerTab === 'meta_media'    ? metaInnerTab === t
+              : outerTab === 'google_search' ? searchInnerTab === t
+              : innerTab === t
+            const onClick =
+              outerTab === 'meta_media'    ? () => setMetaInnerTab(t)
+              : outerTab === 'google_search' ? () => setSearchInnerTab(t)
+              : () => setInnerTab(t)
             return (
               <button
                 key={t}
@@ -262,7 +287,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
         {outerTab === 'google_search' && (
           <>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
-              Applied to Google Search campaign pages. Includes search-specific metrics like Impression Share.
+              Applied to Google Search campaign pages. Search drives revenue for ecom advertisers too, so it has its own Lead Gen / Ecom split — pick the tab above.
             </p>
             <LayoutSection
               title="KPI Cards"
@@ -270,7 +295,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={googleSearchLayout.kpi_cards}
               allKeys={SEARCH_ADS_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('google_search', { kpi_cards: items })}
+              onChange={items => updateGoogleSearchLayout(searchInnerTab, { kpi_cards: items })}
             />
             <LayoutSection
               title="Top Metrics"
@@ -278,7 +303,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={googleSearchLayout.top_metrics}
               allKeys={SEARCH_ADS_METRIC_KEYS}
               labels={METRIC_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('google_search', { top_metrics: items })}
+              onChange={items => updateGoogleSearchLayout(searchInnerTab, { top_metrics: items })}
             />
             <LayoutSection
               title="Table Columns"
@@ -286,7 +311,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={googleSearchLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
               labels={COLUMN_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('google_search', { table_columns: items })}
+              onChange={items => updateGoogleSearchLayout(searchInnerTab, { table_columns: items })}
             />
             <LayoutSection
               title="Ad Group Columns"
@@ -294,7 +319,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               items={googleSearchLayout.adgroup_table_columns ?? DEFAULT_GOOGLE_SEARCH_LAYOUT.adgroup_table_columns!}
               allKeys={ALL_ADGROUP_COLUMN_KEYS}
               labels={ADGROUP_COLUMN_LABELS as Record<string, string>}
-              onChange={items => updatePlatformLayout('google_search', { adgroup_table_columns: items })}
+              onChange={items => updateGoogleSearchLayout(searchInnerTab, { adgroup_table_columns: items })}
             />
           </>
         )}
