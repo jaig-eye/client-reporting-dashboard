@@ -153,16 +153,31 @@ export async function injectNearbyLinks(
     const updatedContent = existingContent + buildNearbySection(links)
 
     // Update via WP
+    let pushedToCms = false
     if (post.wp_post_id && wpAuth && wpSiteUrl) {
-      await updatePage(wpSiteUrl, wpAuth, post.wp_post_id, { content: updatedContent }).catch(() => {})
+      const ok = await updatePage(wpSiteUrl, wpAuth, post.wp_post_id, { content: updatedContent })
+        .then(() => true).catch(() => false)
+      pushedToCms = pushedToCms || ok
     }
 
     // Update via BC
     if (post.bc_post_id && bcStoreHash && bcAccessToken) {
-      await updateBCPage(bcStoreHash, bcAccessToken, post.bc_post_id, { body: updatedContent }).catch(() => {})
+      const ok = await updateBCPage(bcStoreHash, bcAccessToken, post.bc_post_id, { body: updatedContent })
+        .then(() => true).catch(() => false)
+      pushedToCms = pushedToCms || ok
     }
 
-    // Update DB content cache
-    await db.from('content_posts').update({ content: updatedContent }).eq('id', postId).then(null, () => {})
+    // Update DB content cache.
+    //
+    // last_pushed_at moves too, because this function IS a push: it rewrote the
+    // live CMS copy with exactly the HTML being cached here. Without it the
+    // trigger would stamp updated_at newer than last_pushed_at and every
+    // service-area page would read as "live copy is out of date" forever, even
+    // though the site is perfectly in sync. Only stamped when a CMS write
+    // actually succeeded — otherwise the DB really is ahead of the site.
+    await db.from('content_posts').update({
+      content: updatedContent,
+      ...(pushedToCms ? { last_pushed_at: new Date().toISOString() } : {}),
+    }).eq('id', postId).then(null, () => {})
   }
 }

@@ -71,16 +71,29 @@ CREATE INDEX IF NOT EXISTS idx_content_posts_silo_keyword  ON content_posts  (si
 
 -- 4. Backfill cluster_keywords JSONB -> content_silo_keywords, preserving order and
 --    the planned/published state. Skips keywords already present for that silo.
-INSERT INTO content_silo_keywords (client_id, silo_id, keyword, keyword_type, sort_order, used_at)
+--
+--    HUB-LESS SILOS ONLY. A silo with a hub page keeps using the hub-and-spoke
+--    generator, which reads cluster_keywords and never consumes the queue. Giving
+--    it queue rows would show a "3 of 5 keywords left" counter that generation
+--    never decrements, and would gate its Generate button on a queue nothing
+--    touches. hub_page_url IS NULL is the same condition the generator uses to
+--    pick the queue path, so the two stay in agreement by construction.
+--
+--    selected = true because a backfilled keyword was authored by a human as
+--    part of the plan; the optimisation engine's own unchosen candidates are
+--    written with selected = false and must never be consumed automatically.
+INSERT INTO content_silo_keywords (client_id, silo_id, keyword, keyword_type, sort_order, used_at, selected)
 SELECT s.client_id,
        s.id,
        trim(k.value ->> 'keyword'),
        'supporting',
        k.ordinality::int,
-       CASE WHEN k.value ->> 'status' = 'published' THEN now() ELSE NULL END
+       CASE WHEN k.value ->> 'status' = 'published' THEN now() ELSE NULL END,
+       true
   FROM content_silos s
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.cluster_keywords, '[]'::jsonb)) WITH ORDINALITY AS k(value, ordinality)
- WHERE COALESCE(trim(k.value ->> 'keyword'), '') <> ''
+ WHERE s.hub_page_url IS NULL
+   AND COALESCE(trim(k.value ->> 'keyword'), '') <> ''
    AND NOT EXISTS (
      SELECT 1 FROM content_silo_keywords ck
       WHERE ck.silo_id = s.id

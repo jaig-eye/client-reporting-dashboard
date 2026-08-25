@@ -122,7 +122,10 @@ export async function updateBCPage(
   storeHash:   string,
   accessToken: string,
   pageId:      number,
-  patch:       { body?: string }
+  // `name` and `url` matter on a republish: without them a regenerated page
+  // keeps its old title on the live storefront while the dashboard reports it
+  // as republished. Link injection still passes `body` alone.
+  patch:       { body?: string; name?: string; url?: string; is_visible?: boolean }
 ): Promise<void> {
   const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
     method:  'PUT',

@@ -216,7 +216,7 @@ export async function POST(
         let bcPageId: number
         let bcPagePath: string
         if (existingBcId !== null) {
-          await updateBCPage(storeHash, accessToken, existingBcId, { body: pageBody })
+          await updateBCPage(storeHash, accessToken, existingBcId, { body: pageBody, name: String(p.title ?? '') })
           bcPageId   = existingBcId
           bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
         } else {
@@ -576,7 +576,13 @@ export async function POST(
     await db.from('content_posts').update({
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
-      wp_status:         isServiceArea ? result.status : wpPublishStatus,
+      // On a republish the WordPress status is deliberately NOT sent (so a live
+      // post is not knocked back to draft), which means wpPublishStatus is not
+      // what the site actually has. result.status is the value WP returned, so
+      // trust that whenever it is available.
+      wp_status:         isRepublish ? (result.status || wpPublishStatus)
+                        : isServiceArea ? result.status
+                        : wpPublishStatus,
       status:            'draft_saved',
       // Only a real permalink goes in published_url; the wp-admin fallback lives
       // in platform_edit_url so internal-link injection never emits it. And when

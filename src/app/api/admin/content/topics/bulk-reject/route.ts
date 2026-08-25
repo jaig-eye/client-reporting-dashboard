@@ -31,13 +31,20 @@ export async function POST(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { error } = await db
+  const { data: rejected, error } = await db
     .from('content_topics')
     .update({ status: 'rejected', updated_at: new Date().toISOString() })
     .in('id', topicIds)
     .eq('client_id', clientId)
+    .select('id')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Rejected topics hand their silo keywords back to the queue. Without this a
+  // bulk reject retires every one of those terms permanently and the silo reads
+  // "0 of N left" with nothing published for them.
+  await releaseKeywordsForTopics(db, (rejected ?? []).map((t: { id: string }) => t.id))
+    .catch(() => {})
 
   logActivity(adminSession, 'rejected', 'topics', {
     clientId,

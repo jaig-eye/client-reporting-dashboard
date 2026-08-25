@@ -13,6 +13,8 @@
 
 import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
 import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
+import { runQualityGate } from '@/lib/content/qualityGate'
+import { isRegulatedVertical } from '@/lib/content/editorialStandards'
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
@@ -160,15 +162,35 @@ export async function POST(
   const pr        = post as Record<string, unknown>
   const isLive    = Boolean(pr.wp_post_id || pr.bc_post_id)
 
-  // Detach / remove the existing live article BEFORE the rewrite starts, so the
-  // decision is applied even if generation later fails. 'replace' is the default
-  // and does nothing here: keeping the platform id is what makes the next push
-  // overwrite in place rather than duplicate.
+  // Mark as generating atomically — the neq guard acts as the idempotency check so two
+  // concurrent requests can't both claim the slot (no TOCTOU window)
+  const { data: claimed, error: genErr } = await db
+    .from('content_posts')
+    .update({ status: 'generating' })
+    .eq('id', postId)
+    .neq('status', 'generating')
+    .select('id')
+  if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
+  if (!claimed?.length) return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
+
+  // ORDER MATTERS: this runs only AFTER the claim succeeds.
+  //
+  // Doing it first meant a losing double-click could delete the article from the
+  // client's site and erase every reference to it, then return
+  // "Already regenerating" as though nothing had happened. Removal is
+  // irreversible on BigCommerce, so it must never run on a request that is about
+  // to bail out.
+  //
+  // It still runs BEFORE generation, so the decision holds even if the rewrite
+  // itself later fails. 'replace' does nothing here: keeping the platform id is
+  // what makes the next push overwrite in place rather than duplicate.
   if (isLive && liveMode !== 'replace') {
     if (liveMode === 'new_remove') {
       const removal = isCmsAction(body.cms) && body.cms !== 'leave' ? body.cms : 'unpublish'
       const res = await applyCmsAction(db, postId, removal)
       if (!res.ok) {
+        // Release the claim so the post is not stranded in 'generating'.
+        await db.from('content_posts').update({ status: post.status ?? 'for_review' }).eq('id', postId)
         return NextResponse.json(
           { error: `Could not update the live article: ${res.message}` },
           { status: 502 },
@@ -181,17 +203,6 @@ export async function POST(
       await clearPlatformRefs(db, postId)
     }
   }
-
-  // Mark as generating atomically — the neq guard acts as the idempotency check so two
-  // concurrent requests can't both claim the slot (no TOCTOU window)
-  const { data: claimed, error: genErr } = await db
-    .from('content_posts')
-    .update({ status: 'generating' })
-    .eq('id', postId)
-    .neq('status', 'generating')
-    .select('id')
-  if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
-  if (!claimed?.length) return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
 
   // Capture admin session before returning — cookies are request-scoped
   const adminSession = await getAdminSession()
@@ -337,10 +348,43 @@ Requirements:
       parsed.content = stripDangerousHtml(parsed.content)
       parsed.content = styleTables(parsed.content)
 
+      // Re-run the quality gate: the content is entirely new, so the stored
+      // report describes an article that no longer exists. Leaving it would show
+      // the reviewer findings for text they are not looking at, and could let a
+      // clean-looking old report wave a bad rewrite through the auto-push gate.
+      const { data: qgSiblings } = await db
+        .from('content_posts')
+        .select('id, title, content')
+        .eq('client_id', post.client_id as string)
+        .eq('content_type', (post.content_type as string | null) ?? 'blog')
+        .in('status', ['draft_saved', 'published'])
+        .neq('id', postId)
+        .order('generated_at', { ascending: false })
+        .limit(20)
+
+      const { data: csVertical } = await db
+        .from('content_settings')
+        .select('vertical')
+        .eq('client_id', post.client_id as string)
+        .maybeSingle()
+
+      const quality = runQualityGate({
+        html:          parsed.content,
+        title:         parsed.title,
+        targetKeyword: (newTopic.target_keyword as string | null) ?? null,
+        siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
+        regulated:     isRegulatedVertical((csVertical as { vertical?: string | null } | null)?.vertical),
+      })
+
       // 8. Update post in-place with new content + mark new topic as fully generated
       const { error: saveErr } = await db.from('content_posts').update({
         title:            parsed.title,
         content:          parsed.content,
+        quality_report:     quality,
+        quality_score:      quality.score,
+        quality_checked_at: new Date().toISOString(),
+        // A fresh hold is a fresh alert.
+        quality_hold_alerted_at: null,
         meta_description: parsed.metaDescription,
         slug:             parsed.slug,
         target_keyword:   newTopic.target_keyword,

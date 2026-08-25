@@ -409,18 +409,36 @@ export async function GET(request: NextRequest) {
     if (auto_push_posts) {
       const pushThreshold = new Date()
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
+      // NOTE: the platform-id filters that used to live here have been removed.
+      //
+      // `.is('wp_post_id', null)` meant a post that was regenerated after going
+      // live could never be picked up again — which was half of the dead end the
+      // approve route now fixes. A live post is eligible again only when its DB
+      // copy is genuinely newer than the CMS copy, which is filtered below rather
+      // than in SQL so the comparison stays in one place.
       const { data: duePosts } = await db
         .from('content_posts')
-        .select('id, title, quality_report')
+        .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
         .eq('status', 'approved')
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
-        .is('wp_post_id', null)
-        .is('bc_post_id', null)
 
-      type DuePost = { id: string; title: string | null; quality_report?: { blocksAutoPush?: boolean; findings?: { severity: string; message: string }[] } | null }
-      const dueRaw = (duePosts ?? []) as unknown as DuePost[]
+      type DuePost = {
+        id: string; title: string | null
+        quality_report?: { blocksAutoPush?: boolean; findings?: { severity: string; message: string }[] } | null
+        quality_hold_alerted_at?: string | null
+        wp_post_id?: number | null; bc_post_id?: number | null
+        updated_at?: string | null; last_pushed_at?: string | null
+      }
+      const dueRaw = ((duePosts ?? []) as unknown as DuePost[]).filter(p => {
+        const live = Boolean(p.wp_post_id || p.bc_post_id)
+        if (!live) return true            // never published — the normal case
+        // Already live: only re-push when the DB copy is actually newer, so a
+        // cron running every 2h cannot churn an unchanged article.
+        if (!p.updated_at || !p.last_pushed_at) return false
+        return new Date(p.updated_at).getTime() > new Date(p.last_pushed_at).getTime()
+      })
 
       // QUALITY GATE — the whole point of this block.
       //
@@ -440,19 +458,30 @@ export async function GET(request: NextRequest) {
       if (held.length > 0) {
         console.log(`[content-topics] quality gate held ${held.length} post(s) from auto-push for client ${client_id}`)
         for (const p of held) {
+          // Alert ONCE per hold. A held post legitimately stays 'approved' and
+          // keeps matching the selector, so without this marker the same alert
+          // is re-raised every run — 12 times a day, indefinitely, per post.
+          if (p.quality_hold_alerted_at) continue
+
           const reasons = (p.quality_report?.findings ?? [])
             .filter(f => f.severity === 'critical')
             .map(f => f.message)
-          await db.from('admin_alerts').insert({
+
+          const { error: alertErr } = await db.from('admin_alerts').insert({
             type:      'content',
             severity:  'warning',
             client_id,
             title:     `Held from auto-publish: ${p.title ?? 'Untitled post'}`,
             body:      `The quality gate flagged this post, so it was not published automatically. Review and publish it by hand.\n\n${reasons.join('\n')}`,
             link_url:  '/admin/content',
-          }).then(({ error }) => {
-            if (error) console.error('[content-topics] hold alert insert failed', error.message)
           })
+          if (alertErr) {
+            console.error('[content-topics] hold alert insert failed', alertErr.message)
+            continue   // leave the marker unset so the next run retries
+          }
+          await db.from('content_posts')
+            .update({ quality_hold_alerted_at: new Date().toISOString() })
+            .eq('id', p.id)
         }
       }
 

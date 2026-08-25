@@ -57,3 +57,14 @@ ALTER TABLE agency_settings
 
 COMMENT ON COLUMN agency_settings.quality_gate_blocks_autopush IS
   'When true (default) a critical quality finding holds a post back from the unattended cron push. Manual publishing is never blocked.';
+
+-- Dedup marker for the auto-push hold alert.
+--
+-- Without this the cron re-raises an identical admin_alerts row on every run
+-- (every 2 hours, indefinitely) for any post the gate holds back, because the
+-- post legitimately stays 'approved' and keeps matching the selector.
+ALTER TABLE content_posts
+  ADD COLUMN IF NOT EXISTS quality_hold_alerted_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN content_posts.quality_hold_alerted_at IS
+  'Last time the quality gate raised a hold alert for this post. Cleared when the post is regenerated or re-checked so a genuinely new hold alerts again.';

@@ -151,7 +151,7 @@ export async function POST(
       let bcPageId:   number
       let bcPagePath: string
       if (existingBcId !== null) {
-        await updateBCPage(storeHash, accessToken, existingBcId, { body: String(p.content ?? '') })
+        await updateBCPage(storeHash, accessToken, existingBcId, { body: String(p.content ?? ''), name: String(p.title ?? '') })
         bcPageId   = existingBcId
         bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
       } else {
