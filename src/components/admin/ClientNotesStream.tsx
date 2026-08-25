@@ -10,6 +10,7 @@ import {
   type NoteCategory,
 } from '@/lib/note-templates'
 import { NoteTemplateFields, NoteFieldsReadout, NoteCategoryChip } from './NoteTemplateFields'
+import { NoteSecretInput, NoteSecretReveal } from './NoteSecretField'
 
 interface NoteUser {
   name:       string
@@ -21,6 +22,7 @@ interface Note {
   title:      string | null
   content:    string
   category:   string
+  has_secret?: boolean
   fields:     Record<string, string> | null
   pinned:     boolean
   created_at: string
@@ -92,6 +94,7 @@ export default function ClientNotesStream({
   const [draft,         setDraft]         = useState('')
   const [draftCategory, setDraftCategory] = useState<NoteCategory>('general')
   const [draftFields,   setDraftFields]   = useState<Record<string, string>>({})
+  const [draftSecret,   setDraftSecret]   = useState('')
   const [saving,        setSaving]        = useState(false)
 
   // Expanded note popup
@@ -100,6 +103,9 @@ export default function ClientNotesStream({
   const [editTitle,    setEditTitle]    = useState('')
   const [editContent,  setEditContent]  = useState('')
   const [editFields,   setEditFields]   = useState<Record<string, string>>({})
+  const [editSecret,   setEditSecret]   = useState('')
+  // '' means "leave the stored credential alone", so clearing needs its own flag.
+  const [editSecretClear, setEditSecretClear] = useState(false)
   const [editSaving,   setEditSaving]   = useState(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -117,7 +123,7 @@ export default function ClientNotesStream({
   const canSaveDraft   = draft.trim() !== '' || draftHasFields
 
   function resetDraft() {
-    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftCategory('general')
+    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftCategory('general'); setDraftSecret('')
   }
 
   async function addNote() {
@@ -145,7 +151,7 @@ export default function ClientNotesStream({
     }
     setNotes(prev => sortNotes([temp, ...prev]))
     const snapshot = { title: draftTitle, category: draftCategory, fields: draftFields }
-    setDraft(''); setDraftTitle(''); setDraftFields({})
+    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftSecret('')
 
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/notes`, {
@@ -156,6 +162,7 @@ export default function ClientNotesStream({
           title:    snapshot.title.trim() || null,
           category: snapshot.category,
           fields:   cleanFields,
+          ...(draftSecret ? { secret: draftSecret } : {}),
         }),
       })
       if (!res.ok) throw new Error()
@@ -211,6 +218,9 @@ export default function ClientNotesStream({
           title:    editTitle.trim() || null,
           category: note.category,
           fields:   cleanFields,
+          // Only send a secret when one was typed or explicitly cleared; omitting
+          // the key leaves the stored credential untouched.
+          ...(editSecret !== "" || editSecretClear ? { secret: editSecretClear ? "" : editSecret } : {}),
         }),
       })
       if (!res.ok) throw new Error()
@@ -235,6 +245,7 @@ export default function ClientNotesStream({
     setEditTitle(expanded.title ?? '')
     setEditContent(expanded.content)
     setEditFields({ ...(expanded.fields ?? {}) })
+    setEditSecret(''); setEditSecretClear(false)
     setEditing(true)
   }
 
@@ -354,6 +365,14 @@ export default function ClientNotesStream({
             values={draftFields}
             onChange={(k, v) => setDraftFields(prev => ({ ...prev, [k]: v }))}
           />
+
+          {draftTemplate.hasSecret && (
+            <NoteSecretInput
+              hasSecret={false}
+              value={draftSecret}
+              onChange={setDraftSecret}
+            />
+          )}
 
           <input
             value={draftTitle}
@@ -550,6 +569,22 @@ export default function ClientNotesStream({
                       onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
                     />
                   </div>
+
+                  {expandedTemplate.hasSecret && (
+                    <div style={{ marginBottom: 8 }}>
+                      <NoteSecretInput
+                        hasSecret={!!expanded.has_secret && !editSecretClear}
+                        value={editSecret}
+                        onChange={v => { setEditSecret(v); setEditSecretClear(false) }}
+                        onClear={() => { setEditSecret(''); setEditSecretClear(true) }}
+                      />
+                      {editSecretClear && (
+                        <p style={{ fontSize: '0.66rem', color: 'var(--red)', margin: '4px 0 0' }}>
+                          The stored password will be removed when you save.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <textarea
                     value={editContent}
                     onChange={e => setEditContent(e.target.value)}
@@ -564,6 +599,13 @@ export default function ClientNotesStream({
                 </>
               ) : (
                 <>
+                  {/* The credential is fetched on demand from the audited reveal
+                      endpoint — it is never part of the note payload. */}
+                  <NoteSecretReveal
+                    clientId={clientId}
+                    noteId={expanded.id}
+                    hasSecret={!!expanded.has_secret}
+                  />
                   <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
                   {expanded.content && (
                     <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>

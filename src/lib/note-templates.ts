@@ -5,9 +5,13 @@
 // client_notes.fields (JSONB) and the freeform body stays in client_notes.content.
 // Adding a category here + to the CHECK in 199_note_categories.sql is all it takes.
 //
-// SECURITY NOTE on 'login': this stores where a credential LIVES, never the
-// credential. client_notes is an ordinary table — service-role readable, included
-// in backups, and fair game for any future export. Passwords do not belong in it.
+// SECURITY NOTE on 'login': the structured FIELDS record where a credential
+// lives (vault item, username, MFA method) and are stored as ordinary readable
+// text. The password itself, if stored at all, goes in client_notes.secret_enc
+// as AES-256-GCM ciphertext with the key held in the environment — never in the
+// `fields` blob, and never returned by a list endpoint. See migration 204 and
+// src/lib/crypto/secrets.ts for the threat model, which is honest about what
+// that does and does not protect against.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type NoteFieldType = 'text' | 'textarea' | 'date' | 'select' | 'url' | 'number'
@@ -36,6 +40,8 @@ export interface NoteTemplate {
   hint:  string
   /** Accent colour for the category chip. */
   color: string
+  /** This category can hold an encrypted credential (client_notes.secret_enc). */
+  hasSecret?: boolean
   /** Saving a note in this category stamps clients.last_contacted_at. */
   stampsContact?: boolean
   /** Label for the freeform body in this category. */
@@ -66,7 +72,7 @@ export const NOTE_TEMPLATES: Record<NoteCategory, NoteTemplate> = {
 
   login: {
     key: 'login', label: 'Login', hint: 'Where the credential lives — never the password itself.',
-    color: '#f59e0b', bodyLabel: 'Access notes',
+    color: '#f59e0b', bodyLabel: 'Access notes', hasSecret: true,
     fields: [
       { key: 'service',    label: 'Service',        type: 'text', placeholder: 'WordPress admin, Cloudflare, ...' },
       { key: 'url',        label: 'Login URL',      type: 'url',  placeholder: 'https://.../wp-admin' },
