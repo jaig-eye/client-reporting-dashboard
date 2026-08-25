@@ -86,8 +86,9 @@ export function NoteSecretInput({
       </div>
 
       <p style={{ fontSize: '0.63rem', color: 'var(--text-faint)', margin: '5px 0 0', lineHeight: 1.5 }}>
-        Encrypted before it is written, and never shown again without an unlock that is logged.
-        For anything high-value, keep the vault as the source of truth and store only the pointer above.
+        Encrypted before it is written, never returned by a list, and never shown again without an
+        unlock that is recorded. Anyone who can run code on the server can still decrypt it, so treat
+        this as a shared team password store rather than a place for banking or payment logins.
       </p>
     </div>
   )

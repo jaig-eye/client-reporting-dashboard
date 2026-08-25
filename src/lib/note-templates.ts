@@ -5,13 +5,18 @@
 // client_notes.fields (JSONB) and the freeform body stays in client_notes.content.
 // Adding a category here + to the CHECK in 199_note_categories.sql is all it takes.
 //
-// SECURITY NOTE on 'login': the structured FIELDS record where a credential
-// lives (vault item, username, MFA method) and are stored as ordinary readable
-// text. The password itself, if stored at all, goes in client_notes.secret_enc
-// as AES-256-GCM ciphertext with the key held in the environment — never in the
-// `fields` blob, and never returned by a list endpoint. See migration 204 and
-// src/lib/crypto/secrets.ts for the threat model, which is honest about what
-// that does and does not protect against.
+// SECURITY NOTE on the credential categories (login, dns, hosting).
+//
+// Structured FIELDS — service, username, login URL, MFA method — are ordinary
+// readable text. The PASSWORD goes in client_notes.secret_enc as AES-256-GCM
+// ciphertext with the key held in the environment: never in the `fields` blob,
+// never returned by a list endpoint, and readable only through the audited
+// reveal route. src/lib/crypto/secrets.ts states the threat model plainly,
+// including what it does not protect against.
+//
+// One credential per note, on purpose. A domain whose registrar and DNS host are
+// different companies gets two notes rather than two passwords crammed into one,
+// so "which password is this?" always has an answer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type NoteFieldType = 'text' | 'textarea' | 'date' | 'select' | 'url' | 'number'
@@ -71,38 +76,50 @@ export const NOTE_TEMPLATES: Record<NoteCategory, NoteTemplate> = {
   },
 
   login: {
-    key: 'login', label: 'Login', hint: 'Where the credential lives — never the password itself.',
+    key: 'login', label: 'Login', hint: 'Credentials for a service. The password is encrypted at rest.',
     color: '#f59e0b', bodyLabel: 'Access notes', hasSecret: true,
     fields: [
       { key: 'service',    label: 'Service',        type: 'text', placeholder: 'WordPress admin, Cloudflare, ...' },
       { key: 'url',        label: 'Login URL',      type: 'url',  placeholder: 'https://.../wp-admin' },
       { key: 'username',   label: 'Username',       type: 'text' },
-      { key: 'vault_item', label: 'Vault item',     type: 'text', placeholder: '1Password / Bitwarden item name' },
+      { key: 'vault_item', label: 'Vault item',     type: 'text', placeholder: 'Optional — 1Password / Bitwarden item, if you keep one' },
       { key: 'mfa',        label: 'MFA',            type: 'select', options: ['None', 'TOTP app', 'SMS', 'Email', 'Hardware key', 'Backup codes in vault'] },
       { key: 'held_by',    label: 'Who has access', type: 'text' },
     ],
   },
 
+  // Registrar and DNS host are frequently different companies with different
+  // logins, so `login_for` says which account the stored credential opens.
+  // A domain needing both gets two notes — one credential per note keeps
+  // "which password is this?" unambiguous.
   dns: {
-    key: 'dns', label: 'DNS', hint: 'Registrar, nameservers, and records.',
-    color: '#8b5cf6', bodyLabel: 'Records / notes',
+    key: 'dns', label: 'DNS', hint: 'Registrar, nameservers, records — and the login for them.',
+    color: '#8b5cf6', bodyLabel: 'Records / notes', hasSecret: true,
     fields: [
       { key: 'domain',      label: 'Domain',         type: 'text', placeholder: 'example.com' },
       { key: 'registrar',   label: 'Registrar',      type: 'text', placeholder: 'GoDaddy, Namecheap, ...' },
-      { key: 'nameservers', label: 'Nameservers',    type: 'textarea', wide: true, placeholder: 'ns1....\nns2....' },
       { key: 'dns_host',    label: 'DNS host',       type: 'text', placeholder: 'Cloudflare, registrar, ...' },
+      { key: 'login_for',   label: 'Login is for',   type: 'select', options: ['Registrar', 'DNS host', 'Both (same account)'] },
+      { key: 'login_url',   label: 'Login URL',      type: 'url',  placeholder: 'https://dash.cloudflare.com' },
+      { key: 'username',    label: 'Username',       type: 'text' },
+      { key: 'mfa',         label: 'MFA',            type: 'select', options: ['None', 'TOTP app', 'SMS', 'Email', 'Hardware key', 'Backup codes below'] },
+      { key: 'nameservers', label: 'Nameservers',    type: 'textarea', wide: true, placeholder: 'ns1....\nns2....' },
       { key: 'expires_on',  label: 'Domain expires', type: 'date' },
       { key: 'auto_renew',  label: 'Auto-renew',     type: 'select', options: ['On', 'Off', 'Unknown'] },
     ],
   },
 
+  // Same reasoning as DNS: a control-panel URL without somewhere to put the
+  // password just sends people back to a spreadsheet.
   hosting: {
-    key: 'hosting', label: 'Hosting', hint: 'Server, control panel, SSL.',
-    color: '#14b8a6', bodyLabel: 'Notes',
+    key: 'hosting', label: 'Hosting', hint: 'Server, control panel, SSL — and the login for them.',
+    color: '#14b8a6', bodyLabel: 'Notes', hasSecret: true,
     fields: [
       { key: 'provider',     label: 'Host',          type: 'text', placeholder: 'WP Engine, SiteGround, ...' },
       { key: 'plan',         label: 'Plan',          type: 'text' },
       { key: 'panel_url',    label: 'Control panel', type: 'url' },
+      { key: 'username',     label: 'Username',      type: 'text' },
+      { key: 'mfa',          label: 'MFA',           type: 'select', options: ['None', 'TOTP app', 'SMS', 'Email', 'Hardware key', 'Backup codes below'] },
       { key: 'php_version',  label: 'PHP version',   type: 'text' },
       { key: 'ssl_provider', label: 'SSL provider',  type: 'text' },
       { key: 'ssl_expires',  label: 'SSL expires',   type: 'date' },
