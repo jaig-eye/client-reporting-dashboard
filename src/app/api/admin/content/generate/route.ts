@@ -1,3 +1,5 @@
+import { describeTenure } from '@/lib/content/eeat'
+import type { EeatData } from '@/lib/content/types'
 import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
@@ -199,7 +201,7 @@ function formatEeat(eeatRaw: unknown): string {
   if (!e || typeof e !== 'object') return String(eeatRaw)
   const r = e as Record<string, unknown>
   const parts: string[] = []
-  if (r.years_in_business)      parts.push(`${r.years_in_business} years in business`)
+  { const tenure = describeTenure(r as Partial<EeatData>); if (tenure) parts.push(tenure) }
   if (r.licenses)               parts.push(`licensed/certified: ${r.licenses}`)
   if (r.review_count)           parts.push(`${r.review_count} reviews`)
   if (r.owner_details)          parts.push(`owner: ${r.owner_details}`)

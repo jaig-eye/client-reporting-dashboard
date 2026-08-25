@@ -129,11 +129,20 @@ export async function POST(
 
   const { data: post } = await db
     .from('content_posts')
-    .select('id, client_id, topic_id, target_publish_date, status, content_type')
+    .select('id, client_id, topic_id, target_publish_date, status, content_type, wp_post_id, bc_post_id, admin_approved_at')
     .eq('id', postId)
     .maybeSingle()
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+
+  // Regenerating a post that is already on the client's site is allowed, but the
+  // caller needs to know the live copy will go stale until it is re-pushed. The
+  // platform ids and admin_approved_at are deliberately PRESERVED: they record
+  // that a CMS copy exists and that a human approved it, both still true. The
+  // "live copy is out of date" state is then derived from updated_at >
+  // last_pushed_at rather than being smuggled into `status`. See migration 200.
+  const pr        = post as Record<string, unknown>
+  const isLive    = Boolean(pr.wp_post_id || pr.bc_post_id)
 
   // Mark as generating atomically — the neq guard acts as the idempotency check so two
   // concurrent requests can't both claim the slot (no TOCTOU window)
@@ -350,5 +359,7 @@ Requirements:
     }
   })())
 
-  return NextResponse.json({ ok: true, queued: true })
+  // wasLive tells the UI to warn that the client's site still shows the old copy
+  // until the regenerated post is pushed again.
+  return NextResponse.json({ ok: true, queued: true, wasLive: isLive })
 }

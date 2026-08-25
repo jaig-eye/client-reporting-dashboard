@@ -21,6 +21,7 @@ interface BrandDnaForm {
 }
 
 const EMPTY_EEAT: EeatData = {
+  founded_year:           '',
   years_in_business:      '',
   licenses:               '',
   insurance:              '',
@@ -172,7 +173,7 @@ export default function ClientContentSettingsForm({
     }))
     // Merge any E-E-A-T signals the AI found — only overwrite non-empty values
     const EEAT_KEYS: (keyof EeatData)[] = [
-      'years_in_business','review_count','licenses','insurance','awards',
+      'founded_year','years_in_business','review_count','licenses','insurance','awards',
       'owner_details','team_experience','guarantees','brands_used','financing_options',
       'warranties','emergency_availability','case_studies','before_after_proof','common_objections',
     ]
@@ -370,8 +371,11 @@ export default function ClientContentSettingsForm({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Years in Business</Label>
-              <input className="input" style={{ width: '100%' }} value={eeat.years_in_business} onChange={e => setEeatField('years_in_business', e.target.value)} placeholder="e.g. 22 years" />
+              <Label>Year Founded</Label>
+              <input className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
+              <p style={{ fontSize: '0.68rem', color: 'var(--text-faint)', marginTop: 3 }}>
+                Tenure is calculated from this, so it stays correct as years pass.
+              </p>
             </div>
             <div>
               <Label>Reviews (count &amp; rating)</Label>

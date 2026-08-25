@@ -7,8 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
-import { publishBCPage } from '@/lib/connectors/bigcommerce'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
+import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -52,12 +52,16 @@ export async function POST(
 
   const p = post as Record<string, unknown>
 
-  if (p.wp_post_id) {
-    return NextResponse.json({ error: 'Post is already uploaded to WordPress' }, { status: 400 })
-  }
-  if (p.bc_post_id) {
-    return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
-  }
+  // A post that is already on a CMS is UPDATED in place, not duplicated.
+  //
+  // This used to be a hard 400. That made "regenerate an already-live post" a
+  // dead end: full-regenerate keeps the platform id, so this route refused the
+  // row forever and the cron's `.is('wp_post_id', null)` filter excluded it too.
+  // The regenerated content simply never reached the client's site while the
+  // stale copy stayed live. See migration 200.
+  const existingWpId = p.wp_post_id ? Number(p.wp_post_id) : null
+  const existingBcId = p.bc_post_id ? Number(p.bc_post_id) : null
+  const isRepublish  = existingWpId !== null || existingBcId !== null
 
   // ─── approve_only: mark as admin-approved; cron will push on schedule ──────
   if (action === 'approve_only') {
@@ -206,33 +210,51 @@ export async function POST(
 
       if (isSaPage) {
         // Use BC pages API for service area pages
-        const bcPage = await publishBCPage(storeHash, accessToken, {
-          name:       String(p.title ?? ''),
-          body:       String((p as Record<string, unknown>).content ?? ''),
-          url:        postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
-          is_visible: false,
-        })
+        const pageBody = String((p as Record<string, unknown>).content ?? '')
+        const pagePath = postSlug.startsWith('/') ? postSlug : `/${postSlug}`
+
+        let bcPageId: number
+        let bcPagePath: string
+        if (existingBcId !== null) {
+          await updateBCPage(storeHash, accessToken, existingBcId, { body: pageBody })
+          bcPageId   = existingBcId
+          bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
+        } else {
+          const bcPage = await publishBCPage(storeHash, accessToken, {
+            name:       String(p.title ?? ''),
+            body:       pageBody,
+            url:        pagePath,
+            is_visible: false,
+          })
+          bcPageId   = bcPage.id
+          bcPagePath = bcPage.url || pagePath
+        }
+
         const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
+        // The public permalink, not the admin panel — see migration 202.
+        const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPagePath)
 
         await db.from('content_posts').update({
-          bc_post_id:        bcPage.id,
+          bc_post_id:        bcPageId,
           bc_store_hash:     storeHash,
           status:            'draft_saved',
-          published_url:     bcEditUrl,
+          published_url:     publicUrl,
+          platform_edit_url: bcEditUrl,
+          last_pushed_at:    new Date().toISOString(),
           admin_approved_at: new Date().toISOString(),
         }).eq('id', id)
 
         const adminSession = await getAdminSession()
-        logActivity(adminSession, 'approved', 'post', {
+        logActivity(adminSession, isRepublish ? 'republished' : 'approved', 'post', {
           resourceId: id, clientId: String(p.client_id),
-          meta: { title: p.title, bc_page_id: bcPage.id },
+          meta: { title: p.title, bc_page_id: bcPageId, republished: isRepublish },
         })
 
         // Inject nearby-city links (fire-and-forget)
         injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
           .catch(() => {})
 
-        return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+        return NextResponse.json({ bc_post_id: bcPageId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
       }
 
       const blogUrl = (() => {
@@ -253,40 +275,65 @@ export async function POST(
         ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
       }
 
-      const bcRes = await fetch(
-        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Auth-Token': accessToken, 'Accept': 'application/json' },
-          body: JSON.stringify(bcPayload),
+      let bcPostId:   number
+      let bcPostPath: string
+
+      if (existingBcId !== null) {
+        // Already live — replace the CMS copy in place, keeping the same post id
+        // (and therefore the same public URL, so nothing that links to it breaks).
+        const updated = await updateBCBlogPost(storeHash, accessToken, existingBcId, {
+          title:            String(bcPayload.title ?? ''),
+          body:             String(bcPayload.body ?? ''),
+          meta_description: String(bcPayload.meta_description ?? ''),
+          meta_keywords:    String(bcPayload.meta_keywords ?? ''),
+          tags:             bcPayload.tags as string[] | undefined,
+          ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
+        })
+        bcPostId   = updated.id
+        bcPostPath = updated.url || blogUrl
+      } else {
+        const bcRes = await fetch(
+          `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': accessToken, 'Accept': 'application/json' },
+            body: JSON.stringify(bcPayload),
+          }
+        )
+        if (!bcRes.ok) {
+          const text = await bcRes.text()
+          throw new Error(bcRes.status === 401
+            ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+            : `BigCommerce API error ${bcRes.status}: ${text}`)
         }
-      )
-      if (!bcRes.ok) {
-        const text = await bcRes.text()
-        throw new Error(bcRes.status === 401
-          ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
-          : `BigCommerce API error ${bcRes.status}: ${text}`)
+        const bcPost = (await bcRes.json()) as Record<string, unknown>
+        bcPostId   = Number(bcPost.id)
+        bcPostPath = String(bcPost.url || blogUrl)
       }
 
-      const bcPost = (await bcRes.json()) as Record<string, unknown>
       const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
+      // published_url must be the PUBLIC permalink: internal-link injection reads
+      // it and used to emit this admin URL into client content. See migration 202.
+      const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPostPath)
 
       await db.from('content_posts').update({
-        bc_post_id:        Number(bcPost.id),
+        bc_post_id:        bcPostId,
         bc_store_hash:     storeHash,
         status:            'draft_saved',
-        published_url:     bcEditUrl,
+        published_url:     publicUrl,
+        platform_edit_url: bcEditUrl,
+        last_pushed_at:    new Date().toISOString(),
         admin_approved_at: new Date().toISOString(),
       }).eq('id', id)
 
       const adminSession = await getAdminSession()
-      logActivity(adminSession, 'approved', 'post', {
+      logActivity(adminSession, isRepublish ? 'republished' : 'approved', 'post', {
         resourceId: id,
         clientId: String(p.client_id),
-        meta: { title: p.title, bc_post_id: Number(bcPost.id) },
+        meta: { title: p.title, bc_post_id: bcPostId, republished: isRepublish },
       })
 
-      return NextResponse.json({ bc_post_id: Number(bcPost.id), bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+      return NextResponse.json({ bc_post_id: bcPostId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
     } catch (err) {
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
@@ -393,7 +440,14 @@ export async function POST(
         wpParent = parentId
       }
 
-      result = await publishPage(siteUrl, auth, {
+      result = existingWpId !== null
+        ? await updatePage(siteUrl, auth, existingWpId, {
+            title:   String(p.title ?? ""),
+            content: styleTables(String(p.content ?? "")),
+            status:  saStatus,
+            slug:    wpSlug,
+          })
+        : await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
         content: styleTables(String(p.content ?? '')),
         status:  saStatus,
@@ -476,22 +530,37 @@ export async function POST(
         }
       }
 
-      result = await publishPost(siteUrl, auth, {
-        title:          String(p.title ?? ''),
-        content:        styleTables(String(p.content ?? '')),
-        status:         wpPublishStatus,
-        date:           wpDate,
-        slug:           p.slug ? String(p.slug) : undefined,
-        tags:           tagIds.length > 0 ? tagIds : undefined,
-        featured_media: featuredMediaId,
-        author:         authorId,
-        categories:     postCategoryIds,
-        meta: {
-          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-        },
-      })
+      const wpMeta = {
+        rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+        rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+        rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+      }
+
+      result = existingWpId !== null
+        // Already live — overwrite in place so the URL and any links to it survive.
+        // `date` is deliberately omitted: re-pushing must not reschedule a post
+        // that has already gone out.
+        ? await updatePost(siteUrl, auth, existingWpId, {
+            title:          String(p.title ?? ''),
+            content:        styleTables(String(p.content ?? '')),
+            slug:           p.slug ? String(p.slug) : undefined,
+            tags:           tagIds.length > 0 ? tagIds : undefined,
+            featured_media: featuredMediaId,
+            categories:     postCategoryIds,
+            meta:           wpMeta,
+          })
+        : await publishPost(siteUrl, auth, {
+            title:          String(p.title ?? ''),
+            content:        styleTables(String(p.content ?? '')),
+            status:         wpPublishStatus,
+            date:           wpDate,
+            slug:           p.slug ? String(p.slug) : undefined,
+            tags:           tagIds.length > 0 ? tagIds : undefined,
+            featured_media: featuredMediaId,
+            author:         authorId,
+            categories:     postCategoryIds,
+            meta:           wpMeta,
+          })
     }
 
     const wpEditUrl = isServiceArea
@@ -503,7 +572,11 @@ export async function POST(
       wp_site_url:       siteUrl,
       wp_status:         isServiceArea ? result.status : wpPublishStatus,
       status:            'draft_saved',
-      published_url:     result.link || wpEditUrl,
+      // Only a real permalink goes in published_url; the wp-admin fallback lives
+      // in platform_edit_url so internal-link injection never emits it.
+      published_url:     result.link || null,
+      platform_edit_url: wpEditUrl,
+      last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
     }).eq('id', id)
 

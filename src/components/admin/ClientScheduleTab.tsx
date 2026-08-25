@@ -169,12 +169,13 @@ const FREQ_LABEL: Record<string, string> = {
   monthly: 'Monthly', monthly_first: 'Monthly (1st)', monthly_mid: 'Monthly (15th)', monthly_end: 'Monthly (28th)',
 }
 
-type DisplayStatus = 'pending' | 'approved' | 'generating' | 'generated' | 'published' | 'rejected'
+type DisplayStatus = 'pending' | 'approved' | 'generating' | 'regenerating' | 'generated' | 'published' | 'rejected'
 
 const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; color: string; dot: string }> = {
   pending:    { label: 'Pending Topics',   bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
   approved:   { label: 'Approved Topics',  bg: 'var(--blue-subtle)',   color: 'var(--blue)',    dot: '#2563eb' },
   generating: { label: 'Generating Posts', bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
+  regenerating: { label: 'Regenerating',   bg: 'var(--amber-subtle)',  color: 'var(--amber)',   dot: '#f59e0b' },
   generated:  { label: 'Ready for Review',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#10b981' },
   published:  { label: 'Published Posts',  bg: 'var(--green-subtle)',  color: 'var(--green)',   dot: '#059669' },
   rejected:   { label: 'Rejected',         bg: 'var(--red-subtle)',    color: 'var(--red)',     dot: '#ef4444' },
@@ -190,7 +191,11 @@ function getTopicDisplayStatus(t: Topic): DisplayStatus {
 
 function getPostDisplayStatus(p: Post): DisplayStatus {
   if (p.status === 'rejected')                                        return 'rejected'
-  if (p.status === 'generating')                                      return 'generating'
+  // A post being generated that already exists on a CMS is a REWRITE of live
+  // content, not a first draft — worth saying so, since the client's site is
+  // still serving the old copy while this runs.
+  if (p.status === 'generating')
+    return (p.wp_post_id || p.bc_post_id) ? 'regenerating' : 'generating'
   if (p.status === 'for_review')                                      return 'generated'
   if (p.status === 'draft_saved' || p.status === 'published')         return 'published'
   return 'generated'
@@ -1545,7 +1550,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
                           >
                             <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                                <StatusPill status={displayStatus} generating={t.status === 'generating' || displayStatus === 'regenerating' || displayStatus === 'generating'} />
                                 {hasError && (
                                   <span title={t.generation_error ?? ''} style={{ fontSize: '0.7rem', color: '#f59e0b', cursor: 'help', lineHeight: 1 }}>⚠</span>
                                 )}
@@ -3754,7 +3759,7 @@ function PipelineCalendar({
                           >
                             <td style={{ padding: '8px 8px 8px 0', verticalAlign: 'middle' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                <StatusPill status={displayStatus} generating={t.status === 'generating'} />
+                                <StatusPill status={displayStatus} generating={t.status === 'generating' || displayStatus === 'regenerating' || displayStatus === 'generating'} />
                                 {hasError && <span title={t.generation_error ?? ''} style={{ fontSize: '0.7rem', color: '#f59e0b', cursor: 'help' }}>⚠</span>}
                               </div>
                             </td>

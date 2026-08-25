@@ -183,8 +183,14 @@ export async function updatePage(
   siteUrl: string,
   auth: { username: string; app_password: string },
   pageId: number,
-  patch: { content?: string }
-): Promise<void> {
+  patch: {
+    content?: string
+    title?:   string
+    slug?:    string
+    status?:  string
+    meta?:    Record<string, string>
+  }
+): Promise<WpPublishedPost> {
   const res = await fetch(wpApiUrl(siteUrl, `/pages/${pageId}`), {
     method: 'POST',
     headers: {
@@ -197,6 +203,77 @@ export async function updatePage(
     const text = await res.text()
     throw new Error(`WordPress API error ${res.status}: ${text}`)
   }
+  const data = (await res.json()) as Record<string, unknown>
+  return {
+    id:     Number(data.id),
+    link:   String(data.link || ''),
+    title:  String((data.title as Record<string, unknown> | undefined)?.rendered ?? ''),
+    status: String(data.status || ''),
+    date:   String(data.date || ''),
+  }
+}
+
+/**
+ * Overwrite an existing WordPress POST (not page).
+ *
+ * The counterpart to publishPost, used when a post that is already live gets
+ * regenerated: it keeps its wp_post_id, so the live copy is replaced in place
+ * and every existing link to it still resolves.
+ */
+export async function updatePost(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+  patch: {
+    title?:          string
+    content?:        string
+    excerpt?:        string
+    slug?:           string
+    status?:         string
+    categories?:     number[]
+    tags?:           number[]
+    featured_media?: number
+    meta?:           Record<string, string>
+  },
+): Promise<WpPublishedPost> {
+  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}`), {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader(auth.username, auth.app_password),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Record<string, unknown>
+  return {
+    id:     Number(data.id),
+    link:   String(data.link || ''),
+    title:  String((data.title as Record<string, unknown> | undefined)?.rendered ?? ''),
+    status: String(data.status || ''),
+    date:   String(data.date || ''),
+  }
+}
+
+/** Read one post — used by the published_url backfill. */
+export async function fetchPost(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+): Promise<{ id: number; link: string; status: string } | null> {
+  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
+    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Record<string, unknown>
+  return { id: Number(data.id), link: String(data.link || ''), status: String(data.status || '') }
 }
 
 /**

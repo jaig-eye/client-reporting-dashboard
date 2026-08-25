@@ -5,6 +5,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { updatePage }        from '@/lib/connectors/wordpress'
 import { updateBCPage }      from '@/lib/connectors/bigcommerce'
+import { isPublicPermalink }  from '@/lib/content/postLinks'
 
 interface NearbyLinkPost {
   id:             string
@@ -62,7 +63,11 @@ export async function injectNearbyLinks(
     .single()
 
   const allPosts = [...(siblings as NearbyLinkPost[]), { ...(currentPost as NearbyLinkPost), id: currentPostId }]
-    .filter(p => p.published_url)
+    // A published_url must be a PUBLIC permalink before it can become an href.
+    // Before migration 202 every BigCommerce post carried the store-admin URL here,
+    // so this injector emitted links into client content that pointed at the
+    // BigCommerce control panel. Filter on the predicate, not on truthiness.
+    .filter(p => isPublicPermalink(p.published_url ?? null))
 
   // Resolve connection auth for WP
   const wpSiteUrl = (currentPost as NearbyLinkPost | null)?.wp_site_url
@@ -108,7 +113,7 @@ export async function injectNearbyLinks(
     const postId = post.id === currentPostId ? currentPostId : post.id
     const others = allPosts.filter(p => {
       const pid = p.id === currentPostId ? currentPostId : p.id
-      return pid !== postId && p.city && p.published_url
+      return pid !== postId && p.city && isPublicPermalink(p.published_url ?? null)
     })
 
     if (others.length === 0) continue

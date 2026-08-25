@@ -216,6 +216,15 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setToastError(true)
         setToastMsg('Failed to start regeneration — please try again')
+      } else {
+        // Regenerating a post that is already on the client's site does not pull
+        // it down; the old copy keeps serving until the replacement is pushed.
+        // Say so, because it is the surprising part of this action.
+        const { wasLive } = await res.json().catch(() => ({ wasLive: false })) as { wasLive?: boolean }
+        if (wasLive) {
+          setToastError(false)
+          setToastMsg('Regenerating. The live post stays up until you push the new version.')
+        }
       }
       // Session-level polling picks up completion
     } catch {

@@ -74,7 +74,7 @@ export async function getMonthlyReviewData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: postsRaw } = await (db as any)
     .from('content_posts')
-    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash')
+    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash, last_pushed_at, updated_at, platform_edit_url')
     .in('status', ['for_review', 'pending', 'approved', 'draft_saved', 'generating'])
     .or('admin_approved_at.not.is.null,wp_post_id.is.null')
     .or('admin_approved_at.not.is.null,bc_post_id.is.null')

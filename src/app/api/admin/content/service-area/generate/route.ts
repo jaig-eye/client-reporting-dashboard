@@ -2,6 +2,8 @@
 // Generates a service area landing page from an approved SA topic.
 // Body: { topic_id: string }
 
+import { describeTenure } from '@/lib/content/eeat'
+import type { EeatData } from '@/lib/content/types'
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil }                 from '@vercel/functions'
 import { cookies }                   from 'next/headers'
@@ -99,7 +101,7 @@ function formatEeat(eeatRaw: unknown): string {
   if (!e || typeof e !== 'object') return ''
   const r = e as Record<string, unknown>
   const parts: string[] = []
-  if (r.years_in_business)      parts.push(`${r.years_in_business} years in business`)
+  { const tenure = describeTenure(r as Partial<EeatData>); if (tenure) parts.push(tenure) }
   if (r.licenses)               parts.push(`licensed: ${r.licenses}`)
   if (r.review_count)           parts.push(`${r.review_count} reviews`)
   if (r.guarantees)             parts.push(`guarantees: ${r.guarantees}`)

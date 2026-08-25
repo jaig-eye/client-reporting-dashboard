@@ -2,6 +2,7 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
+import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
 import { PLATFORM_BOT_UA }               from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
@@ -359,7 +360,7 @@ export async function generateTopicsForClient(
   let eeatText = ''
   if (eeat) {
     const parts: string[] = []
-    if (eeat.years_in_business)    parts.push(`${eeat.years_in_business} years in business`)
+    { const tenure = describeTenure(eeat); if (tenure) parts.push(tenure) }
     if (eeat.licenses)             parts.push(`Licenses: ${eeat.licenses}`)
     if (eeat.review_count)         parts.push(`${eeat.review_count} reviews`)
     if (eeat.guarantees)           parts.push(`Guarantees: ${eeat.guarantees}`)

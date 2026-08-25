@@ -25,6 +25,10 @@ export interface MonthlyReviewPost {
   bc_post_id:          number | null
   bc_store_hash:       string | null
   isBc:                boolean
+  /** Set when the CMS copy was last written. See migration 200. */
+  last_pushed_at?:     string | null
+  /** Maintained by trg_content_posts_updated_at. */
+  updated_at?:         string | null
 }
 
 interface Props {
@@ -58,6 +62,15 @@ export default function MonthlyReviewPostCard({
   post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
+
+  // "Live, but the client's site is serving an older copy." Derived rather than
+  // stored, so it is correct the moment content changes. See migration 200.
+  const isLive = Boolean(post.wp_post_id || post.bc_post_id)
+  const isStaleLive =
+    isLive &&
+    !!post.updated_at &&
+    !!post.last_pushed_at &&
+    new Date(post.updated_at).getTime() > new Date(post.last_pushed_at).getTime()
 
   if (isCollapsed) {
     return null
@@ -149,13 +162,38 @@ export default function MonthlyReviewPostCard({
               </div>
             )
           })()}
+
+          {isStaleLive && (
+            <div style={{
+              marginTop: 6, padding: '4px 8px', borderRadius: 5,
+              background: '#fef3c7', border: '1px solid #fcd34d',
+              fontSize: 11.5, color: '#92400e', fontWeight: 600,
+            }}>
+              Live copy is out of date — the site still shows the previous version. Push to update it.
+            </div>
+          )}
         </div>
 
         {/* Status / actions */}
         {isApproved ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
-            ✓ Approved
-          </span>
+          // Regenerate stays available AFTER approval on purpose: changing your
+          // mind about a post you just approved is the common case, and the
+          // button being absent here is why it looked like the feature was missing.
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
+              ✓ Approved
+            </span>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title={isLive
+                ? 'Generate a brand-new topic and article. The live copy stays up until you push the replacement.'
+                : 'Generate a brand-new topic and article for this slot'}
+              onClick={() => onRegenerate(post.id)}
+            >
+              ⟳ Regenerate
+            </button>
+          </div>
         ) : isRejected ? (
           <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             Rejected
@@ -174,13 +212,23 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <button
-            className="btn btn-sm"
-            disabled={isLoading}
-            onClick={() => onOpenEditor(post.id)}
-          >
-            Review →
-          </button>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title="Generate a brand-new topic and article for this slot"
+              onClick={() => onRegenerate(post.id)}
+            >
+              ⟳ Regenerate
+            </button>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onOpenEditor(post.id)}
+            >
+              Review →
+            </button>
+          </div>
         )}
       </div>
     </div>

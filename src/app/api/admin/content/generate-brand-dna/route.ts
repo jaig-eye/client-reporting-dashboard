@@ -19,6 +19,7 @@ interface BrandDnaResult {
   geographic_focus:    string
   brand_voice:         string
   // E-E-A-T signals (omitted if not found on site)
+  founded_year?:           string
   years_in_business?:      string
   review_count?:           string
   licenses?:               string
@@ -188,7 +189,8 @@ Required keys (always include these):
 
 Optional trust & credibility keys — include only if the information is clearly stated on the site. Do NOT guess or invent values. Omit keys you cannot confidently determine:
 {
-  "years_in_business": "number of years or a phrase like 'Since 2008' or '15+ years'",
+  "founded_year": "the 4-digit year the business was founded, e.g. \"2003\" — prefer this over a duration; derive it from phrases like \"Since 2008\" or \"serving X for 15 years\" where the current year makes that unambiguous",
+  "years_in_business": "ONLY if a founding year cannot be determined: a duration phrase like '15+ years'",
   "review_count": "e.g. '200+ Google reviews, 4.9 stars' or '500 five-star reviews'",
   "licenses": "license types, numbers, or certifications mentioned (e.g. 'Licensed & Insured, TX #12345')",
   "insurance": "insurance or bonding information mentioned",
