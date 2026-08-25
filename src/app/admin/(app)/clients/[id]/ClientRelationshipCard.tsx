@@ -95,7 +95,15 @@ export default function ClientRelationshipCard({
 
   return (
     <div className="card p-5">
-      <h2 className="section-title mb-1">Relationship</h2>
+      <h2 className="section-title mb-1">
+        Relationship
+        <span style={{
+          fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+          background: 'var(--blue)', color: '#fff',
+          padding: '1px 4px', borderRadius: 3,
+          marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+        }}>BETA</span>
+      </h2>
       <p className="section-desc mb-3">Attention level and when we last spoke.</p>
 
       {/* Temperature ------------------------------------------------------- */}
@@ -104,14 +112,9 @@ export default function ClientRelationshipCard({
           and orders the weekly check-in digest — it does not yet change what is
           monitored or when anything alerts. Colouring the unselected options
           would promise more than it currently does. */}
+      {/* The BETA pill lives on the card heading now, so it is not repeated here. */}
       <p style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 5px' }}>
         Attention needed
-        <span style={{
-          fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-          background: 'var(--blue)', color: '#fff',
-          padding: '1px 4px', borderRadius: 3,
-          marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
-        }}>BETA</span>
       </p>
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {TEMPERATURES.map(t => {

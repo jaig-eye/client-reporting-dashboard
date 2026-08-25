@@ -96,6 +96,7 @@ export default function ClientNotesStream({
   const [draftFields,   setDraftFields]   = useState<Record<string, string>>({})
   const [draftSecret,   setDraftSecret]   = useState('')
   const [saving,        setSaving]        = useState(false)
+  const [saveError,     setSaveError]     = useState<string | null>(null)
 
   // Expanded note popup
   const [expanded,     setExpanded]     = useState<Note | null>(null)
@@ -150,8 +151,11 @@ export default function ClientNotesStream({
       editor:     null,
     }
     setNotes(prev => sortNotes([temp, ...prev]))
-    const snapshot = { title: draftTitle, category: draftCategory, fields: draftFields }
-    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftSecret('')
+    // The secret belongs in the snapshot too. It used to be cleared before the
+    // request and never restored, so a failed save silently threw away the
+    // password the user had just typed.
+    const snapshot = { title: draftTitle, category: draftCategory, fields: draftFields, secret: draftSecret }
+    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftSecret(''); setSaveError(null)
 
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/notes`, {
@@ -162,20 +166,28 @@ export default function ClientNotesStream({
           title:    snapshot.title.trim() || null,
           category: snapshot.category,
           fields:   cleanFields,
-          ...(draftSecret ? { secret: draftSecret } : {}),
+          ...(snapshot.secret ? { secret: snapshot.secret } : {}),
         }),
       })
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        // The server explains exactly why (an unset CREDENTIAL_ENCRYPTION_KEY,
+        // an empty note, a DB error). Throwing that away is what made a failed
+        // save look like nothing happening at all.
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Could not save the note (HTTP ${res.status})`)
+      }
       const { note, contactStampedAt } = await res.json() as { note: Note; contactStampedAt: string | null }
       setNotes(prev => sortNotes(prev.map(n => n.id === temp.id ? note : n)))
       if (contactStampedAt) onContactLogged?.(contactStampedAt)
       setAddingNote(false)
       setDraftCategory('general')
-    } catch {
+    } catch (e) {
       setNotes(prev => prev.filter(n => n.id !== temp.id))
       setDraft(content)
       setDraftTitle(snapshot.title)
       setDraftFields(snapshot.fields)
+      setDraftSecret(snapshot.secret)
+      setSaveError(e instanceof Error ? e.message : 'Could not save the note')
     } finally {
       setSaving(false)
     }
@@ -223,19 +235,25 @@ export default function ClientNotesStream({
           ...(editSecret !== "" || editSecretClear ? { secret: editSecretClear ? "" : editSecret } : {}),
         }),
       })
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Could not save the note (HTTP ${res.status})`)
+      }
       const { note: updated } = await res.json() as { note: Note }
       setNotes(prev => sortNotes(prev.map(n => n.id === note.id ? updated : n)))
       setExpanded(updated)
       setEditing(false)
-    } catch {
-      // leave edit mode open on failure
+      setSaveError(null)
+    } catch (e) {
+      // Stay in edit mode so nothing typed is lost, and say why.
+      setSaveError(e instanceof Error ? e.message : 'Could not save the note')
     } finally {
       setEditSaving(false)
     }
   }
 
   function openNote(note: Note) {
+    setSaveError(null)
     setExpanded(note)
     setEditing(false)
   }
@@ -293,7 +311,7 @@ export default function ClientNotesStream({
           />
         </div>
         <button
-          onClick={() => { setAddingNote(v => !v); resetDraft() }}
+          onClick={() => { setAddingNote(v => !v); resetDraft(); setSaveError(null) }}
           className="btn btn-secondary"
           style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
         >
@@ -392,6 +410,16 @@ export default function ClientNotesStream({
             autoFocus
             style={{ ...inp, resize: 'vertical' }}
           />
+          {saveError && (
+            <div style={{
+              padding: '6px 9px', borderRadius: 5,
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+              fontSize: '0.7rem', color: 'var(--red)', lineHeight: 1.5,
+            }}>
+              {saveError}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
             {draftTemplate.stampsContact && (
               <span style={{ marginRight: 'auto', fontSize: '0.63rem', color: 'var(--text-faint)' }}>
@@ -625,9 +653,18 @@ export default function ClientNotesStream({
                 )}
               </div>
               {editing ? (
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                  {saveError && (
+                    <span style={{
+                      padding: '4px 8px', borderRadius: 5, maxWidth: 280,
+                      background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                      fontSize: '0.66rem', color: 'var(--red)', lineHeight: 1.4,
+                    }}>
+                      {saveError}
+                    </span>
+                  )}
                   <button
-                    onClick={() => setEditing(false)}
+                    onClick={() => { setEditing(false); setSaveError(null) }}
                     style={{ padding: '0.3rem 0.7rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
                   >
                     Cancel
