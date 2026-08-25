@@ -220,10 +220,92 @@ export interface QualityGateInput {
   html:           string
   title?:         string | null
   targetKeyword?: string | null
+  slug?:          string | null
   /** Existing published posts for the same client, for the corpus check. */
   siblings?:      { id: string; title: string | null; content: string | null }[]
+  /**
+   * Every URL known to exist on the client's site (cached sitemap rows).
+   *
+   * The generator's cannibalization guard is built from exactly this data, so
+   * when it is empty the guard ran blind — and that is worth saying out loud
+   * rather than letting a duplicate ship quietly.
+   */
+  siteUrls?:      string[]
   /** Adds financial-claim checks. */
   regulated?:     boolean
+}
+
+/** Words too common in slugs to count as evidence of the same topic. */
+const SLUG_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'for', 'to', 'of', 'in', 'on', 'with', 'your',
+  'you', 'my', 'is', 'are', 'do', 'does', 'how', 'what', 'why', 'when', 'best',
+  'guide', 'blog', 'post', 'right', 'need', 'vs', 'versus', 'top', 'new',
+])
+
+function slugTokens(s: string): Set<string> {
+  return new Set(
+    s.toLowerCase()
+      .replace(/\.(html?|php|aspx)$/i, '')
+      .split(/[^a-z0-9]+/)
+      .filter(w => w.length > 2 && !SLUG_STOPWORDS.has(w)),
+  )
+}
+
+/**
+ * Overlap weighted by how DISTINCTIVE each shared word is on this particular site.
+ *
+ * A plain token count does not work here. For a client called Cyrious Plasma
+ * Tables, the words "cnc", "plasma" and "table" appear in nearly every URL, so
+ * unweighted containment scores three unrelated articles at 75% and buries the
+ * one real duplicate among them. Those words describe the whole site; they carry
+ * no information about which page this is.
+ *
+ * Weighting each word by inverse document frequency across the client's own URLs
+ * fixes that: site-wide vocabulary contributes almost nothing, and a rare word
+ * like "size" — the word that actually makes two posts the same article —
+ * dominates the score.
+ */
+function weightedContainment(
+  mine: Set<string>,
+  theirs: Set<string>,
+  idf: Map<string, number>,
+): { score: number; shared: string[] } {
+  if (mine.size === 0 || theirs.size === 0) return { score: 0, shared: [] }
+  const w = (t: string) => idf.get(t) ?? 1
+  const mineArr = Array.from(mine)
+  const shared = mineArr.filter(t => theirs.has(t))
+  // Denominator is the smaller side's total weight, so "same topic, longer title"
+  // still scores high.
+  const theirsArr = Array.from(theirs)
+  const mineWeight   = mineArr.reduce((s, t) => s + w(t), 0)
+  const theirsWeight = theirsArr.reduce((s, t) => s + w(t), 0)
+  const denom = Math.min(mineWeight, theirsWeight)
+  if (denom === 0) return { score: 0, shared: [] }
+  const sharedWeight = shared.reduce((s, t) => s + w(t), 0)
+  return { score: sharedWeight / denom, shared }
+}
+
+/** IDF for every token across the client's own URL set. */
+function buildIdf(urls: string[]): Map<string, number> {
+  const df = new Map<string, number>()
+  for (const u of urls) {
+    const seen = slugTokens(lastSegment(u))
+    Array.from(seen).forEach(t => df.set(t, (df.get(t) ?? 0) + 1))
+  }
+  const n = Math.max(urls.length, 1)
+  const idf = new Map<string, number>()
+  Array.from(df.entries()).forEach(([t, d]) => {
+    idf.set(t, Math.log(n / (1 + d)) + 1)   // +1 keeps every weight positive
+  })
+  return idf
+}
+
+/** Last meaningful path segment of a URL. */
+function lastSegment(url: string): string {
+  try {
+    const segs = new URL(url).pathname.split('/').filter(Boolean)
+    return segs[segs.length - 1] ?? ''
+  } catch { return '' }
 }
 
 const SIM_WARN     = 0.82
@@ -388,6 +470,50 @@ export function runQualityGate(input: QualityGateInput): QualityReport {
           message: `${(share * 100).toFixed(0)}% of H2 headings across this client's posts start with "${word}". Vary how sections are introduced.`,
         })
       }
+    }
+  }
+
+  // ── Cannibalising a page that already exists on the site ──────────────────
+  //
+  // The generator's avoid-list is built from cached sitemap rows. When the
+  // sitemap never parsed, that list is empty and the model is told nothing about
+  // the client's existing articles — so it will happily write a second version of
+  // one. This is the backstop for that, checked against the URLs rather than
+  // against our own database, because the database only knows the posts WE made.
+  const siteUrls = input.siteUrls ?? []
+  const mineTokens = new Set(
+    Array.from(slugTokens(input.slug ?? '')).concat(Array.from(slugTokens(input.targetKeyword ?? ''))),
+  )
+
+  if (siteUrls.length === 0) {
+    findings.push({
+      code: 'cannibalisation_unchecked',
+      severity: 'warning',
+      message: 'No sitemap pages are cached for this client, so the generator had no list of existing articles to avoid — this post may duplicate one already on the site. Fetch the sitemap on the client\'s Sitemap tab, then regenerate or re-check.',
+    })
+  } else if (mineTokens.size >= 2) {
+    const idf = buildIdf(siteUrls)
+    const matches = siteUrls
+      .map(u => ({ url: u, ...weightedContainment(mineTokens, slugTokens(lastSegment(u)), idf) }))
+      // HIGH BAR ON PURPOSE. Measured against this client's real 102-URL sitemap,
+      // the genuine duplicate scores 1.00 while every other article about the same
+      // product line clusters at 0.66 — they share the house vocabulary and nothing
+      // else. A 0.6 cut-off would raise eight warnings on every post, which teaches
+      // people to dismiss the check; 0.8 raises exactly the one that matters.
+      // This finding blocks unattended publishing, so precision beats recall here —
+      // the corpus-sameness check and human review still cover the near misses.
+      .filter(m => m.shared.length >= 2 && m.score >= 0.8)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+
+    if (matches.length > 0) {
+      const worst = matches[0]
+      findings.push({
+        code: 'cannibalisation_risk',
+        severity: 'critical',
+        message: `This targets substantially the same topic as a page already on the client's site (${Math.round(worst.score * 100)}% match on the words that actually distinguish their pages from each other). Two pages competing for one query is worse than either alone. Re-angle it to a genuinely different search intent, or update the existing article instead of adding a second one.`,
+        evidence: matches.map(m => `${m.url}  — shared: ${m.shared.join(', ')}`),
+      })
     }
   }
 

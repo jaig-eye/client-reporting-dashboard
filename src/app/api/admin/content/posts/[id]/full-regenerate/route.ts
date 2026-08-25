@@ -362,6 +362,11 @@ Requirements:
         .order('generated_at', { ascending: false })
         .limit(20)
 
+      const { data: qgSiteUrls } = await db
+        .from('content_sitemap_pages')
+        .select('url')
+        .eq('client_id', post.client_id as string)
+
       const { data: csVertical } = await db
         .from('content_settings')
         .select('vertical')
@@ -372,6 +377,8 @@ Requirements:
         html:          parsed.content,
         title:         parsed.title,
         targetKeyword: (newTopic.target_keyword as string | null) ?? null,
+        slug:          parsed.slug,
+        siteUrls:      (qgSiteUrls ?? []).map((r: { url: string }) => r.url),
         siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
         regulated:     isRegulatedVertical((csVertical as { vertical?: string | null } | null)?.vertical),
       })

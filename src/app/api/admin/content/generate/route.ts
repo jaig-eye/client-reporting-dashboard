@@ -1087,6 +1087,12 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       html:          parsed.content,
       title:         parsed.title,
       targetKeyword: topicData.target_keyword ?? null,
+      slug:          finalSlug,
+      // The client's real site URLs, so the gate can catch a post that duplicates
+      // a page the generator never knew about. sitemapRows is empty exactly when
+      // the sitemap failed to parse — which is when this backstop matters most,
+      // and the gate raises its own finding for that case.
+      siteUrls:      sitemapRows.map(r => r.url),
       siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
       regulated:     isRegulatedVertical(clientSettings?.vertical),
     })

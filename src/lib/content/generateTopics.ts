@@ -5,7 +5,7 @@
 import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
 import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { PLATFORM_BOT_UA }               from '@/lib/platformBot'
+import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors }            from '@/lib/content/competitorResearch'
@@ -43,11 +43,22 @@ function extractSitemapLocs(xml: string): string[] {
 async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; blogPosts: string[] }> {
   const empty = { pages: [], blogPosts: [] }
   try {
+    // BROWSER_BOT_UA, not PLATFORM_BOT_UA: this fetches a CLIENT's site, which is
+    // exactly the case platformBot.ts says the browser-signature variant is for.
+    // It keeps the "GoLaunchLocal" token so a Cloudflare skip rule still matches.
+    //
+    // The old 4s ceiling was too tight for a Cloudflare-fronted sitemap — the
+    // index alone routinely takes ~1s — and a timeout here is indistinguishable
+    // from "site has no pages", which silently empties the cannibalization
+    // avoid-list. Hence the wider budget and the loud log.
     const res = await fetch(sitemapUrl, {
-      signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': PLATFORM_BOT_UA },
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': BROWSER_BOT_UA },
     })
-    if (!res.ok) return empty
+    if (!res.ok) {
+      console.warn(`[generateTopics] sitemap ${sitemapUrl} → HTTP ${res.status}. Cannibalization avoid-list will not include this site's existing pages.`)
+      return empty
+    }
     const xml = await res.text()
     const locs = extractSitemapLocs(xml)
 
@@ -58,8 +69,8 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
       await Promise.all(subUrls.map(async subUrl => {
         try {
           const sub = await fetch(subUrl, {
-            signal: AbortSignal.timeout(4000),
-            headers: { 'User-Agent': PLATFORM_BOT_UA },
+            signal: AbortSignal.timeout(12_000),
+            headers: { 'User-Agent': BROWSER_BOT_UA },
           })
           if (!sub.ok) return
           const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
@@ -68,13 +79,18 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
           } else {
             pages.push(...subLocs)
           }
-        } catch { /* non-fatal */ }
+        } catch (e) {
+          console.warn(`[generateTopics] sub-sitemap ${subUrl} failed: ${e instanceof Error ? e.message : e}`)
+        }
       }))
       return { pages: pages.slice(0, 40), blogPosts: blogPosts.slice(0, 150) }
     }
 
     return { pages: locs.filter(u => !u.endsWith('.xml')).slice(0, 40), blogPosts: [] }
-  } catch {
+  } catch (e) {
+    // Never silent. An empty return here is indistinguishable from "this site has
+    // no pages", which quietly disables cannibalization protection for the whole run.
+    console.warn(`[generateTopics] sitemap ${sitemapUrl} fetch failed: ${e instanceof Error ? e.message : e}. Cannibalization avoid-list will not include this site's existing pages.`)
     return empty
   }
 }

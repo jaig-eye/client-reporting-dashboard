@@ -1,5 +1,20 @@
 // POST /api/admin/content/sitemap-parse?client_id=X
 // Fetches and parses the client's configured sitemap(s), upserts page URLs to DB, returns full list.
+//
+// This was the ONLY route under /api/admin/content without a maxDuration export,
+// so it ran on the platform default (~10s) while every sibling sets 60-300. A
+// sitemap index with 8-10 children fetched sequentially exceeds that, and a
+// killed function leaves the page cache empty with nothing to show the user.
+//
+// That empty cache is not cosmetic: generate/route.ts builds its cannibalization
+// avoid-list from cached sitemap rows (the `[existing site post]` entries), so a
+// client whose sitemap never parsed has NO protection against the AI rewriting a
+// page that already exists on their site.
+
+export const maxDuration = 60
+
+/** Per-sub-sitemap ceiling, so one slow child cannot consume the whole budget. */
+const SUB_FETCH_TIMEOUT_MS = 12_000
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
@@ -64,7 +79,7 @@ export async function POST(request: NextRequest) {
       continue
     }
     try {
-      const res = await fetch(sitemapUrl, { headers, redirect: 'follow' })
+      const res = await fetch(sitemapUrl, { headers, redirect: 'follow', signal: AbortSignal.timeout(SUB_FETCH_TIMEOUT_MS) })
       if (!res.ok) {
         const hint = res.status === 403
           ? `HTTP 403 — site is blocking server-side requests (may be Cloudflare or bot protection)`
@@ -83,24 +98,42 @@ export async function POST(request: NextRequest) {
       const locs = extractLocs(xml)
 
       if (xml.includes('<sitemapindex')) {
-        // Sitemap index — recurse one level into sub-sitemaps, capped at 20 to prevent DoS
+        // Sitemap index — recurse one level into sub-sitemaps, capped at 20 to prevent DoS.
+        //
+        // These used to run in a sequential for-loop, one await per sub-sitemap.
+        // A Rank Math / Yoast index routinely has 8-10 children, and at roughly
+        // 0.6-1.1s each behind Cloudflare that is 6-11 seconds of wall clock —
+        // long enough to hit the serverless time limit and be killed mid-parse,
+        // which is what left the cache empty with no error to show for it.
+        // Fetching them together turns that into roughly one round trip.
         const subUrls = locs.filter(isPublicUrl).slice(0, 20)
-        for (const subUrl of subUrls) {
+        const subResults = await Promise.all(subUrls.map(async subUrl => {
           try {
-            const subRes = await fetch(subUrl, { headers, redirect: 'follow' })
+            const subRes = await fetch(subUrl, {
+              headers,
+              redirect: 'follow',
+              signal: AbortSignal.timeout(SUB_FETCH_TIMEOUT_MS),
+            })
             if (!subRes.ok) {
               const hint = subRes.status === 403
                 ? `HTTP 403 — site is blocking server-side requests`
                 : `HTTP ${subRes.status}`
-              fetchErrors.push(`${subUrl} → ${hint}`)
-              continue
+              return { subUrl, error: hint, locs: [] as string[] }
             }
-            // Record source sub-sitemap so callers can identify blog-post sitemaps later
-            for (const loc of extractLocs(await subRes.text())) {
-              if (!pageMap.has(loc)) pageMap.set(loc, subUrl)
-            }
+            return { subUrl, error: null, locs: extractLocs(await subRes.text()) }
           } catch (e) {
-            fetchErrors.push(`${subUrl} → ${e instanceof Error ? e.message : 'fetch failed'}`)
+            const msg = e instanceof Error
+              ? (e.name === 'TimeoutError' ? `timed out after ${SUB_FETCH_TIMEOUT_MS / 1000}s` : e.message)
+              : 'fetch failed'
+            return { subUrl, error: msg, locs: [] as string[] }
+          }
+        }))
+
+        for (const r of subResults) {
+          if (r.error) { fetchErrors.push(`${r.subUrl} → ${r.error}`); continue }
+          // Record source sub-sitemap so callers can identify blog-post sitemaps later
+          for (const loc of r.locs) {
+            if (!pageMap.has(loc)) pageMap.set(loc, r.subUrl)
           }
         }
       } else {
