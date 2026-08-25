@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   chart_color_conversions:       '#059669',
   chart_color_prior_conversions: '#34d399',
   crm_name:                      'CRM',
+  contact_stale_days:            14,
 }
 
 // Cache agency settings for 5 minutes — they change rarely (only when an admin saves

@@ -60,6 +60,7 @@ export async function PUT(request: NextRequest) {
     'ads_sync_frequency', 'ads_sync_hour_utc',
     'master_writing_prompt',
     'metric_alert_window_days',
+    'contact_stale_days',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
     'service_page_master_prompt',

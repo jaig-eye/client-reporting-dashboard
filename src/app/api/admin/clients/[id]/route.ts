@@ -30,6 +30,7 @@ export async function PATCH(
     'auto_pause_ads', 'auto_resume_ads', 'campaigns_paused_at',
     'bc_daily_report',
     'address', 'phone', 'website', 'account_manager_id',
+    'temperature', 'last_contacted_at', 'contact_stale_days',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {

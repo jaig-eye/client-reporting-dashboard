@@ -6,7 +6,7 @@ import { Suspense } from 'react'
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import type { Client, ClientConnection, Connector, SyncJob } from '@/lib/types'
+import type { Client, ClientConnection, Connector, SyncJob, ClientTemperature } from '@/lib/types'
 import {
   GOOGLE_CONNECTOR_TYPES,
   UNGROUPED_CONNECTOR_TYPES,
@@ -74,7 +74,7 @@ export default async function ClientDetailPage({
       .eq('client_id', id)
       .order('started_at', { ascending: false })
       .limit(20),
-    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts,ai_api_key').single(),
+    db.from('agency_settings').select('ad_fuel_cut,default_lead_action,default_purchase_action,benchmark_roas,benchmark_ctr,benchmark_cpc,benchmark_conv_rate,benchmark_cpm,benchmark_cpl,metric_layouts,ai_api_key,contact_stale_days').single(),
     db.from('meta_ads_metrics')
       .select('discovered_actions')
       .eq('client_id', id)
@@ -128,6 +128,7 @@ export default async function ClientDetailPage({
     benchmark_cpl?: number
     metric_layouts?: MetricLayouts | null
     ai_api_key?: string | null
+    contact_stale_days?: number | null
   } | null
   const aiConfigured = !!(agencySettings?.ai_api_key)
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
@@ -231,6 +232,10 @@ export default async function ClientDetailPage({
           website={client.website ?? null}
           logoUrl={client.logo_url ?? null}
           accountManagerId={client.account_manager_id ?? null}
+          temperature={(client as unknown as { temperature?: ClientTemperature | null }).temperature ?? null}
+          lastContactedAt={(client as unknown as { last_contacted_at?: string | null }).last_contacted_at ?? null}
+          contactStaleDays={(client as unknown as { contact_stale_days?: number | null }).contact_stale_days ?? null}
+          agencyStaleDays={agencySettings?.contact_stale_days ?? 14}
           adminUsers={adminUsers}
           contacts={contacts}
           dashUrl={dashUrl}

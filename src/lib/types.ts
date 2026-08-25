@@ -193,9 +193,22 @@ export interface Client {
   website?: string | null
   /** FK to users.id — the account manager assigned to this client. */
   account_manager_id?: string | null
+  /** How much attention this client needs right now. NULL = not triaged. */
+  temperature?: ClientTemperature | null
+  /** Last time we spoke to them. Jotted down manually, or stamped by a 'contact' note. */
+  last_contacted_at?: string | null
+  /** FK to client_notes.id — the contact note that last stamped last_contacted_at. */
+  last_contact_note_id?: string | null
+  /** Per-client override of agency_settings.contact_stale_days. NULL = use agency default. */
+  contact_stale_days?: number | null
+  /** Dedup marker so the staleness cron alerts once per stale streak. */
+  last_contact_alert_at?: string | null
   created_at: string
   updated_at: string
 }
+
+/** Attention level, not satisfaction: 'high' means needs hands-on work now. */
+export type ClientTemperature = 'low' | 'medium' | 'high'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AGENCY SETTINGS
@@ -207,6 +220,8 @@ export interface AgencySettings {
   agency_logo_url?: string
   /** White-label name for the CRM integration shown to clients (default: 'CRM'). */
   crm_name?: string
+  /** Days without contact before a client is flagged stale. Overridable per client. */
+  contact_stale_days?: number
   /** Performance benchmark targets used in the Efficiency Score calculation. */
   benchmark_roas: number
   benchmark_ctr: number

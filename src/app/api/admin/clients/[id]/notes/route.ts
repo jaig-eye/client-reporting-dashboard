@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
+import {
+  isNoteCategory,
+  sanitizeNoteFields,
+  categoryStampsContact,
+} from '@/lib/note-templates'
+
+const NOTE_SELECT =
+  'id, title, content, category, fields, pinned, created_at, updated_at, updated_by, user_id, ' +
+  'users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)'
 
 export async function GET(
   request: NextRequest,
@@ -14,13 +23,21 @@ export async function GET(
   const { id: clientId } = await params
   const db = createAdminClient()
 
-  const { data, error } = await db
+  // Optional server-side category filter; the free-text filter stays client-side
+  // because the list is capped at 200 rows anyway.
+  const category = request.nextUrl.searchParams.get('category')
+
+  let q = db
     .from('client_notes')
-    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)')
+    .select(NOTE_SELECT)
     .eq('client_id', clientId)
+
+  if (category && isNoteCategory(category)) q = q.eq('category', category)
+
+  const { data, error } = await q
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(100)
+    .limit(200)
 
   if (error) {
     console.error('[client notes GET]', error)
@@ -28,6 +45,14 @@ export async function GET(
   }
 
   return NextResponse.json({ notes: data ?? [] })
+}
+
+interface NoteBody {
+  content?:  string
+  title?:    string
+  pinned?:   boolean
+  category?: string
+  fields?:   Record<string, unknown>
 }
 
 export async function POST(
@@ -42,16 +67,24 @@ export async function POST(
   const { id: clientId } = await params
   const userId = request.cookies.get('admin_user_id')?.value ?? null
 
-  let body: { content?: string; title?: string; pinned?: boolean }
+  let body: NoteBody
   try {
-    body = await request.json() as { content?: string; title?: string; pinned?: boolean }
+    body = await request.json() as NoteBody
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const content = body.content?.trim()
-  if (!content) {
-    return NextResponse.json({ error: 'content is required' }, { status: 400 })
+  const category = isNoteCategory(body.category) ? body.category : 'general'
+  const fields   = sanitizeNoteFields(category, body.fields)
+  const content  = body.content?.trim() ?? ''
+
+  // A structured note (DNS record, login pointer) is meaningful with no prose,
+  // so only require a body when the template has no fields to carry the meaning.
+  if (!content && Object.keys(fields).length === 0) {
+    return NextResponse.json(
+      { error: 'Add a note body or fill in at least one field' },
+      { status: 400 },
+    )
   }
 
   const db = createAdminClient()
@@ -64,8 +97,10 @@ export async function POST(
       content,
       title:     body.title?.trim() || null,
       pinned:    body.pinned ?? false,
+      category,
+      fields,
     })
-    .select('id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url)')
+    .select(NOTE_SELECT)
     .single()
 
   if (error || !data) {
@@ -73,6 +108,45 @@ export async function POST(
     return NextResponse.json({ error: 'Failed to save note' }, { status: 500 })
   }
 
+  // The generated DB types predate the category/fields columns, so PostgREST's
+  // select-string inference falls back to an error union here.
+  const note = data as unknown as Record<string, unknown> & { id: string }
+
+  // A contact-log note doubles as the "we spoke to them" stamp so the common
+  // path needs no second action. Never move the date backwards: back-filling an
+  // old call must not make a client look staler than it is.
+  let contactStampedAt: string | null = null
+  if (categoryStampsContact(category)) {
+    const occurred = fields.occurred_on
+      ? new Date(`${fields.occurred_on}T12:00:00Z`)
+      : new Date()
+    const stamp = isNaN(occurred.getTime()) ? new Date() : occurred
+
+    const { data: current } = await db
+      .from('clients')
+      .select('last_contacted_at')
+      .eq('id', clientId)
+      .maybeSingle()
+
+    const prev = current?.last_contacted_at ? new Date(current.last_contacted_at as string) : null
+    if (!prev || stamp > prev) {
+      const iso = stamp.toISOString()
+      const { error: stampErr } = await db
+        .from('clients')
+        .update({
+          last_contacted_at:     iso,
+          last_contact_note_id:  note.id,
+          last_contact_alert_at: null, // re-arm the staleness alert
+        })
+        .eq('id', clientId)
+      if (stampErr) console.error('[client notes POST] contact stamp failed', stampErr)
+      else contactStampedAt = iso
+    }
+  }
+
   // editor is always null on a fresh insert (updated_by is unset)
-  return NextResponse.json({ note: { ...data, editor: null } }, { status: 201 })
+  return NextResponse.json(
+    { note: { ...note, editor: null }, contactStampedAt },
+    { status: 201 },
+  )
 }

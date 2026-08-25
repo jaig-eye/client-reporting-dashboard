@@ -61,6 +61,7 @@ interface Settings {
   notify_connector_errors:        boolean
   metric_alert_threshold:         number
   metric_alert_window_days:       number
+  contact_stale_days:             number
   daily_alert_threshold:          number
   daily_alert_metrics:            string[]
   weekly_alert_metrics:           string[]
@@ -117,6 +118,7 @@ const DEFAULT: Settings = {
   notify_connector_errors:        false,
   metric_alert_threshold:         25,
   metric_alert_window_days:       14,
+  contact_stale_days:             14,
   daily_alert_threshold:          50,
   daily_alert_metrics:            ['spend', 'conversions', 'cpa'],
   weekly_alert_metrics:           ['spend', 'conversions', 'cpa', 'roas', 'ctr'],
@@ -852,6 +854,41 @@ export default function AgencySettingsPage() {
               )}
             </FormField>
             <NotificationTypeTable />
+
+            {/* Client contact window — agency default, overridable per client */}
+            <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{
+                padding: '0.625rem 1rem',
+                background: 'var(--bg-subtle)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+                  Client Comms
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12, padding: '0.75rem 1rem' }}>
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Contact window
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1, maxWidth: 480 }}>
+                    Days without a logged contact before a client shows as due a check-in. Any client can override this on their Overview tab.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={form.contact_stale_days}
+                    onChange={e => field('contact_stale_days', Number(e.target.value))}
+                    className="input"
+                    style={{ width: 80, fontSize: '0.8125rem' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>days</span>
+                </div>
+              </div>
+            </div>
 
             {/* Metric Alert Thresholds — styled to match NotificationTypeTable groups */}
             <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
