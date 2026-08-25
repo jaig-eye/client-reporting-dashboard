@@ -1097,7 +1097,12 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     const quality = runQualityGate({
       html:          parsed.content,
       title:         parsed.title,
-      targetKeyword: topicData.target_keyword ?? null,
+      // parsed.focusKeyword, NOT the topic's planned keyword. The prompt tells
+      // the model to pivot when a topic is too close to existing content, and the
+      // row below is saved with parsed.focusKeyword — so measuring density,
+      // heading capitalisation and cannibalisation against the original term
+      // checks a phrase the finished article may barely contain.
+      targetKeyword: parsed.focusKeyword || topicData.target_keyword || null,
       slug:          finalSlug,
       // The client's real site URLs, so the gate can catch a post that duplicates
       // a page the generator never knew about. sitemapRows is empty exactly when
@@ -1553,12 +1558,37 @@ export async function POST(request: NextRequest) {
     const manualPublishDate = target_publish_date && target_publish_date >= manualToday
       ? target_publish_date
       : manualToday
+    // The manual path runs the gate too. It used to insert with no quality_report
+    // at all, and a missing report read as a pass on the cron gate — so anything
+    // generated here could be approved and auto-published with zero checking,
+    // including for a regulated client where the topic path would have held it.
+    const { data: qgSiblingsManual } = await db
+      .from('content_posts')
+      .select('id, title, content')
+      .eq('client_id', effectiveClientId)
+      .eq('content_type', manualContentType)
+      .in('status', ['draft_saved', 'published'])
+      .order('generated_at', { ascending: false })
+      .limit(20)
+
+    const qualityManual = runQualityGate({
+      html:          parsed.content,
+      title:         parsed.title,
+      targetKeyword: parsed.focusKeyword || null,
+      slug:          finalSlug,
+      siteUrls:      sitemapRows.map(r => r.url),
+      regulated:     isRegulatedVertical(clientSettings?.vertical),
+    })
+
     const { data: savedPost, error: insertError } = await db.from('content_posts').insert({
       client_id:           effectiveClientId,
       connection_id:       connectionId,
       status:              'for_review',
       content_type:        manualContentType,
       target_publish_date: manualPublishDate,
+      quality_report:      qualityManual,
+      quality_score:       qualityManual.score,
+      quality_checked_at:  new Date().toISOString(),
       title:               parsed.title,
       seo_title:           parsed.seoTitle || parsed.title,
       content:             parsed.content,

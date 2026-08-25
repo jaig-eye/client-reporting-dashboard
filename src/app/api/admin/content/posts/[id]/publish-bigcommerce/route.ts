@@ -10,6 +10,7 @@ import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { injectNearbyLinks } from '@/lib/content/injectNearbyLinks'
+import { stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -132,7 +133,7 @@ export async function POST(
 
   const payload: Record<string, unknown> = {
     title:            String(p.title ?? ''),
-    body:             String(p.content ?? ''),
+    body:             stripEditorialMarkers(String(p.content ?? '')),
     author:           'Admin',
     url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
     is_published:     false,
@@ -151,13 +152,13 @@ export async function POST(
       let bcPageId:   number
       let bcPagePath: string
       if (existingBcId !== null) {
-        await updateBCPage(storeHash, accessToken, existingBcId, { body: String(p.content ?? ''), name: String(p.title ?? '') })
+        await updateBCPage(storeHash, accessToken, existingBcId, { body: stripEditorialMarkers(String(p.content ?? '')), name: String(p.title ?? '') })
         bcPageId   = existingBcId
         bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
       } else {
         const bcPage = await publishBCPage(storeHash, accessToken, {
           name:       String(p.title ?? ''),
-          body:       String(p.content ?? ''),
+          body:       stripEditorialMarkers(String(p.content ?? '')),
           url:        pagePath,
           is_visible: false,
         })

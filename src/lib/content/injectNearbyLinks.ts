@@ -81,7 +81,11 @@ export async function injectNearbyLinks(
   // Get the current post's URL for linking back
   const { data: currentPost } = await db
     .from('content_posts')
-    .select('city, state_abbr, published_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash')
+    // `content` is NOT optional here. This row is spread into allPosts below and
+    // later written back as `post.content ?? ''` + the links section. Omitting it
+    // meant the current post was rewritten to nothing but the nearby-links list —
+    // destroying the article in the CMS *and* in the database.
+    .select('city, state_abbr, published_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, content')
     .eq('id', currentPostId)
     .single()
 
@@ -147,7 +151,19 @@ export async function injectNearbyLinks(
       url:   o.published_url!,
     }))
 
+    // Refuse to append to a body we do not actually have.
+    //
+    // This function only ever APPENDS, so an empty `content` can only mean the
+    // row was not loaded with its body — never that the article is genuinely
+    // empty (an empty article could not have been published). Writing in that
+    // state replaces a real page with a bare list, on the live site and in the
+    // database, with no way back. A missing body is a bug in the caller, so skip
+    // loudly rather than destroy the page.
     const existingContent = post.content ?? ''
+    if (existingContent.trim() === '') {
+      console.error(`[injectNearbyLinks] refusing to write post ${post.id}: content missing from the loaded row`)
+      continue
+    }
     if (alreadyHasNearbySection(existingContent)) continue
 
     const updatedContent = existingContent + buildNearbySection(links)

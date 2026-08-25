@@ -39,8 +39,49 @@ export class SecretsUnavailableError extends Error {
 }
 
 /**
- * Resolve the 32-byte key. Accepts base64 or hex so operators can paste either
- * `openssl rand -base64 32` or `openssl rand -hex 32`.
+ * KEY ROTATION
+ *
+ * CREDENTIAL_ENCRYPTION_KEY is the active key — everything is sealed under it.
+ * CREDENTIAL_ENCRYPTION_KEY_OLD is an optional comma-separated list of retired
+ * keys that decryption will still try.
+ *
+ * Without this, rotating the key — the routine response to a suspected leak,
+ * which is the single scenario this module exists for — would irrecoverably
+ * destroy every stored credential, discovered one failed unlock at a time. With
+ * it, rotation is: move the current value to _OLD, set a new one, and every
+ * existing secret keeps opening while new writes use the new key. Re-sealing an
+ * individual secret happens naturally the next time someone saves it.
+ */
+function decryptionKeys(): Buffer[] {
+  const keys = [key()]
+  const retired = process.env.CREDENTIAL_ENCRYPTION_KEY_OLD
+  if (retired) {
+    for (const k of retired.split(',').map(s => s.trim()).filter(Boolean)) {
+      try { keys.push(parseKey(k)) } catch { /* skip an unusable retired key */ }
+    }
+  }
+  return keys
+}
+
+/** Decode a base64 or hex 32-byte key. */
+function parseKey(trimmed: string): Buffer {
+  let buf: Buffer
+  if (/^[0-9a-f]{64}$/i.test(trimmed)) {
+    buf = Buffer.from(trimmed, 'hex')
+  } else {
+    buf = Buffer.from(trimmed, 'base64')
+  }
+  if (buf.length !== 32) {
+    throw new SecretsUnavailableError(
+      `CREDENTIAL_ENCRYPTION_KEY must decode to 32 bytes (got ${buf.length}). Use \`openssl rand -base64 32\`.`,
+    )
+  }
+  return buf
+}
+
+/**
+ * Resolve the 32-byte active key. Accepts base64 or hex so operators can paste
+ * either `openssl rand -base64 32` or `openssl rand -hex 32`.
  */
 function key(): Buffer {
   const raw = process.env.CREDENTIAL_ENCRYPTION_KEY
@@ -97,7 +138,6 @@ export function encryptSecret(plaintext: string): string {
  * anything, which is the point of using an authenticated cipher.
  */
 export function decryptSecret(stored: string): string {
-  const k = key()
   const parts = stored.split('.')
   if (parts.length !== 4 || parts[0] !== PREFIX) {
     throw new Error('Stored secret is not in the expected format')
@@ -108,9 +148,24 @@ export function decryptSecret(stored: string): string {
   if (iv.length !== IV_LEN || tag.length !== TAG_LEN) {
     throw new Error('Stored secret has an invalid nonce or tag length')
   }
-  const decipher = createDecipheriv(ALGO, k, iv)
-  decipher.setAuthTag(tag)
-  return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8')
+
+  // Try the active key, then any retired ones. GCM authenticates, so a wrong key
+  // throws rather than returning plausible garbage — trying several is safe and
+  // is what makes rotation survivable.
+  const keys = decryptionKeys()
+  let lastErr: unknown
+  for (const k of keys) {
+    try {
+      const decipher = createDecipheriv(ALGO, k, iv)
+      decipher.setAuthTag(tag)
+      return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8')
+    } catch (e) { lastErr = e }
+  }
+  throw new Error(
+    keys.length > 1
+      ? 'Could not decrypt with the current key or any retired key.'
+      : `Could not decrypt with the current key.${lastErr ? '' : ''}`,
+  )
 }
 
 /** Cheap shape check without needing the key — used to show "a secret is stored". */

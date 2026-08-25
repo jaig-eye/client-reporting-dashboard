@@ -129,6 +129,18 @@ export async function getMonthlyReviewData(
     bc_post_id:          p.bc_post_id    != null ? Number(p.bc_post_id) : null,
     bc_store_hash:       p.bc_store_hash ? String(p.bc_store_hash) : null,
     isBc:                !wpClientIds.has(p.client_id as string),
+
+    // These are fetched by the SELECT above but were not being mapped through.
+    // MonthlyReviewPostCard is the ONLY consumer of QualityFindings, so dropping
+    // quality_report here made the entire reviewer-facing half of the quality
+    // gate dead code — no findings, not even the "checks passed" badge. The two
+    // timestamps drive the "Live copy is out of date" banner, and the silo pair
+    // drives the provenance chip; all three silently did nothing.
+    quality_report:      (p.quality_report ?? null) as MonthlyReviewPost['quality_report'],
+    last_pushed_at:      p.last_pushed_at ? String(p.last_pushed_at) : null,
+    updated_at:          p.updated_at     ? String(p.updated_at)     : null,
+    silo:                (p.silo ?? null)         as MonthlyReviewPost['silo'],
+    silo_keyword:        (p.silo_keyword ?? null) as MonthlyReviewPost['silo_keyword'],
   }))
 
   posts.sort((a, b) =>

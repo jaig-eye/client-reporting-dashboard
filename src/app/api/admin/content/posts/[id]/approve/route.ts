@@ -13,7 +13,7 @@ import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
-import { styleTables }          from '@/lib/content/contentHtml'
+import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 export async function POST(
   request: NextRequest,
@@ -210,7 +210,7 @@ export async function POST(
 
       if (isSaPage) {
         // Use BC pages API for service area pages
-        const pageBody = String((p as Record<string, unknown>).content ?? '')
+        const pageBody = stripEditorialMarkers(String((p as Record<string, unknown>).content ?? ''))
         const pagePath = postSlug.startsWith('/') ? postSlug : `/${postSlug}`
 
         let bcPageId: number
@@ -267,7 +267,7 @@ export async function POST(
       })()
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
-        body:             styleTables(String((p as Record<string, unknown>).content ?? '')),
+        body:             stripEditorialMarkers(styleTables(String((p as Record<string, unknown>).content ?? ''))),
         author:           bcAuthor,
         url:              blogUrl,
         is_published:     false,
@@ -450,12 +450,12 @@ export async function POST(
         // service-area page every time its content was re-pushed.
         ? await updatePage(siteUrl, auth, existingWpId, {
             title:   String(p.title ?? ''),
-            content: styleTables(String(p.content ?? '')),
+            content: stripEditorialMarkers(styleTables(String(p.content ?? ''))),
             slug:    wpSlug,
           })
         : await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
-        content: styleTables(String(p.content ?? '')),
+        content: stripEditorialMarkers(styleTables(String(p.content ?? ''))),
         status:  saStatus,
         date:    saDate,
         slug:    wpSlug,
@@ -548,7 +548,7 @@ export async function POST(
         // that has already gone out.
         ? await updatePost(siteUrl, auth, existingWpId, {
             title:          String(p.title ?? ''),
-            content:        styleTables(String(p.content ?? '')),
+            content:        stripEditorialMarkers(styleTables(String(p.content ?? ''))),
             slug:           p.slug ? String(p.slug) : undefined,
             tags:           tagIds.length > 0 ? tagIds : undefined,
             featured_media: featuredMediaId,
@@ -557,7 +557,7 @@ export async function POST(
           })
         : await publishPost(siteUrl, auth, {
             title:          String(p.title ?? ''),
-            content:        styleTables(String(p.content ?? '')),
+            content:        stripEditorialMarkers(styleTables(String(p.content ?? ''))),
             status:         wpPublishStatus,
             date:           wpDate,
             slug:           p.slug ? String(p.slug) : undefined,
@@ -602,7 +602,15 @@ export async function POST(
 
     // Auto-update WP hub page if this post belongs to a silo (fire-and-forget).
     // p.silo_id is only populated once migration 149 (content_silos) is applied.
-    if ((p as Record<string, unknown>).silo_id) {
+    //
+    // !isRepublish is essential now that re-pushing a live post is allowed. This
+    // block appends a link to the client's hub page and only checks for the
+    // section marker, never for whether the link is already there — and
+    // append_silo_pending_link is a raw JSONB concat with no uniqueness test. So
+    // without this guard, every re-push adds another duplicate <li> to a live
+    // page: push N times, get N copies. The BigCommerce counterpart already
+    // carries the same guard.
+    if ((p as Record<string, unknown>).silo_id && !isRepublish) {
       ;(async () => {
         try {
           const { data: siloRaw } = await db

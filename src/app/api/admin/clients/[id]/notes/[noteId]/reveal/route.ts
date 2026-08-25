@@ -30,6 +30,27 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // ROLE CHECK, not just "is logged in".
+  //
+  // isAdminAuthed only compares the shared admin_session cookie against
+  // ADMIN_PASSWORD, and admin-login hands that same cookie to a role='viewer'
+  // account. Without this, any logged-in viewer could unlock every stored
+  // credential for every client. Reading a password is the single most
+  // privileged action in the app, so it requires an actual admin.
+  //
+  // The session is resolved BEFORE anything is decrypted, so an unauthorised
+  // caller never reaches the ciphertext.
+  const admin = await getAdminSession()
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!admin.isSuperAdmin && admin.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'Viewing stored credentials requires an admin account.' },
+      { status: 403 },
+    )
+  }
+
   const { id: clientId, noteId } = await params
 
   if (!secretsAvailable()) {
@@ -77,15 +98,18 @@ export async function POST(
     )
   }
 
-  const admin = await getAdminSession()
-  const actorLabel = admin?.email ?? admin?.name ?? (admin?.isSuperAdmin ? 'super_admin' : 'admin')
+  // `admin` was already resolved by the role gate above — re-fetching it here
+  // would just repeat the lookup. The label comes from the SESSION, never from
+  // the unsigned admin_user_id cookie, so a caller cannot attribute a reveal to
+  // a colleague by editing a cookie.
+  const actorLabel = admin.email ?? admin.name ?? (admin.isSuperAdmin ? 'super_admin' : 'admin')
 
   // Written BEFORE the value is handed over, so the trail cannot be lost to a
   // later failure. A logging failure does not block the reveal, but it is loud.
   const { error: logErr } = await db.from('credential_access_log').insert({
     note_id:     note.id,
     client_id:   note.client_id,
-    user_id:     admin?.userId ?? null,
+    user_id:     admin.userId ?? null,
     actor_label: actorLabel,
     service:     (note.fields?.service as string | undefined) ?? null,
     ip:          request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,

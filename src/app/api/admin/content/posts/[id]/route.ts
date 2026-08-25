@@ -63,6 +63,25 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
   const db = createAdminClient()
+
+  // Same guard as /content/status: rejecting a post that is live on a CMS here
+  // would hide it from the dashboard while leaving the article published, and
+  // only /dismiss knows how to ask what should happen to the live copy.
+  if (body.status === 'rejected') {
+    const { data: live } = await db
+      .from('content_posts')
+      .select('wp_post_id, bc_post_id')
+      .eq('id', id)
+      .maybeSingle()
+    const l = live as { wp_post_id?: number | null; bc_post_id?: number | null } | null
+    if (l?.wp_post_id || l?.bc_post_id) {
+      return NextResponse.json(
+        { error: 'This post is published on the client\'s site. Use Discard in the review view so you can choose whether to leave, unpublish, or delete the live article.' },
+        { status: 409 },
+      )
+    }
+  }
+
   const { error } = await db.from('content_posts').update(update).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

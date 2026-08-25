@@ -368,8 +368,23 @@ export function runQualityGate(input: QualityGateInput): QualityReport {
       // Count phrase occurrences rather than individual words.
       const hay = wordList.join(' ')
       const needle = kwWords.join(' ')
+      // Word-boundary matching, not raw indexOf.
+      //
+      // `hay` is a space-joined word list, so a bare indexOf for "car" also
+      // matches inside "cars", "care", "carefully", "cargo" and "scarce". On a
+      // realistic 1,500-word article that inflated a true 2% density to over 5%,
+      // which trips the 3.5% CRITICAL threshold and permanently holds a clean
+      // post back from auto-publish. Anchoring on spaces makes the count mean
+      // what the threshold assumes it means.
       let count = 0, idx = 0
-      while ((idx = hay.indexOf(needle, idx)) !== -1) { count++; idx += needle.length }
+      const padded = ` ${hay} `
+      const target = ` ${needle} `
+      while ((idx = padded.indexOf(target, idx)) !== -1) {
+        count++
+        // Step by needle length, not the padded length, so back-to-back
+        // repetitions ("x y x y") are still both counted.
+        idx += needle.length + 1
+      }
       const density = (count * kwWords.length) / wordCount
       if (density > 0.025) {
         findings.push({
@@ -517,8 +532,21 @@ export function runQualityGate(input: QualityGateInput): QualityReport {
     }
   }
 
-  // ── Thin content ──────────────────────────────────────────────────────────
-  if (wordCount > 0 && wordCount < 400) {
+  // ── Thin or empty content ─────────────────────────────────────────────────
+  //
+  // The `wordCount > 0` guard used to exclude the worst case from the only check
+  // that could catch it. A post whose body strips to zero words passed every
+  // other check trivially — no banned phrases in empty text, no keyword density,
+  // an empty structural fingerprint — so it scored 100, reported
+  // "Quality checks passed", and was auto-published to the client's live site as
+  // a blank page. Empty is critical, not merely thin.
+  if (wordCount === 0) {
+    findings.push({
+      code: 'empty_content',
+      severity: 'critical',
+      message: 'The post body contains no readable text. Something failed during generation or sanitisation — publishing this would put a blank page on the client\'s site.',
+    })
+  } else if (wordCount < 400) {
     findings.push({
       code: 'thin_content',
       severity: 'warning',

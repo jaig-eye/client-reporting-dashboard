@@ -25,7 +25,13 @@ export function describeTenure(
   const explicit = parseFoundedYear(eeat.founded_year, currentYear)
   if (explicit !== null) return renderTenure(explicit, currentYear)
 
-  const legacy = (eeat.years_in_business ?? '').trim()
+  // eeat_data is untyped JSONB and the brand-DNA prompt asks the model for a
+  // "number of years", so this value can legitimately arrive as a JSON number.
+  // Calling .trim() on it would throw, and describeTenure runs inside four
+  // content routes — the version on main used a template literal, which coerced
+  // silently. Coerce explicitly rather than reintroducing that fragility.
+  const legacyRaw = eeat.years_in_business
+  const legacy = legacyRaw == null ? '' : String(legacyRaw).trim()
   if (!legacy) return null
 
   // "Since 2008" / "2008" — a bare year in the legacy field is a founding year.

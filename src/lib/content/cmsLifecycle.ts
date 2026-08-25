@@ -72,9 +72,15 @@ async function wpCreds(db: Db, clientId: string) {
     .maybeSingle()
   const c = data as { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } } | null
   if (!c) return null
-  const siteUrl      = String(c.connector.config.site_url || '')
-  const username     = String(c.connector.auth.username || '')
-  const app_password = String(c.connector.auth.app_password || '')
+  // config FIRST, then auth. The only path that creates a wordpress connector
+  // (direct-connections) writes credentials into `config` and leaves `auth` as
+  // the empty default from migration 015 — all 15 production WP connectors are
+  // shaped that way. Reading auth alone returned null every time, which made the
+  // entire live-post lifecycle a no-op for every WordPress client. Every other
+  // resolver in the repo already does config-then-auth; this one did not.
+  const siteUrl      = String(c.connector.config.site_url     || c.connector.auth.site_url     || '')
+  const username     = String(c.connector.config.username     || c.connector.auth.username     || '')
+  const app_password = String(c.connector.config.app_password || c.connector.auth.app_password || '')
   if (!siteUrl || !username || !app_password) return null
   return { siteUrl, username, app_password }
 }

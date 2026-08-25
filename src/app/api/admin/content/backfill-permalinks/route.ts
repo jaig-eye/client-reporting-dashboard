@@ -111,9 +111,10 @@ export async function POST(request: NextRequest) {
       .maybeSingle()
     const c = conn as { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } } | null
     if (!c) { wpCreds.set(clientId, null); return null }
-    const siteUrl      = String(c.connector.config.site_url || '')
-    const username     = String(c.connector.auth.username   || '')
-    const app_password = String(c.connector.auth.app_password || '')
+    // config-then-auth: WP connectors store credentials in config (see cmsLifecycle).
+    const siteUrl      = String(c.connector.config.site_url     || c.connector.auth.site_url     || '')
+    const username     = String(c.connector.config.username     || c.connector.auth.username     || '')
+    const app_password = String(c.connector.config.app_password || c.connector.auth.app_password || '')
     if (!siteUrl || !username || !app_password) { wpCreds.set(clientId, null); return null }
     const v = { siteUrl, username, app_password }
     wpCreds.set(clientId, v)
