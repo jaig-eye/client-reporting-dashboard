@@ -633,9 +633,20 @@ async function runTopicGeneration({
         .eq('client_id', effectiveClientId)
         .not('status', 'in', '("rejected","generating")')
         .neq('id', topicData.id),
+      // source_sitemap requires migration 183. Where it is missing PostgREST
+      // rejects the ENTIRE select, .data comes back null, and sitemapRows silently
+      // becomes [] — which quietly removes every existing-page entry from the
+      // cannibalisation avoid-list. Fall back to the column set that always
+      // exists so a pending migration degrades blog-post detection to a URL
+      // heuristic instead of disabling the protection outright.
       db.from('content_sitemap_pages')
         .select('url, is_priority, is_excluded, created_at, source_sitemap')
-        .eq('client_id', effectiveClientId),
+        .eq('client_id', effectiveClientId)
+        .then(r => r.error && /source_sitemap/i.test(r.error.message)
+          ? db.from('content_sitemap_pages')
+              .select('url, is_priority, is_excluded, created_at')
+              .eq('client_id', effectiveClientId)
+          : r),
     ])
 
     const clientSettings = clientSettingsRes.data as Record<string, unknown> | null

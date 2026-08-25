@@ -304,10 +304,32 @@ export async function generateTopicsForClient(
   })()
 
   const halfMonthAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
-  const { data: storedPages } = await db
+  // source_sitemap requires migration 183; without it PostgREST rejects the whole
+  // select and the cached sitemap silently reads as empty. See the matching
+  // fallback in api/admin/content/generate.
+  type CachedSitemapRow = {
+    url: string; is_priority: boolean; is_excluded: boolean
+    created_at: string; source_sitemap?: string | null
+  }
+
+  const firstTry = await db
     .from('content_sitemap_pages')
     .select('url, is_priority, is_excluded, created_at, source_sitemap')
     .eq('client_id', clientId)
+
+  let storedPages = firstTry.data as CachedSitemapRow[] | null
+  let storedErr   = firstTry.error
+
+  if (storedErr && /source_sitemap/i.test(storedErr.message)) {
+    console.warn('[generateTopics] source_sitemap column missing (migration 183 not applied) — falling back to URL heuristics for blog-post detection.')
+    const retry = await db
+      .from('content_sitemap_pages')
+      .select('url, is_priority, is_excluded, created_at')
+      .eq('client_id', clientId)
+    storedPages = retry.data as CachedSitemapRow[] | null
+    storedErr   = retry.error
+  }
+  if (storedErr) console.error('[generateTopics] sitemap cache read failed:', storedErr.message)
 
   const cacheIsFresh = storedPages && storedPages.length > 0 &&
     (storedPages as { created_at: string }[]).some(r => r.created_at >= halfMonthAgo)

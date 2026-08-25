@@ -48,6 +48,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   // Sitemap config state
   const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
   const [manualLinks,   setManualLinks]   = useState<ManualLink[]>([])
+  const [excludeProducts, setExcludeProducts] = useState(false)
   const [configSaving,  setConfigSaving]  = useState(false)
   const [configSaved,   setConfigSaved]   = useState(false)
   const [configError,   setConfigError]   = useState('')
@@ -67,6 +68,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
         ? d.sitemap_urls as string[]
         : (d.sitemap_url ? [String(d.sitemap_url)] : [])
       setSitemapUrls(urls)
+      setExcludeProducts(d.exclude_product_sitemaps === true)
       const links: ManualLink[] = ((d.manual_link_urls ?? []) as string[]).map(s => {
         try { const p = JSON.parse(s); if (p?.url) return { url: String(p.url), label: String(p.label ?? '') } } catch { /* skip */ }
         if (typeof s === 'string' && s.startsWith('http')) return { url: s, label: '' }
@@ -86,6 +88,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
           client_id:        clientId,
           sitemap_urls:     sitemapUrls.filter(u => u.trim()),
           manual_link_urls: manualLinks.filter(l => l.url.trim()).map(l => JSON.stringify({ url: l.url.trim(), label: l.label.trim() })),
+          exclude_product_sitemaps: excludeProducts,
         }),
       })
       if (!res.ok) { const d = await res.json(); setConfigError(d.error || 'Failed to save'); return }
@@ -234,6 +237,29 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
         </div>
 
         {configError && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', margin: 0 }}>{configError}</p>}
+
+        {/* Ecommerce escape hatch. Off by default because on a store the product
+            page is usually the most valuable thing an article can link to — the
+            round-robin quota in the parser is what handles catalogue scale, so
+            this is only for clients whose SKUs are not useful link targets. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={excludeProducts}
+            onChange={e => setExcludeProducts(e.target.checked)}
+            style={{ width: 15, height: 15, marginTop: 2, flexShrink: 0 }}
+          />
+          <span>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+              Skip individual product pages
+            </span>
+            <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+              {excludeProducts
+                ? 'Product sitemaps are ignored. Category and collection sitemaps are still included — those are strong link targets.'
+                : 'Products are included. Every sub-sitemap gets a fair share of the 500-page cache, so a large catalogue cannot crowd out your service pages and articles. Turn this on only if individual products are not worth linking to.'}
+            </span>
+          </span>
+        </label>
 
         <div>
           <Label hint="for internal link suggestions">Sitemap URLs</Label>

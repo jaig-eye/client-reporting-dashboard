@@ -55,6 +55,7 @@ const CONTENT_FIELDS = [
   'blog_url_prefix',
   'bc_author',
   'vertical',
+  'exclude_product_sitemaps',
 ] as const
 
 export async function PUT(request: NextRequest) {

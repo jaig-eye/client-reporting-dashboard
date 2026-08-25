@@ -16,6 +16,24 @@ export const maxDuration = 60
 /** Per-sub-sitemap ceiling, so one slow child cannot consume the whole budget. */
 const SUB_FETCH_TIMEOUT_MS = 12_000
 
+/** How many URLs we keep per client. Shared fairly across sub-sitemaps below. */
+const MAX_CACHED_URLS = 500
+
+/**
+ * An individual-PRODUCT sitemap, as opposed to a category or collection one.
+ *
+ * The distinction matters: category and collection pages are among the best
+ * internal-link targets a store has, while individual SKUs are the volume that
+ * crowds everything else out. So `product_cat-sitemap.xml` and
+ * `collections-sitemap.xml` are kept even when product exclusion is on;
+ * `product-sitemap.xml` is not.
+ */
+function isProductSitemap(sitemapUrl: string): boolean {
+  const name = sitemapUrl.toLowerCase().split('/').pop() ?? ''
+  if (/categor|_cat|collection|brand|manufacturer/.test(name)) return false
+  return /product|shop|store|item|sku/.test(name)
+}
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
@@ -42,12 +60,15 @@ export async function POST(request: NextRequest) {
 
   const { data: settings } = await db
     .from('content_settings')
-    .select('sitemap_urls, sitemap_url')
+    .select('sitemap_urls, sitemap_url, exclude_product_sitemaps')
     .eq('client_id', clientId)
     .maybeSingle()
 
-  type Settings = { sitemap_urls?: string[] | null; sitemap_url?: string | null } | null
+  type Settings = { sitemap_urls?: string[] | null; sitemap_url?: string | null; exclude_product_sitemaps?: boolean | null } | null
   const s = settings as Settings
+  // Default false: on a store, the product page is usually the most valuable
+  // thing an article can link to. The quota below is what handles scale.
+  const excludeProducts = s?.exclude_product_sitemaps === true
 
   const sitemapUrls: string[] = [
     ...(Array.isArray(s?.sitemap_urls) ? (s!.sitemap_urls as string[]) : []),
@@ -149,7 +170,7 @@ export async function POST(request: NextRequest) {
   if (fetchErrors.length > 0) console.log('[sitemap-parse] fetch errors:', fetchErrors)
 
   const pageUrls = Array.from(pageMap.keys())
-  const urls = pageUrls
+  const filtered = pageUrls
     .filter(u => {
       if (!u.startsWith('http')) return false
       // Reject binary/media/archive files by extension
@@ -164,7 +185,48 @@ export async function POST(request: NextRequest) {
       } catch { return false }
       return true
     })
-    .slice(0, 500)
+
+  // ── Fair share across sub-sitemaps ────────────────────────────────────────
+  //
+  // A flat .slice(0, 500) takes URLs in sitemap-index order, so a store with a
+  // large catalogue fills every slot with products before page-sitemap.xml or
+  // post-sitemap.xml is even reached — and the pages that matter for internal
+  // linking and cannibalisation never make it into the cache at all.
+  //
+  // Round-robin instead: one URL from each sub-sitemap in turn. Small sitemaps
+  // (pages, posts, services) are taken in full because they run out early, and
+  // the catalogue gets whatever is left rather than everything. Same 500 ceiling,
+  // very different 500.
+  const buckets = new Map<string, string[]>()
+  for (const u of filtered) {
+    const src = pageMap.get(u) ?? '(root)'
+    const arr = buckets.get(src)
+    if (arr) arr.push(u)
+    else buckets.set(src, [u])
+  }
+
+  const excludedProductSitemaps: string[] = []
+  if (excludeProducts) {
+    Array.from(buckets.keys()).forEach(src => {
+      if (isProductSitemap(src)) {
+        excludedProductSitemaps.push(src)
+        buckets.delete(src)
+      }
+    })
+  }
+
+  const urls: string[] = []
+  const lists = Array.from(buckets.values())
+  for (let i = 0; urls.length < MAX_CACHED_URLS; i++) {
+    let tookAny = false
+    for (const list of lists) {
+      if (i >= list.length) continue
+      urls.push(list[i])
+      tookAny = true
+      if (urls.length >= MAX_CACHED_URLS) break
+    }
+    if (!tookAny) break
+  }
 
   if (urls.length === 0) {
     const detail = fetchErrors.length > 0 ? ` Errors: ${fetchErrors.join('; ')}` : ''
@@ -175,10 +237,40 @@ export async function POST(request: NextRequest) {
   // ignoreDuplicates: false with a 3-column payload is intentional: PostgREST issues
   // ON CONFLICT (client_id, url) DO UPDATE SET source_sitemap = excluded.source_sitemap
   // so only source_sitemap is touched; is_priority / is_excluded / title are NOT overwritten.
-  await db.from('content_sitemap_pages').upsert(
-    urls.map(url => ({ client_id: clientId, url, source_sitemap: pageMap.get(url) ?? null })),
-    { onConflict: 'client_id,url', ignoreDuplicates: false }
-  )
+  //
+  // THE ERROR IS CHECKED, AND THE FALLBACK IS NOT OPTIONAL POLISH.
+  // source_sitemap comes from migration 183, which is not applied on every
+  // environment. When it is missing PostgREST rejects the whole upsert with
+  // PGRST204, and because this call previously ignored its error the route went
+  // on to return an empty 200 — a silent no-op that looked to the user like
+  // "the sitemap tab returns nothing", with no message anywhere to explain it.
+  // Worse, the empty cache silently disables cannibalisation protection at
+  // generation time. Degrade to writing without the column rather than writing
+  // nothing at all.
+  const rows = urls.map(url => ({ client_id: clientId, url, source_sitemap: pageMap.get(url) ?? null }))
+
+  let { error: upsertErr } = await db
+    .from('content_sitemap_pages')
+    .upsert(rows, { onConflict: 'client_id,url', ignoreDuplicates: false })
+
+  let sourceSitemapMissing = false
+  if (upsertErr && /source_sitemap/i.test(upsertErr.message)) {
+    sourceSitemapMissing = true
+    console.warn('[sitemap-parse] source_sitemap column missing (migration 183 not applied) — retrying without it. Blog-post detection will fall back to URL heuristics.')
+    const bare = rows.map(({ client_id, url }) => ({ client_id, url }))
+    const retry = await db
+      .from('content_sitemap_pages')
+      .upsert(bare, { onConflict: 'client_id,url', ignoreDuplicates: false })
+    upsertErr = retry.error
+  }
+
+  if (upsertErr) {
+    console.error('[sitemap-parse] upsert failed:', upsertErr.message)
+    return NextResponse.json(
+      { error: `Parsed ${urls.length} pages but could not save them: ${upsertErr.message}` },
+      { status: 500 },
+    )
+  }
 
   const { data: allPages } = await db
     .from('content_sitemap_pages')
