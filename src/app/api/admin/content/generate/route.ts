@@ -1,3 +1,5 @@
+import { buildEditorialStandards, isRegulatedVertical } from '@/lib/content/editorialStandards'
+import { runQualityGate } from '@/lib/content/qualityGate'
 import { attachPostToKeyword } from '@/lib/content/siloQueue'
 import { describeTenure } from '@/lib/content/eeat'
 import type { EeatData } from '@/lib/content/types'
@@ -469,7 +471,9 @@ function buildSystemPrompt(
   avoidTopics: string,
   postStructure: string,
   masterPreamble?: string | null,
-  blogReminder?: string | null
+  blogReminder?: string | null,
+  /** Purpose + regulated-claim standards. See editorialStandards.ts. */
+  editorialStandards?: string | null
 ): string {
   // Appended last so it survives recency bias — keeps a stale near-me topic from
   // producing a near-me article at write time (see blogStrategy.ts).
@@ -478,6 +482,9 @@ function buildSystemPrompt(
   // hierarchy, citation honesty. Universal (all content types). Blog-only structure
   // (Key Takeaways box, FAQ) is carried by blogReminder, gated at the call sites.
   const qualityNote = `\n\n${WRITER_QUALITY_RULES}`
+  // Appended AFTER the writer-quality bar so the purpose-level standards (who
+  // this is for, what must never be invented) are the last thing the model reads.
+  const editorialNote = editorialStandards ? `\n\n${editorialStandards}` : ''
   const currentYear = new Date().getFullYear()
   const yearNote = `\nContent freshness — IMPORTANT: The current calendar year is ${currentYear}. All trend references, "this year", seasonal topics, and time-sensitive content must reflect ${currentYear}. Only reference ${currentYear - 1} explicitly when the topic is about the previous year's results or historical comparison.`
 
@@ -515,7 +522,7 @@ ${jsonFormat}
 ${clientContext ? `\n${clientContext}` : ''}
 ${contextRules}
 ${postStructure ? `\nPost structure to follow:\n${postStructure}` : ''}
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}${qualityNote}${blogIntentNote}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${yearNote}${rulesReminder}${qualityNote}${editorialNote}${blogIntentNote}`
   }
 
   return `You are a professional SEO content writer for ${agency}.
@@ -545,7 +552,7 @@ SEO guidelines:
 - INTERNAL LINKS — CRITICAL: ONLY use URLs that appear verbatim in the "Available site pages for internal linking" list provided in the client context. Do NOT invent, guess, or construct any internal URL. Any internal link to a URL not in that list is a critical error. Do NOT modify any URL in any way — do not prepend, append, or insert any path segment. Use each URL character-for-character as it appears in the list.
 - NEVER link to XML files, sitemaps, PHP scripts, feeds, or any non-HTML page. External links are not permitted — mention sources by name only.
 - AVOID HTML tables. Tables render poorly on mobile in WordPress. Only use a <table> when the data is genuinely comparative (≤4 rows, ≤3 columns); use bullet lists or prose for everything else.
-${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${qualityNote}${blogIntentNote}`
+${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles and target keywords are already published or queued. Before writing, check your chosen focusKeyword and angle against every entry below:\n1. Do NOT target the same focus keyword (including plurals, minor rephrasing, or city-swap variants).\n2. Do NOT answer the same core user question or intent, even under a different title.\n3. Do NOT use a slug that starts with the same base as an existing post's slug.\n4. If the assigned topic is too close to an existing entry, pivot to a clearly adjacent subtopic — a different buyer stage, a different service facet, or a more specific long-tail angle.\n\nExisting covered content:\n${avoidTopics}` : ''}${qualityNote}${editorialNote}${blogIntentNote}`
 }
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
@@ -607,7 +614,7 @@ async function runTopicGeneration({
     // ── Load all settings in parallel ────────────────────────────────────────
     const [clientSettingsRes, globalSettingsRes, existingPostsRes, pendingTopicsRes, sitemapPagesRes] = await Promise.all([
       db.from('content_settings')
-        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt, blog_url_prefix')
+        .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, content_image_generation, content_image_prompt, blog_url_prefix, vertical')
         .eq('client_id', effectiveClientId)
         .maybeSingle(),
       db.from('content_settings')
@@ -793,7 +800,8 @@ async function runTopicGeneration({
       ? `\nContent Restrictions (strictly enforced — never violate these):\n${clientSettings!.topic_guidelines}`
       : ''
 
-    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, contentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)
+    const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, contentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null,
+      buildEditorialStandards({ vertical: (clientSettings?.vertical as string | null) ?? null }))
       + eeatSection + restrictionSection
 
     // ── Build user prompt ──────────────────────────────────────────────────────
@@ -1062,6 +1070,27 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       brief,
     })
 
+    // Pre-publish quality gate. Compares against the client's own published posts,
+    // so it can see the corpus-level "every page has the same skeleton" pattern
+    // that no single-document check would catch. Never blocks a human; a critical
+    // finding only holds the post back from the unattended cron push.
+    const { data: qgSiblings } = await db
+      .from('content_posts')
+      .select('id, title, content')
+      .eq('client_id', effectiveClientId)
+      .eq('content_type', topicData.content_type ?? 'blog')
+      .in('status', ['draft_saved', 'published'])
+      .order('generated_at', { ascending: false })
+      .limit(20)
+
+    const quality = runQualityGate({
+      html:          parsed.content,
+      title:         parsed.title,
+      targetKeyword: topicData.target_keyword ?? null,
+      siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
+      regulated:     isRegulatedVertical(clientSettings?.vertical),
+    })
+
     const { data: savedPost, error: insertError } = await db.from('content_posts').insert({
       client_id:           effectiveClientId,
       connection_id:       connectionId,
@@ -1071,6 +1100,9 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       content:             parsed.content,
       meta_description:    parsed.metaDescription,
       slug:                finalSlug,
+      quality_report:      quality,
+      quality_score:       quality.score,
+      quality_checked_at:  new Date().toISOString(),
       target_keyword:      parsed.focusKeyword,
       focus_topic:         topicData.topic ?? null,
       topic_rationale:     topicData.rationale ?? null,
@@ -1283,7 +1315,7 @@ export async function POST(request: NextRequest) {
   const [clientSettingsRes, globalSettingsRes, existingPostsRes, pendingTopicsRes2, sitemapPagesRes] = await Promise.all([
     effectiveClientId
       ? db.from('content_settings')
-          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix, content_image_generation, content_image_prompt')
+          .select('business_background, services, target_audience, geographic_focus, brand_voice, post_structure, sitemap_url, sitemap_urls, manual_link_urls, phone_number, target_length, connection_id, cta_list, publish_time, eeat_data, topic_guidelines, blog_url_prefix, content_image_generation, content_image_prompt, vertical')
           .eq('client_id', effectiveClientId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -1442,7 +1474,8 @@ export async function POST(request: NextRequest) {
     ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000 })
     : ''
 
-  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null)
+  const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null,
+    buildEditorialStandards({ vertical: (clientSettings?.vertical as string | null) ?? null }))
     + manualEeatSection + manualRestrictionSection + manualCompetitorSection
 
   let rawText: string

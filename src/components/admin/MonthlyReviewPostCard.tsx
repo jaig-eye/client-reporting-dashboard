@@ -2,6 +2,8 @@
 
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import QualityFindings from './QualityFindings'
+import type { QualityReport } from '@/lib/content/qualityGate'
 
 
 export interface MonthlyReviewPost {
@@ -27,6 +29,8 @@ export interface MonthlyReviewPost {
   isBc:                boolean
   /** Set when the CMS copy was last written. See migration 200. */
   last_pushed_at?:     string | null
+  /** Pre-publish quality gate result. See src/lib/content/qualityGate.ts. */
+  quality_report?:     QualityReport | null
   /** Silo provenance — which keyword set produced this, on which term. */
   silo?:               { id: string; name: string } | null
   silo_keyword?:       { id: string; keyword: string } | null
@@ -190,6 +194,10 @@ export default function MonthlyReviewPostCard({
               Live copy is out of date — the site still shows the previous version. Push to update it.
             </div>
           )}
+
+          {/* The human check that the spam-update reporting singled out as
+              protective. Shown before approval, with the reason, not just a score. */}
+          <QualityFindings report={post.quality_report} />
         </div>
 
         {/* Status / actions */}

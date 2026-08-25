@@ -94,12 +94,15 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config, quality_gate_blocks_autopush')
     .single()
 
   const notifEmail          = (agencySettings?.notification_email          as string | null)  ?? null
   const agencyName          = (agencySettings?.agency_name                 as string | null)  ?? 'Agency Dashboard'
   const consolidatedEmail   = (agencySettings?.consolidated_email_notifications as boolean | null) ?? true
+  // Default true: unattended publishing is the risk, so the gate is on unless
+  // an agency explicitly opts out.
+  const qualityGateBlocksAutopush = (agencySettings?.quality_gate_blocks_autopush as boolean | null) ?? true
   const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
@@ -408,7 +411,7 @@ export async function GET(request: NextRequest) {
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
       const { data: duePosts } = await db
         .from('content_posts')
-        .select('id, title')
+        .select('id, title, quality_report')
         .eq('client_id', client_id)
         .eq('status', 'approved')
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
@@ -416,7 +419,42 @@ export async function GET(request: NextRequest) {
         .is('wp_post_id', null)
         .is('bc_post_id', null)
 
-      const allDuePosts = (duePosts ?? []) as { id: string; title: string | null }[]
+      type DuePost = { id: string; title: string | null; quality_report?: { blocksAutoPush?: boolean; findings?: { severity: string; message: string }[] } | null }
+      const dueRaw = (duePosts ?? []) as unknown as DuePost[]
+
+      // QUALITY GATE — the whole point of this block.
+      //
+      // Reporting on the August 2026 spam update was blunt about the pattern:
+      // sites "automatically posting" end to end were "being filtered and dropped
+      // across the board", while publishers doing human checks before publishing
+      // were fine. Unattended publishing is the risk being managed here, so a post
+      // carrying a CRITICAL quality finding is held back for a human rather than
+      // shipped by a cron at 2am. It stays 'approved' and remains fully publishable
+      // by hand — nothing is rejected, only un-automated.
+      const gateOn = qualityGateBlocksAutopush !== false
+      const held   = gateOn ? dueRaw.filter(p => p.quality_report?.blocksAutoPush === true) : []
+      const allDuePosts = gateOn
+        ? dueRaw.filter(p => p.quality_report?.blocksAutoPush !== true)
+        : dueRaw
+
+      if (held.length > 0) {
+        console.log(`[content-topics] quality gate held ${held.length} post(s) from auto-push for client ${client_id}`)
+        for (const p of held) {
+          const reasons = (p.quality_report?.findings ?? [])
+            .filter(f => f.severity === 'critical')
+            .map(f => f.message)
+          await db.from('admin_alerts').insert({
+            type:      'content',
+            severity:  'warning',
+            client_id,
+            title:     `Held from auto-publish: ${p.title ?? 'Untitled post'}`,
+            body:      `The quality gate flagged this post, so it was not published automatically. Review and publish it by hand.\n\n${reasons.join('\n')}`,
+            link_url:  '/admin/content',
+          }).then(({ error }) => {
+            if (error) console.error('[content-topics] hold alert insert failed', error.message)
+          })
+        }
+      }
 
       // Resolve client name once for notifications
       let clientNameForPush = topicAccum.get(client_id)?.clientName ?? ''

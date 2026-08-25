@@ -61,6 +61,7 @@ export async function PUT(request: NextRequest) {
     'master_writing_prompt',
     'metric_alert_window_days',
     'contact_stale_days',
+    'quality_gate_blocks_autopush',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
     'service_page_master_prompt',

@@ -54,6 +54,7 @@ const CONTENT_FIELDS = [
   'default_category_ids',
   'blog_url_prefix',
   'bc_author',
+  'vertical',
 ] as const
 
 export async function PUT(request: NextRequest) {
