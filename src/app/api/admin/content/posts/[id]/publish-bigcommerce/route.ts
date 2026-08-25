@@ -172,7 +172,9 @@ export async function POST(
         bc_post_id:        bcPageId,
         bc_store_hash:     storeHash,
         status:            'draft_saved',
-        published_url:     publicUrl,
+        // Only overwrite when we actually resolved one - a transient storefront
+        // lookup failure must not wipe a permalink we already had.
+        ...(publicUrl ? { published_url: publicUrl } : {}),
         platform_edit_url: bcEditUrl,
         last_pushed_at:    new Date().toISOString(),
       }).eq('id', id)
@@ -248,7 +250,9 @@ export async function POST(
       bc_post_id:        bcPostId,
       bc_store_hash:     storeHash,
       status:            'draft_saved',
-      published_url:     publicUrl,
+      // Only overwrite when we actually resolved one - a transient storefront
+      // lookup failure must not wipe a permalink we already had.
+      ...(publicUrl ? { published_url: publicUrl } : {}),
       platform_edit_url: bcEditUrl,
       last_pushed_at:    new Date().toISOString(),
     }).eq('id', id)
@@ -269,6 +273,8 @@ export async function POST(
       })).catch(() => {})
     }
 
+    // The response always carries the key — the conditional spread above is a
+    // DB-write concern only; callers here expect published_url to be present.
     return NextResponse.json({
       bc_post_id:    bcPostId,
       bc_edit_url:   bcEditUrl,

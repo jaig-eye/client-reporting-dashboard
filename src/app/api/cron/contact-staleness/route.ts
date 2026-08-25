@@ -133,20 +133,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // In-app alert so it is visible without Discord at all.
-  await db.from('admin_alerts').insert({
+  // In-app alert so it is visible without Discord or email configured at all.
+  const { error: alertErr } = await db.from('admin_alerts').insert({
     type:     'crm',
     severity: 'warning',
     title:    `${stale.length} client${stale.length === 1 ? '' : 's'} due a check-in`,
     body:     lines.join('\n'),
     link_url: '/admin/dashboard',
-  }).then(({ error }) => {
-    if (error) console.error('[contact-staleness] admin_alerts insert failed', error.message)
   })
+  if (alertErr) console.error('[contact-staleness] admin_alerts insert failed', alertErr.message)
+  const inAppSent = !alertErr
 
-  // Only mark as alerted if the notice actually went somewhere, so a Discord
-  // outage does not silently burn the one alert for this stale streak.
-  if (discordSent || emailSent) {
+  // Only mark as alerted if the notice actually reached SOME channel, so a
+  // Discord outage does not silently burn the one alert for this stale streak.
+  // The in-app alert counts: without it, an agency with neither Discord nor
+  // email configured would never stamp, and would re-insert the same digest
+  // every single weekday.
+  if (discordSent || emailSent || inAppSent) {
     const stamp = new Date().toISOString()
     const { error } = await db
       .from('clients')
@@ -161,6 +164,7 @@ export async function GET(request: NextRequest) {
     stale:   stale.length,
     discordSent,
     emailSent,
+    inAppSent,
   })
 }
 

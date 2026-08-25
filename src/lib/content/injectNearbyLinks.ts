@@ -43,6 +43,29 @@ export async function injectNearbyLinks(
 
   const db = createAdminClient()
 
+  // Honour the per-silo internal-linking switch.
+  //
+  // Without this the toggle would only soften a sentence in the generation
+  // prompt while this injector kept writing cross-links directly into live CMS
+  // pages — i.e. "linking off" would not actually turn linking off.
+  const { data: ownerPost } = await db
+    .from('content_posts')
+    .select('silo_id')
+    .eq('id', currentPostId)
+    .maybeSingle()
+
+  const ownerSiloId = (ownerPost as { silo_id?: string | null } | null)?.silo_id ?? null
+  if (ownerSiloId) {
+    const { data: silo } = await db
+      .from('content_silos')
+      .select('inject_internal_links')
+      .eq('id', ownerSiloId)
+      .maybeSingle()
+    // Only an explicit false opts out; a missing column (migration 201 not yet
+    // applied) leaves the previous always-on behaviour intact.
+    if ((silo as { inject_internal_links?: boolean } | null)?.inject_internal_links === false) return
+  }
+
   // Find all pushed sibling SA pages for the same service
   const { data: siblings } = await db
     .from('content_posts')

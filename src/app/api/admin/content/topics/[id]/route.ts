@@ -3,7 +3,7 @@
 // Updates topic status (approve/reject) and target_publish_date.
 // When approving past the generate_by_date deadline, fires post generation immediately.
 
-import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
+import { releaseKeywordForTopic, releaseKeywordsForTopics } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -94,13 +94,19 @@ export async function PATCH(
       .in('status', ['approved', 'generating', 'generated'])
 
     if ((approvedCount ?? 0) >= postsNeeded) {
-      await db
+      // Capture the ids so their silo keywords can go back on the queue —
+      // an auto-rejected topic must not retire its keyword.
+      const { data: autoRejected } = await db
         .from('content_topics')
         .update({ status: 'rejected' })
         .eq('client_id', topic.client_id)
         .eq('target_publish_date', topic.target_publish_date)
         .in('status', ['pending', 'scheduled'])
         .neq('id', id)
+        .select('id')
+
+      const ids = (autoRejected ?? []).map((t: { id: string }) => t.id)
+      if (ids.length > 0) await releaseKeywordsForTopics(db, ids).catch(() => {})
     }
   }
 

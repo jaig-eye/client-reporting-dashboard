@@ -238,7 +238,10 @@ export async function POST(
           bc_post_id:        bcPageId,
           bc_store_hash:     storeHash,
           status:            'draft_saved',
-          published_url:     publicUrl,
+          // Only overwrite when one was actually resolved — a transient /v2/store
+          // failure returns null, and writing that would wipe a permalink we
+          // already had, dropping the post out of link injection and "View live".
+          ...(publicUrl ? { published_url: publicUrl } : {}),
           platform_edit_url: bcEditUrl,
           last_pushed_at:    new Date().toISOString(),
           admin_approved_at: new Date().toISOString(),
@@ -320,7 +323,8 @@ export async function POST(
         bc_post_id:        bcPostId,
         bc_store_hash:     storeHash,
         status:            'draft_saved',
-        published_url:     publicUrl,
+        // See above: never let a failed storefront lookup null out a good permalink.
+        ...(publicUrl ? { published_url: publicUrl } : {}),
         platform_edit_url: bcEditUrl,
         last_pushed_at:    new Date().toISOString(),
         admin_approved_at: new Date().toISOString(),
@@ -441,10 +445,12 @@ export async function POST(
       }
 
       result = existingWpId !== null
+        // `status` is deliberately omitted, exactly as in the blog branch below:
+        // saStatus defaults to 'draft', so sending it would UN-PUBLISH a live
+        // service-area page every time its content was re-pushed.
         ? await updatePage(siteUrl, auth, existingWpId, {
-            title:   String(p.title ?? ""),
-            content: styleTables(String(p.content ?? "")),
-            status:  saStatus,
+            title:   String(p.title ?? ''),
+            content: styleTables(String(p.content ?? '')),
             slug:    wpSlug,
           })
         : await publishPage(siteUrl, auth, {
@@ -573,8 +579,10 @@ export async function POST(
       wp_status:         isServiceArea ? result.status : wpPublishStatus,
       status:            'draft_saved',
       // Only a real permalink goes in published_url; the wp-admin fallback lives
-      // in platform_edit_url so internal-link injection never emits it.
-      published_url:     result.link || null,
+      // in platform_edit_url so internal-link injection never emits it. And when
+      // WP returns no link at all, keep whatever was already stored rather than
+      // nulling a permalink that was previously correct.
+      ...(result.link ? { published_url: result.link } : {}),
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),

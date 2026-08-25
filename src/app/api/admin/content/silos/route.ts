@@ -92,6 +92,7 @@ export async function GET(request: NextRequest) {
     const { data: kws } = await db
       .from('content_silo_keywords')
       .select('silo_id, used_at')
+      .eq('selected', true)   // same definition the queue walker uses
       .in('silo_id', siloIds)
 
     for (const k of (kws ?? []) as { silo_id: string; used_at: string | null }[]) {
@@ -181,6 +182,8 @@ export async function POST(request: NextRequest) {
         keyword,
         keyword_type: 'supporting',
         sort_order:   i,
+        // Typed straight into the queue, so they are chosen by definition.
+        selected:     true,
       })),
     )
     if (kwErr) {

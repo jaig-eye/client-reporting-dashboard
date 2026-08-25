@@ -518,7 +518,7 @@ The hub/pillar page does not exist yet. The FIRST topic in your response MUST ta
       // page. Every silo in production today has hub_page_url NULL, and the
       // hub-and-spoke prompt below would instruct the model to link to a hub that
       // does not exist. Walk the keyword queue instead.
-      queueKeywords = await fetchQueueKeywords(db, opts.siloId, Math.max(count, 12))
+      queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
       const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
 
       if (isKeywordQueue) {

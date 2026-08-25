@@ -14,7 +14,7 @@
 -- This migration moves the admin URL to its own column and NULLs the bogus
 -- published_url values, which immediately stops the link injector from emitting
 -- them. The real permalinks are restored by the backfill route:
---   POST /api/admin/content/backfill-bc-urls
+--   POST /api/admin/content/backfill-permalinks
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE content_posts

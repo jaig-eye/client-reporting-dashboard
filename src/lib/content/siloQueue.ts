@@ -42,6 +42,7 @@ export async function fetchQueueKeywords(
     .from('content_silo_keywords')
     .select('id, keyword, keyword_type, intent, sort_order, used_at')
     .eq('silo_id', siloId)
+    .eq('selected', true)
     .is('used_at', null)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true })
@@ -63,8 +64,8 @@ export async function queueCounts(
   siloId: string,
 ): Promise<{ total: number; unused: number }> {
   const [{ count: total }, { count: unused }] = await Promise.all([
-    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId),
-    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId).is('used_at', null),
+    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId).eq('selected', true),
+    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId).eq('selected', true).is('used_at', null),
   ])
   return { total: total ?? 0, unused: unused ?? 0 }
 }
@@ -153,10 +154,25 @@ export async function releaseKeywordForTopic(
   db: SupabaseClient<any>,
   topicId: string,
 ): Promise<void> {
+  return releaseKeywordsForTopics(db, [topicId])
+}
+
+/**
+ * Bulk form, for the paths that reject many topics at once — the slot-quota
+ * auto-reject, the bulk-reject endpoint, and the topic swap inside
+ * full-regenerate. Without this those routes strand their keywords as used
+ * forever and the silo reads as exhausted.
+ */
+export async function releaseKeywordsForTopics(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: SupabaseClient<any>,
+  topicIds: string[],
+): Promise<void> {
+  if (topicIds.length === 0) return
   const { error } = await db
     .from('content_silo_keywords')
     .update({ used_at: null, target_topic_id: null, target_post_id: null })
-    .eq('target_topic_id', topicId)
+    .in('target_topic_id', topicIds)
   if (error) console.error('[siloQueue] release failed:', error.message)
 }
 

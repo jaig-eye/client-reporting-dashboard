@@ -130,9 +130,22 @@ export default function SiloManager({ clientId, onGenerated, platform = 'wordpre
       : await fetch(`/api/admin/content/silos?id=${editingSiloId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     setSaving(false)
     if (res.ok) {
+      // 207 means the silo saved but seeding its keywords did not. res.ok is true
+      // for 207, so without this the failure is swallowed behind "Silo created"
+      // and the user gets an empty queue with no explanation.
+      const payloadBack = await res.json().catch(() => ({})) as { warning?: string; keywordsAdded?: number }
       setModalOpen(false); loadSilos()
       if (modalMode === 'create') playSiloCreated()
-      showToast(modalMode === 'create' ? 'Silo created' : 'Silo saved')
+      if (payloadBack.warning) {
+        showToast(payloadBack.warning, 'error')
+      } else {
+        const n = payloadBack.keywordsAdded ?? 0
+        showToast(
+          modalMode === 'create'
+            ? (n > 0 ? `Silo created with ${n} keyword${n === 1 ? '' : 's'} queued` : 'Silo created')
+            : 'Silo saved',
+        )
+      }
     } else showToast((await res.json().catch(() => ({}))).error ?? 'Failed to save', 'error')
   }
 

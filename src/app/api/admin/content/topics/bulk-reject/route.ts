@@ -4,6 +4,7 @@
 // Used by the slot "Clean up" action to archive stale pending/approved topics
 // in calendar slots that already have a generated post.
 
+import { releaseKeywordsForTopics } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'

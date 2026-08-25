@@ -170,12 +170,18 @@ export default function ClientRelationshipCard({
       </div>
 
       {editingDate ? (
+        // Commit on blur / Enter only. A per-keystroke onChange fires while the
+        // year is still being typed ("0002-.."), saving a nonsense date and
+        // unmounting the field after the first digit.
         <input
           type="date"
           autoFocus
           defaultValue={contact ? new Date(contact).toISOString().slice(0, 10) : ''}
           onBlur={e => { if (e.target.value) setContactDate(e.target.value); else setEditingDate(false) }}
-          onChange={e => e.target.value && setContactDate(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+            if (e.key === 'Escape') { e.preventDefault(); setEditingDate(false) }
+          }}
           className="input w-full"
           style={{ fontSize: '0.75rem', marginBottom: 6 }}
         />

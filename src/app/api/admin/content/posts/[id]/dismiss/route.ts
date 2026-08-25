@@ -79,19 +79,23 @@ export async function POST(
       .update({ status: 'rejected' })
       .eq('post_id', id)
       .not('status', 'eq', 'rejected')
+
+    // The topic is dead, so its silo keyword goes back on the queue — otherwise
+    // the term is retired forever with nothing published for it.
+    //
+    // Only on this branch. The `else` path below deliberately KEEPS the topic
+    // alive to be regenerated, and that topic still owns the keyword; releasing
+    // it here would let a second topic claim the same term and produce two
+    // articles competing for one keyword.
+    if (ownerTopic) {
+      await releaseKeywordForTopic(db, (ownerTopic as { id: string }).id).catch(() => {})
+    }
   } else {
     // Reset topic back to approved so the cron regenerates a new post
     await db
       .from('content_topics')
       .update({ status: 'approved', post_id: null })
       .eq('post_id', id)
-  }
-
-  // Return the silo keyword to the queue either way. A rejected article must not
-  // silently retire its keyword — otherwise the silo reads as exhausted while
-  // nothing was ever published for that term.
-  if (ownerTopic) {
-    await releaseKeywordForTopic(db, (ownerTopic as { id: string }).id).catch(() => {})
   }
 
   return NextResponse.json({ ok: true })

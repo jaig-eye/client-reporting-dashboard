@@ -11,6 +11,7 @@
 // A waitUntil background job handles topic generation + AI + DB update,
 // then flips status back to 'for_review' when done.
 
+import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
@@ -192,6 +193,9 @@ export async function POST(
         await db.from('content_topics')
           .update({ post_id: null, status: 'rejected' })
           .eq('id', post.topic_id as string)
+        // The superseded topic hands its silo keyword back to the queue; the new
+        // topic claims its own. Skipping this strands the term as used forever.
+        await releaseKeywordForTopic(db, post.topic_id as string).catch(() => {})
       }
 
       // 3. Fetch full topic data (TopicSummary only has a few fields)
