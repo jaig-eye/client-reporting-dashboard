@@ -27,6 +27,9 @@ export interface MonthlyReviewPost {
   isBc:                boolean
   /** Set when the CMS copy was last written. See migration 200. */
   last_pushed_at?:     string | null
+  /** Silo provenance — which keyword set produced this, on which term. */
+  silo?:               { id: string; name: string } | null
+  silo_keyword?:       { id: string; keyword: string } | null
   /** Maintained by trg_content_posts_updated_at. */
   updated_at?:         string | null
 }
@@ -138,6 +141,21 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
           </div>
+          {/* Silo provenance — which keyword set this came out of, and the term
+              it consumed. Otherwise a silo-driven post is indistinguishable from
+              an ad-hoc one by the time it reaches review. */}
+          {post.silo && (
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{
+                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
+                border: '1px solid rgba(139,92,246,0.28)',
+                padding: '0 5px', borderRadius: 3, fontWeight: 600,
+              }}>
+                silo: {post.silo.name}
+              </span>
+              {post.silo_keyword && <span>from &ldquo;{post.silo_keyword.keyword}&rdquo;</span>}
+            </div>
+          )}
           {/* Live-post links — shown once the post is on-site */}
           {(post.status === 'draft_saved' || post.status === 'published') && (() => {
             const live = viewLiveUrl(post)

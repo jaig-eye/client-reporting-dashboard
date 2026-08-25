@@ -21,11 +21,37 @@ export async function GET(
     .from('content_silo_keywords')
     .select('*')
     .eq('silo_id', siloId)
-    .order('keyword_type', { ascending: true })
-    .order('created_at', { ascending: true })
+    .order('sort_order',  { ascending: true })
+    .order('created_at',  { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ keywords: data ?? [] })
+
+  const keywords = (data ?? []) as Record<string, unknown>[]
+
+  // Attach what each keyword actually produced, so the silo can answer
+  // "which article came from this term?" without an N+1 from the client.
+  const postIds  = keywords.map(k => k.target_post_id).filter(Boolean) as string[]
+  const topicIds = keywords.map(k => k.target_topic_id).filter(Boolean) as string[]
+
+  const [postsRes, topicsRes] = await Promise.all([
+    postIds.length
+      ? db.from('content_posts').select('id, title, status, published_url, target_publish_date').in('id', postIds)
+      : Promise.resolve({ data: [] }),
+    topicIds.length
+      ? db.from('content_topics').select('id, topic, status').in('id', topicIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const postById  = new Map((postsRes.data  ?? []).map((p: Record<string, unknown>) => [p.id as string, p]))
+  const topicById = new Map((topicsRes.data ?? []).map((t: Record<string, unknown>) => [t.id as string, t]))
+
+  return NextResponse.json({
+    keywords: keywords.map(k => ({
+      ...k,
+      post:  k.target_post_id  ? postById.get(k.target_post_id  as string) ?? null : null,
+      topic: k.target_topic_id ? topicById.get(k.target_topic_id as string) ?? null : null,
+    })),
+  })
 }
 
 export async function POST(

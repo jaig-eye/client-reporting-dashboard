@@ -3,6 +3,7 @@
 // Updates topic status (approve/reject) and target_publish_date.
 // When approving past the generate_by_date deadline, fires post generation immediately.
 
+import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -103,6 +104,11 @@ export async function PATCH(
     }
   }
 
+  // A rejected topic puts its silo keyword back on the queue.
+  if (patch.status === 'rejected') {
+    await releaseKeywordForTopic(db, id).catch(() => {})
+  }
+
   const adminSession = await getAdminSession()
   if (patch.status === 'approved' || patch.status === 'rejected') {
     logActivity(adminSession, patch.status, 'topic', {
@@ -126,8 +132,13 @@ export async function DELETE(
 
   const { id } = await params
   const db = createAdminClient()
+  // Release before the delete: once the row is gone the FK is nulled and the
+  // keyword could never be matched back to it.
+  await releaseKeywordForTopic(db, id).catch(() => {})
+
   const { error } = await db.from('content_topics').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'deleted', 'topic', { resourceId: id })
   return NextResponse.json({ ok: true })

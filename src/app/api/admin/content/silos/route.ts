@@ -85,10 +85,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Keyword-queue depth per silo, so the UI can show "3 of 4 keywords left"
+  // without an extra round trip per silo.
+  const queue: Record<string, { total: number; unused: number }> = {}
+  if (siloIds.length > 0) {
+    const { data: kws } = await db
+      .from('content_silo_keywords')
+      .select('silo_id, used_at')
+      .in('silo_id', siloIds)
+
+    for (const k of (kws ?? []) as { silo_id: string; used_at: string | null }[]) {
+      if (!queue[k.silo_id]) queue[k.silo_id] = { total: 0, unused: 0 }
+      queue[k.silo_id].total++
+      if (!k.used_at) queue[k.silo_id].unused++
+    }
+  }
+
   const result = (silos ?? []).map((s: SiloRow) => ({
     ...s,
     clusterCount: counts[s.id]?.total ?? 0,
     publishedCount: counts[s.id]?.published ?? 0,
+    keywordTotal:  queue[s.id]?.total  ?? 0,
+    keywordUnused: queue[s.id]?.unused ?? 0,
   }))
 
   return NextResponse.json({ silos: result })
@@ -112,6 +130,9 @@ export async function POST(request: NextRequest) {
     cluster_keywords?: ClusterKeyword[]
     target_exists?: boolean
     priority?: number
+    /** Flat keyword queue — the hub-less "here are 4 keywords, write 4 posts" flow. */
+    keywords?: string[]
+    inject_internal_links?: boolean
   }
 
   if (!body.client_id || !body.name)
@@ -136,12 +157,42 @@ export async function POST(request: NextRequest) {
       cluster_keywords: body.cluster_keywords ?? [],
       target_exists:    body.target_exists    ?? true,
       priority:         body.priority         ?? 100,
+      inject_internal_links: body.inject_internal_links ?? true,
     })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ silo: data })
+
+  // Seed the keyword queue. Order is preserved via sort_order — the generator
+  // walks it top-down and consumes one keyword per topic.
+  const seed = (body.keywords ?? [])
+    .map(k => k.trim())
+    .filter(Boolean)
+    // De-dupe case-insensitively so "Roof Repair" and "roof repair" are one slot.
+    .filter((k, i, arr) => arr.findIndex(o => o.toLowerCase() === k.toLowerCase()) === i)
+
+  if (seed.length > 0) {
+    const siloRow = data as { id: string }
+    const { error: kwErr } = await db.from('content_silo_keywords').insert(
+      seed.map((keyword, i) => ({
+        client_id:    body.client_id,
+        silo_id:      siloRow.id,
+        keyword,
+        keyword_type: 'supporting',
+        sort_order:   i,
+      })),
+    )
+    if (kwErr) {
+      // The silo itself is fine; surface the partial failure rather than lying.
+      return NextResponse.json(
+        { silo: data, warning: `Silo created but keywords failed: ${kwErr.message}` },
+        { status: 207 },
+      )
+    }
+  }
+
+  return NextResponse.json({ silo: data, keywordsAdded: seed.length })
 }
 
 export async function PATCH(request: NextRequest) {
@@ -166,6 +217,7 @@ export async function PATCH(request: NextRequest) {
     target_exists: boolean
     priority: number
     pending_links: unknown[]
+    inject_internal_links: boolean
   }>
 
   if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
@@ -195,7 +247,7 @@ export async function PATCH(request: NextRequest) {
   // pending_links writes go through the append_silo_pending_link RPC for atomic appends.
   // Direct PATCH of pending_links is intentionally excluded to prevent races.
   const allowed = ['name', 'hub_page_url', 'hub_page_title', 'central_entity', 'description', 'section', 'status',
-    'content_type', 'target_keyword', 'cluster_keywords', 'target_exists', 'priority']
+    'content_type', 'target_keyword', 'cluster_keywords', 'target_exists', 'priority', 'inject_internal_links']
   const update: Record<string, unknown> = {}
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {

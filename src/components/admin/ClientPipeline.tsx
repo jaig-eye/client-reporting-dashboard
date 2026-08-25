@@ -469,7 +469,11 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       <details className="card" style={{ overflow: 'hidden' }}>
         <summary className="p-5 cursor-pointer font-semibold text-sm" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>▸ Topic Silos</summary>
         <div className="p-5 pt-0" style={{ borderTop: '1px solid var(--border)' }}>
-          <SiloManager clientId={clientId} onGenerated={loadPipeline} />
+          <SiloManager
+            clientId={clientId}
+            onGenerated={loadPipeline}
+            platform={clientSites.some(s => s.connectorType === 'bigcommerce') ? 'bigcommerce' : 'wordpress'}
+          />
         </div>
       </details>
 

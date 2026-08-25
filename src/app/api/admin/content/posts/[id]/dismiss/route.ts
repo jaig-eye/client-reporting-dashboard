@@ -6,6 +6,7 @@
 // If the post is already published (wp_post_id or bc_post_id set), archives it
 // instead of rejecting — the external post stays live, it just disappears from the dashboard.
 
+import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
@@ -64,6 +65,13 @@ export async function POST(
     return NextResponse.json({ error: postErr.message }, { status: 500 })
   }
 
+  // Which topic owned this post — needed to put its silo keyword back on the queue.
+  const { data: ownerTopic } = await db
+    .from('content_topics')
+    .select('id')
+    .eq('post_id', id)
+    .maybeSingle()
+
   if (discard) {
     // Permanently kill the topic so it won't regenerate
     await db
@@ -77,6 +85,13 @@ export async function POST(
       .from('content_topics')
       .update({ status: 'approved', post_id: null })
       .eq('post_id', id)
+  }
+
+  // Return the silo keyword to the queue either way. A rejected article must not
+  // silently retire its keyword — otherwise the silo reads as exhausted while
+  // nothing was ever published for that term.
+  if (ownerTopic) {
+    await releaseKeywordForTopic(db, (ownerTopic as { id: string }).id).catch(() => {})
   }
 
   return NextResponse.json({ ok: true })

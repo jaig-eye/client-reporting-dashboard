@@ -32,17 +32,32 @@ interface Silo {
   priority:         number
   pending_links:    Array<{ post_id?: string; url?: string; title: string; added_at: string }>
   clusterCount:     number
+  keywordTotal:     number
+  keywordUnused:    number
+  inject_internal_links: boolean
   publishedCount:   number
+}
+
+type QueueKeyword = {
+  id:         string
+  keyword:    string
+  used_at:    string | null
+  sort_order: number
+  post:  { id: string; title: string | null; status: string; published_url: string | null } | null
+  topic: { id: string; topic: string; status: string } | null
 }
 
 type Draft = {
   name: string; hub_page_url: string; hub_page_title: string
   target_keyword: string; target_exists: boolean; cluster_keywords: ClusterKw[]; priority: number; section: string
+  /** One keyword per line — the hub-less queue. Only sent on create. */
+  keywordQueue: string
+  injectInternalLinks: boolean
 }
 
-const EMPTY_DRAFT: Draft = { name: '', hub_page_url: '', hub_page_title: '', target_keyword: '', target_exists: true, cluster_keywords: [], priority: 100, section: 'core' }
+const EMPTY_DRAFT: Draft = { name: '', hub_page_url: '', hub_page_title: '', target_keyword: '', target_exists: true, cluster_keywords: [], priority: 100, section: 'core', keywordQueue: '', injectInternalLinks: true }
 
-export default function SiloManager({ clientId, onGenerated }: { clientId: string; onGenerated?: () => void }) {
+export default function SiloManager({ clientId, onGenerated, platform = 'wordpress' }: { clientId: string; onGenerated?: () => void; platform?: 'wordpress' | 'bigcommerce' }) {
   const [silos,           setSilos]           = useState<Silo[]>([])
   const [silosLoading,    setSilosLoading]    = useState(false)
   const [expandedSiloId,  setExpandedSiloId]  = useState<string | null>(null)
@@ -54,6 +69,9 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
   const [generating,      setGenerating]      = useState<Record<string, boolean>>({})
   const [archiveConfirm,  setArchiveConfirm]  = useState<string | null>(null)
   const [toast,           setToast]           = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
+  // Keyword queues are loaded lazily per silo when its card is expanded.
+  const [queues,          setQueues]          = useState<Record<string, QueueKeyword[]>>({})
+  const [queueLoading,    setQueueLoading]    = useState<Record<string, boolean>>({})
   const { playSiloCreated, playClusterAdded, playTopicGenerated } = useSiloSounds(true)
 
   function showToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
@@ -69,6 +87,15 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
   }, [clientId])
   useEffect(() => { loadSilos() }, [loadSilos])
 
+  const loadQueue = useCallback((siloId: string) => {
+    setQueueLoading(p => ({ ...p, [siloId]: true }))
+    fetch(`/api/admin/content/silos/${siloId}/keywords`)
+      .then(r => r.json())
+      .then((d: { keywords?: QueueKeyword[] }) => setQueues(p => ({ ...p, [siloId]: d.keywords ?? [] })))
+      .catch(() => {})
+      .finally(() => setQueueLoading(p => ({ ...p, [siloId]: false })))
+  }, [])
+
   function openCreate() { setDraft({ ...EMPTY_DRAFT }); setModalMode('create'); setEditingSiloId(null); setModalOpen(true) }
   function openEdit(s: Silo) {
     setDraft({
@@ -76,6 +103,10 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
       target_keyword: s.target_keyword ?? '', target_exists: s.target_exists,
       cluster_keywords: Array.isArray(s.cluster_keywords) ? s.cluster_keywords : [],
       priority: s.priority ?? 100, section: s.section ?? 'core',
+      // The queue is only seeded at creation; editing it happens on the silo's
+      // own keyword list, so this stays blank in edit mode.
+      keywordQueue: '',
+      injectInternalLinks: s.inject_internal_links !== false,
     })
     setModalMode('edit'); setEditingSiloId(s.id); setModalOpen(true)
   }
@@ -83,11 +114,16 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
   async function saveSilo() {
     if (!draft.name.trim()) return
     setSaving(true)
-    const payload = {
+    const payload: Record<string, unknown> = {
       client_id: clientId, name: draft.name.trim(), content_type: 'blog',
       hub_page_url: draft.hub_page_url.trim() || null, hub_page_title: draft.hub_page_title.trim() || null,
       target_keyword: draft.target_keyword.trim() || null, target_exists: draft.target_exists,
       cluster_keywords: draft.cluster_keywords, priority: draft.priority, section: draft.section,
+      inject_internal_links: draft.injectInternalLinks,
+    }
+    // Seed the keyword queue on create only — one keyword per line.
+    if (modalMode === 'create') {
+      payload.keywords = draft.keywordQueue.split('\n').map(k => k.trim()).filter(Boolean)
     }
     const res = modalMode === 'create'
       ? await fetch('/api/admin/content/silos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -131,7 +167,20 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
   }
 
   async function generateFromSilo(siloId: string, silo: Silo) {
-    if (!silo.cluster_keywords?.length) { showToast('Add cluster keywords first to guide generation', 'error'); return }
+    // A keyword-queue silo has no cluster_keywords — its keywords live in
+    // content_silo_keywords. Blocking on cluster_keywords alone would make every
+    // hub-less silo ungeneratable.
+    const hasQueue   = (silo.keywordUnused ?? 0) > 0
+    const hasCluster = (silo.cluster_keywords?.length ?? 0) > 0
+    if (!hasQueue && !hasCluster) {
+      showToast(
+        (silo.keywordTotal ?? 0) > 0
+          ? 'Every keyword in this set has been used — add more to keep generating'
+          : 'Add keywords first to guide generation',
+        'error',
+      )
+      return
+    }
     setGenerating(p => ({ ...p, [siloId]: true }))
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -141,7 +190,8 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
     if (res.ok) {
       playTopicGenerated()
       showToast('Topics are generating — they\'ll appear in the pipeline shortly', 'info')
-      setTimeout(() => { loadSilos(); onGenerated?.() }, 3000)
+      // Refresh the queue too — generation consumes keywords.
+      setTimeout(() => { loadSilos(); loadQueue(siloId); onGenerated?.() }, 3000)
     } else showToast((await res.json().catch(() => ({}))).error ?? 'Generation failed', 'error')
   }
 
@@ -193,7 +243,7 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
             const isGenerating = generating[s.id]
             return (
               <div key={s.id} className="silo-card-enter card" style={{ '--silo-i': idx } as React.CSSProperties}>
-                <div onClick={() => setExpandedSiloId(isExpanded ? null : s.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', userSelect: 'none' }}>
+                <div onClick={() => { const next = isExpanded ? null : s.id; setExpandedSiloId(next); if (next) loadQueue(next) }} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', userSelect: 'none' }}>
                   <span className="badge badge-blue" style={{ fontSize: '0.65rem', flexShrink: 0 }}>Blog</span>
                   <span style={{ fontWeight: 600, fontSize: '0.8125rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                   {pendCount > 0 && (
@@ -238,6 +288,44 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
                           </div>
                         </div>
                       )}
+                      {/* Keyword queue + what each term produced. */}
+                      {(s.keywordTotal ?? 0) > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+                            Keyword queue — {s.keywordUnused} of {s.keywordTotal} left
+                            {s.inject_internal_links === false && (
+                              <span style={{ marginLeft: 6, fontWeight: 500, color: 'var(--text-faint)' }}>· linking off</span>
+                            )}
+                          </p>
+                          {queueLoading[s.id] && <p style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>Loading…</p>}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 160, overflowY: 'auto' }}>
+                            {(queues[s.id] ?? []).map(k => (
+                              <div key={k.id} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.75rem' }}>
+                                <span style={{ color: k.used_at ? 'var(--green)' : 'var(--text-faint)', flexShrink: 0 }}>
+                                  {k.used_at ? '✓' : '○'}
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <span style={{ color: 'var(--text-primary)' }}>&ldquo;{k.keyword}&rdquo;</span>
+                                  {k.post ? (
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                                      →{' '}
+                                      {k.post.published_url
+                                        ? <a href={k.post.published_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{k.post.title ?? 'Untitled'} ↗</a>
+                                        : <span>{k.post.title ?? 'Untitled'}</span>}
+                                      {' '}<span>({k.post.status})</span>
+                                    </div>
+                                  ) : k.topic ? (
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                                      → topic: {k.topic.topic} ({k.topic.status})
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {pendCount > 0 && (
                         <div style={{ padding: '8px 10px', background: 'var(--amber-subtle)', border: '1px solid var(--amber-border, #fde68a)', borderRadius: 5, marginBottom: 8 }}>
                           <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--amber)', marginBottom: 4 }}>{pendCount} cluster page{pendCount !== 1 ? 's' : ''} ready — update hub page on WordPress</p>
@@ -289,15 +377,73 @@ export default function SiloManager({ clientId, onGenerated }: { clientId: strin
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Silo Name *</label>
                 <input className="input" autoFocus value={draft.name} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} placeholder="e.g. HVAC Repair" />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {/* Keyword queue — the hub-less path. Offered first because it is
+                  the common case: a flat list of terms with no pillar page. */}
+              {modalMode === 'create' && (
                 <div>
-                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page URL</label>
-                  <input className="input" value={draft.hub_page_url} onChange={e => setDraft(d => ({ ...d, hub_page_url: e.target.value }))} placeholder="https://…" />
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+                    Keywords — one per line
+                  </label>
+                  <textarea
+                    className="input"
+                    rows={4}
+                    value={draft.keywordQueue}
+                    onChange={e => setDraft(d => ({ ...d, keywordQueue: e.target.value }))}
+                    placeholder={'best outdoor car covers\ncar storage bubble vs garage\nhow to store a classic car\nwinter car storage checklist'}
+                    style={{ resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }}
+                  />
+                  <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 4 }}>
+                    {(() => {
+                      const n = draft.keywordQueue.split('\n').filter(k => k.trim()).length
+                      return n > 0
+                        ? `Queues ${n} post${n === 1 ? '' : 's'} — one per keyword, generated in this order. No hub page needed.`
+                        : 'Leave the hub fields below empty to run this as a flat keyword set with no pillar page.'
+                    })()}
+                  </p>
                 </div>
-                <div>
-                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page Title</label>
-                  <input className="input" value={draft.hub_page_title} onChange={e => setDraft(d => ({ ...d, hub_page_title: e.target.value }))} placeholder="e.g. HVAC Repair Services" />
+              )}
+
+              <details style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                <summary style={{ cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', listStyle: 'none' }}>
+                  ▸ Hub page (optional — for a full hub-and-spoke silo)
+                </summary>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page URL</label>
+                    <input className="input" value={draft.hub_page_url} onChange={e => setDraft(d => ({ ...d, hub_page_url: e.target.value }))} placeholder="https://…" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Hub Page Title</label>
+                    <input className="input" value={draft.hub_page_title} onChange={e => setDraft(d => ({ ...d, hub_page_title: e.target.value }))} placeholder="e.g. HVAC Repair Services" />
+                  </div>
                 </div>
+              </details>
+
+              {/* Internal linking — off-switch plus an honest capability warning. */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.injectInternalLinks}
+                    onChange={e => setDraft(d => ({ ...d, injectInternalLinks: e.target.checked }))}
+                    style={{ width: 16, height: 16 }}
+                  />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Inject internal links between these articles
+                  </span>
+                </label>
+                {platform === 'bigcommerce' && draft.injectInternalLinks && (
+                  <p style={{ fontSize: '0.72rem', color: 'var(--amber)', marginTop: 6, marginLeft: 24, lineHeight: 1.5 }}>
+                    ⚠ This client publishes to BigCommerce. Linking only works once a post has a
+                    real public permalink — posts pushed before the permalink fix stored the store
+                    admin URL instead. Run the permalink backfill, or leave this off for now.
+                  </p>
+                )}
+                {!draft.injectInternalLinks && (
+                  <p style={{ fontSize: '0.72rem', color: 'var(--text-faint)', marginTop: 6, marginLeft: 24 }}>
+                    Articles will be written standalone, with no cross-links between them.
+                  </p>
+                )}
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Target Keyword</label>

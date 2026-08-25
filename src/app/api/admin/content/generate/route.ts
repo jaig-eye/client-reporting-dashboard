@@ -1,3 +1,4 @@
+import { attachPostToKeyword } from '@/lib/content/siloQueue'
 import { describeTenure } from '@/lib/content/eeat'
 import type { EeatData } from '@/lib/content/types'
 import { NextRequest, NextResponse } from 'next/server'
@@ -1110,6 +1111,11 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     await db.from('content_topics')
       .update({ post_id: savedPost.id, status: 'generated', generation_error: null })
       .eq('id', topicId)
+
+    // Carry silo-keyword provenance through to the post, so the silo can show
+    // "this keyword produced this article" and the article can show where it
+    // came from. Soft-fails if migration 201 has not been applied yet.
+    await attachPostToKeyword(db, topicId, savedPost.id).catch(() => {})
 
     // Register the target keyword in the SEO datastream (content → keyword link), so
     // once DataForSEO is connected, rank checks surface on this post's card and editor.

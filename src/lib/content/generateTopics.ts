@@ -2,6 +2,7 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
+import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
 import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
 import { PLATFORM_BOT_UA }               from '@/lib/platformBot'
@@ -460,10 +461,11 @@ export async function generateTopicsForClient(
   let siloPromptBlock = ''
   let siloName: string | null = null
   let siloContentType: string | null = null
+  let queueKeywords: SiloQueueKeyword[] = []
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
-      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type')
+      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type, inject_internal_links')
       .eq('id', opts.siloId)
       .eq('client_id', clientId)
       .maybeSingle()
@@ -512,6 +514,24 @@ The hub/pillar page does not exist yet. The FIRST topic in your response MUST ta
         ? `\nDefined cluster keywords not yet covered (PRIORITIZE topics from this list — generate topics targeting these keywords):\n${plannedKws.map(k => `  - "${k.keyword}"${k.title ? ` (suggested title: "${k.title}")` : ''}`).join('\n')}`
         : ''
 
+      // Hub-less silos are the common case: a flat set of keywords with no pillar
+      // page. Every silo in production today has hub_page_url NULL, and the
+      // hub-and-spoke prompt below would instruct the model to link to a hub that
+      // does not exist. Walk the keyword queue instead.
+      queueKeywords = await fetchQueueKeywords(db, opts.siloId, Math.max(count, 12))
+      const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
+
+      if (isKeywordQueue) {
+        siloPromptBlock = buildKeywordQueueBlock(
+          silo.name as string,
+          (silo.description as string | null) ?? null,
+          queueKeywords,
+          existingClusterText,
+          (silo as { inject_internal_links?: boolean }).inject_internal_links !== false,
+        )
+      } else {
+      // Hub-and-spoke: the original strategy, unchanged.
+      queueKeywords = []
       siloPromptBlock = `
 ${hubFirstBlock}TOPICAL SILO — HUB + CLUSTER STRATEGY:
 Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
@@ -525,6 +545,7 @@ SILO RULES (override any conflicting instructions above):
 3. No two topics may target the same search intent — zero cannibalization within the silo.
 4. Prioritize subtopics closest to revenue (transactional/commercial intent first within the silo).
 5. Think: what questions does a searcher ask BEFORE contacting the business? Those cluster topics funnel authority to the hub.`
+      }
     }
   }
 
@@ -703,6 +724,15 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       target_publish_date: targetPublishDate ?? null,
       keyword_opportunity: r.keyword_opportunity ?? null,
     }))
+
+  // ── Consume the silo keyword queue ─────────────────────────────────────────
+  // Deliberately AFTER the insert: claiming up front would burn keywords on any
+  // run that failed at the AI or insert step, and the silo would look exhausted
+  // with nothing to show for it.
+  if (queueKeywords.length > 0) {
+    const claimed = await claimKeywordsForTopics(db, queueKeywords, savedTopics)
+    console.log(`[generateTopics] claimed ${claimed.length}/${queueKeywords.length} silo keywords`)
+  }
 
   // ── Email notification (skipped when called from the cron batch flow) ───────
   if (!opts?.suppressEmail) {
