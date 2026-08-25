@@ -23,7 +23,7 @@ export function NoteTemplateFields({
   const inp: React.CSSProperties = {
     width: '100%', padding: '0.32rem 0.5rem', boxSizing: 'border-box',
     background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 5, fontSize: '0.75rem', color: 'var(--text)', fontFamily: 'inherit',
+    borderRadius: 5, fontSize: '0.75rem', color: 'var(--text-primary)', fontFamily: 'inherit',
   }
 
   function renderInput(f: NoteField) {
@@ -115,7 +115,7 @@ export function NoteFieldsReadout({
           <dt style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap', fontSize: '0.7rem', paddingTop: 1 }}>
             {f.label}
           </dt>
-          <dd style={{ margin: 0, color: 'var(--text)', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+          <dd style={{ margin: 0, color: 'var(--text-primary)', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
             {f.type === 'url' && /^https?:\/\//i.test(values[f.key])
               ? <a href={values[f.key]} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>{values[f.key]}</a>
               : values[f.key]}

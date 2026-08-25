@@ -99,8 +99,19 @@ export default function ClientRelationshipCard({
       <p className="section-desc mb-3">Attention level and when we last spoke.</p>
 
       {/* Temperature ------------------------------------------------------- */}
+      {/* Marked BETA and rendered in neutral tones until a level is chosen.
+          The control is fully functional, but today it only labels the client
+          and orders the weekly check-in digest — it does not yet change what is
+          monitored or when anything alerts. Colouring the unselected options
+          would promise more than it currently does. */}
       <p style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 5px' }}>
         Attention needed
+        <span style={{
+          fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+          background: 'var(--blue)', color: '#fff',
+          padding: '1px 4px', borderRadius: 3,
+          marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+        }}>BETA</span>
       </p>
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {TEMPERATURES.map(t => {
@@ -114,9 +125,11 @@ export default function ClientRelationshipCard({
               style={{
                 flex: 1, padding: '0.35rem 0.25rem', borderRadius: 6, cursor: 'pointer',
                 fontSize: '0.75rem', fontWeight: 600,
-                background: on ? t.color : `${t.color}12`,
-                color:      on ? '#fff' : t.color,
-                border: `1px solid ${on ? t.color : `${t.color}40`}`,
+                // Colour only on the chosen level, so the card still reads at a
+                // glance without the whole row implying active monitoring.
+                background: on ? t.color : 'var(--bg-subtle)',
+                color:      on ? '#fff'  : 'var(--text-muted)',
+                border: `1px solid ${on ? t.color : 'var(--border)'}`,
               }}
             >
               {t.label}
@@ -124,8 +137,13 @@ export default function ClientRelationshipCard({
           )
         })}
       </div>
-      <p style={{ fontSize: '0.66rem', color: 'var(--text-faint)', margin: '0 0 1rem', minHeight: '1em' }}>
+      <p style={{ fontSize: '0.66rem', color: 'var(--text-faint)', margin: '0 0 0.35rem', minHeight: '1em' }}>
         {temp ? TEMPERATURES.find(t => t.key === temp)?.hint : 'Not triaged - click to set'}
+      </p>
+      <p style={{ fontSize: '0.63rem', color: 'var(--text-faint)', margin: '0 0 1rem', lineHeight: 1.5 }}>
+        For now this is a label: it flags the client here and puts high-attention
+        accounts at the top of the weekly check-in digest. It does not change what
+        gets monitored or when anything alerts — that comes in a later update.
       </p>
 
       {/* Last contacted ---------------------------------------------------- */}

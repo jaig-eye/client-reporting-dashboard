@@ -58,7 +58,7 @@ export function NoteSecretInput({
           style={{
             flex: 1, minWidth: 0, padding: '0.32rem 0.5rem', boxSizing: 'border-box',
             background: 'var(--bg-surface)', border: '1px solid var(--border)',
-            borderRadius: 5, fontSize: '0.75rem', color: 'var(--text)', fontFamily: 'inherit',
+            borderRadius: 5, fontSize: '0.75rem', color: 'var(--text-primary)', fontFamily: 'inherit',
           }}
         />
         <button
@@ -181,7 +181,7 @@ export function NoteSecretReveal({
         ) : (
           <>
             <code style={{
-              fontSize: '0.82rem', color: 'var(--text)', wordBreak: 'break-all',
+              fontSize: '0.82rem', color: 'var(--text-primary)', wordBreak: 'break-all',
               background: 'var(--bg-surface)', border: '1px solid var(--border)',
               padding: '2px 6px', borderRadius: 4,
             }}>

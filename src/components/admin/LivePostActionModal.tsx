@@ -156,7 +156,7 @@ export default function LivePostActionModal({
                   width: '100%', boxSizing: 'border-box', resize: 'vertical',
                   background: 'var(--bg-subtle)', border: '1px solid var(--border)',
                   borderRadius: 6, padding: '7px 9px', fontSize: 12.5,
-                  color: 'var(--text)', fontFamily: 'inherit', lineHeight: 1.5,
+                  color: 'var(--text-primary)', fontFamily: 'inherit', lineHeight: 1.5,
                 }}
               />
             </div>

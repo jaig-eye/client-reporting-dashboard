@@ -272,7 +272,7 @@ export default function ClientNotesStream({
   const inp: React.CSSProperties = {
     width: '100%', padding: '0.4rem 0.6rem', boxSizing: 'border-box',
     background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text)', fontFamily: 'inherit',
+    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text-primary)', fontFamily: 'inherit',
   }
 
   const expandedTemplate = expanded ? templateFor(expanded.category) : null
@@ -309,7 +309,7 @@ export default function ClientNotesStream({
             style={{
               padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
               fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
-              background: catFilter === 'all' ? 'var(--text)' : 'transparent',
+              background: catFilter === 'all' ? 'var(--text-primary)' : 'transparent',
               color:      catFilter === 'all' ? 'var(--bg-surface)' : 'var(--text-muted)',
               border: '1px solid var(--border)',
             }}
@@ -450,14 +450,14 @@ export default function ClientNotesStream({
                 <Avatar name={note.users?.name ?? null} avatarUrl={note.users?.avatar_url ?? null} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {note.title && (
-                    <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {note.title}
                     </p>
                   )}
                   {note.content
                     ? (
                       <p style={{
-                        margin: 0, fontSize: '0.78rem', color: 'var(--text)',
+                        margin: 0, fontSize: '0.78rem', color: 'var(--text-primary)',
                         overflow: 'hidden',
                         display: '-webkit-box',
                         WebkitLineClamp: 2,
@@ -531,11 +531,11 @@ export default function ClientNotesStream({
                     style={{
                       width: '100%', background: 'var(--bg-subtle)', border: '1px solid var(--border)',
                       borderRadius: 5, padding: '0.3rem 0.5rem', fontSize: '0.9rem', fontWeight: 600,
-                      color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
+                      color: 'var(--text-primary)', fontFamily: 'inherit', boxSizing: 'border-box',
                     }}
                   />
                 ) : (
-                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text)', wordBreak: 'break-word' }}>
+                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
                     {expanded.title ?? '(no title)'}
                   </p>
                 )}
@@ -592,7 +592,7 @@ export default function ClientNotesStream({
                     style={{
                       width: '100%', resize: 'vertical', background: 'var(--bg-subtle)',
                       border: '1px solid var(--border)', borderRadius: 6,
-                      padding: '0.5rem 0.625rem', fontSize: '0.85rem', color: 'var(--text)',
+                      padding: '0.5rem 0.625rem', fontSize: '0.85rem', color: 'var(--text-primary)',
                       fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: 1.6,
                     }}
                   />
@@ -608,7 +608,7 @@ export default function ClientNotesStream({
                   />
                   <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
                   {expanded.content && (
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
                       {expanded.content}
                     </p>
                   )}
