@@ -12,6 +12,7 @@
 // then flips status back to 'for_review' when done.
 
 import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
+import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
@@ -123,8 +124,22 @@ export async function POST(
   }
 
   const { id: postId } = await params
-  const body = await request.json().catch(() => ({})) as { edit_notes?: string }
+  const body = await request.json().catch(() => ({})) as {
+    edit_notes?: string
+    /**
+     * Only meaningful when the post is already live:
+     *   'replace'    — keep the platform id; the next push overwrites the live
+     *                  article in place, preserving its URL and inbound links.
+     *   'new_keep'   — detach from the live article and publish the rewrite as a
+     *                  SEPARATE post. The old one stays up untouched.
+     *   'new_remove' — detach, and unpublish/trash the old article first.
+     */
+    live_mode?: 'replace' | 'new_keep' | 'new_remove'
+    /** Removal style for 'new_remove'. */
+    cms?: string
+  }
   const { edit_notes } = body
+  const liveMode = body.live_mode ?? 'replace'
 
   const db = createAdminClient()
 
@@ -144,6 +159,28 @@ export async function POST(
   // last_pushed_at rather than being smuggled into `status`. See migration 200.
   const pr        = post as Record<string, unknown>
   const isLive    = Boolean(pr.wp_post_id || pr.bc_post_id)
+
+  // Detach / remove the existing live article BEFORE the rewrite starts, so the
+  // decision is applied even if generation later fails. 'replace' is the default
+  // and does nothing here: keeping the platform id is what makes the next push
+  // overwrite in place rather than duplicate.
+  if (isLive && liveMode !== 'replace') {
+    if (liveMode === 'new_remove') {
+      const removal = isCmsAction(body.cms) && body.cms !== 'leave' ? body.cms : 'unpublish'
+      const res = await applyCmsAction(db, postId, removal)
+      if (!res.ok) {
+        return NextResponse.json(
+          { error: `Could not update the live article: ${res.message}` },
+          { status: 502 },
+        )
+      }
+      // A successful delete already cleared the refs; unpublish did not.
+      if (removal === 'unpublish') await clearPlatformRefs(db, postId)
+    } else {
+      // new_keep: the old article stays live and simply stops being ours.
+      await clearPlatformRefs(db, postId)
+    }
+  }
 
   // Mark as generating atomically — the neq guard acts as the idempotency check so two
   // concurrent requests can't both claim the slot (no TOCTOU window)
@@ -365,5 +402,5 @@ Requirements:
 
   // wasLive tells the UI to warn that the client's site still shows the old copy
   // until the regenerated post is pushed again.
-  return NextResponse.json({ ok: true, queued: true, wasLive: isLive })
+  return NextResponse.json({ ok: true, queued: true, wasLive: isLive, liveMode })
 }

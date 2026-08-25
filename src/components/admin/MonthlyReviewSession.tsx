@@ -1,5 +1,7 @@
 'use client'
 
+import LivePostActionModal, { type LiveMode } from '@/components/admin/LivePostActionModal'
+import type { CmsAction } from '@/lib/content/cmsLifecycle'
 import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
@@ -56,6 +58,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [toastError, setToastError] = useState(false)
   const router = useRouter()
+  const [liveRegenModal,  setLiveRegenModal]  = useState<{ postId: string } | null>(null)
+  const [removeModal,     setRemoveModal]     = useState<{ postId: string; discard: boolean } | null>(null)
   const [regenModal,      setRegenModal]      = useState<{ postId: string } | null>(null)
   const [regenModalNotes, setRegenModalNotes] = useState('')
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
@@ -116,24 +120,46 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
 
-  const handleReject = useCallback(async (postId: string, discard?: boolean) => {
+  const doReject = useCallback(async (postId: string, discard?: boolean, cms: CmsAction = 'leave') => {
     setLoadingId(postId)
     try {
-      const url = `/api/admin/content/posts/${postId}/dismiss${discard ? '?discard=true' : ''}`
+      const url = `/api/admin/content/posts/${postId}/dismiss?cms=${cms}${discard ? '&discard=true' : ''}`
       const res = await fetch(url, { method: 'POST' })
       if (!res.ok) throw new Error(await res.text())
+      const body = await res.json().catch(() => ({})) as { cms?: { message?: string } }
       if (discard) {
         setDiscardedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       } else {
         setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       }
+      // Say what happened to the live article, since that is the surprising part.
+      if (cms !== 'leave' && body.cms?.message) {
+        setToastError(false)
+        setToastMsg(body.cms.message)
+      }
     } catch (e) {
       console.error('Reject failed:', e)
-      alert('Failed to reject post. Please try again.')
+      setToastError(true)
+      setToastMsg('Failed to reject post. Please try again.')
     } finally {
       setLoadingId(null)
     }
   }, [])
+
+  /**
+   * Rejecting a post that is LIVE has to ask first: removing it from the
+   * dashboard has never taken it off the client's site, which is how rejected
+   * articles ended up still published. Posts that were never pushed skip the
+   * dialog entirely — there is nothing to decide.
+   */
+  const handleReject = useCallback((postId: string, discard?: boolean) => {
+    const post = initialPosts.find(p => p.id === postId)
+    if (post && (post.wp_post_id || post.bc_post_id)) {
+      setRemoveModal({ postId, discard: !!discard })
+      return
+    }
+    void doReject(postId, discard, 'leave')
+  }, [initialPosts, doReject])
 
   const handleRestore = useCallback(async (postId: string) => {
     setLoadingId(postId)
@@ -177,8 +203,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   // Direct-from-card full-regenerate — opens confirm modal first
   const handleCardRegenerate = useCallback((postId: string) => {
-    setRegenModal({ postId })
-  }, [])
+    const post = initialPosts.find(p => p.id === postId)
+    // A live post needs the replace-or-publish-new decision; an unpublished one
+    // has nothing to decide, so it keeps the lighter notes-only prompt.
+    if (post && (post.wp_post_id || post.bc_post_id)) setLiveRegenModal({ postId })
+    else setRegenModal({ postId })
+  }, [initialPosts])
 
   // Editor-initiated actions (monthly review mode)
   const handleEditorApprove = useCallback(() => {
@@ -199,31 +229,42 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [editorPostId])
 
-  const handleRegenModalConfirm = useCallback(async () => {
-    if (!regenModal) return
-    const { postId } = regenModal
-    const notes = regenModalNotes
+  const startRegenerate = useCallback(async (
+    postId: string,
+    opts: { notes?: string; liveMode?: LiveMode; cms?: CmsAction } = {},
+  ) => {
     setRegenModal(null)
+    setLiveRegenModal(null)
     setRegenModalNotes('')
     setRegeneratingIds(prev => { const next = new Set(prev); next.add(postId); return next })
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ edit_notes: notes.trim() || undefined }),
+        body:    JSON.stringify({
+          edit_notes: opts.notes?.trim() || undefined,
+          live_mode:  opts.liveMode,
+          cms:        opts.cms,
+        }),
       })
       if (!res.ok) {
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setToastError(true)
-        setToastMsg('Failed to start regeneration — please try again')
+        const msg = await res.json().catch(() => ({})) as { error?: string }
+        setToastMsg(msg.error ?? 'Failed to start regeneration — please try again')
       } else {
-        // Regenerating a post that is already on the client's site does not pull
-        // it down; the old copy keeps serving until the replacement is pushed.
-        // Say so, because it is the surprising part of this action.
-        const { wasLive } = await res.json().catch(() => ({ wasLive: false })) as { wasLive?: boolean }
+        // What happens to the live article is the surprising part of this action,
+        // so the toast states it explicitly rather than saying "done".
+        const { wasLive, liveMode } = await res.json().catch(() => ({})) as { wasLive?: boolean; liveMode?: LiveMode }
         if (wasLive) {
           setToastError(false)
-          setToastMsg('Regenerating. The live post stays up until you push the new version.')
+          setToastMsg(
+            liveMode === 'new_keep'
+              ? 'Regenerating as a separate post. The current article stays live.'
+              : liveMode === 'new_remove'
+                ? 'Regenerating as a separate post. The old article has been taken down.'
+                : 'Regenerating. The live post keeps serving until you publish the replacement, which then overwrites it.',
+          )
         }
       }
       // Session-level polling picks up completion
@@ -232,7 +273,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       setToastError(true)
       setToastMsg('Failed to start regeneration — please try again')
     }
-  }, [regenModal, regenModalNotes])
+  }, [])
+
+  const handleRegenModalConfirm = useCallback(async () => {
+    if (!regenModal) return
+    await startRegenerate(regenModal.postId, { notes: regenModalNotes })
+  }, [regenModal, regenModalNotes, startRegenerate])
 
   // Toast auto-clear
   useEffect(() => {
@@ -363,6 +409,43 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         <button onClick={() => { setToastMsg(null); setToastError(false) }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
       </div>
     )}
+    {/* Rejecting a LIVE post — asks what happens to the article on the site. */}
+    {removeModal && (() => {
+      const p = initialPosts.find(x => x.id === removeModal.postId)
+      if (!p) return null
+      return (
+        <LivePostActionModal
+          mode="remove"
+          platform={p.bc_post_id ? 'bigcommerce' : 'wordpress'}
+          postTitle={p.title}
+          busy={loadingId === removeModal.postId}
+          onCancel={() => setRemoveModal(null)}
+          onConfirm={({ cms }) => {
+            const { postId, discard } = removeModal
+            setRemoveModal(null)
+            void doReject(postId, discard, cms)
+          }}
+        />
+      )
+    })()}
+
+    {/* Regenerating a LIVE post — replace in place, or publish separately. */}
+    {liveRegenModal && (() => {
+      const p = initialPosts.find(x => x.id === liveRegenModal.postId)
+      if (!p) return null
+      return (
+        <LivePostActionModal
+          mode="regenerate"
+          platform={p.bc_post_id ? 'bigcommerce' : 'wordpress'}
+          postTitle={p.title}
+          busy={regeneratingIds.has(liveRegenModal.postId)}
+          onCancel={() => setLiveRegenModal(null)}
+          onConfirm={({ cms, liveMode, notes }) =>
+            void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms })}
+        />
+      )
+    })()}
+
     {regenModal && (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
         onClick={e => { if (e.target === e.currentTarget) { setRegenModal(null); setRegenModalNotes('') } }}>

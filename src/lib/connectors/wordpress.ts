@@ -471,3 +471,54 @@ export const wordpressConnector: ConnectorAdapter = {
     }
   },
 }
+
+/**
+ * Move a WordPress post or page to the trash, or delete it permanently.
+ *
+ * `force: false` (the default) trashes, which is recoverable from wp-admin —
+ * the right default when a human is removing published content, because an
+ * accidental click should not be unrecoverable.
+ */
+export async function deleteWpContent(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  kind: 'post' | 'page',
+  id: number,
+  force = false,
+): Promise<{ deleted: boolean; alreadyGone: boolean }> {
+  const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
+  const res = await fetch(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
+    method: 'DELETE',
+    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+  })
+  // Already gone is a success for our purposes: the goal state is "not on the site".
+  if (res.status === 404 || res.status === 410) return { deleted: false, alreadyGone: true }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  }
+  return { deleted: true, alreadyGone: false }
+}
+
+/** Flip a live post or page back to draft without deleting it. */
+export async function setWpContentStatus(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  kind: 'post' | 'page',
+  id: number,
+  status: 'draft' | 'publish' | 'private',
+): Promise<void> {
+  const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
+  const res = await fetch(wpApiUrl(siteUrl, path), {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader(auth.username, auth.app_password),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ status }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  }
+}

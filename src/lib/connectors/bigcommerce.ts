@@ -295,3 +295,53 @@ export function bcPermalink(origin: string | null, path: string): string | null 
   if (!origin || !path) return null
   return `${origin}/${path.replace(/^\/+/, '')}`
 }
+
+/**
+ * Delete a BigCommerce blog post or page.
+ *
+ * BigCommerce has no trash: v2 DELETE is permanent. Callers must treat this as
+ * irreversible and say so in the UI — unlike WordPress, there is nothing to
+ * restore from afterwards.
+ */
+export async function deleteBCContent(
+  storeHash:   string,
+  accessToken: string,
+  kind: 'blog' | 'page',
+  id: number,
+): Promise<{ deleted: boolean; alreadyGone: boolean }> {
+  const path = kind === 'page' ? `/v2/pages/${id}` : `/v2/blog/posts/${id}`
+  const res = await fetch(`${BC_API(storeHash)}${path}`, {
+    method:  'DELETE',
+    headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+  })
+  if (res.status === 404) return { deleted: false, alreadyGone: true }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(res.status === 401
+      ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+      : `BigCommerce API error ${res.status}: ${text}`)
+  }
+  return { deleted: true, alreadyGone: false }
+}
+
+/** Hide a BC blog post or page from the storefront without deleting it. */
+export async function setBCContentVisibility(
+  storeHash:   string,
+  accessToken: string,
+  kind: 'blog' | 'page',
+  id: number,
+  visible: boolean,
+): Promise<void> {
+  const path = kind === 'page' ? `/v2/pages/${id}` : `/v2/blog/posts/${id}`
+  // Pages use is_visible; blog posts use is_published.
+  const body = kind === 'page' ? { is_visible: visible } : { is_published: visible }
+  const res = await fetch(`${BC_API(storeHash)}${path}`, {
+    method:  'PUT',
+    headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
+}
