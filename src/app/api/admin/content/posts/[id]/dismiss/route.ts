@@ -11,7 +11,7 @@ import { applyCmsAction, isCmsAction, type CmsAction } from '@/lib/content/cmsLi
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, requireVerifiedAdmin } from '@/lib/auth'
 
 export async function POST(
   request: NextRequest,
@@ -32,6 +32,18 @@ export async function POST(
   const rawCms = request.nextUrl.searchParams.get('cms')
     ?? (await request.json().catch(() => ({})) as { cms?: string }).cms
   const cmsAction: CmsAction = isCmsAction(rawCms) ? rawCms : 'leave'
+
+  // Removing a page from the client's live site is irreversible on BigCommerce
+  // (v2 DELETE has no trash) and is a support call on WordPress. isAdminAuthed
+  // above only proves somebody logged in — admin-login hands the same cookie to
+  // a role='viewer' — so anything that touches the live site needs a verified
+  // admin. 'leave' changes nothing outside the dashboard and stays open.
+  if (cmsAction !== 'leave') {
+    const gate = await requireVerifiedAdmin()
+    if (!gate.ok) {
+      return NextResponse.json({ error: gate.error }, { status: gate.status })
+    }
+  }
 
   const db = createAdminClient()
 

@@ -883,7 +883,14 @@ export default function AgencySettingsPage() {
                     min={1}
                     max={365}
                     value={form.contact_stale_days}
-                    onChange={e => field('contact_stale_days', Number(e.target.value))}
+                    // Number('') is 0, so a plain Number(e.target.value) turns
+                    // "select the digits and hit backspace" into a saved threshold
+                    // of zero — which marks every client overdue forever. `min` is
+                    // only a browser hint on an input that is never submitted.
+                    onChange={e => {
+                      const n = Number(e.target.value)
+                      field('contact_stale_days', e.target.value === '' || !Number.isFinite(n) ? 1 : Math.min(365, Math.max(1, Math.trunc(n))))
+                    }}
                     className="input"
                     style={{ width: 80, fontSize: '0.8125rem' }}
                   />

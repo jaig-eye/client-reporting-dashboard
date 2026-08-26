@@ -485,6 +485,14 @@ export async function GET(request: NextRequest) {
 
       if (held.length > 0) {
         console.log(`[content-topics] quality gate held ${held.length} post(s) from auto-push for client ${client_id}`)
+
+        // Batched, not one INSERT + one UPDATE per post. quality_report only
+        // exists from migration 203, so on the first run after deploy EVERY
+        // approved due post lands here — 30 clients x 5 posts was 300 serial
+        // round trips inside a budget already shared with AI generation.
+        const alertRows: Record<string, unknown>[] = []
+        const alertedIds: string[] = []
+
         for (const p of held) {
           // Alert ONCE per hold. A held post legitimately stays 'approved' and
           // keeps matching the selector, so without this marker the same alert
@@ -498,11 +506,16 @@ export async function GET(request: NextRequest) {
           // Distinguish "checked and failed" from "never checked" — the remedy
           // differs, and telling someone a post was "flagged" when it simply has
           // no report sends them looking for findings that do not exist.
+          // Every path that writes content now re-runs the gate (see
+          // lib/content/recheckQuality.ts), so a missing report means the post
+          // predates that or its last re-check failed. Saving it re-scores it —
+          // which is only true since the re-check went on the write path; the
+          // advice used to name a remedy that cleared the report again.
           const body = p.quality_report == null
-            ? 'This post has no quality report, so it was not published automatically. Open it and use Regenerate (or re-save it) to run the checks, then publish by hand.'
+            ? 'This post has no quality report, so it was not published automatically. Open it and save it to run the checks, then publish by hand.'
             : `The quality gate flagged this post, so it was not published automatically. Review and publish it by hand.\n\n${reasons.join('\n')}`
 
-          const { error: alertErr } = await db.from('admin_alerts').insert({
+          alertRows.push({
             type:      'content',
             severity:  'warning',
             client_id,
@@ -510,13 +523,19 @@ export async function GET(request: NextRequest) {
             body,
             link_url:  '/admin/content',
           })
+          alertedIds.push(p.id)
+        }
+
+        if (alertRows.length > 0) {
+          const { error: alertErr } = await db.from('admin_alerts').insert(alertRows)
           if (alertErr) {
+            // Nothing is stamped, so the next run retries the whole batch.
             console.error('[content-topics] hold alert insert failed', alertErr.message)
-            continue   // leave the marker unset so the next run retries
+          } else {
+            await db.from('content_posts')
+              .update({ quality_hold_alerted_at: new Date().toISOString() })
+              .in('id', alertedIds)
           }
-          await db.from('content_posts')
-            .update({ quality_hold_alerted_at: new Date().toISOString() })
-            .eq('id', p.id)
         }
       }
 

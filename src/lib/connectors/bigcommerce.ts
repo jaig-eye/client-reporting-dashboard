@@ -12,6 +12,13 @@ import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 
 const BC_API = (storeHash: string) => `https://api.bigcommerce.com/stores/${storeHash}`
 
+/**
+ * Ceiling on any single BigCommerce call. Without one, a stalled request holds a
+ * serverless invocation open until the platform kills it — on the approve path
+ * that stalls a whole cron auto-push run.
+ */
+const BC_TIMEOUT_MS = 15_000
+
 export interface BCOrderSummary {
   grossRevenue: number
   orderCount:   number
@@ -64,6 +71,7 @@ export async function fetchBCStoreTimezone(
   try {
     const res = await fetch(`${BC_API(storeHash)}/v2/store`, {
       headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+      signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const data = (await res.json()) as Record<string, unknown>
@@ -98,6 +106,7 @@ export async function publishBCPage(
   const res = await fetch(`${BC_API(storeHash)}/v2/pages`, {
     method:  'POST',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify({
       type:       'raw',
       name:       page.name,
@@ -130,6 +139,7 @@ export async function updateBCPage(
   const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
     method:  'PUT',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify(patch),
   })
   if (!res.ok) {
@@ -223,6 +233,7 @@ export async function updateBCBlogPost(
   const res = await fetch(`${BC_API(storeHash)}/v2/blog/posts/${postId}`, {
     method:  'PUT',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify(patch),
   })
   if (!res.ok) {
@@ -243,6 +254,7 @@ export async function fetchBCBlogPost(
 ): Promise<{ id: number; url: string; title: string } | null> {
   const res = await fetch(`${BC_API(storeHash)}/v2/blog/posts/${postId}`, {
     headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
   })
   if (res.status === 404) return null
   if (!res.ok) {
@@ -261,6 +273,7 @@ export async function fetchBCPage(
 ): Promise<{ id: number; url: string } | null> {
   const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
     headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
   })
   if (res.status === 404) return null
   if (!res.ok) {
@@ -284,6 +297,7 @@ export async function fetchBCStorefrontOrigin(
 ): Promise<string | null> {
   const res = await fetch(`${BC_API(storeHash)}/v2/store`, {
     headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
   })
   if (!res.ok) return null
   const d = (await res.json()) as Record<string, unknown>
@@ -316,6 +330,7 @@ export async function deleteBCContent(
   const res = await fetch(`${BC_API(storeHash)}${path}`, {
     method:  'DELETE',
     headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
   })
   if (res.status === 404) return { deleted: false, alreadyGone: true }
   if (!res.ok) {
@@ -341,6 +356,7 @@ export async function setBCContentVisibility(
   const res = await fetch(`${BC_API(storeHash)}${path}`, {
     method:  'PUT',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify(body),
   })
   if (!res.ok) {

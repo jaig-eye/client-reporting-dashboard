@@ -90,21 +90,12 @@ function key(): Buffer {
       'CREDENTIAL_ENCRYPTION_KEY is not set. Generate one with `openssl rand -base64 32` and add it to the environment before storing credentials.',
     )
   }
-  const trimmed = raw.trim()
-
-  let buf: Buffer
-  if (/^[0-9a-f]{64}$/i.test(trimmed)) {
-    buf = Buffer.from(trimmed, 'hex')
-  } else {
-    buf = Buffer.from(trimmed, 'base64')
-  }
-
-  if (buf.length !== 32) {
-    throw new SecretsUnavailableError(
-      `CREDENTIAL_ENCRYPTION_KEY must decode to 32 bytes (got ${buf.length}). Use \`openssl rand -base64 32\`.`,
-    )
-  }
-  return buf
+  // Delegates to parseKey rather than repeating it. The active key and the
+  // retired rotation keys MUST decode by identical rules: if the two ever drift
+  // — say one is widened to accept base64url — a rotation looks successful and
+  // then silently fails to open anything sealed under the previous key, which is
+  // the one failure this module exists to prevent.
+  return parseKey(raw.trim())
 }
 
 /** True when the environment is configured to store credentials at all. */
@@ -161,14 +152,11 @@ export function decryptSecret(stored: string): string {
       return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8')
     } catch (e) { lastErr = e }
   }
+  console.error('[secrets] decrypt failed', lastErr instanceof Error ? lastErr.message : lastErr)
   throw new Error(
     keys.length > 1
       ? 'Could not decrypt with the current key or any retired key.'
-      : `Could not decrypt with the current key.${lastErr ? '' : ''}`,
+      : 'Could not decrypt with the current key.',
   )
 }
 
-/** Cheap shape check without needing the key — used to show "a secret is stored". */
-export function looksEncrypted(v: unknown): boolean {
-  return typeof v === 'string' && v.startsWith(`${PREFIX}.`) && v.split('.').length === 4
-}

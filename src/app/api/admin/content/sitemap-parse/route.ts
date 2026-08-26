@@ -272,11 +272,68 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // PRUNE what this parse deliberately left out.
+  //
+  // Without this, both of the controls above are no-ops for any client that has
+  // already been parsed once. "Skip individual product pages" only stops NEW
+  // product URLs being written; the 400 already cached stay, the route reads the
+  // whole table back, and the generator keeps building its internal-linking
+  // candidates and cannibalisation avoid-list from them — the exact damage the
+  // setting promises to fix. The round-robin fair-share has the same problem: it
+  // cannot evict what the old flat `.slice(0, 500)` stored.
+  //
+  // Scoped to rows the operator did not curate: is_priority and is_excluded are
+  // human decisions and a row carrying either is left alone even if this parse
+  // did not select it.
+  const keep = new Set(urls)
+  const { data: cached } = await db
+    .from('content_sitemap_pages')
+    .select('url, is_priority, is_excluded')
+    .eq('client_id', clientId)
+
+  const stale = ((cached ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[])
+    .filter(r => !keep.has(r.url) && !r.is_priority && !r.is_excluded)
+    .map(r => r.url)
+
+  let pruned = 0
+  if (stale.length > 0) {
+    // Chunked: a single .in() with hundreds of URLs makes a request line long
+    // enough for PostgREST to reject.
+    for (let i = 0; i < stale.length; i += 100) {
+      const { error: delErr } = await db
+        .from('content_sitemap_pages')
+        .delete()
+        .eq('client_id', clientId)
+        .in('url', stale.slice(i, i + 100))
+      if (delErr) {
+        console.error('[sitemap-parse] prune failed:', delErr.message)
+        break
+      }
+      pruned += Math.min(100, stale.length - i)
+    }
+  }
+
   const { data: allPages } = await db
     .from('content_sitemap_pages')
     .select('url, title, is_priority, is_excluded')
     .eq('client_id', clientId)
     .order('url')
+
+  // Both callers parse the body as a bare array, so the diagnostics ride in a
+  // header rather than changing the shape. They were previously computed and
+  // then dropped, which meant a client running without migration 183 silently
+  // lost blog-post detection with nothing said about it, and the operator who
+  // ticked "skip product pages" got no confirmation that anything happened.
+  const notes: string[] = []
+  if (excludedProductSitemaps.length > 0) {
+    notes.push(`Skipped ${excludedProductSitemaps.length} product sitemap${excludedProductSitemaps.length === 1 ? '' : 's'}`)
+  }
+  if (pruned > 0) notes.push(`Removed ${pruned} cached page${pruned === 1 ? '' : 's'} no longer selected`)
+  if (sourceSitemapMissing) {
+    notes.push('Saved without source_sitemap (migration 183 not applied) — blog detection falls back to URL heuristics')
+  }
+  if (fetchErrors.length > 0) notes.push(`${fetchErrors.length} sitemap fetch error(s)`)
+  if (notes.length > 0) console.warn('[sitemap-parse]', clientId, notes.join(' | '))
 
   return NextResponse.json(
     (allPages ?? []).map((p: { url: string; title: string | null; is_priority: boolean; is_excluded: boolean }) => ({
@@ -284,6 +341,7 @@ export async function POST(request: NextRequest) {
       title:      p.title ?? null,
       isPriority: p.is_priority,
       isExcluded: p.is_excluded,
-    }))
+    })),
+    { headers: notes.length > 0 ? { 'X-Sitemap-Notes': notes.join(' | ') } : {} },
   )
 }

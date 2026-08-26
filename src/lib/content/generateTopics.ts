@@ -559,6 +559,25 @@ The hub/pillar page does not exist yet. The FIRST topic in your response MUST ta
       queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
       const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
 
+      // An EXHAUSTED hub-less queue is not the hub-and-spoke case. Falling through
+      // to the else branch below emitted `Hub page: "..." at (URL not yet set)`
+      // plus a rule making a link to it mandatory — telling the model to link to a
+      // page that does not exist, while the writer prompt forbids inventing internal
+      // URLs. SiloManager still enables Generate on such a silo because
+      // content_silos.cluster_keywords stays populated after migration 201's
+      // backfill, and the cron path never checks at all, so this is reachable the
+      // moment a four-keyword silo is worked through. Nothing to generate is the
+      // honest answer.
+      if (!silo.hub_page_url && queueKeywords.length === 0) {
+        console.warn(`[generateTopics] silo ${opts.siloId} has no hub page and an empty keyword queue — nothing to generate`)
+        return {
+          topics:     [],
+          clientName: '',
+          count:      0,
+          error:      'This silo has no hub page and every keyword in its queue has been used. Add more keywords to generate from it.',
+        }
+      }
+
       if (isKeywordQueue) {
         siloPromptBlock = buildKeywordQueueBlock(
           silo.name as string,

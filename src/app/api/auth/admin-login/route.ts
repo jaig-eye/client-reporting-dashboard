@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashPassword, timingSafeCompare } from '@/lib/auth'
+import { hashPassword, timingSafeCompare, signIdentity, IDENTITY_COOKIE, SUPER_SUBJECT } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
 import crypto from 'crypto'
@@ -53,7 +53,18 @@ function superAdminSessionResponse(): NextResponse {
   const res = NextResponse.json({ ok: true, role: 'super_admin' })
   res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
   res.cookies.delete('admin_user_id')
+  setIdentity(res, SUPER_SUBJECT)
   return res
+}
+
+/**
+ * The tamper-proof half of the session. admin_session is the same string for
+ * every user and admin_user_id is unsigned, so this cookie is what actually
+ * proves WHO is calling — see the signing notes in lib/auth.ts.
+ */
+function setIdentity(res: NextResponse, subject: string): void {
+  const signed = signIdentity(subject)
+  if (signed) res.cookies.set(IDENTITY_COOKIE, signed, COOKIE_OPTS)
 }
 
 export async function POST(request: NextRequest) {
@@ -197,5 +208,6 @@ export async function POST(request: NextRequest) {
   const res = NextResponse.json({ ok: true, role: user.role })
   res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
   res.cookies.set('admin_user_id', user.id, COOKIE_OPTS)
+  setIdentity(res, user.id)
   return res
 }

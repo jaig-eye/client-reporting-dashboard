@@ -1577,6 +1577,12 @@ export async function POST(request: NextRequest) {
       targetKeyword: parsed.focusKeyword || null,
       slug:          finalSlug,
       siteUrls:      sitemapRows.map(r => r.url),
+      // Was fetched just above and then dropped, so `siblings` arrived undefined
+      // and the whole per-corpus half of the gate never ran here —
+      // structural_duplication (the only critical corpus finding) plus
+      // structural_sameness and heading_monotony. A post that is byte-identical
+      // to twenty siblings scored 100 on this path and was held on the topic one.
+      siblings:      (qgSiblingsManual ?? []) as { id: string; title: string | null; content: string | null }[],
       regulated:     isRegulatedVertical(clientSettings?.vertical),
     })
 

@@ -15,6 +15,7 @@ import { stripHallucinatedLinks }                      from '@/lib/content/linkU
 import { generatePostImage }                           from '@/lib/content/generatePostImage'
 import { sendDiscordMessage }                          from '@/lib/discord'
 import { getNotif, type NotifConfig }                  from '@/lib/notificationConfig'
+import { recheckPostQuality }                          from '@/lib/content/recheckQuality'
 
 export const maxDuration = 300
 
@@ -519,6 +520,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   await db.from('content_topics')
     .update({ status: 'generated', post_id: post.id })
     .eq('id', topicId)
+
+  // Service-area pages went in with no quality report at all, and the cron
+  // auto-push gate fails closed on a missing one — so every SA page was held
+  // and alerted with no way to clear it. Scored on the same terms as blogs.
+  await recheckPostQuality(db, post.id as string)
 
   // Generate featured image if configured (mirrors blog pipeline)
   const openaiKey = agency?.openai_api_key as string | null

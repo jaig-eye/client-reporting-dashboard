@@ -20,9 +20,9 @@
 export const maxDuration = 300
 
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { requireVerifiedAdmin }      from '@/lib/auth'
+import { wpCreds, bcCreds }          from '@/lib/content/cmsLifecycle'
 import { fetchPost }                 from '@/lib/connectors/wordpress'
 import {
   fetchBCBlogPost,
@@ -45,13 +45,26 @@ interface PostRow {
 }
 
 export async function POST(request: NextRequest) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Cross-tenant by default (clientId is optional), reads every client's CMS
+  // credentials, and fans out authenticated calls to every client's site for up
+  // to five minutes. That is an admin operation, not a "logged in" one.
+  const gate = await requireVerifiedAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
 
-  const body = await request.json().catch(() => ({})) as { clientId?: string; dryRun?: boolean }
+  const body = await request.json().catch(() => ({})) as { clientId?: string; dryRun?: boolean; limit?: number }
   const dryRun = body.dryRun === true
+
+  // Bounded per call, and the bound is reported back.
+  //
+  // The selector is every published_url IS NULL row across ALL clients — exactly
+  // the population migration 202 NULLed — and each one costs a remote CMS round
+  // trip. At ~600ms a call, 500 posts is 300s: the function is killed mid-loop,
+  // the results array is lost, and the operator sees a timeout with no record of
+  // what was repaired. A capped batch that says how many remain is re-runnable;
+  // a run that dies is not.
+  const limit = Math.min(Math.max(Math.trunc(Number(body.limit) || 150), 1), 400)
 
   const db = createAdminClient()
 
@@ -66,59 +79,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Failed to load posts: ${error.message}` }, { status: 500 })
   }
 
-  const posts = ((data ?? []) as unknown as PostRow[])
+  const candidates = ((data ?? []) as unknown as PostRow[])
     .filter(p => p.wp_post_id !== null || p.bc_post_id !== null)
 
-  if (posts.length === 0) {
-    return NextResponse.json({ ok: true, candidates: 0, repaired: 0, results: [] })
+  if (candidates.length === 0) {
+    return NextResponse.json({ ok: true, candidates: 0, repaired: 0, remaining: 0, results: [] })
   }
+
+  const posts     = candidates.slice(0, limit)
+  const deferred  = candidates.length - posts.length
 
   // Credentials are per client, and the BC storefront origin costs an API call —
   // resolve each once rather than per post.
-  const bcCreds  = new Map<string, { storeHash: string; accessToken: string; origin: string | null } | null>()
-  const wpCreds  = new Map<string, { siteUrl: string; username: string; app_password: string } | null>()
+  //
+  // The resolvers themselves come from cmsLifecycle rather than being copied
+  // here. The config-then-auth precedence they encode is a per-connector
+  // convention, and getting it backwards is what made the whole live-post
+  // lifecycle a silent no-op for every WordPress client — a fourth hand-written
+  // copy is a fourth place for that to go wrong, and it fails by returning null
+  // rather than erroring, so it would report success and repair nothing.
+  const bcCache = new Map<string, { storeHash: string; accessToken: string; origin: string | null } | null>()
+  const wpCache = new Map<string, { siteUrl: string; username: string; app_password: string } | null>()
 
   async function bcFor(clientId: string) {
-    if (bcCreds.has(clientId)) return bcCreds.get(clientId)!
-    const { data: conn } = await db
-      .from('client_connections')
-      .select('id, connector:connectors!inner(type, auth, config)')
-      .eq('client_id', clientId)
-      .eq('status', 'active')
-      .eq('connector.type', 'bigcommerce')
-      .limit(1)
-      .maybeSingle()
-    const c = conn as { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } } | null
-    if (!c) { bcCreds.set(clientId, null); return null }
-    const storeHash   = String(c.connector.config.store_hash   || c.connector.auth.store_hash   || '')
-    const accessToken = String(c.connector.config.access_token || c.connector.auth.access_token || '')
-    if (!storeHash || !accessToken) { bcCreds.set(clientId, null); return null }
-    const origin = await fetchBCStorefrontOrigin(storeHash, accessToken).catch(() => null)
-    const v = { storeHash, accessToken, origin }
-    bcCreds.set(clientId, v)
+    if (bcCache.has(clientId)) return bcCache.get(clientId)!
+    const creds = await bcCreds(db, clientId)
+    if (!creds) { bcCache.set(clientId, null); return null }
+    const origin = await fetchBCStorefrontOrigin(creds.storeHash, creds.accessToken).catch(() => null)
+    const v = { ...creds, origin }
+    bcCache.set(clientId, v)
     return v
   }
 
   async function wpFor(clientId: string) {
-    if (wpCreds.has(clientId)) return wpCreds.get(clientId)!
-    const { data: conn } = await db
-      .from('client_connections')
-      .select('id, connector:connectors!inner(type, auth, config)')
-      .eq('client_id', clientId)
-      .eq('status', 'active')
-      .eq('connector.type', 'wordpress')
-      .limit(1)
-      .maybeSingle()
-    const c = conn as { connector: { auth: Record<string, unknown>; config: Record<string, unknown> } } | null
-    if (!c) { wpCreds.set(clientId, null); return null }
-    // config-then-auth: WP connectors store credentials in config (see cmsLifecycle).
-    const siteUrl      = String(c.connector.config.site_url     || c.connector.auth.site_url     || '')
-    const username     = String(c.connector.config.username     || c.connector.auth.username     || '')
-    const app_password = String(c.connector.config.app_password || c.connector.auth.app_password || '')
-    if (!siteUrl || !username || !app_password) { wpCreds.set(clientId, null); return null }
-    const v = { siteUrl, username, app_password }
-    wpCreds.set(clientId, v)
-    return v
+    if (wpCache.has(clientId)) return wpCache.get(clientId)!
+    const creds = await wpCreds(db, clientId)
+    wpCache.set(clientId, creds)
+    return creds
   }
 
   const results: { id: string; title: string | null; url: string | null; outcome: string }[] = []
@@ -168,5 +165,14 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, dryRun, candidates: posts.length, repaired, results })
+  return NextResponse.json({
+    ok: true,
+    dryRun,
+    candidates: candidates.length,
+    processed:  posts.length,
+    repaired,
+    // Non-zero means run it again; the selector is idempotent so repeats are safe.
+    remaining:  deferred,
+    results,
+  })
 }

@@ -18,38 +18,30 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { requireVerifiedAdmin }      from '@/lib/auth'
 import { decryptSecret, secretsAvailable } from '@/lib/crypto/secrets'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; noteId: string }> },
 ) {
-  const session = request.cookies.get('admin_session')?.value
-  if (!isAdminAuthed(session)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // ROLE CHECK, not just "is logged in".
+  // ROLE CHECK ON A VERIFIED IDENTITY, not just "is logged in".
   //
   // isAdminAuthed only compares the shared admin_session cookie against
   // ADMIN_PASSWORD, and admin-login hands that same cookie to a role='viewer'
-  // account. Without this, any logged-in viewer could unlock every stored
-  // credential for every client. Reading a password is the single most
-  // privileged action in the app, so it requires an actual admin.
+  // account — so it cannot distinguish roles at all. A plain getAdminSession()
+  // role check is not enough either: identity used to come from the unsigned
+  // admin_user_id cookie, whose absence meant super admin, so deleting one
+  // cookie in devtools was a promotion. requireVerifiedAdmin() checks the
+  // HMAC-signed identity cookie instead.
   //
-  // The session is resolved BEFORE anything is decrypted, so an unauthorised
-  // caller never reaches the ciphertext.
-  const admin = await getAdminSession()
-  if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Resolved BEFORE anything is decrypted, so an unauthorised caller never
+  // reaches the ciphertext.
+  const gate = await requireVerifiedAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
-  if (!admin.isSuperAdmin && admin.role !== 'admin') {
-    return NextResponse.json(
-      { error: 'Viewing stored credentials requires an admin account.' },
-      { status: 403 },
-    )
-  }
+  const admin = gate.admin
 
   const { id: clientId, noteId } = await params
 
@@ -98,23 +90,36 @@ export async function POST(
     )
   }
 
-  // `admin` was already resolved by the role gate above — re-fetching it here
-  // would just repeat the lookup. The label comes from the SESSION, never from
-  // the unsigned admin_user_id cookie, so a caller cannot attribute a reveal to
-  // a colleague by editing a cookie.
+  // The label comes from the VERIFIED session above, so a caller cannot
+  // attribute a reveal to a colleague by editing a cookie.
   const actorLabel = admin.email ?? admin.name ?? (admin.isSuperAdmin ? 'super_admin' : 'admin')
 
-  // Written BEFORE the value is handed over, so the trail cannot be lost to a
-  // later failure. A logging failure does not block the reveal, but it is loud.
+  // x-real-ip is set by the Vercel proxy. The leftmost x-forwarded-for entry is
+  // whatever the CLIENT sent, so it is only a fallback for local/self-hosted
+  // runs and is never preferred — an attacker can write anything into it.
+  const ip = request.headers.get('x-real-ip')?.trim()
+    || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || null
+
+  // Written BEFORE the value is handed over, and a failure to write it BLOCKS
+  // the reveal. An audit trail that is best-effort is not an audit trail: the
+  // one moment it matters is an incident, which is exactly when "the insert
+  // happened to fail" is indistinguishable from "nobody looked".
   const { error: logErr } = await db.from('credential_access_log').insert({
     note_id:     note.id,
     client_id:   note.client_id,
     user_id:     admin.userId ?? null,
     actor_label: actorLabel,
     service:     (note.fields?.service as string | undefined) ?? null,
-    ip:          request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    ip,
   })
-  if (logErr) console.error('[credential reveal] access log insert failed', logErr.message)
+  if (logErr) {
+    console.error('[credential reveal] access log insert failed', logErr.message)
+    return NextResponse.json(
+      { error: 'This reveal could not be recorded in the access log, so it was refused. Check that migration 204 has been applied.' },
+      { status: 500 },
+    )
+  }
 
   return NextResponse.json(
     { secret: plaintext },

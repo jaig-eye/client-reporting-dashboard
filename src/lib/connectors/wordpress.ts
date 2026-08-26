@@ -33,6 +33,33 @@ function authHeader(username: string, appPassword: string): string {
   return `Basic ${encoded}`
 }
 
+/**
+ * A client site that accepts the connection and never answers would otherwise
+ * hold a serverless invocation open until the platform kills it — which on the
+ * permalink backfill (a serial loop under maxDuration=300) means one dead site
+ * consumes the whole budget and every remaining post is silently skipped.
+ */
+const WP_TIMEOUT_MS = 15_000
+
+/**
+ * Every outbound WordPress call goes through these headers.
+ *
+ * BROWSER_BOT_UA matters: sites behind Cloudflare or Wordfence are allow-listed
+ * on it, and the four lifecycle functions below originally hand-rolled their
+ * fetch without it — so update/delete/unpublish 403'd on exactly the sites where
+ * publishing worked.
+ */
+function wpHeaders(
+  auth: { username: string; app_password: string },
+  json = false,
+): Record<string, string> {
+  return {
+    Authorization: authHeader(auth.username, auth.app_password),
+    'User-Agent':  BROWSER_BOT_UA,
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+  }
+}
+
 async function wpGet(
   siteUrl: string,
   path: string,
@@ -237,12 +264,10 @@ export async function updatePost(
   },
 ): Promise<WpPublishedPost> {
   const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}`), {
-    method: 'POST',
-    headers: {
-      Authorization: authHeader(auth.username, auth.app_password),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(patch),
+    method:  'POST',
+    headers: wpHeaders(auth, true),
+    body:    JSON.stringify(patch),
+    signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
   if (!res.ok) {
     const text = await res.text()
@@ -265,7 +290,8 @@ export async function fetchPost(
   postId: number,
 ): Promise<{ id: number; link: string; status: string } | null> {
   const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
-    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+    headers: wpHeaders(auth),
+    signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
   if (res.status === 404) return null
   if (!res.ok) {
@@ -488,16 +514,29 @@ export async function deleteWpContent(
 ): Promise<{ deleted: boolean; alreadyGone: boolean }> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
   const res = await fetch(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
-    method: 'DELETE',
-    headers: { Authorization: authHeader(auth.username, auth.app_password) },
+    method:  'DELETE',
+    headers: wpHeaders(auth),
+    signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
-  // Already gone is a success for our purposes: the goal state is "not on the site".
-  if (res.status === 404 || res.status === 410) return { deleted: false, alreadyGone: true }
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`WordPress API error ${res.status}: ${text}`)
+  if (res.ok) return { deleted: true, alreadyGone: false }
+
+  const text = await res.text()
+
+  // "Already gone" is a success for our purposes — the goal state is "not on the
+  // site" — but ONLY when WordPress itself says the id does not exist. A bare
+  // 404 is not proof of that: /wp/v2/pages/{id} also 404s when {id} is a post,
+  // a stale wp_site_url pointing at a parked domain 404s, and a WAF can 404 the
+  // whole /wp-json route. Treating those as "deleted" made the caller clear the
+  // platform ids and permanently orphan an article that is still live, which is
+  // the exact failure this module exists to prevent. A REST error carries a JSON
+  // body with a `rest_*` code; an infrastructure 404 returns HTML.
+  if (res.status === 404 || res.status === 410) {
+    let code = ''
+    try { code = String((JSON.parse(text) as { code?: unknown }).code ?? '') } catch { /* not JSON */ }
+    if (/^rest_/.test(code)) return { deleted: false, alreadyGone: true }
   }
-  return { deleted: true, alreadyGone: false }
+
+  throw new Error(`WordPress API error ${res.status}: ${text}`)
 }
 
 /** Flip a live post or page back to draft without deleting it. */
@@ -510,12 +549,10 @@ export async function setWpContentStatus(
 ): Promise<void> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
   const res = await fetch(wpApiUrl(siteUrl, path), {
-    method: 'POST',
-    headers: {
-      Authorization: authHeader(auth.username, auth.app_password),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ status }),
+    method:  'POST',
+    headers: wpHeaders(auth, true),
+    body:    JSON.stringify({ status }),
+    signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
   if (!res.ok) {
     const text = await res.text()

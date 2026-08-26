@@ -23,7 +23,13 @@ export default function LivePostActionModal({
 }: {
   /** 'remove' = rejecting/discarding. 'regenerate' = rewriting. */
   mode:      'remove' | 'regenerate'
-  platform:  'wordpress' | 'bigcommerce'
+  /**
+   * 'both' is real: a row can carry wp_post_id AND bc_post_id, and the action
+   * is applied to every copy. Naming only one of them would tell the human the
+   * wrong thing about what is about to happen — and specifically would hide the
+   * irreversible half.
+   */
+  platform:  'wordpress' | 'bigcommerce' | 'both'
   postTitle: string | null
   busy?:     boolean
   onCancel:  () => void
@@ -33,13 +39,17 @@ export default function LivePostActionModal({
   const [liveMode, setLiveMode] = useState<LiveMode>('replace')
   const [notes, setNotes]       = useState('')
 
-  const isWp = platform === 'wordpress'
-  const platformName = isWp ? 'WordPress' : 'BigCommerce'
+  const isWp   = platform === 'wordpress'
+  const isBoth = platform === 'both'
+  const platformName = isBoth ? 'WordPress and BigCommerce' : isWp ? 'WordPress' : 'BigCommerce'
 
-  // WordPress trashes (recoverable). BigCommerce has no trash at all.
-  const deleteCopy = isWp
-    ? 'Move it to the WordPress trash. Recoverable from wp-admin.'
-    : 'Delete it from BigCommerce. Permanent — BigCommerce has no trash.'
+  // WordPress trashes (recoverable). BigCommerce has no trash at all. When the
+  // post is on both, lead with the irreversible half.
+  const deleteCopy = isBoth
+    ? 'Trashes the WordPress copy (recoverable from wp-admin) and deletes the BigCommerce copy. The BigCommerce half is permanent.'
+    : isWp
+      ? 'Move it to the WordPress trash. Recoverable from wp-admin.'
+      : 'Delete it from BigCommerce. Permanent — BigCommerce has no trash.'
 
   const optionStyle = (on: boolean): React.CSSProperties => ({
     display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
@@ -127,11 +137,15 @@ export default function LivePostActionModal({
               )}
 
               <button style={optionStyle(cms === 'unpublish')} onClick={() => setCms('unpublish')}>
-                <div style={titleStyle}>{isWp ? 'Revert to draft' : 'Hide from the storefront'}</div>
+                <div style={titleStyle}>
+                  {isBoth ? 'Take it out of view' : isWp ? 'Revert to draft' : 'Hide from the storefront'}
+                </div>
                 <div style={descStyle}>
-                  {isWp
-                    ? 'The post stays in WordPress but is no longer visible to visitors. Reversible.'
-                    : 'The post stays in BigCommerce but is unpublished. Reversible.'}
+                  {isBoth
+                    ? 'Reverts the WordPress copy to a draft and unpublishes the BigCommerce copy. Both reversible.'
+                    : isWp
+                      ? 'The post stays in WordPress but is no longer visible to visitors. Reversible.'
+                      : 'The post stays in BigCommerce but is unpublished. Reversible.'}
                 </div>
               </button>
 
@@ -168,9 +182,11 @@ export default function LivePostActionModal({
               background: '#fee2e2', border: '1px solid #fca5a5',
               fontSize: 11.5, color: '#b91c1c', lineHeight: 1.5,
             }}>
-              {isWp
-                ? 'This removes the article from the live site. It goes to the WordPress trash, so it can be restored from wp-admin if this was a mistake.'
-                : 'This permanently deletes the article from BigCommerce. There is no trash and no undo.'}
+              {isBoth
+                ? 'This removes the article from both live sites. The WordPress copy goes to the trash and can be restored from wp-admin; the BigCommerce copy is deleted permanently, with no trash and no undo.'
+                : isWp
+                  ? 'This removes the article from the live site. It goes to the WordPress trash, so it can be restored from wp-admin if this was a mistake.'
+                  : 'This permanently deletes the article from BigCommerce. There is no trash and no undo.'}
             </div>
           )}
         </div>

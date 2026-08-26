@@ -6,24 +6,11 @@ import {
   sanitizeNoteFields,
   categoryStampsContact,
 } from '@/lib/note-templates'
-import { encryptSecret, secretsAvailable } from '@/lib/crypto/secrets'
+import { redactSecret, encodeSecret } from '@/lib/notes/noteSecrets'
 
 const NOTE_SELECT =
   'id, title, content, category, fields, pinned, created_at, updated_at, updated_by, user_id, secret_enc, ' +
   'users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)'
-
-/**
- * Strip the ciphertext before anything leaves the server.
- *
- * The browser only ever needs to know THAT a secret is stored, so it can render
- * the locked state. The value itself is available exclusively through the
- * audited reveal endpoint. Sending encrypted bytes to the client would not be a
- * disaster, but there is no reason to put them on the wire at all.
- */
-function redactSecret<T extends Record<string, unknown>>(row: T): Omit<T, 'secret_enc'> & { has_secret: boolean } {
-  const { secret_enc, ...rest } = row
-  return { ...rest, has_secret: typeof secret_enc === 'string' && secret_enc.length > 0 }
-}
 
 export async function GET(
   request: NextRequest,
@@ -73,27 +60,6 @@ interface NoteBody {
   secret?:   string
 }
 
-/**
- * Turn a plaintext secret into stored ciphertext.
- *
- * Returns a 400-shaped error rather than storing anything when the key is
- * missing: falling back to plaintext would silently defeat the entire point,
- * and a loud failure is the correct behaviour for a misconfigured secret store.
- */
-function encodeSecret(raw: string | undefined): { value?: string; error?: string } {
-  if (raw === undefined) return {}
-  const s = raw.trim()
-  if (s === '') return { value: undefined }   // explicit clear
-  if (!secretsAvailable()) {
-    return { error: 'Credential storage is not configured. Set CREDENTIAL_ENCRYPTION_KEY in the environment (openssl rand -base64 32), then try again.' }
-  }
-  try {
-    return { value: encryptSecret(s) }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Could not encrypt the credential' }
-  }
-}
-
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -126,7 +92,7 @@ export async function POST(
     )
   }
 
-  const secret = encodeSecret(body.secret)
+  const secret = encodeSecret(body.secret, category)
   if (secret.error) return NextResponse.json({ error: secret.error }, { status: 400 })
 
   const db = createAdminClient()
@@ -163,7 +129,13 @@ export async function POST(
     const occurred = fields.occurred_on
       ? new Date(`${fields.occurred_on}T12:00:00Z`)
       : new Date()
-    const stamp = isNaN(occurred.getTime()) ? new Date() : occurred
+    const now = new Date()
+    // Clamp forward as well as backward. A future date is a plausible typo
+    // (2027 for 2026) and it is silently permanent: the cron computes a NEGATIVE
+    // days-since, so `days >= threshold` is false and the client drops out of the
+    // staleness digest entirely until that date arrives — no alert, and nothing
+    // that would ever surface the mistake.
+    const stamp = isNaN(occurred.getTime()) || occurred > now ? now : occurred
 
     const { data: current } = await db
       .from('clients')

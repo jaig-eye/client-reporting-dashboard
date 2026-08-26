@@ -173,10 +173,3 @@ FINAL CHECK before returning the JSON — answer honestly and fix what fails:
   return parts.join('\n\n')
 }
 
-/** Pull the media brief out of generated HTML for display in the review UI. */
-export function extractMediaBrief(html: string | null | undefined): string[] {
-  if (!html) return []
-  const m = html.match(/<!--\s*MEDIA:\s*([\s\S]*?)-->/i)
-  if (!m) return []
-  return m[1].split('|').map(s => s.trim()).filter(Boolean)
-}

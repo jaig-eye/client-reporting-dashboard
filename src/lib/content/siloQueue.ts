@@ -57,18 +57,6 @@ export async function fetchQueueKeywords(
   return (data ?? []) as unknown as SiloQueueKeyword[]
 }
 
-/** How many keywords are still available / already consumed. */
-export async function queueCounts(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: SupabaseClient<any>,
-  siloId: string,
-): Promise<{ total: number; unused: number }> {
-  const [{ count: total }, { count: unused }] = await Promise.all([
-    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId).eq('selected', true),
-    db.from('content_silo_keywords').select('id', { count: 'exact', head: true }).eq('silo_id', siloId).eq('selected', true).is('used_at', null),
-  ])
-  return { total: total ?? 0, unused: unused ?? 0 }
-}
 
 /**
  * Link generated topics back to the keywords that produced them, and mark those
@@ -115,11 +103,16 @@ export async function claimKeywordsForTopics(
     pairs.push({ topicId, keywordId: k.id })
   }
 
-  const claimed: { topicId: string; keywordId: string }[] = []
   const now = new Date().toISOString()
 
-  for (const pair of pairs) {
-    // Compare-and-swap: only claim a keyword that is still unused.
+  // Concurrent, not serial. Each claim needs its own statement — the
+  // compare-and-swap writes a DIFFERENT target_topic_id per row, so it cannot
+  // collapse into one bulk UPDATE — but they are independent, and the queue
+  // returns up to 12 keywords. Serially that was ~24 round trips (a second of
+  // pure latency) per silo generation, multiplied by every silo-backed client on
+  // every cron run. The compare-and-swap is what makes concurrency safe here:
+  // whichever writer loses the `is('used_at', null)` race simply updates nothing.
+  const claimed = (await Promise.all(pairs.map(async pair => {
     const { data: won, error } = await db
       .from('content_silo_keywords')
       .update({ used_at: now, target_topic_id: pair.topicId })
@@ -127,8 +120,8 @@ export async function claimKeywordsForTopics(
       .is('used_at', null)
       .select('id')
 
-    if (error) { console.error('[siloQueue] claim failed:', error.message); continue }
-    if (!won || won.length === 0) continue   // another run got there first
+    if (error) { console.error('[siloQueue] claim failed:', error.message); return null }
+    if (!won || won.length === 0) return null   // another run got there first
 
     const { error: linkErr } = await db
       .from('content_topics')
@@ -136,8 +129,8 @@ export async function claimKeywordsForTopics(
       .eq('id', pair.topicId)
     if (linkErr) console.error('[siloQueue] topic link failed:', linkErr.message)
 
-    claimed.push(pair)
-  }
+    return pair
+  }))).filter((p): p is { topicId: string; keywordId: string } => p !== null)
 
   return claimed
 }
@@ -173,6 +166,15 @@ export async function releaseKeywordsForTopics(
     .from('content_silo_keywords')
     .update({ used_at: null, target_topic_id: null, target_post_id: null })
     .in('target_topic_id', topicIds)
+    // A keyword that already PRODUCED a post is not free, whatever happened to
+    // the topic row afterwards. Deleting or rejecting the topic used to match
+    // here regardless, so a keyword whose article is live went back on the queue,
+    // the silo counted it as an open slot, and the next generation handed the
+    // same term to a second topic — two articles competing for one keyword,
+    // which is precisely the invariant dismiss/route.ts guards. Clearing
+    // target_post_id at the same time also severed the provenance link while
+    // content_posts.silo_keyword_id still pointed the other way.
+    .is('target_post_id', null)
   if (error) console.error('[siloQueue] release failed:', error.message)
 }
 
@@ -213,8 +215,16 @@ export function buildKeywordQueueBlock(
   alreadyCovered: string,
   injectInternalLinks: boolean,
 ): string {
+  // 'transactional', 'navigational' and 'local' are valid values of the intent
+  // column (migration 165) but naming them here tells a BLOG topic generator to
+  // serve an intent blogs may not serve. Only the intents a blog can legitimately
+  // target are passed through; the rest are simply omitted rather than argued with.
+  const BLOG_SAFE_INTENTS = new Set(['informational', 'commercial'])
   const list = keywords
-    .map((k, i) => `  ${i + 1}. "${k.keyword}"${k.intent ? ` (intent: ${k.intent})` : ''}`)
+    .map((k, i) => {
+      const intent = k.intent && BLOG_SAFE_INTENTS.has(k.intent) ? ` (intent: ${k.intent})` : ''
+      return `  ${i + 1}. "${k.keyword}"${intent}`
+    })
     .join('\n')
 
   return `
@@ -228,10 +238,15 @@ verbatim as that topic's target_keyword:
 ${list}
 ${alreadyCovered ? `\nAlready covered in this set (do NOT duplicate these intents):\n${alreadyCovered}` : ''}
 
-RULES (override any conflicting instructions above):
+RULES:
 1. Exactly one topic per keyword listed, in the order given.
-2. Use each keyword EXACTLY as written for target_keyword — it is how the topic
-   is matched back to the queue.
+2. Use each keyword EXACTLY as written for target_keyword — UNLESS it would break
+   the blog-intent rules stated above. Those rules win: a blog target_keyword must
+   be a question or an informational noun phrase, never a bare geo+service term
+   ("roof repair Dallas"), a "near me" phrase, or anything transactional. When a
+   queued keyword is one of those, keep it as the SUBJECT of the article and write
+   an informational target_keyword for it instead — the queue still matches the
+   topic by position, so nothing is lost.
 3. Angle each topic so no two compete for the same search intent.
 4. ${injectInternalLinks
     ? 'Where it genuinely helps the reader, cross-link to the other articles in this set.'

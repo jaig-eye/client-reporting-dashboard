@@ -85,13 +85,41 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Repair the rows that bookkeeping writes already falsely marked stale.
--- Only touches rows that ARE on a CMS and have no evidence of a real edit
--- pending; a post genuinely awaiting a re-push is left flagged.
-UPDATE content_posts
-   SET updated_at = last_pushed_at
- WHERE last_pushed_at IS NOT NULL
-   AND updated_at > last_pushed_at
-   AND status IN ('draft_saved', 'published');
+--
+-- The predicate matters, because `updated_at > last_pushed_at` on a draft_saved
+-- row is ALSO exactly what a genuine pending edit looks like — the editor's PATCH
+-- never changes status. Clearing every such row would assert the client's site is
+-- in sync while it serves the old paragraphs, and nothing would ever re-raise the
+-- flag, so the repair has to identify bookkeeping specifically.
+--
+-- It can, precisely: a bulk UPDATE stamps every row it touches with one
+-- transaction timestamp. The 12 affected rows in production all carry the
+-- identical updated_at (2026-08-25 17:27:03.626852) from 202's rewrite, across
+-- different clients and last_pushed_at values days apart. Two humans cannot save
+-- two different posts in the same microsecond, so a shared exact timestamp is a
+-- machine write and a unique one is a person. Elapsed time does NOT separate them
+-- — the real gaps here run from 8 to 21 days — which is why this keys on the
+-- stamp rather than on a window.
+--
+-- A bulk statement that happened to touch a single row is left flagged. That is
+-- the safe direction to be wrong in: a spurious "out of date" banner costs a
+-- needless re-push, a missing one costs a stale page nobody notices.
+WITH bulk_stamps AS (
+  SELECT updated_at
+    FROM content_posts
+   WHERE last_pushed_at IS NOT NULL
+     AND updated_at > last_pushed_at
+     AND status IN ('draft_saved', 'published')
+   GROUP BY updated_at
+  HAVING count(*) > 1
+)
+UPDATE content_posts p
+   SET updated_at = p.last_pushed_at
+  FROM bulk_stamps b
+ WHERE p.updated_at = b.updated_at
+   AND p.last_pushed_at IS NOT NULL
+   AND p.updated_at > p.last_pushed_at
+   AND p.status IN ('draft_saved', 'published');
 
 CREATE TRIGGER trg_content_posts_updated_at
   BEFORE UPDATE ON content_posts

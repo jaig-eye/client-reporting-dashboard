@@ -40,6 +40,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [error,   setError]   = useState('')
+  const [notes,   setNotes]   = useState<string | null>(null)
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
   const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
@@ -128,6 +129,11 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error((await res.json()).error || 'Failed')
       const data = await res.json() as SitemapPage[]
       setPages(data)
+      // A parse can succeed and still have done something the operator should
+      // know about — product sitemaps skipped, stale rows pruned, or a degraded
+      // save because migration 183 is missing. These were logged server-side and
+      // never shown.
+      setNotes(res.headers.get('X-Sitemap-Notes'))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch sitemap')
     } finally {
@@ -324,6 +330,10 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
 
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 12 }}>{error}</p>
+      )}
+
+      {notes && (
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 12 }}>{notes}</p>
       )}
 
       {/* Legend */}

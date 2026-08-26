@@ -416,7 +416,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       return (
         <LivePostActionModal
           mode="remove"
-          platform={p.bc_post_id ? 'bigcommerce' : 'wordpress'}
+          platform={p.wp_post_id && p.bc_post_id ? 'both' : p.bc_post_id ? 'bigcommerce' : 'wordpress'}
           postTitle={p.title}
           busy={loadingId === removeModal.postId}
           onCancel={() => setRemoveModal(null)}
@@ -436,7 +436,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       return (
         <LivePostActionModal
           mode="regenerate"
-          platform={p.bc_post_id ? 'bigcommerce' : 'wordpress'}
+          platform={p.wp_post_id && p.bc_post_id ? 'both' : p.bc_post_id ? 'bigcommerce' : 'wordpress'}
           postTitle={p.title}
           busy={regeneratingIds.has(liveRegenModal.postId)}
           onCancel={() => setLiveRegenModal(null)}

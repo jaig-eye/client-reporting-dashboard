@@ -200,6 +200,19 @@ export function categoryStampsContact(c: string): boolean {
 }
 
 /**
+ * Whether this category is allowed to carry a stored credential.
+ *
+ * The UI only offers the secret field on login/dns/hosting, but the UI is not a
+ * boundary: the API accepted `secret` on any category, so a credential could be
+ * written onto (say) a billing note where nothing in the interface would ever
+ * show it was there — invisible, undeletable through the app, and still
+ * decryptable through the reveal endpoint.
+ */
+export function categoryHoldsSecret(c: string): boolean {
+  return isNoteCategory(c) && NOTE_TEMPLATES[c].hasSecret === true
+}
+
+/**
  * Drop unknown keys and blank answers so `fields` only ever holds values the
  * template actually declares. Keeps the JSONB from accumulating junk when a
  * template changes shape.

@@ -99,7 +99,13 @@ export async function POST(
       trust_authority_score:   body.trust_authority_score   ?? null,
       current_ranking_url:     body.current_ranking_url     ?? null,
       current_ranking_position: body.current_ranking_position ?? null,
-      selected:                body.selected                ?? false,
+      // Default TRUE, not false. `selected` is what the hub-less keyword queue
+      // means by "available" (see fetchQueueKeywords and the silo card's
+      // "N of M left" count), and this is the only in-app way to add a keyword to
+      // an existing silo — the detail page's add box sends no `selected` at all.
+      // Defaulting to false made every keyword typed there invisible: never
+      // queued, never counted, never generated from, and no error anywhere.
+      selected:                body.selected                ?? true,
       page_category:           body.page_category           ?? null,
     })
     .select()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ClientTemperature } from '@/lib/types'
 
@@ -11,11 +11,28 @@ const TEMPERATURES: { key: ClientTemperature; label: string; color: string; hint
 ]
 
 function daysSince(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  // Floored at 0. Contact dates are stamped at noon UTC, so a row written before
+  // the clamp existed can sit slightly in the future for anyone west of UTC, and
+  // Math.floor on a small negative difference renders "-1 days ago".
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000))
 }
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/**
+ * The date input's value in the same calendar terms formatDate displays.
+ *
+ * toISOString().slice(0,10) is the UTC date, while the card above renders the
+ * local one — so for a noon-UTC stamp the field pre-filled a DIFFERENT day than
+ * the label, and because it commits on blur, merely focusing and tabbing out
+ * silently moved the contact date.
+ */
+function dateInputValue(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 export default function ClientRelationshipCard({
@@ -33,15 +50,38 @@ export default function ClientRelationshipCard({
 }) {
   const router = useRouter()
 
-  const [temp,     setTemp]     = useState<ClientTemperature | null>(initialTemp)
-  const [contact,  setContact]  = useState<string | null>(initialContact)
-  const [override, setOverride] = useState<string>(initialOverride?.toString() ?? '')
+  // Optimistic OVERLAY, not a mirror of the props.
+  //
+  // useState initialisers run once, so plain mirrors never picked up new props —
+  // and this component's own patch() calls router.refresh(), which re-renders the
+  // mounted component rather than remounting it. Logging a Contact note elsewhere
+  // on the page stamps clients.last_contacted_at, the fresh prop arrives, and the
+  // card kept showing "Never logged" until a hard reload. Worse, `threshold` was
+  // read from the PROP while the input rendered the STATE, so editing "Alert
+  // after" computed the red banner against the previous value.
+  //
+  // Holding only the in-flight value and clearing it when the server value
+  // catches up gives instant feedback AND convergence.
+  const [pendingTemp,     setPendingTemp]     = useState<{ value: ClientTemperature | null } | null>(null)
+  const [pendingContact,  setPendingContact]  = useState<string | null>(null)
+  const [pendingOverride, setPendingOverride] = useState<string | null>(null)
   const [saving,   setSaving]   = useState(false)
   const [editingDate, setEditingDate] = useState(false)
 
-  const threshold = initialOverride ?? agencyStaleDays
-  const elapsed   = contact ? daysSince(contact) : null
-  const isStale   = elapsed === null || elapsed >= threshold
+  const temp     = pendingTemp ? pendingTemp.value : initialTemp
+  const contact  = pendingContact ?? initialContact
+  const override = pendingOverride ?? (initialOverride?.toString() ?? '')
+
+  // Once the server agrees with what we optimistically showed, drop the overlay
+  // so later external changes flow through.
+  useEffect(() => { setPendingTemp(null) },     [initialTemp])
+  useEffect(() => { setPendingContact(null) },  [initialContact])
+  useEffect(() => { setPendingOverride(null) }, [initialOverride])
+
+  const overrideNum = override.trim() === '' ? null : Number(override)
+  const threshold   = overrideNum !== null && Number.isFinite(overrideNum) ? overrideNum : agencyStaleDays
+  const elapsed     = contact ? daysSince(contact) : null
+  const isStale     = elapsed === null || elapsed >= threshold
 
   async function patch(body: Record<string, unknown>, rollback: () => void) {
     setSaving(true)
@@ -61,36 +101,37 @@ export default function ClientRelationshipCard({
   }
 
   function setTemperature(next: ClientTemperature | null) {
-    const prev = temp
-    setTemp(next)
+    setPendingTemp({ value: next })
     // Clearing the alert marker re-arms the staleness cron for this client.
-    void patch({ temperature: next }, () => setTemp(prev))
+    void patch({ temperature: next }, () => setPendingTemp(null))
   }
 
   function logContactNow() {
-    const prev = contact
-    const iso  = new Date().toISOString()
-    setContact(iso)
-    void patch({ last_contacted_at: iso }, () => setContact(prev))
+    const iso = new Date().toISOString()
+    setPendingContact(iso)
+    void patch({ last_contacted_at: iso }, () => setPendingContact(null))
   }
 
   function setContactDate(dateStr: string) {
     if (!dateStr) return
-    const prev = contact
-    // Noon UTC keeps the date stable either side of a timezone boundary.
-    const iso = new Date(`${dateStr}T12:00:00Z`).toISOString()
-    setContact(iso)
+    // Noon UTC keeps the date stable either side of a timezone boundary, but it
+    // can land in the FUTURE for anyone west of UTC picking today's date before
+    // noon — which rendered "-1 days ago" and, server-side, dropped the client
+    // out of the staleness digest. Never stamp ahead of now.
+    const picked = new Date(`${dateStr}T12:00:00Z`)
+    const now    = new Date()
+    const iso    = (picked > now ? now : picked).toISOString()
+    setPendingContact(iso)
     setEditingDate(false)
-    void patch({ last_contacted_at: iso }, () => setContact(prev))
+    void patch({ last_contacted_at: iso }, () => setPendingContact(null))
   }
 
   function saveOverride(raw: string) {
     const trimmed = raw.trim()
     const value   = trimmed === '' ? null : Number(trimmed)
     if (value !== null && (!Number.isFinite(value) || value < 1 || value > 365)) return
-    const prev = override
-    setOverride(trimmed)
-    void patch({ contact_stale_days: value }, () => setOverride(prev))
+    setPendingOverride(trimmed)
+    void patch({ contact_stale_days: value }, () => setPendingOverride(null))
   }
 
   return (
@@ -197,7 +238,7 @@ export default function ClientRelationshipCard({
         <input
           type="date"
           autoFocus
-          defaultValue={contact ? new Date(contact).toISOString().slice(0, 10) : ''}
+          defaultValue={contact ? dateInputValue(contact) : ''}
           onBlur={e => { if (e.target.value) setContactDate(e.target.value); else setEditingDate(false) }}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
@@ -230,7 +271,10 @@ export default function ClientRelationshipCard({
             max={365}
             value={override}
             placeholder={`Global: ${agencyStaleDays}`}
-            onChange={e => setOverride(e.target.value)}
+            // Typing updates the overlay so the field stays editable; only blur
+            // commits. The threshold above is derived from the same value, so the
+            // "past the N-day mark" banner tracks what is on screen.
+            onChange={e => setPendingOverride(e.target.value)}
             onBlur={e => saveOverride(e.target.value)}
             disabled={saving}
             className="input"

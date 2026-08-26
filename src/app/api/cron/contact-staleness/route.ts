@@ -17,6 +17,7 @@ import { createAdminClient }          from '@/lib/supabase/server'
 import { sendDiscordMessage }         from '@/lib/discord'
 import { sendEmail }                  from '@/lib/email'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
+import { buildAgencyEmail, escapeEmailHtml } from '@/lib/content/emailTemplates'
 
 export const maxDuration = 60
 
@@ -35,8 +36,12 @@ interface ClientRow {
 const TEMP_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
 export async function GET(request: NextRequest) {
+  // The CRON_SECRET presence check is separate on purpose. Interpolating an
+  // unset var produces the literal string "Bearer undefined", which is truthy —
+  // so timingSafeCompare's own `!expected` guard never fires and anyone sending
+  // `Authorization: Bearer undefined` is let in. Check the var itself first.
   const authHeader = request.headers.get('authorization')
-  if (!timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  if (!process.env.CRON_SECRET || !timingSafeCompare(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -55,7 +60,16 @@ export async function GET(request: NextRequest) {
   const opsChannel  = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
   const notifConfig = (settings?.notification_config as NotifConfig | null) ?? {}
   const notifyEmail = (settings?.notification_email as string | null) ?? null
-  const agencyDays  = (settings?.contact_stale_days as number | null) ?? 14
+  // Clamped, not just defaulted. `?? 14` only covers NULL, and the value that
+  // actually causes damage is 0 — which makes every client stale on every run
+  // AND defeats the re-arm window below (`now - 0` is always now), so the digest
+  // names every client every weekday forever. The settings route now rejects it
+  // on the way in; this defends against a row that already holds one.
+  const rawAgencyDays = Number(settings?.contact_stale_days)
+  const agencyName    = (settings?.agency_name as string | null) ?? 'Agency'
+  const agencyDays    = Number.isFinite(rawAgencyDays) && rawAgencyDays >= 1
+    ? Math.min(365, Math.trunc(rawAgencyDays))
+    : 14
 
   const notif = getNotif(notifConfig, 'client_contact_stale')
 
@@ -65,7 +79,10 @@ export async function GET(request: NextRequest) {
   const stale: { row: ClientRow; days: number | null; threshold: number }[] = []
 
   for (const c of clients) {
-    const threshold = c.contact_stale_days ?? agencyDays
+    const perClient = Number(c.contact_stale_days)
+    const threshold = Number.isFinite(perClient) && perClient >= 1
+      ? Math.min(365, Math.trunc(perClient))
+      : agencyDays
     const contacted = c.last_contacted_at ? new Date(c.last_contacted_at).getTime() : null
     const days      = contacted === null ? null : Math.floor((now - contacted) / DAY_MS)
 
@@ -120,12 +137,19 @@ export async function GET(request: NextRequest) {
       await sendEmail({
         to:      notifyEmail,
         subject: `${stale.length} client${stale.length === 1 ? '' : 's'} due a check-in`,
-        html:    `<h2>Clients due a check-in</h2><ul>${
-          stale.map(({ row, days, threshold }) =>
-            `<li><strong>${escapeHtml(row.name)}</strong>${row.temperature ? ` (${row.temperature})` : ''} — ${
-              days === null ? 'never logged' : `${days} days ago`
-            }, window ${threshold}d</li>`).join('')
-        }</ul>`,
+        // Same shell as every other agency notification. This used to ship as a
+        // bare <h2>/<ul> in the client's default serif, so the one email about
+        // our own follow-up discipline was the one that looked like spam.
+        html:    buildAgencyEmail(
+          agencyName,
+          'Clients due a check-in',
+          `<ul style="margin:0;padding-left:18px;color:#374151;font-size:14px;line-height:1.7;">${
+            stale.map(({ row, days, threshold }) =>
+              `<li><strong>${escapeEmailHtml(row.name)}</strong>${row.temperature ? ` (${escapeEmailHtml(row.temperature)})` : ''} — ${
+                days === null ? 'never logged' : `${days} days ago`
+              }, window ${threshold}d</li>`).join('')
+          }</ul>`,
+        ),
       })
       emailSent = true
     } catch (e) {
@@ -180,7 +204,3 @@ function chunkLines(text: string, max: number): string[] {
   return out
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c))
-}

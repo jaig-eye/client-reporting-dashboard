@@ -61,7 +61,7 @@ export function isOnCms(p: Partial<LivePost> | null | undefined): boolean {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = SupabaseClient<any>
 
-async function wpCreds(db: Db, clientId: string) {
+export async function wpCreds(db: Db, clientId: string) {
   const { data } = await db
     .from('client_connections')
     .select('id, connector:connectors!inner(type, auth, config)')
@@ -85,7 +85,7 @@ async function wpCreds(db: Db, clientId: string) {
   return { siteUrl, username, app_password }
 }
 
-async function bcCreds(db: Db, clientId: string) {
+export async function bcCreds(db: Db, clientId: string) {
   const { data } = await db
     .from('client_connections')
     .select('id, connector:connectors!inner(type, auth, config)')
@@ -131,68 +131,125 @@ export async function applyCmsAction(
 
   const isPage = post.content_type === 'service_area'
 
-  try {
-    if (post.wp_post_id) {
-      const creds = await wpCreds(db, post.client_id)
-      if (!creds) {
-        return { applied: action, platform: 'wordpress', ok: false, message: 'No active WordPress connection for this client' }
-      }
-      const siteUrl = post.wp_site_url || creds.siteUrl
-      const auth = { username: creds.username, app_password: creds.app_password }
-      const kind: 'post' | 'page' = isPage ? 'page' : 'post'
+  // BOTH platforms, not the first one that matches.
+  //
+  // A row can carry wp_post_id AND bc_post_id — approve/ and publish-bigcommerce/
+  // each set their own id without clearing the other. The old shape returned
+  // after the WordPress branch and then cleared BOTH ids, so a "delete" on such a
+  // post trashed the WordPress copy, wiped the BigCommerce reference, and left
+  // that article live on the storefront with nothing in the dashboard able to
+  // reach it. Worse, the modal labels itself from bc_post_id first, so the human
+  // was told "BigCommerce, permanent" while WordPress was what actually happened.
+  const outcomes: CmsActionResult[] = []
 
-      if (action === 'unpublish') {
-        await setWpContentStatus(siteUrl, auth, kind, post.wp_post_id, 'draft')
-        return { applied: action, platform: 'wordpress', ok: true, message: 'Reverted to a WordPress draft — still recoverable' }
-      }
+  if (post.wp_post_id) {
+    outcomes.push(await actOnWordPress(db, post, action, isPage))
+  }
+  if (post.bc_post_id) {
+    outcomes.push(await actOnBigCommerce(db, post, action, isPage))
+  }
 
-      // force:false trashes rather than destroying, so a mistaken click can be
-      // undone from wp-admin.
-      const res = await deleteWpContent(siteUrl, auth, kind, post.wp_post_id, false)
-      await clearPlatformRefs(db, postId)
-      return {
-        applied: action, platform: 'wordpress', ok: true, alreadyGone: res.alreadyGone,
-        message: res.alreadyGone
-          ? 'Already gone from WordPress — the dashboard record has been reconciled'
-          : 'Moved to the WordPress trash (recoverable from wp-admin)',
-      }
-    }
-
-    if (post.bc_post_id) {
-      const creds = await bcCreds(db, post.client_id)
-      if (!creds) {
-        return { applied: action, platform: 'bigcommerce', ok: false, message: 'No active BigCommerce connection for this client' }
-      }
-      const hash = post.bc_store_hash || creds.storeHash
-      const kind: 'blog' | 'page' = isPage ? 'page' : 'blog'
-
-      if (action === 'unpublish') {
-        await setBCContentVisibility(hash, creds.accessToken, kind, post.bc_post_id, false)
-        return { applied: action, platform: 'bigcommerce', ok: true, message: 'Hidden from the BigCommerce storefront — still recoverable' }
-      }
-
-      const res = await deleteBCContent(hash, creds.accessToken, kind, post.bc_post_id)
-      await clearPlatformRefs(db, postId)
-      return {
-        applied: action, platform: 'bigcommerce', ok: true, alreadyGone: res.alreadyGone,
-        message: res.alreadyGone
-          ? 'Already gone from BigCommerce — the dashboard record has been reconciled'
-          : 'Deleted from BigCommerce (permanent — BigCommerce has no trash)',
-      }
-    }
-
+  if (outcomes.length === 0) {
     return { applied: action, platform: null, ok: true, message: 'Nothing published to remove' }
+  }
+
+  const failed = outcomes.filter(o => !o.ok)
+  if (failed.length > 0) {
+    // Partial success is reported as a failure on purpose: the caller must not
+    // archive the row while a copy is still live somewhere.
+    return {
+      applied:  action,
+      platform: failed[0].platform,
+      ok:       false,
+      message:  failed.map(f => `${f.platform}: ${f.message}`).join('; '),
+    }
+  }
+
+  // Every live copy is dealt with, so the row can stop claiming one.
+  if (action === 'delete') await clearPlatformRefs(db, postId)
+
+  return {
+    applied:     action,
+    platform:    outcomes[0].platform,
+    ok:          true,
+    alreadyGone: outcomes.every(o => o.alreadyGone),
+    message:     outcomes.map(o => o.message).join('; '),
+  }
+}
+
+async function actOnWordPress(
+  db: Db,
+  post: LivePost,
+  action: Exclude<CmsAction, 'leave'>,
+  isPage: boolean,
+): Promise<CmsActionResult> {
+  try {
+    const creds = await wpCreds(db, post.client_id)
+    if (!creds) {
+      return { applied: action, platform: 'wordpress', ok: false, message: 'No active WordPress connection for this client' }
+    }
+    const siteUrl = post.wp_site_url || creds.siteUrl
+    const auth = { username: creds.username, app_password: creds.app_password }
+    const kind: 'post' | 'page' = isPage ? 'page' : 'post'
+
+    if (action === 'unpublish') {
+      await setWpContentStatus(siteUrl, auth, kind, post.wp_post_id!, 'draft')
+      return { applied: action, platform: 'wordpress', ok: true, message: 'Reverted to a WordPress draft — still recoverable' }
+    }
+
+    // force:false trashes rather than destroying, so a mistaken click can be
+    // undone from wp-admin.
+    const res = await deleteWpContent(siteUrl, auth, kind, post.wp_post_id!, false)
+    return {
+      applied: action, platform: 'wordpress', ok: true, alreadyGone: res.alreadyGone,
+      message: res.alreadyGone
+        ? 'Already gone from WordPress — the dashboard record has been reconciled'
+        : 'Moved to the WordPress trash (recoverable from wp-admin)',
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    console.error('[cmsLifecycle] action failed', action, postId, msg)
-    return { applied: action, platform: post.wp_post_id ? 'wordpress' : 'bigcommerce', ok: false, message: msg }
+    console.error('[cmsLifecycle] wordpress action failed', action, post.id, msg)
+    return { applied: action, platform: 'wordpress', ok: false, message: msg }
+  }
+}
+
+async function actOnBigCommerce(
+  db: Db,
+  post: LivePost,
+  action: Exclude<CmsAction, 'leave'>,
+  isPage: boolean,
+): Promise<CmsActionResult> {
+  try {
+    const creds = await bcCreds(db, post.client_id)
+    if (!creds) {
+      return { applied: action, platform: 'bigcommerce', ok: false, message: 'No active BigCommerce connection for this client' }
+    }
+    const hash = post.bc_store_hash || creds.storeHash
+    const kind: 'blog' | 'page' = isPage ? 'page' : 'blog'
+
+    if (action === 'unpublish') {
+      await setBCContentVisibility(hash, creds.accessToken, kind, post.bc_post_id!, false)
+      return { applied: action, platform: 'bigcommerce', ok: true, message: 'Hidden from the BigCommerce storefront — still recoverable' }
+    }
+
+    const res = await deleteBCContent(hash, creds.accessToken, kind, post.bc_post_id!)
+    return {
+      applied: action, platform: 'bigcommerce', ok: true, alreadyGone: res.alreadyGone,
+      message: res.alreadyGone
+        ? 'Already gone from BigCommerce — the dashboard record has been reconciled'
+        : 'Deleted from BigCommerce (permanent — BigCommerce has no trash)',
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[cmsLifecycle] bigcommerce action failed', action, post.id, msg)
+    return { applied: action, platform: 'bigcommerce', ok: false, message: msg }
   }
 }
 
 /**
- * Forget the CMS copy. Called after a successful delete, and by the
- * "publish as a new post" regenerate mode, which deliberately detaches the row
- * from the article it used to own.
+ * Forget the CMS copy. Called after a successful delete on every platform the
+ * row claimed, and by the "publish as a new post" regenerate mode, which
+ * deliberately detaches the row from the article it used to own.
  */
 export async function clearPlatformRefs(db: Db, postId: string): Promise<void> {
   const { error } = await db

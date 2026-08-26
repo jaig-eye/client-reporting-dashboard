@@ -19,7 +19,7 @@ import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession, requireVerifiedAdmin } from '@/lib/auth'
 import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
@@ -143,11 +143,21 @@ export async function POST(
   const { edit_notes } = body
   const liveMode = body.live_mode ?? 'replace'
 
+  // Same reasoning as the dismiss route: 'new_remove' unpublishes or permanently
+  // deletes a page from the client's live site, and isAdminAuthed cannot tell an
+  // admin from a viewer. 'replace' and 'new_keep' leave the live article alone.
+  if (liveMode === 'new_remove') {
+    const gate = await requireVerifiedAdmin()
+    if (!gate.ok) {
+      return NextResponse.json({ error: gate.error }, { status: gate.status })
+    }
+  }
+
   const db = createAdminClient()
 
   const { data: post } = await db
     .from('content_posts')
-    .select('id, client_id, topic_id, target_publish_date, status, content_type, wp_post_id, bc_post_id, admin_approved_at')
+    .select('id, client_id, topic_id, target_publish_date, status, content_type, silo_id, wp_post_id, bc_post_id, admin_approved_at')
     .eq('id', postId)
     .maybeSingle()
 
@@ -214,6 +224,12 @@ export async function POST(
     try {
       // 1. Generate a fresh topic — generateTopicsForClient builds its own avoid list
       //    from existing topics, so it naturally avoids the current topic.
+      //
+      //    siloId is carried over deliberately. Without it the queue path in
+      //    generateTopics is skipped entirely (it is gated on opts.siloId), so the
+      //    replacement topic claims no keyword — while the old topic's keyword was
+      //    just released. The silo then counted a free slot whose article is live
+      //    and handed the same term to a second topic on the next run.
       const topicResult = await generateTopicsForClient(
         db,
         post.client_id as string,
@@ -222,6 +238,7 @@ export async function POST(
         {
           suppressEmail: true,
           contentType:   (post.content_type as string | undefined) ?? undefined,
+          ...(post.silo_id ? { siloId: String(post.silo_id) } : {}),
         }
       )
 
@@ -261,7 +278,9 @@ export async function POST(
           .select('ai_provider, ai_model, ai_api_key, agency_name')
           .maybeSingle(),
         db.from('content_settings')
-          .select('topic_guidelines, target_length')
+          // `vertical` rides along so the quality gate below does not need its
+          // own round trip for one column.
+          .select('topic_guidelines, target_length, vertical')
           .eq('client_id', post.client_id)
           .maybeSingle(),
       ])
@@ -352,6 +371,11 @@ Requirements:
       // report describes an article that no longer exists. Leaving it would show
       // the reviewer findings for text they are not looking at, and could let a
       // clean-looking old report wave a bad rewrite through the auto-push gate.
+      // Only the siblings need fetching here. The site URLs came back with the
+      // allow-list at step 4 and the vertical rides along with the settings read
+      // at step 3 — re-querying them cost two extra serial round trips and a
+      // second, unbounded read of content_sitemap_pages (the first one caps at
+      // 200) on every regenerate.
       const { data: qgSiblings } = await db
         .from('content_posts')
         .select('id, title, content')
@@ -362,25 +386,14 @@ Requirements:
         .order('generated_at', { ascending: false })
         .limit(20)
 
-      const { data: qgSiteUrls } = await db
-        .from('content_sitemap_pages')
-        .select('url')
-        .eq('client_id', post.client_id as string)
-
-      const { data: csVertical } = await db
-        .from('content_settings')
-        .select('vertical')
-        .eq('client_id', post.client_id as string)
-        .maybeSingle()
-
       const quality = runQualityGate({
         html:          parsed.content,
         title:         parsed.title,
         targetKeyword: (newTopic.target_keyword as string | null) ?? null,
         slug:          parsed.slug,
-        siteUrls:      (qgSiteUrls ?? []).map((r: { url: string }) => r.url),
+        siteUrls:      Array.from(allowedUrls),
         siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
-        regulated:     isRegulatedVertical((csVertical as { vertical?: string | null } | null)?.vertical),
+        regulated:     isRegulatedVertical((settingsRes.data as { vertical?: string | null } | null)?.vertical),
       })
 
       // 8. Update post in-place with new content + mark new topic as fully generated

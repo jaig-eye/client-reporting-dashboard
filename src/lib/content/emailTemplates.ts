@@ -41,6 +41,50 @@ function wrapper(agencyName: string, clientName: string, body: string): string {
 </html>`
 }
 
+/**
+ * Escape for HTML email bodies.
+ *
+ * Exported so callers outside this file stop hand-rolling their own — there were
+ * four copies in the repo and they had already drifted on whether to escape the
+ * apostrophe, which is exactly how a client called O'Brien & Sons renders one way
+ * in one notification and another way in the next.
+ */
+export const escapeEmailHtml = esc
+
+/**
+ * The same shell as the per-client emails, for agency-wide notifications that
+ * are not about a single client.
+ *
+ * Without it, an ops digest ships as unstyled default-serif HTML while every
+ * other notification carries the agency header and footer — so the one alert
+ * about our own follow-up discipline is the one that looks like spam, and a
+ * future change to the email shell never reaches it.
+ */
+export function buildAgencyEmail(agencyName: string, heading: string, bodyHtml: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:24px 16px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+
+    <div style="background:#1e3a8a;padding:22px 28px;">
+      <p style="margin:0 0 4px;color:#93c5fd;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">${esc(agencyName)}</p>
+      <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.3;">${esc(heading)}</h1>
+    </div>
+
+    <div style="padding:28px;">
+      ${bodyHtml}
+    </div>
+
+    <div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+      <p style="margin:0;color:#9ca3af;font-size:11px;">${esc(agencyName)}</p>
+    </div>
+
+  </div>
+</body>
+</html>`
+}
+
 function tableRow(cells: string[], isAlt: boolean): string {
   const bg = isAlt ? '#f9fafb' : '#ffffff'
   return `<tr style="background:${bg};">${cells.map(c =>

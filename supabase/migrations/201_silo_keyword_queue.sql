@@ -46,6 +46,15 @@ CREATE INDEX IF NOT EXISTS idx_silo_keywords_queue
   ON content_silo_keywords (silo_id, sort_order, created_at)
   WHERE used_at IS NULL;
 
+-- target_topic_id needs its own index for two reasons. It carries an
+-- ON DELETE SET NULL foreign key, and Postgres does NOT index the referencing
+-- side automatically — so every content_topics DELETE would seq-scan this table
+-- to find rows to null. It is also the sole lookup key for releaseKeywordsForTopics
+-- and attachPostToKeyword, both on the rejection path.
+CREATE INDEX IF NOT EXISTS idx_silo_keywords_target_topic
+  ON content_silo_keywords (target_topic_id)
+  WHERE target_topic_id IS NOT NULL;
+
 -- 3. Provenance in the other direction: a topic/post knows which keyword spawned it.
 ALTER TABLE content_topics
   ADD COLUMN IF NOT EXISTS silo_keyword_id UUID;

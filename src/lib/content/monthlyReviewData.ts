@@ -72,7 +72,7 @@ export async function getMonthlyReviewData(
   const nextUrl = currentOrd < maxOrd ? buildHref(monthParam(nextYear, nextMon)) : null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: postsRaw } = await (db as any)
+  const { data: postsRaw, error: postsErr } = await (db as any)
     .from('content_posts')
     .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash, last_pushed_at, updated_at, platform_edit_url, silo:content_silos!silo_id(id, name), silo_keyword:content_silo_keywords!silo_keyword_id(id, keyword), quality_report, quality_score')
     .in('status', ['for_review', 'pending', 'approved', 'draft_saved', 'generating'])
@@ -83,6 +83,20 @@ export async function getMonthlyReviewData(
     .lte('target_publish_date', windowEnd)
     .not('target_publish_date', 'is', null)
     .order('target_publish_date', { ascending: true })
+
+  // This SELECT now depends on migrations 200-203 (last_pushed_at, updated_at,
+  // platform_edit_url, quality_report) and on two PostgREST embeds that need 201.
+  // A single unapplied migration makes PostgREST reject the WHOLE query, and with
+  // the error discarded that surfaced as "this month has no posts" — an empty
+  // review screen hiding posts that are due for approval. This branch's own
+  // migration 205 exists because 183 was never applied in production, so the
+  // drift is not hypothetical. Fail loudly instead.
+  if (postsErr) {
+    console.error('[monthlyReviewData] post query failed:', postsErr.message)
+    throw new Error(
+      `Could not load the monthly review: ${postsErr.message}. This usually means a content migration (200-203) has not been applied.`,
+    )
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const postsRawArr = (postsRaw ?? []) as Record<string, any>[]

@@ -132,9 +132,34 @@ const FINANCIAL_FIGURE_PATTERNS: { re: RegExp; label: string }[] = [
 /** Named-source markers that make a figure defensible. */
 const SOURCE_MARKERS = /\b(according to|per the|reported by|data from|study by|survey by|source:|states that|published by)\b/i
 
+/**
+ * Whole-word phrase matching.
+ *
+ * A bare `includes` is wrong for the short entries in these lists: 'unlock'
+ * matched "unlocked the panel", 'elevate' matched "elevated deck", 'robust'
+ * matched "robustly built", 'plethora' is fine but 'seamless' matched
+ * "seamlessly". Three such accidents pushed the finding to `critical`, which
+ * blocks a perfectly clean post from the unattended push and shows the reviewer
+ * a list of phrases that do not appear in the article.
+ *
+ * Boundaries are asserted with a lookaround on either side rather than \b,
+ * because several entries end in a non-word character ("in today's ...",
+ * "game-changer") where \b means the opposite of what is wanted.
+ */
+const phraseRegexCache = new Map<string, RegExp>()
+
+function phraseRegex(phrase: string): RegExp {
+  let re = phraseRegexCache.get(phrase)
+  if (!re) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    re = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i')
+    phraseRegexCache.set(phrase, re)
+  }
+  return re
+}
+
 function findPhrases(text: string, phrases: string[]): string[] {
-  const lower = text.toLowerCase()
-  return phrases.filter(p => lower.includes(p))
+  return phrases.filter(p => phraseRegex(p).test(text))
 }
 
 function collectMatches(text: string, re: RegExp, cap = 5): string[] {
@@ -268,25 +293,50 @@ function slugTokens(s: string): Set<string> {
 function weightedContainment(
   mine: Set<string>,
   theirs: Set<string>,
-  idf: Map<string, number>,
+  idf: Idf,
 ): { score: number; shared: string[] } {
   if (mine.size === 0 || theirs.size === 0) return { score: 0, shared: [] }
-  const w = (t: string) => idf.get(t) ?? 1
-  const mineArr = Array.from(mine)
-  const shared = mineArr.filter(t => theirs.has(t))
-  // Denominator is the smaller side's total weight, so "same topic, longer title"
-  // still scores high.
+  const w = (t: string) => idf.weight(t)
+  const mineArr   = Array.from(mine)
   const theirsArr = Array.from(theirs)
+  const shared = mineArr.filter(t => theirs.has(t))
+
   const mineWeight   = mineArr.reduce((s, t) => s + w(t), 0)
   const theirsWeight = theirsArr.reduce((s, t) => s + w(t), 0)
-  const denom = Math.min(mineWeight, theirsWeight)
-  if (denom === 0) return { score: 0, shared: [] }
+  if (mineWeight === 0 || theirsWeight === 0) return { score: 0, shared: [] }
   const sharedWeight = shared.reduce((s, t) => s + w(t), 0)
-  return { score: sharedWeight / denom, shared }
+
+  // Geometric mean of the two containments, NOT division by the smaller side.
+  //
+  // Dividing by min() means any existing URL whose tokens are a SUBSET of the new
+  // post's scores exactly 1.00 — the weights cancel out of the ratio entirely, so
+  // the IDF work above was doing nothing. A category page /plasma-tables/ versus a
+  // post "how-to-clean-plasma-tables" scored a perfect match and raised a critical
+  // cannibalisation finding, which the fail-closed cron gate then turned into a
+  // permanent hold on a post that duplicates nothing.
+  //
+  // sqrt(mine x theirs) still tolerates the case min() was chosen for — same
+  // topic, one title longer — because the extra tokens only enter under a square
+  // root, while a bare subset is penalised in proportion to how much of the new
+  // post they fail to explain.
+  return { score: sharedWeight / Math.sqrt(mineWeight * theirsWeight), shared }
 }
 
-/** IDF for every token across the client's own URL set. */
-function buildIdf(urls: string[]): Map<string, number> {
+/**
+ * IDF over the client's own URL set.
+ *
+ * `unseen` matters as much as the map. A token that appears in NO site URL is the
+ * most distinctive word available — it is what makes this post different from
+ * everything already published — but a plain `idf.get(t) ?? 1` fallback gave it
+ * the LOWEST possible weight, below a word present in every single URL. That
+ * inverted the whole point of the weighting for exactly the words it exists to
+ * reward, so an unseen token is scored as if its document frequency were zero.
+ */
+interface Idf {
+  weight(token: string): number
+}
+
+function buildIdf(urls: string[]): Idf {
   const df = new Map<string, number>()
   for (const u of urls) {
     const seen = slugTokens(lastSegment(u))
@@ -297,7 +347,8 @@ function buildIdf(urls: string[]): Map<string, number> {
   Array.from(df.entries()).forEach(([t, d]) => {
     idf.set(t, Math.log(n / (1 + d)) + 1)   // +1 keeps every weight positive
   })
-  return idf
+  const unseen = Math.log(n) + 1            // df = 0: the ceiling of the scale
+  return { weight: (t: string) => idf.get(t) ?? unseen }
 }
 
 /** Last meaningful path segment of a URL. */
@@ -448,8 +499,12 @@ export function runQualityGate(input: QualityGateInput): QualityReport {
   const siblings = (input.siblings ?? []).filter(s => s.content && s.content.length > 200)
   if (siblings.length >= 3) {
     const mine = fingerprint(html)
+    // Fingerprint each sibling ONCE. fingerprint() is ~ten full-document regex
+    // passes, and the heading-monotony check below used to re-derive all of them
+    // from scratch — 40 parses over ~400KB of HTML instead of 20, on every
+    // generation and regeneration, for no new information.
     const scored = siblings
-      .map(s => ({ post: s, sim: structuralSimilarity(mine, fingerprint(s.content!)) }))
+      .map(s => { const fp = fingerprint(s.content!); return { post: s, fp, sim: structuralSimilarity(mine, fp) } })
       .sort((a, b) => b.sim - a.sim)
 
     const top = scored[0]
@@ -472,7 +527,7 @@ export function runQualityGate(input: QualityGateInput): QualityReport {
     }
 
     // Site-wide heading monotony, independent of any single pairing.
-    const allOpeners = siblings.flatMap(s => fingerprint(s.content!).h2Openers)
+    const allOpeners = scored.flatMap(s => s.fp.h2Openers)
     if (allOpeners.length >= 12) {
       const freq = new Map<string, number>()
       for (const o of allOpeners) freq.set(o, (freq.get(o) ?? 0) + 1)

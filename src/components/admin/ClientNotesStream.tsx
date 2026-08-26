@@ -277,14 +277,27 @@ export default function ClientNotesStream({
       .map(t => ({ template: t, count: counts.get(t.key) ?? 0 }))
   }, [notes])
 
+  // The chip row is hidden when fewer than two categories remain, so a filter
+  // that no longer matches anything would be unclearable: deleting the last
+  // 'issue' note while filtering on it unmounts the row (including the only
+  // "All" button) and leaves the pane permanently empty until a page reload.
+  // Derive the effective filter instead of trusting the stored one.
+  const activeCatFilter = catFilter !== 'all' && !presentCategories.some(c => c.template.key === catFilter)
+    ? 'all'
+    : catFilter
+
+  useEffect(() => {
+    if (activeCatFilter !== catFilter) setCatFilter('all')
+  }, [activeCatFilter, catFilter])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return notes.filter(n => {
-      if (catFilter !== 'all' && n.category !== catFilter) return false
+      if (activeCatFilter !== 'all' && n.category !== activeCatFilter) return false
       if (!q) return true
       return noteSearchText(n).includes(q)
     })
-  }, [notes, search, catFilter])
+  }, [notes, search, activeCatFilter])
 
   // ── Shared styles ────────────────────────────────────────────────────────
   const inp: React.CSSProperties = {
@@ -327,15 +340,15 @@ export default function ClientNotesStream({
             style={{
               padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
               fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
-              background: catFilter === 'all' ? 'var(--text-primary)' : 'transparent',
-              color:      catFilter === 'all' ? 'var(--bg-surface)' : 'var(--text-muted)',
+              background: activeCatFilter === 'all' ? 'var(--text-primary)' : 'transparent',
+              color:      activeCatFilter === 'all' ? 'var(--bg-surface)' : 'var(--text-muted)',
               border: '1px solid var(--border)',
             }}
           >
             All {notes.length}
           </button>
           {presentCategories.map(({ template: t, count }) => {
-            const on = catFilter === t.key
+            const on = activeCatFilter === t.key
             return (
               <button
                 key={t.key}
@@ -452,7 +465,7 @@ export default function ClientNotesStream({
       {loading && <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Loading...</p>}
       {!loading && filtered.length === 0 && (
         <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          {search.trim() || catFilter !== 'all' ? 'No notes match this filter.' : 'No notes yet.'}
+          {search.trim() || activeCatFilter !== 'all' ? 'No notes match this filter.' : 'No notes yet.'}
         </p>
       )}
 
