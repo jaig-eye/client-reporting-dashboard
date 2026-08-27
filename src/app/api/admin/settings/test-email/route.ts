@@ -14,14 +14,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, isSuperAdminAuthed } from '@/lib/auth'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
+import { escapeEmailHtml }           from '@/lib/content/emailTemplates'
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+  const session = cookieStore.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  // Any admin may test delivery to the address ALREADY configured in settings —
+  // that is the diagnostic, and it reaches nowhere new. Naming a different
+  // recipient is what turns this into "send mail from the agency's DKIM-signed
+  // domain to an address of my choosing", so that requires super admin.
+  const isSuper = isSuperAdminAuthed(session)
 
   // The From address comes from MAILGUN_FROM, NOT from agency settings — a
   // common source of confusion, so it is echoed back explicitly.
@@ -47,9 +54,26 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   const body = await request.json().catch(() => ({})) as { to?: unknown }
-  const to = typeof body.to === 'string' && body.to.trim()
-    ? body.to.trim()
-    : (settings as { notification_email?: string } | null)?.notification_email
+  const requested = typeof body.to === 'string' ? body.to.trim() : ''
+  // ONE address. nodemailer treats the `to` field as an address LIST, so an
+  // unvalidated string turns this into a fan-out primitive that sends from the
+  // agency's own DKIM-signed domain. Commas, semicolons and angle brackets are
+  // excluded specifically because those are what make a list.
+  const SINGLE_ADDRESS = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/
+  if (requested && !SINGLE_ADDRESS.test(requested)) {
+    return NextResponse.json(
+      { ok: false, configured: true, from, host, error: 'Enter a single valid email address.' },
+      { status: 400 },
+    )
+  }
+  const configured = (settings as { notification_email?: string } | null)?.notification_email
+  if (requested && requested !== configured && !isSuper) {
+    return NextResponse.json(
+      { ok: false, configured: true, from, host, error: 'Only the super admin can send a test to an address other than the configured notification email.' },
+      { status: 403 },
+    )
+  }
+  const to = requested || configured
 
   if (!to) {
     return NextResponse.json({
@@ -76,9 +100,9 @@ export async function POST(request: NextRequest) {
             If you are reading this, password reset codes and super-admin login codes will reach you.
           </p>
           <table style="font-size:12px;color:#6b7280;line-height:1.8;">
-            <tr><td style="padding-right:12px;color:#9ca3af;">Sent</td><td>${stamp}</td></tr>
-            <tr><td style="padding-right:12px;color:#9ca3af;">From</td><td>${from}</td></tr>
-            <tr><td style="padding-right:12px;color:#9ca3af;">Via</td><td>${host}</td></tr>
+            <tr><td style="padding-right:12px;color:#9ca3af;">Sent</td><td>${escapeEmailHtml(stamp)}</td></tr>
+            <tr><td style="padding-right:12px;color:#9ca3af;">From</td><td>${escapeEmailHtml(from)}</td></tr>
+            <tr><td style="padding-right:12px;color:#9ca3af;">Via</td><td>${escapeEmailHtml(host)}</td></tr>
           </table>
         </div>`,
     })

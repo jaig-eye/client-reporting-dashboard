@@ -38,8 +38,11 @@ Never use `createClient()` (browser anon key) in API routes or server components
 **GBP rows cast through `unknown`.**
 `GBPRawRow` does not satisfy `RawMetricRow`, so upsert helpers cast via `row as unknown as ExpectedType`.
 
-**Cron routes auth via `Authorization: Bearer CRON_SECRET`.**
-Never use `isAdminAuthed` in cron routes; check the Bearer token directly from the header.
+**Cron routes auth via `verifyCronAuth()` from `lib/auth.ts`.**
+Never use `isAdminAuthed` in cron routes, and never hand-roll the Bearer comparison — an unset `CRON_SECRET` interpolates to the literal `"Bearer undefined"`, which is truthy and authenticates anyone sending it.
+
+**`admin_session` is an HMAC-signed token, not `ADMIN_PASSWORD`.**
+Identity comes from `isSuperAdminAuthed()` / `getVerifiedUserId()` / `getAdminSession()`. Never trust the unsigned `admin_user_id` cookie for authorization or attribution. `SESSION_SECRET` is required in production.
 
 **GSC `fetchMetrics` adapter is a no-op stub.**
 All GSC syncing is done by `syncGSCInChunks` in `lib/connectors/sync.ts`, not the adapter method.

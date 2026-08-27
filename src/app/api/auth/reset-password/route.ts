@@ -6,48 +6,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES } from '@/lib/auth'
 import { hashResetCode } from '@/lib/passwordReset'
+import { createRateLimiter, clientIp } from '@/lib/rateLimit'
 
-// ── Per-IP rate limit on CODE VERIFICATION ───────────────────────────────────
-//
-// This endpoint had none. The code is six digits (~9x10^5) with a ten-minute
-// life, `password_reset_tokens` has no attempt counter, and a hit rewrites the
-// password outright — so an unmetered verifier is a straight path to account
-// takeover, and it locks the real owner out on the way. forgot-password limits
-// only ISSUANCE, which does nothing to slow guessing against a code already sent.
-//
-// In-memory, matching the login route; the same per-instance caveat applies and
-// is still far better than unlimited.
-const RATE_LIMIT_MAX = 10
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
-const attempts = new Map<string, { count: number; resetAt: number }>()
-
-function tooManyAttempts(ip: string): boolean {
-  const entry = attempts.get(ip)
-  if (!entry || Date.now() > entry.resetAt) return false
-  return entry.count >= RATE_LIMIT_MAX
-}
-
-function recordAttempt(ip: string): void {
-  const now = Date.now()
-  const entry = attempts.get(ip)
-  if (!entry || now > entry.resetAt) {
-    attempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return
-  }
-  entry.count++
-  if (attempts.size > 5000) {
-    for (const [k, v] of Array.from(attempts.entries())) {
-      if (now > v.resetAt) attempts.delete(k)
-    }
-  }
-}
+// Per-IP limit on CODE VERIFICATION. This endpoint had none: six digits
+// (~9x10^5) with a ten-minute life, no attempt counter on the token, and a hit
+// rewrites the password outright — a straight path to account takeover that also
+// locks the owner out. forgot-password limits only ISSUANCE, which does nothing
+// to slow guessing against a code already sent.
+const resetLimiter = createRateLimiter({ max: 10, windowMs: 15 * 60 * 1000 })
 
 export async function POST(request: NextRequest) {
-  const ip = request.headers.get('x-real-ip')?.trim()
-    || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || 'unknown'
+  const ip = clientIp(request)
 
-  if (tooManyAttempts(ip)) {
+  // take() reserves the attempt up front, so a burst of concurrent guesses cannot
+  // all read the same pre-increment count.
+  if (!resetLimiter.take(ip)) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 },
@@ -88,7 +61,6 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (!user) {
-    recordAttempt(ip)
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 
@@ -102,7 +74,6 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (!record) {
-    recordAttempt(ip)
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 
@@ -122,24 +93,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Could not complete the reset. Try again.' }, { status: 500 })
   }
   if (!burned || burned.length === 0) {
-    recordAttempt(ip)
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 
-  const { error: pwErr } = await db
+  // must_reset_password / password_changed_at only exist from migration 195. If
+  // the code shipped ahead of the migration, writing them fails — and because the
+  // code above is already burned, the user would be left with the OLD password
+  // and NO usable code, i.e. locked out by deploy ordering. Retry without those
+  // columns so the password still changes; the flag simply does not exist yet.
+  let { error: pwErr } = await db
     .from('users')
     .update({
       password_hash:       hashPasswordSecure(password),
-      // Clears the forced rotation. This is the only path that does, which is
-      // what guarantees a flagged account ends up on a bcrypt hash.
+      // Clears the forced rotation. This is the only self-service path that does,
+      // which is what guarantees a flagged account ends up on a bcrypt hash.
       must_reset_password: false,
       password_changed_at: now,
     })
     .eq('id', user.id)
 
+  if (pwErr && /must_reset_password|password_changed_at/i.test(pwErr.message)) {
+    console.warn('[reset-password] rotation columns missing (migration 195 not applied) — writing the password only')
+    ;({ error: pwErr } = await db
+      .from('users')
+      .update({ password_hash: hashPasswordSecure(password) })
+      .eq('id', user.id))
+  }
+
   if (pwErr) {
+    // Hand the code back. It was burned before the write specifically so two
+    // concurrent requests could not both succeed, but that makes a failed write a
+    // lockout unless the code is restored — every retry would otherwise answer
+    // "Invalid or expired code", and a flagged account has no session to fall
+    // back on.
+    await db.from('password_reset_tokens')
+      .update({ used_at: null })
+      .eq('id', record.id)
+      .then(null, () => {})
+
     console.error('[reset-password] password write failed:', pwErr.message)
-    return NextResponse.json({ error: 'Could not save the new password. Try again.' }, { status: 500 })
+    return NextResponse.json({ error: 'Could not save the new password. Try again with the same code.' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

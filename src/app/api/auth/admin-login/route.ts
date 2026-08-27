@@ -5,10 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { timingSafeCompare, verifyPassword } from '@/lib/auth'
-import { signAdminSession } from '@/lib/session'
+import { signAdminSession, sessionSigningConfigured } from '@/lib/session'
 import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
 import { issueResetCode } from '@/lib/passwordReset'
+import { createRateLimiter, clientIp } from '@/lib/rateLimit'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 
@@ -20,50 +21,13 @@ const COOKIE_OPTS = {
   path: '/',
 }
 
-// ── Per-IP rate limit: 5 FAILURES per 15 minutes ─────────────────────────────
-//
-// In-memory, and therefore per serverless instance — the same limitation main
-// has always had. A database-backed version was tried on the security branch and
-// was strictly worse in practice: it failed OPEN on any query error, and its
-// table (migration 194) is not applied, so every call took the error branch and
-// the endpoint had no rate limiting at all. An imperfect limiter that works
-// beats a durable one that is inert. Moving this to Postgres is worth doing on
-// its own, with the migration applied first and failing CLOSED.
-//
-// Only FAILURES consume budget: a clean super-admin login is two POSTs (password,
-// then OTP), so counting every request burned 2 of 5 slots on success, and
-// colleagues behind one office NAT could lock each other out without ever
-// mistyping anything.
-const RATE_LIMIT_MAX = 5
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
-const failedAttempts = new Map<string, { count: number; resetAt: number }>()
-
-function checkRateLimit(ip: string): boolean {
-  const entry = failedAttempts.get(ip)
-  if (!entry || Date.now() > entry.resetAt) return true
-  return entry.count < RATE_LIMIT_MAX
-}
-
-function recordFailedAttempt(ip: string): void {
-  const now = Date.now()
-  const entry = failedAttempts.get(ip)
-  if (!entry || now > entry.resetAt) {
-    failedAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return
-  }
-  entry.count++
-  // Opportunistic sweep so one instance cannot accumulate an entry per attacker IP
-  // for the lifetime of the process.
-  if (failedAttempts.size > 5000) {
-    for (const [k, v] of Array.from(failedAttempts.entries())) {
-      if (now > v.resetAt) failedAttempts.delete(k)
-    }
-  }
-}
-
-function resetRateLimit(ip: string): void {
-  failedAttempts.delete(ip)
-}
+// Per-IP limit, shared implementation. take() reserves an attempt at request
+// ENTRY — the count and the check are one synchronous step, so a concurrent burst
+// cannot all slip through the way it could when the increment sat after ~0.5s of
+// awaits. A successful sign-in calls reset(), so the two POSTs a clean super-admin
+// login costs (password, then OTP) leave no residue, and colleagues behind one
+// office NAT do not lock each other out.
+const loginLimiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 })
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
 const OTP_TTL_MINUTES   = 10
@@ -84,26 +48,53 @@ function superAdminSessionResponse(): NextResponse {
 }
 
 export async function POST(request: NextRequest) {
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ip = clientIp(request)
   const db = createAdminClient()
 
-  if (!checkRateLimit(ip)) {
+  // Checked BEFORE any credential work. signAdminSession throws when
+  // SESSION_SECRET is unset in production, and that throw lands at the very END
+  // of this handler — after the one-time OTP has already been consumed, after
+  // last_login_at is written, and after a 'logged_in' activity row is recorded
+  // for a login that never happened. Every retry then burned a fresh emailed
+  // code and produced the same opaque 500, with nothing naming the real cause.
+  if (!sessionSigningConfigured()) {
+    console.error('[admin-login] SESSION_SECRET is not set — cannot issue sessions. Generate one with `openssl rand -hex 32`.')
+    return NextResponse.json(
+      { error: 'Sign-in is not configured on this server (missing session secret). Contact your administrator.' },
+      { status: 503 },
+    )
+  }
+
+  if (!loginLimiter.take(ip)) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }
     )
   }
 
-  const { email, password, code } = await request.json()
+  // Guarded parse. An unparseable body, a null body, or a non-string email/password
+  // previously threw — SyntaxError from JSON.parse, a destructure error on null,
+  // `email.trim is not a function`, or bcryptjs's "Illegal arguments" — producing a
+  // 500 and, because the throw happened before any failure was recorded, a probe
+  // that cost the attacker nothing and left no trace.
+  const body = await request.json().catch(() => null) as
+    { email?: unknown; password?: unknown; code?: unknown } | null
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
 
-  if (!password) {
+  const email    = typeof body.email === 'string' ? body.email : ''
+  const password = body.password
+  const code     = body.code
+
+  if (!password || typeof password !== 'string') {
     return NextResponse.json({ error: 'Password required' }, { status: 400 })
   }
 
   // ── Super admin path ────────────────────────────────────────────────────────
   if (!email || email.trim() === '') {
     if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
-      recordFailedAttempt(ip)
+      // No second take(): the attempt was already reserved at request entry.
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
 
@@ -123,7 +114,6 @@ export async function POST(request: NextRequest) {
         new Date(expiresAt) < new Date() ||
         !crypto.timingSafeEqual(Buffer.from(hashOtp(String(code)), 'hex'), Buffer.from(storedHash, 'hex'))
       ) {
-        recordFailedAttempt(ip)
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }
 
@@ -133,7 +123,7 @@ export async function POST(request: NextRequest) {
         super_admin_otp_expires_at: null,
       })
 
-      resetRateLimit(ip)
+      loginLimiter.reset(ip)
       return superAdminSessionResponse()
     }
 
@@ -197,17 +187,51 @@ export async function POST(request: NextRequest) {
   const identifier = email.toLowerCase().trim()
   const isEmail    = identifier.includes('@')
 
-  const USER_COLS = 'id, role, password_hash, is_active, email, name, must_reset_password'
-  const { data: user } = isEmail
-    ? await db.from('users').select(USER_COLS)
-        .eq('email', identifier).eq('is_active', true).maybeSingle()
-    : await db.from('users').select(USER_COLS)
-        .ilike('username', identifier).eq('is_active', true).maybeSingle()
+  // The error is CHECKED, and the missing-column case degrades instead of failing.
+  //
+  // must_reset_password only exists from migration 195. Migrations here are
+  // applied by hand, so code can reach production first — and a discarded
+  // PostgREST error would make `user` null and answer "Invalid credentials" to a
+  // correct password for every admin, with nothing logged. That is a total
+  // lockout caused purely by deploy ordering.
+  //
+  // Falling back to the column list that exists on every environment keeps login
+  // working, and costs nothing in safety: every account the flag would have
+  // caught is a legacy SHA-256 hash, which `needsUpgrade` below forces to rotate
+  // regardless of the flag.
+  const BASE_COLS  = 'id, role, password_hash, is_active, email, name'
+  const FULL_COLS  = `${BASE_COLS}, must_reset_password`
+
+  async function lookup(cols: string) {
+    return isEmail
+      ? await db.from('users').select(cols)
+          .eq('email', identifier).eq('is_active', true).maybeSingle()
+      : await db.from('users').select(cols)
+          .ilike('username', identifier).eq('is_active', true).maybeSingle()
+  }
+
+  let { data: userRow, error: lookupErr } = await lookup(FULL_COLS)
+  if (lookupErr && /must_reset_password/i.test(lookupErr.message)) {
+    console.warn('[admin-login] must_reset_password column missing (migration 195 not applied) — falling back; legacy hashes still force a rotation')
+    ;({ data: userRow, error: lookupErr } = await lookup(BASE_COLS))
+  }
+  if (lookupErr) {
+    console.error('[admin-login] user lookup failed:', lookupErr.message)
+    return NextResponse.json(
+      { error: 'Sign-in is temporarily unavailable. Please try again shortly.' },
+      { status: 503 },
+    )
+  }
+
+  const user = userRow as unknown as {
+    id: string; role: string | null; password_hash: string | null
+    is_active: boolean; email: string | null; name: string | null
+    must_reset_password?: boolean
+  } | null
 
   // verifyPassword equalizes timing when no user/hash exists (dummy bcrypt compare).
   const { ok: hashMatch, needsUpgrade } = verifyPassword(password, user?.password_hash)
   if (!user || !hashMatch) {
-    recordFailedAttempt(ip)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -221,10 +245,41 @@ export async function POST(request: NextRequest) {
   // we can delete outright rather than support forever.
   const mustReset = user.must_reset_password === true || needsUpgrade
   if (mustReset) {
-    // Not fire-and-forget: if the mail does not leave, blocking the login is a
-    // lockout, so the caller has to be told the difference.
-    const issued = await issueResetCode(db, { id: user.id, email: user.email }, { reason: 'forced' })
-    resetRateLimit(ip)
+    // An account with no email address cannot be rotated this way, and issuing a
+    // code would throw inside nodemailer ("No recipients defined") and read as a
+    // transient failure the user is invited to retry forever. Say what is wrong.
+    if (!user.email) {
+      return NextResponse.json(
+        {
+          resetRequired: true,
+          emailSent:     false,
+          error: 'Your password must be updated, but this account has no email address on file so a code cannot be sent. Ask an administrator to set one.',
+        },
+        { status: 409 },
+      )
+    }
+
+    // Re-use a live code instead of minting a new one on every attempt.
+    //
+    // issueResetCode invalidates all outstanding codes for the user, so an
+    // unconditional call here meant: user reads code A from their inbox, clicks
+    // Sign in once more, code A is silently killed and code B is sent, and code A
+    // now fails. Repeatedly clicking Sign in was also an unmetered mail-bomb, one
+    // ~1s bcrypt compare per click.
+    const { data: liveCode } = await db
+      .from('password_reset_tokens')
+      .select('id')
+      .eq('user_id', user.id)
+      .is('used_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .limit(1)
+      .maybeSingle()
+
+    const issued = liveCode
+      ? { ok: true as const }
+      // Not fire-and-forget: if the mail does not leave, blocking the login is a
+      // lockout, so the caller has to be told the difference.
+      : await issueResetCode(db, { id: user.id, email: user.email ?? undefined }, { reason: 'forced' })
 
     if (!issued.ok) {
       console.error('[admin-login] forced reset could not send a code:', issued.reason, issued.detail ?? '')
@@ -232,6 +287,7 @@ export async function POST(request: NextRequest) {
         {
           resetRequired: true,
           emailSent:     false,
+          email:         user.email,
           error: issued.reason === 'email_not_configured'
             ? 'Your password must be reset, but email is not configured on this server so a code could not be sent. Contact your administrator.'
             : 'Your password must be reset, but the code could not be emailed. Try again in a moment or contact your administrator.',
@@ -240,8 +296,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // The rate limit is cleared only once the user is genuinely through the
+    // password check AND has a usable code — clearing it before the outcome was
+    // known made this whole branch unmetered.
+    loginLimiter.reset(ip)
+
     logActivity(
-      { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
+      { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email ?? undefined },
       'password_reset_required', 'user', { resourceId: user.id, meta: { email: user.email, ip } },
     )
 
@@ -249,8 +310,17 @@ export async function POST(request: NextRequest) {
       {
         resetRequired: true,
         emailSent:     true,
+        reusedCode:    Boolean(liveCode),
         email:         user.email,
-        message:       'Your password needs to be updated. We have emailed you a reset code.',
+        // `error` as well as `message`: the login page renders `data.error`, so a
+        // body carrying only `message` fell through to "Invalid credentials" and
+        // told every admin their correct password was wrong.
+        error:   liveCode
+          ? 'Your password needs to be updated. Use the code we already emailed you — check your inbox.'
+          : 'Your password needs to be updated. We have emailed you a reset code.',
+        message: liveCode
+          ? 'Your password needs to be updated. Use the code we already emailed you.'
+          : 'Your password needs to be updated. We have emailed you a reset code.',
       },
       { status: 403 },
     )
@@ -267,15 +337,15 @@ export async function POST(request: NextRequest) {
   if (loginStampErr) console.error('[admin-login] last_login_at write failed:', loginStampErr.message)
 
   logActivity(
-    { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
+    { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email ?? undefined },
     'logged_in', 'user', { resourceId: user.id, meta: { email: user.email, ip } }
   )
 
-  resetRateLimit(ip)
+  loginLimiter.reset(ip)
   const res = NextResponse.json({ ok: true, role: user.role })
   // admin_session carries the SIGNED identity; admin_user_id remains only as a
   // non-authoritative display hint (authorization no longer trusts it).
-  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: false, userId: user.id, role: user.role }), COOKIE_OPTS)
+  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: false, userId: user.id, role: user.role ?? undefined }), COOKIE_OPTS)
   res.cookies.set('admin_user_id', user.id, COOKIE_OPTS)
   return res
 }

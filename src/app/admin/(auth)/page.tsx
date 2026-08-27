@@ -60,6 +60,24 @@ function AdminLoginForm() {
         router.push(returnUrl)
         return
       }
+
+      // A forced password rotation is NOT a credential failure. The password was
+      // correct; the account simply cannot hold a session until it is rotated.
+      // Without this branch the 403 fell through to the generic message below and
+      // told every admin their correct password was wrong, while a reset code
+      // arrived silently in their inbox with nothing pointing at it.
+      if (data.resetRequired) {
+        if (data.emailSent) {
+          const q = new URLSearchParams({ forced: '1' })
+          if (typeof data.email === 'string') q.set('email', data.email)
+          router.push(`/admin/reset-password?${q.toString()}`)
+          return
+        }
+        // Flagged, but no code could be sent — the message explains why.
+        setError(data.error || 'Your password must be reset, but a code could not be emailed. Contact your administrator.')
+        return
+      }
+
       setError(data.error || 'Invalid credentials')
     } catch (err) {
       setError(err instanceof DOMException && err.name === 'AbortError'

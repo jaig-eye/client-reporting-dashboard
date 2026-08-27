@@ -73,10 +73,14 @@ export async function getAdminSession(): Promise<AdminSession | null> {
   const token = verifyAdminSessionNode(cookieStore.get('admin_session')?.value)
   if (!token) return null
 
-  if (token.isSuperAdmin || !token.userId) {
+  // Same rule as isSuperAdminAuthed — a missing userId is NOT a promotion. A
+  // token with neither claim is malformed rather than privileged, so it resolves
+  // to no session at all.
+  if (token.isSuperAdmin === true) {
     // Super admin — authenticated via env-var password (+ OTP), no user row.
     return { isSuperAdmin: true }
   }
+  if (!token.userId) return null
 
   // Regular admin user — look up their record from the SIGNED userId claim.
   const db = createAdminClient()
@@ -107,7 +111,12 @@ export function isAdminAuthed(session: string | undefined): boolean {
 /** Synchronous super-admin check from the signed token. Use to gate user-management routes. */
 export function isSuperAdminAuthed(session: string | undefined): boolean {
   const token = verifyAdminSessionNode(session)
-  return !!token && (token.isSuperAdmin || !token.userId)
+  // The claim itself, not "has no userId". The looser form meant a token saying
+  // { isSuperAdmin: false } with userId omitted — which signAdminSession happily
+  // produces, since userId is optional and dropped when falsy — was treated as
+  // SUPER ADMIN here while getVerifiedUserId returned null for the same token.
+  // Two helpers reading one token must not disagree about who it belongs to.
+  return !!token && token.isSuperAdmin === true
 }
 
 /** The authenticated regular-admin's user id from the SIGNED token (never the raw cookie).

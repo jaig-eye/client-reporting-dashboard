@@ -104,6 +104,11 @@ export async function GET(request: NextRequest) {
   const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
+  // Minted ONCE per run. internalAdminCookie() signs a real 14-day super-admin
+  // session, and it was being re-signed inside five separate per-item loops — one
+  // fresh full-privilege credential per topic and per post, on every run.
+  const internalCookie = internalAdminCookie()
+
   const opsChannelId  = ((agencySettings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
   const notifConfig   = (agencySettings?.notification_config as NotifConfig | null) ?? {}
 
@@ -355,7 +360,7 @@ export async function GET(request: NextRequest) {
       try {
         const res = await fetch(`${appUrl}/api/admin/content/topics/${topic.id}/brief`, {
           method:  'POST',
-          headers: { 'Cookie': internalAdminCookie() },
+          headers: { 'Cookie': internalCookie },
         })
         if (res.ok) briefsGenerated.push(topic.id)
         else console.error(`[content-topics cron] brief ${topic.id} returned ${res.status}: ${await res.text().catch(() => '')}`)
@@ -434,7 +439,7 @@ export async function GET(request: NextRequest) {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': internalAdminCookie(),
+              'Cookie': internalCookie,
             },
             body: JSON.stringify({ auto: true }),
           })
@@ -841,7 +846,7 @@ export async function GET(request: NextRequest) {
             method:  'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': internalAdminCookie(),
+              'Cookie': internalCookie,
             },
             body: JSON.stringify({ topic_id: t.id }),
           })
@@ -882,7 +887,7 @@ export async function GET(request: NextRequest) {
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Cookie': internalAdminCookie(),
+                'Cookie': internalCookie,
               },
               body: JSON.stringify({ auto: true }),
             })
@@ -1022,7 +1027,7 @@ export async function GET(request: NextRequest) {
             : JSON.stringify({ topic_id: job.topicId, suppress_email: true })
           const generateHeaders = {
             'Content-Type': 'application/json',
-            'Cookie': internalAdminCookie(),
+            'Cookie': internalCookie,
           }
 
           let res = await fetch(generateUrl, { method: 'POST', headers: generateHeaders, body: generateBody })

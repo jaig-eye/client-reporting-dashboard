@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, getVerifiedUserId, verifyPassword, hashPasswordSecure, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId, verifyPassword, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 export async function POST(req: NextRequest) {
@@ -20,6 +20,14 @@ export async function POST(req: NextRequest) {
   const { current_password, new_password } = await req.json()
   if (!current_password || !new_password) {
     return NextResponse.json({ error: 'current_password and new_password are required' }, { status: 400 })
+  }
+  // typeof, not just length: a JSON number passes `undefined < 10` and then throws
+  // inside Buffer.byteLength.
+  if (typeof new_password !== 'string') {
+    return NextResponse.json({ error: 'new_password must be text' }, { status: 400 })
+  }
+  if (passwordTooLong(new_password)) {
+    return NextResponse.json({ error: `Password is too long — it must be ${MAX_PASSWORD_BYTES} bytes or fewer (roughly ${MAX_PASSWORD_BYTES} characters, fewer if you use emoji or accents).` }, { status: 400 })
   }
   if (new_password.length < 10) {
     return NextResponse.json({ error: 'Password must be at least 10 characters' }, { status: 400 })

@@ -14,7 +14,8 @@
 | `META_APP_ID` | yes | Facebook App ID | `lib/meta-ads.ts`, `lib/connectors/meta-ads.ts` |
 | `META_APP_SECRET` | yes | Facebook App Secret | Same as above |
 | `NEXT_PUBLIC_APP_URL` | yes | Full app URL (e.g. `https://dash.golaunchlocal.com`) | OAuth redirect URIs, email links |
-| `ADMIN_PASSWORD` | yes | Master password for super-admin login and `admin_session` cookie value | `lib/auth.ts`, all API routes using `isAdminAuthed` |
+| `ADMIN_PASSWORD` | yes | Master password for super-admin login (with emailed OTP). **Not** the cookie value any more. | `api/auth/admin-login` |
+| `SESSION_SECRET` | **yes (production)** | HMAC key for admin session tokens (`openssl rand -hex 32`). No fallback in production — unset means nobody can sign in. | `lib/session.ts`, `lib/session-edge.ts` |
 | `CRON_SECRET` | yes | Bearer token for Vercel cron job authorization | All `/api/cron/*` routes |
 | `INGEST_SECRET` | yes | `x-ingest-secret` header for MCC push endpoints | `/api/ingest/google`, `/api/ingest/meta` |
 | `ADFUEL_API_KEY` | yes | `x-api-key` header for the GHL sidebar widget | `/api/adfuel` |

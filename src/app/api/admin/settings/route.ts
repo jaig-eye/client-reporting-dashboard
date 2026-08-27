@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import { getAdminSession, timingSafeCompare } from '@/lib/auth'
+import { getAdminSession, isAdminAuthed } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
 
-function isAdminAuthed(session: string | undefined) {
-  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
-}
+// This file used to define its OWN isAdminAuthed that shadowed the imported one
+// and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
+// typechecks, the sweep that converted every other route to signed sessions
+// silently skipped it — leaving a check that (a) can never pass for a real
+// signed session, and (b) accepts the old ADMIN_PASSWORD value, which
+// `select('*')` below turns into a disclosure of super_admin_otp_hash. That hash
+// is an unsalted SHA-256 of a six-digit OTP, i.e. brute-forceable offline in
+// under a second, so the backdoor completed super-admin 2FA without the email.
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -19,7 +24,17 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data, error } = await db.from('agency_settings').select('*').single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // The live super-admin OTP never leaves the server. It is an unsalted SHA-256
+  // of a six-digit code, so anyone who reads the hash can recover the code
+  // offline in well under a second and complete super-admin 2FA without ever
+  // receiving the email. No UI reads these two columns; `select('*')` was simply
+  // sweeping them up.
+  const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+    data as Record<string, unknown>
+  void super_admin_otp_hash; void super_admin_otp_expires_at
+
+  return NextResponse.json(safe)
 }
 
 export async function PUT(request: NextRequest) {

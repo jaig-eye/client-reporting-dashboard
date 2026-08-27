@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isSuperAdminAuthed, hashPasswordSecure, getAdminSession } from '@/lib/auth'
+import { isSuperAdminAuthed, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 function isSuperAdmin(req: NextRequest): boolean {
@@ -30,6 +30,9 @@ export async function PATCH(
   if (body.email)    update.email    = (body.email as string).toLowerCase().trim()
   if ('username' in body) update.username = body.username ? (body.username as string).toLowerCase().trim() : null
   if (body.password) {
+    if (passwordTooLong(body.password as string)) {
+      return NextResponse.json({ error: `Password is too long — it must be ${MAX_PASSWORD_BYTES} bytes or fewer (roughly ${MAX_PASSWORD_BYTES} characters, fewer if you use emoji or accents).` }, { status: 400 })
+    }
     if ((body.password as string).length < 8) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
     }

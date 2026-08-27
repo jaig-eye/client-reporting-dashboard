@@ -108,7 +108,17 @@ export async function POST(request: NextRequest) {
   // For immediate delivery: fire generation for each topic.
   // waitUntil keeps the Vercel function alive until all fetches complete.
   if (delivery === 'immediate') {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+    // Derived from the incoming request, not an env var with a localhost default.
+    // The Cookie below carries a real 14-day super-admin session token, and the
+    // old `?? 'http://localhost:3000'` fallback would have sent it in cleartext
+    // HTTP to whatever happened to be listening on the container's own port 3000
+    // if NEXT_PUBLIC_APP_URL were unset. Using request.nextUrl.origin also means
+    // preview deployments call themselves rather than production.
+    const appUrl = request.nextUrl.origin
+
+    // Minted ONCE per request, not once per topic inside the loop.
+    const internalCookie = internalAdminCookie()
+
     waitUntil(
       Promise.allSettled(
         (inserted as { id: string }[]).map(async (topic) => {
@@ -118,7 +128,7 @@ export async function POST(request: NextRequest) {
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Cookie': internalAdminCookie(),
+                'Cookie': internalCookie,
               },
               body: JSON.stringify({ topic_id: topic.id, suppress_email: true }),
             })

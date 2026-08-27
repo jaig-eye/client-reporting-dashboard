@@ -349,13 +349,22 @@ export default function AgencySettingsPage() {
     setTestingEmail(true)
     setTestEmailMsg('')
     try {
-      const res = await fetch('/api/admin/content/notify', {
+      // Points at the diagnostic endpoint rather than the notification sender:
+      // it returns the verbatim SMTP error and the resolved From address, which
+      // is what actually tells you why delivery is failing. "authentication
+      // failed", "domain not verified" and "connection timeout" all look
+      // identical through a generic sender.
+      const res = await fetch('/api/admin/settings/test-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'test', email: form.notification_email }),
+        body: JSON.stringify({ to: form.notification_email }),
       })
-      const data = await res.json()
-      setTestEmailMsg(data.error ? `Error: ${data.error}` : 'Test email sent!')
+      const data = await res.json() as { ok?: boolean; error?: string; from?: string }
+      setTestEmailMsg(
+        data.ok
+          ? `Test email sent${data.from ? ` from ${data.from}` : ''}.`
+          : `Error: ${data.error ?? 'Failed to send test email'}`,
+      )
     } catch {
       setTestEmailMsg('Failed to send test email')
     } finally {

@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, isSuperAdminAuthed, hashPasswordSecure, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, isSuperAdminAuthed, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { parseBody }   from '@/lib/apiError'
 
@@ -42,6 +42,12 @@ export async function POST(req: NextRequest) {
 
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
+  }
+  // hashPasswordSecure THROWS past 72 bytes (bcrypt truncates silently, so we
+  // refuse rather than accept a password whose tail is ignored). Unguarded, that
+  // throw is an opaque 500 with no field-level message.
+  if (passwordTooLong(password)) {
+    return NextResponse.json({ error: `Password is too long — it must be ${MAX_PASSWORD_BYTES} bytes or fewer (roughly ${MAX_PASSWORD_BYTES} characters, fewer if you use emoji or accents).` }, { status: 400 })
   }
   if (password.length < 8) {
     return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })

@@ -6,6 +6,18 @@ function esc(s: string | null | undefined): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/**
+ * Escape for HTML email bodies. Exported so callers outside this file stop
+ * hand-rolling their own — there are already several copies in the repo and they
+ * disagree about the apostrophe.
+ *
+ * Not cosmetic: MAILGUN_FROM is documented as `Agency Name <noreply@...>`, so
+ * interpolating it raw makes the mail client parse the address as an unknown tag
+ * and DROP it — the value vanishes from the one diagnostic whose job is to
+ * report it.
+ */
+export const escapeEmailHtml = esc
+
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', {

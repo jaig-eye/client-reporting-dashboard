@@ -5,28 +5,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { issueResetCode } from '@/lib/passwordReset'
+import { createRateLimiter, clientIp } from '@/lib/rateLimit'
 
 
-// In-memory rate limit: 3 attempts per IP per 15 minutes
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
-const RATE_LIMIT_MAX = 3
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
-
-function checkRateLimit(ip: string): boolean {
-  const now   = Date.now()
-  const entry = rateLimitMap.get(ip)
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return true
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false
-  entry.count++
-  return true
-}
+const forgotLimiter = createRateLimiter({ max: 3, windowMs: 15 * 60 * 1000 })
 
 export async function POST(request: NextRequest) {
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
-  if (!checkRateLimit(ip)) {
+  const ip = clientIp(request)
+  if (!forgotLimiter.take(ip)) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }
