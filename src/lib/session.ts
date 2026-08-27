@@ -33,13 +33,19 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14   // 14 days — matches co
 /**
  * HMAC key.
  *
- * ⚠️ SET A DEDICATED `SESSION_SECRET` IN PRODUCTION. The ADMIN_PASSWORD fallback exists only
- * so the feature works without a new env var, but it is NOT safe long-term: until this change
- * shipped, `admin_session` literally WAS the raw ADMIN_PASSWORD and was sent on every admin
- * request — so that value may sit in HAR exports, proxy/WAF logs, Vercel request logs and
- * support screenshots. Anyone holding an old cookie value could use it as the signing key to
- * forge `{ isSuperAdmin: true }` and bypass both the password and the OTP. Generate one with
- * `openssl rand -hex 32` and set it BEFORE deploying.
+ * ⚠️ `SESSION_SECRET` IS REQUIRED IN PRODUCTION — `openssl rand -hex 32`.
+ *
+ * There is no ADMIN_PASSWORD fallback in production, and that is the whole point:
+ * until signed sessions shipped, `admin_session` literally WAS the raw
+ * ADMIN_PASSWORD and was sent on every admin request, so that value may sit in
+ * HAR exports, proxy/WAF logs, Vercel request logs and support screenshots.
+ * Signing with it would let anyone holding an old cookie mint
+ * `{ isSuperAdmin: true }` for themselves, bypassing both the password and the
+ * OTP — a worse position than the escalation signed sessions exist to close.
+ *
+ * With it unset in production this returns '', both verifiers reject everything,
+ * and signing throws: nobody can log in. That is intentional. A five-minute
+ * config fix is preferable to a silently forgeable session.
  */
 function sessionSecret(): string {
   const explicit = process.env.SESSION_SECRET
