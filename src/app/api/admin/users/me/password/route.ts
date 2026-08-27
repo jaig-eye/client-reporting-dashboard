@@ -2,18 +2,17 @@
 // Requires current_password for verification. Super admin cannot use this.
 
 import { NextRequest, NextResponse } from 'next/server'
-import crypto from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId, verifyPassword, hashPasswordSecure, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 export async function POST(req: NextRequest) {
   const session = req.cookies.get('admin_session')?.value
-  const userId  = req.cookies.get('admin_user_id')?.value
 
   if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const userId = getVerifiedUserId(session)
   if (!userId) {
     return NextResponse.json({ error: 'Super admin password is set via environment variable' }, { status: 403 })
   }
@@ -35,18 +34,14 @@ export async function POST(req: NextRequest) {
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-  const inputHash  = hashPassword(current_password)
-  const storedHash = user.password_hash ?? '0'.repeat(64)
-  const inputBuf   = Buffer.from(inputHash,  'hex')
-  const storedBuf  = Buffer.from(storedHash, 'hex')
-  const hashMatch  = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf)
+  const { ok: hashMatch } = verifyPassword(current_password, user.password_hash)
   if (!hashMatch) {
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 })
   }
 
   const { error } = await db
     .from('users')
-    .update({ password_hash: hashPassword(new_password) })
+    .update({ password_hash: hashPasswordSecure(new_password) })
     .eq('id', user.id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

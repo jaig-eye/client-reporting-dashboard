@@ -2,6 +2,7 @@
 // Wizard submission handler — creates content_topics for service/regular pages
 // and optionally fires generation immediately.
 
+import { internalAdminCookie } from '@/lib/session'
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil }                 from '@vercel/functions'
 import { isAdminAuthed }             from '@/lib/auth'
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+                'Cookie': internalAdminCookie(),
               },
               body: JSON.stringify({ topic_id: topic.id, suppress_email: true }),
             })

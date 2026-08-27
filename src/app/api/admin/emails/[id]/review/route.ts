@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -14,7 +14,11 @@ export async function POST(
   }
 
   const { id } = await params
-  const userId = request.cookies.get('admin_user_id')?.value ?? null
+  // From the SIGNED session, never the admin_user_id cookie: that cookie is
+  // client-editable, so any authenticated admin could attribute a write to a
+  // colleague just by changing it. Returns null for the super admin, who has no
+  // user row — same as before.
+  const userId = getVerifiedUserId(session)
 
   let body: { action: 'approve' | 'reject'; notes?: string }
   try {

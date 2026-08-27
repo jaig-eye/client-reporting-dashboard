@@ -1,12 +1,15 @@
 // Admin login — supports two modes:
 //   1. Super admin: email blank, password = ADMIN_PASSWORD env var + email OTP
-//   2. Regular admin: email + password verified against users table
+//   2. Regular admin: email + password verified against users table (bcrypt)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashPassword, timingSafeCompare } from '@/lib/auth'
+import { timingSafeCompare, verifyPassword } from '@/lib/auth'
+import { signAdminSession } from '@/lib/session'
 import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
+import { issueResetCode } from '@/lib/passwordReset'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 
 const COOKIE_OPTS = {
@@ -17,25 +20,49 @@ const COOKIE_OPTS = {
   path: '/',
 }
 
-// In-memory rate limit: 5 attempts per IP per 15 minutes
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+// ── Per-IP rate limit: 5 FAILURES per 15 minutes ─────────────────────────────
+//
+// In-memory, and therefore per serverless instance — the same limitation main
+// has always had. A database-backed version was tried on the security branch and
+// was strictly worse in practice: it failed OPEN on any query error, and its
+// table (migration 194) is not applied, so every call took the error branch and
+// the endpoint had no rate limiting at all. An imperfect limiter that works
+// beats a durable one that is inert. Moving this to Postgres is worth doing on
+// its own, with the migration applied first and failing CLOSED.
+//
+// Only FAILURES consume budget: a clean super-admin login is two POSTs (password,
+// then OTP), so counting every request burned 2 of 5 slots on success, and
+// colleagues behind one office NAT could lock each other out without ever
+// mistyping anything.
 const RATE_LIMIT_MAX = 5
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000
+const failedAttempts = new Map<string, { count: number; resetAt: number }>()
 
 function checkRateLimit(ip: string): boolean {
-  const now   = Date.now()
-  const entry = rateLimitMap.get(ip)
+  const entry = failedAttempts.get(ip)
+  if (!entry || Date.now() > entry.resetAt) return true
+  return entry.count < RATE_LIMIT_MAX
+}
+
+function recordFailedAttempt(ip: string): void {
+  const now = Date.now()
+  const entry = failedAttempts.get(ip)
   if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return true
+    failedAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+    return
   }
-  if (entry.count >= RATE_LIMIT_MAX) return false
   entry.count++
-  return true
+  // Opportunistic sweep so one instance cannot accumulate an entry per attacker IP
+  // for the lifetime of the process.
+  if (failedAttempts.size > 5000) {
+    for (const [k, v] of Array.from(failedAttempts.entries())) {
+      if (now > v.resetAt) failedAttempts.delete(k)
+    }
+  }
 }
 
 function resetRateLimit(ip: string): void {
-  rateLimitMap.delete(ip)
+  failedAttempts.delete(ip)
 }
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
@@ -51,13 +78,15 @@ function generateOtp(): string {
 
 function superAdminSessionResponse(): NextResponse {
   const res = NextResponse.json({ ok: true, role: 'super_admin' })
-  res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
+  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: true }), COOKIE_OPTS)
   res.cookies.delete('admin_user_id')
   return res
 }
 
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const db = createAdminClient()
+
   if (!checkRateLimit(ip)) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
@@ -74,10 +103,9 @@ export async function POST(request: NextRequest) {
   // ── Super admin path ────────────────────────────────────────────────────────
   if (!email || email.trim() === '') {
     if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
+      recordFailedAttempt(ip)
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
-
-    const db = createAdminClient()
 
     // Step 2 — verify OTP
     if (code) {
@@ -95,6 +123,7 @@ export async function POST(request: NextRequest) {
         new Date(expiresAt) < new Date() ||
         !crypto.timingSafeEqual(Buffer.from(hashOtp(String(code)), 'hex'), Buffer.from(storedHash, 'hex'))
       ) {
+        recordFailedAttempt(ip)
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }
 
@@ -165,28 +194,77 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Regular user path: email or username + password ───────────────────────
-  const db         = createAdminClient()
   const identifier = email.toLowerCase().trim()
   const isEmail    = identifier.includes('@')
 
+  const USER_COLS = 'id, role, password_hash, is_active, email, name, must_reset_password'
   const { data: user } = isEmail
-    ? await db.from('users').select('id, role, password_hash, is_active, email, name')
+    ? await db.from('users').select(USER_COLS)
         .eq('email', identifier).eq('is_active', true).maybeSingle()
-    : await db.from('users').select('id, role, password_hash, is_active, email, name')
+    : await db.from('users').select(USER_COLS)
         .ilike('username', identifier).eq('is_active', true).maybeSingle()
 
-  // Always compute both hashes before comparing — prevents timing-based user enumeration
-  const inputHash  = hashPassword(password)
-  const storedHash = user?.password_hash ?? '0'.repeat(64)
-  const inputBuf   = Buffer.from(inputHash,  'hex')
-  const storedBuf  = Buffer.from(storedHash, 'hex')
-  const hashMatch  = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf)
+  // verifyPassword equalizes timing when no user/hash exists (dummy bcrypt compare).
+  const { ok: hashMatch, needsUpgrade } = verifyPassword(password, user?.password_hash)
   if (!user || !hashMatch) {
+    recordFailedAttempt(ip)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
-  // Record login time (fire-and-forget)
-  db.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id)
+  // ── Forced rotation ────────────────────────────────────────────────────────
+  //
+  // The password was correct — that is what proves it is them — but a flagged
+  // account gets NO session. Two conditions force it: the explicit flag, and any
+  // surviving legacy SHA-256 hash. The second is belt-and-braces: it means an
+  // unsalted hash can never mint a session even if the flag was missed, so once
+  // everyone has rotated the legacy branch in verifyPassword becomes dead code
+  // we can delete outright rather than support forever.
+  const mustReset = user.must_reset_password === true || needsUpgrade
+  if (mustReset) {
+    // Not fire-and-forget: if the mail does not leave, blocking the login is a
+    // lockout, so the caller has to be told the difference.
+    const issued = await issueResetCode(db, { id: user.id, email: user.email }, { reason: 'forced' })
+    resetRateLimit(ip)
+
+    if (!issued.ok) {
+      console.error('[admin-login] forced reset could not send a code:', issued.reason, issued.detail ?? '')
+      return NextResponse.json(
+        {
+          resetRequired: true,
+          emailSent:     false,
+          error: issued.reason === 'email_not_configured'
+            ? 'Your password must be reset, but email is not configured on this server so a code could not be sent. Contact your administrator.'
+            : 'Your password must be reset, but the code could not be emailed. Try again in a moment or contact your administrator.',
+        },
+        { status: 503 },
+      )
+    }
+
+    logActivity(
+      { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
+      'password_reset_required', 'user', { resourceId: user.id, meta: { email: user.email, ip } },
+    )
+
+    return NextResponse.json(
+      {
+        resetRequired: true,
+        emailSent:     true,
+        email:         user.email,
+        message:       'Your password needs to be updated. We have emailed you a reset code.',
+      },
+      { status: 403 },
+    )
+  }
+
+  // Record login time. Awaited, unlike the "fire-and-forget" version this
+  // replaces: a supabase-js builder is a lazy thenable, so the un-awaited call
+  // issued no request at all — which is why last_login_at is NULL for every user
+  // in the database despite people logging in for months.
+  const { error: loginStampErr } = await db
+    .from('users')
+    .update({ last_login_at: new Date().toISOString() })
+    .eq('id', user.id)
+  if (loginStampErr) console.error('[admin-login] last_login_at write failed:', loginStampErr.message)
 
   logActivity(
     { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email },
@@ -195,7 +273,9 @@ export async function POST(request: NextRequest) {
 
   resetRateLimit(ip)
   const res = NextResponse.json({ ok: true, role: user.role })
-  res.cookies.set('admin_session', process.env.ADMIN_PASSWORD!, COOKIE_OPTS)
+  // admin_session carries the SIGNED identity; admin_user_id remains only as a
+  // non-authoritative display hint (authorization no longer trusts it).
+  res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: false, userId: user.id, role: user.role }), COOKIE_OPTS)
   res.cookies.set('admin_user_id', user.id, COOKIE_OPTS)
   return res
 }

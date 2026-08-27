@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, isSuperAdminAuthed, hashPasswordSecure, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { parseBody }   from '@/lib/apiError'
 
@@ -26,10 +26,9 @@ export async function GET(req: NextRequest) {
 }
 
 function isSuperAdmin(req: NextRequest): boolean {
-  // Super admin = authenticated but no admin_user_id cookie
-  const session = req.cookies.get('admin_session')?.value
-  const userId  = req.cookies.get('admin_user_id')?.value
-  return isAdminAuthed(session) && !userId
+  // Super admin is a SIGNED claim in the session token — not the absence of a
+  // client-editable cookie (which previously allowed trivial escalation).
+  return isSuperAdminAuthed(req.cookies.get('admin_session')?.value)
 }
 
 export async function POST(req: NextRequest) {
@@ -57,7 +56,7 @@ export async function POST(req: NextRequest) {
     .insert({
       name,
       email:         email.toLowerCase().trim(),
-      password_hash: hashPassword(password),
+      password_hash: hashPasswordSecure(password),
       role:          role ?? 'admin',
       is_active:     true,
       ...(username ? { username: username.toLowerCase().trim() } : {}),

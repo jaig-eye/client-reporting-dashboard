@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 
 const NOTE_SELECT = 'id, title, content, pinned, created_at, updated_at, updated_by, user_id, users:users!user_id(name, avatar_url), editor:users!updated_by(name, avatar_url)'
@@ -40,7 +40,11 @@ export async function PATCH(
   }
 
   const { id: clientId, noteId } = await params
-  const userId = request.cookies.get('admin_user_id')?.value ?? null
+  // From the SIGNED session, never the admin_user_id cookie: that cookie is
+  // client-editable, so any authenticated admin could attribute a write to a
+  // colleague just by changing it. Returns null for the super admin, who has no
+  // user row — same as before.
+  const userId = getVerifiedUserId(session)
 
   let body: { pinned?: boolean; content?: string; title?: string | null }
   try {

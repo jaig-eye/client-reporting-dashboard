@@ -3,13 +3,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { isSuperAdminAuthed, hashPasswordSecure, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 
 function isSuperAdmin(req: NextRequest): boolean {
-  const session = req.cookies.get('admin_session')?.value
-  const userId  = req.cookies.get('admin_user_id')?.value
-  return isAdminAuthed(session) && !userId
+  // Signed super-admin claim, not the absence of a client-editable cookie.
+  return isSuperAdminAuthed(req.cookies.get('admin_session')?.value)
 }
 
 export async function PATCH(
@@ -34,7 +33,7 @@ export async function PATCH(
     if ((body.password as string).length < 8) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
     }
-    update.password_hash = hashPassword(body.password)
+    update.password_hash = hashPasswordSecure(body.password)
   }
 
   if (Object.keys(update).length === 0) {
