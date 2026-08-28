@@ -4,6 +4,7 @@ import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { buildRewriteSystemPrompt } from '@/lib/content/rewritePrompt'
 import { styleTables } from '@/lib/content/contentHtml'
+import { recheckPostQuality } from '@/lib/content/recheckQuality'
 
 /**
  * POST /api/admin/content/regenerate
@@ -215,6 +216,11 @@ export async function POST(request: NextRequest) {
       prompt_used:     finalPrompt,
       status:          'pending',
     }).eq('id', post_id)
+
+    // The write above changes content, so migration 206's trigger clears the
+    // quality report; the cron gate fails closed on a missing one. Recompute it
+    // here or this post can never auto-publish again.
+    await recheckPostQuality(db, post_id)
 
     logActivity(adminSession, 'regenerated', 'post', {
       resourceId: post_id,

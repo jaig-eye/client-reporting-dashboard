@@ -61,6 +61,8 @@ interface Settings {
   notify_connector_errors:        boolean
   metric_alert_threshold:         number
   metric_alert_window_days:       number
+  contact_stale_days:             number
+  quality_gate_blocks_autopush:   boolean
   daily_alert_threshold:          number
   daily_alert_metrics:            string[]
   weekly_alert_metrics:           string[]
@@ -117,6 +119,8 @@ const DEFAULT: Settings = {
   notify_connector_errors:        false,
   metric_alert_threshold:         25,
   metric_alert_window_days:       14,
+  contact_stale_days:             14,
+  quality_gate_blocks_autopush:   true,
   daily_alert_threshold:          50,
   daily_alert_metrics:            ['spend', 'conversions', 'cpa'],
   weekly_alert_metrics:           ['spend', 'conversions', 'cpa', 'roas', 'ctr'],
@@ -861,6 +865,93 @@ export default function AgencySettingsPage() {
               )}
             </FormField>
             <NotificationTypeTable />
+
+            {/* Client contact window — agency default, overridable per client */}
+            <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{
+                padding: '0.625rem 1rem',
+                background: 'var(--bg-subtle)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+                  Client Comms
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12, padding: '0.75rem 1rem' }}>
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Contact window
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1, maxWidth: 480 }}>
+                    Days without a logged contact before a client shows as due a check-in. Any client can override this on their Overview tab.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={form.contact_stale_days}
+                    // Number('') is 0, so a plain Number(e.target.value) turns
+                    // "select the digits and hit backspace" into a saved threshold
+                    // of zero — which marks every client overdue forever. `min` is
+                    // only a browser hint on an input that is never submitted.
+                    onChange={e => {
+                      const n = Number(e.target.value)
+                      field('contact_stale_days', e.target.value === '' || !Number.isFinite(n) ? 1 : Math.min(365, Math.max(1, Math.trunc(n))))
+                    }}
+                    className="input"
+                    style={{ width: 80, fontSize: '0.8125rem' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>days</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Content quality gate — an operational guard, grouped here because
+                this tab already owns thresholds and holds. */}
+            <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{
+                padding: '0.625rem 1rem',
+                background: 'var(--bg-subtle)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+                  Content Quality
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12, padding: '0.75rem 1rem' }}>
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Hold flagged posts back from auto-publish
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1, maxWidth: 520, lineHeight: 1.5 }}>
+                    When a generated post trips a critical quality check (invented figures, approval promises, keyword stuffing, or the same structure as the rest of the site), the scheduled push skips it and raises an alert instead. Publishing by hand is never blocked. Unattended publishing is the pattern Google&rsquo;s spam update targeted, so leaving this on is the safer default.
+                  </div>
+                </div>
+                <div style={{ width: 72, display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    role="switch"
+                    aria-checked={form.quality_gate_blocks_autopush}
+                    onClick={() => field('quality_gate_blocks_autopush', !form.quality_gate_blocks_autopush)}
+                    style={{
+                      width: 36, height: 20, borderRadius: 999,
+                      background: form.quality_gate_blocks_autopush ? '#2563eb' : 'var(--bg-subtle)',
+                      border: `1px solid ${form.quality_gate_blocks_autopush ? '#2563eb' : 'var(--border)'}`,
+                      cursor: 'pointer', position: 'relative',
+                      transition: 'background 0.15s, border-color 0.15s',
+                      padding: 0, flexShrink: 0,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 1, left: form.quality_gate_blocks_autopush ? 17 : 1,
+                      width: 16, height: 16, borderRadius: '50%', background: '#fff',
+                      transition: 'left 0.15s', boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                </div>
+              </div>
+            </div>
 
             {/* Metric Alert Thresholds — styled to match NotificationTypeTable groups */}
             <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>

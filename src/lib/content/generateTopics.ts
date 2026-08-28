@@ -2,8 +2,10 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
+import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
+import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { PLATFORM_BOT_UA }               from '@/lib/platformBot'
+import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors }            from '@/lib/content/competitorResearch'
@@ -41,11 +43,22 @@ function extractSitemapLocs(xml: string): string[] {
 async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; blogPosts: string[] }> {
   const empty = { pages: [], blogPosts: [] }
   try {
+    // BROWSER_BOT_UA, not PLATFORM_BOT_UA: this fetches a CLIENT's site, which is
+    // exactly the case platformBot.ts says the browser-signature variant is for.
+    // It keeps the "GoLaunchLocal" token so a Cloudflare skip rule still matches.
+    //
+    // The old 4s ceiling was too tight for a Cloudflare-fronted sitemap — the
+    // index alone routinely takes ~1s — and a timeout here is indistinguishable
+    // from "site has no pages", which silently empties the cannibalization
+    // avoid-list. Hence the wider budget and the loud log.
     const res = await fetch(sitemapUrl, {
-      signal: AbortSignal.timeout(4000),
-      headers: { 'User-Agent': PLATFORM_BOT_UA },
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': BROWSER_BOT_UA },
     })
-    if (!res.ok) return empty
+    if (!res.ok) {
+      console.warn(`[generateTopics] sitemap ${sitemapUrl} → HTTP ${res.status}. Cannibalization avoid-list will not include this site's existing pages.`)
+      return empty
+    }
     const xml = await res.text()
     const locs = extractSitemapLocs(xml)
 
@@ -56,8 +69,8 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
       await Promise.all(subUrls.map(async subUrl => {
         try {
           const sub = await fetch(subUrl, {
-            signal: AbortSignal.timeout(4000),
-            headers: { 'User-Agent': PLATFORM_BOT_UA },
+            signal: AbortSignal.timeout(12_000),
+            headers: { 'User-Agent': BROWSER_BOT_UA },
           })
           if (!sub.ok) return
           const subLocs = extractSitemapLocs(await sub.text()).filter(u => !u.endsWith('.xml'))
@@ -66,13 +79,18 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
           } else {
             pages.push(...subLocs)
           }
-        } catch { /* non-fatal */ }
+        } catch (e) {
+          console.warn(`[generateTopics] sub-sitemap ${subUrl} failed: ${e instanceof Error ? e.message : e}`)
+        }
       }))
       return { pages: pages.slice(0, 40), blogPosts: blogPosts.slice(0, 150) }
     }
 
     return { pages: locs.filter(u => !u.endsWith('.xml')).slice(0, 40), blogPosts: [] }
-  } catch {
+  } catch (e) {
+    // Never silent. An empty return here is indistinguishable from "this site has
+    // no pages", which quietly disables cannibalization protection for the whole run.
+    console.warn(`[generateTopics] sitemap ${sitemapUrl} fetch failed: ${e instanceof Error ? e.message : e}. Cannibalization avoid-list will not include this site's existing pages.`)
     return empty
   }
 }
@@ -286,10 +304,32 @@ export async function generateTopicsForClient(
   })()
 
   const halfMonthAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
-  const { data: storedPages } = await db
+  // source_sitemap requires migration 183; without it PostgREST rejects the whole
+  // select and the cached sitemap silently reads as empty. See the matching
+  // fallback in api/admin/content/generate.
+  type CachedSitemapRow = {
+    url: string; is_priority: boolean; is_excluded: boolean
+    created_at: string; source_sitemap?: string | null
+  }
+
+  const firstTry = await db
     .from('content_sitemap_pages')
     .select('url, is_priority, is_excluded, created_at, source_sitemap')
     .eq('client_id', clientId)
+
+  let storedPages = firstTry.data as CachedSitemapRow[] | null
+  let storedErr   = firstTry.error
+
+  if (storedErr && /source_sitemap/i.test(storedErr.message)) {
+    console.warn('[generateTopics] source_sitemap column missing (migration 183 not applied) — falling back to URL heuristics for blog-post detection.')
+    const retry = await db
+      .from('content_sitemap_pages')
+      .select('url, is_priority, is_excluded, created_at')
+      .eq('client_id', clientId)
+    storedPages = retry.data as CachedSitemapRow[] | null
+    storedErr   = retry.error
+  }
+  if (storedErr) console.error('[generateTopics] sitemap cache read failed:', storedErr.message)
 
   const cacheIsFresh = storedPages && storedPages.length > 0 &&
     (storedPages as { created_at: string }[]).some(r => r.created_at >= halfMonthAgo)
@@ -359,7 +399,7 @@ export async function generateTopicsForClient(
   let eeatText = ''
   if (eeat) {
     const parts: string[] = []
-    if (eeat.years_in_business)    parts.push(`${eeat.years_in_business} years in business`)
+    { const tenure = describeTenure(eeat); if (tenure) parts.push(tenure) }
     if (eeat.licenses)             parts.push(`Licenses: ${eeat.licenses}`)
     if (eeat.review_count)         parts.push(`${eeat.review_count} reviews`)
     if (eeat.guarantees)           parts.push(`Guarantees: ${eeat.guarantees}`)
@@ -459,10 +499,11 @@ export async function generateTopicsForClient(
   let siloPromptBlock = ''
   let siloName: string | null = null
   let siloContentType: string | null = null
+  let queueKeywords: SiloQueueKeyword[] = []
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
-      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type')
+      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type, inject_internal_links')
       .eq('id', opts.siloId)
       .eq('client_id', clientId)
       .maybeSingle()
@@ -511,6 +552,43 @@ The hub/pillar page does not exist yet. The FIRST topic in your response MUST ta
         ? `\nDefined cluster keywords not yet covered (PRIORITIZE topics from this list — generate topics targeting these keywords):\n${plannedKws.map(k => `  - "${k.keyword}"${k.title ? ` (suggested title: "${k.title}")` : ''}`).join('\n')}`
         : ''
 
+      // Hub-less silos are the common case: a flat set of keywords with no pillar
+      // page. Every silo in production today has hub_page_url NULL, and the
+      // hub-and-spoke prompt below would instruct the model to link to a hub that
+      // does not exist. Walk the keyword queue instead.
+      queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
+      const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
+
+      // An EXHAUSTED hub-less queue is not the hub-and-spoke case. Falling through
+      // to the else branch below emitted `Hub page: "..." at (URL not yet set)`
+      // plus a rule making a link to it mandatory — telling the model to link to a
+      // page that does not exist, while the writer prompt forbids inventing internal
+      // URLs. SiloManager still enables Generate on such a silo because
+      // content_silos.cluster_keywords stays populated after migration 201's
+      // backfill, and the cron path never checks at all, so this is reachable the
+      // moment a four-keyword silo is worked through. Nothing to generate is the
+      // honest answer.
+      if (!silo.hub_page_url && queueKeywords.length === 0) {
+        console.warn(`[generateTopics] silo ${opts.siloId} has no hub page and an empty keyword queue — nothing to generate`)
+        return {
+          topics:     [],
+          clientName: '',
+          count:      0,
+          error:      'This silo has no hub page and every keyword in its queue has been used. Add more keywords to generate from it.',
+        }
+      }
+
+      if (isKeywordQueue) {
+        siloPromptBlock = buildKeywordQueueBlock(
+          silo.name as string,
+          (silo.description as string | null) ?? null,
+          queueKeywords,
+          existingClusterText,
+          (silo as { inject_internal_links?: boolean }).inject_internal_links !== false,
+        )
+      } else {
+      // Hub-and-spoke: the original strategy, unchanged.
+      queueKeywords = []
       siloPromptBlock = `
 ${hubFirstBlock}TOPICAL SILO — HUB + CLUSTER STRATEGY:
 Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
@@ -524,6 +602,7 @@ SILO RULES (override any conflicting instructions above):
 3. No two topics may target the same search intent — zero cannibalization within the silo.
 4. Prioritize subtopics closest to revenue (transactional/commercial intent first within the silo).
 5. Think: what questions does a searcher ask BEFORE contacting the business? Those cluster topics funnel authority to the hub.`
+      }
     }
   }
 
@@ -702,6 +781,15 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       target_publish_date: targetPublishDate ?? null,
       keyword_opportunity: r.keyword_opportunity ?? null,
     }))
+
+  // ── Consume the silo keyword queue ─────────────────────────────────────────
+  // Deliberately AFTER the insert: claiming up front would burn keywords on any
+  // run that failed at the AI or insert step, and the silo would look exhausted
+  // with nothing to show for it.
+  if (queueKeywords.length > 0) {
+    const claimed = await claimKeywordsForTopics(db, queueKeywords, savedTopics)
+    console.log(`[generateTopics] claimed ${claimed.length}/${queueKeywords.length} silo keywords`)
+  }
 
   // ── Email notification (skipped when called from the cron batch flow) ───────
   if (!opts?.suppressEmail) {

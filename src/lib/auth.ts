@@ -67,6 +67,11 @@ export interface AdminSession {
   avatarUrl?: string
 }
 
+// Identity is carried by the HMAC-signed `admin_session` token itself (see
+// lib/session.ts) — CRM's earlier separate `admin_identity` cookie is unnecessary
+// under signed sessions and was removed during integration. `requireVerifiedAdmin`
+// below layers a role check on top of the verified session.
+
 /** Reads cookies and returns the current admin session, or null if unauthenticated. */
 export async function getAdminSession(): Promise<AdminSession | null> {
   const cookieStore = await cookies()
@@ -117,6 +122,30 @@ export async function getAdminSession(): Promise<AdminSession | null> {
     role: data.role,
     avatarUrl: data.avatar_url,
   }
+}
+
+export type AdminGate =
+  | { ok: true;  admin: AdminSession }
+  | { ok: false; status: 401 | 403; error: string }
+
+/**
+ * Gate for the actions where being wrong is expensive: revealing a stored
+ * credential, deleting a client's live article, cross-tenant maintenance.
+ *
+ * getAdminSession() already trusts ONLY the HMAC-signed `admin_session` token
+ * (identity cannot be forged by editing a cookie), so this no longer needs the
+ * separate signed-identity cookie CRM used before integration — it layers the
+ * role requirement on top of a verified session. Super admin passes; a regular
+ * admin must have role 'admin' (viewers are refused).
+ */
+export async function requireVerifiedAdmin(): Promise<AdminGate> {
+  const admin = await getAdminSession()
+  if (!admin) return { ok: false, status: 401, error: 'Unauthorized' }
+  if (admin.isSuperAdmin) return { ok: true, admin }
+  if (admin.role !== 'admin') {
+    return { ok: false, status: 403, error: 'This action requires an admin account.' }
+  }
+  return { ok: true, admin }
 }
 
 /** Quick synchronous check — valid admin session of any kind. Use in API routes that just need auth. */

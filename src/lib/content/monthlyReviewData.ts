@@ -72,9 +72,9 @@ export async function getMonthlyReviewData(
   const nextUrl = currentOrd < maxOrd ? buildHref(monthParam(nextYear, nextMon)) : null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: postsRaw } = await (db as any)
+  const { data: postsRaw, error: postsErr } = await (db as any)
     .from('content_posts')
-    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash')
+    .select('id, client_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, featured_image_url, target_publish_date, status, content_type, connection_id, admin_approved_at, wp_post_id, wp_site_url, published_url, bc_post_id, bc_store_hash, last_pushed_at, updated_at, platform_edit_url, silo:content_silos!silo_id(id, name), silo_keyword:content_silo_keywords!silo_keyword_id(id, keyword), quality_report, quality_score')
     .in('status', ['for_review', 'pending', 'approved', 'draft_saved', 'generating'])
     .or('admin_approved_at.not.is.null,wp_post_id.is.null')
     .or('admin_approved_at.not.is.null,bc_post_id.is.null')
@@ -83,6 +83,20 @@ export async function getMonthlyReviewData(
     .lte('target_publish_date', windowEnd)
     .not('target_publish_date', 'is', null)
     .order('target_publish_date', { ascending: true })
+
+  // This SELECT now depends on migrations 200-203 (last_pushed_at, updated_at,
+  // platform_edit_url, quality_report) and on two PostgREST embeds that need 201.
+  // A single unapplied migration makes PostgREST reject the WHOLE query, and with
+  // the error discarded that surfaced as "this month has no posts" — an empty
+  // review screen hiding posts that are due for approval. This branch's own
+  // migration 205 exists because 183 was never applied in production, so the
+  // drift is not hypothetical. Fail loudly instead.
+  if (postsErr) {
+    console.error('[monthlyReviewData] post query failed:', postsErr.message)
+    throw new Error(
+      `Could not load the monthly review: ${postsErr.message}. This usually means a content migration (200-203) has not been applied.`,
+    )
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const postsRawArr = (postsRaw ?? []) as Record<string, any>[]
@@ -129,6 +143,18 @@ export async function getMonthlyReviewData(
     bc_post_id:          p.bc_post_id    != null ? Number(p.bc_post_id) : null,
     bc_store_hash:       p.bc_store_hash ? String(p.bc_store_hash) : null,
     isBc:                !wpClientIds.has(p.client_id as string),
+
+    // These are fetched by the SELECT above but were not being mapped through.
+    // MonthlyReviewPostCard is the ONLY consumer of QualityFindings, so dropping
+    // quality_report here made the entire reviewer-facing half of the quality
+    // gate dead code — no findings, not even the "checks passed" badge. The two
+    // timestamps drive the "Live copy is out of date" banner, and the silo pair
+    // drives the provenance chip; all three silently did nothing.
+    quality_report:      (p.quality_report ?? null) as MonthlyReviewPost['quality_report'],
+    last_pushed_at:      p.last_pushed_at ? String(p.last_pushed_at) : null,
+    updated_at:          p.updated_at     ? String(p.updated_at)     : null,
+    silo:                (p.silo ?? null)         as MonthlyReviewPost['silo'],
+    silo_keyword:        (p.silo_keyword ?? null) as MonthlyReviewPost['silo_keyword'],
   }))
 
   posts.sort((a, b) =>

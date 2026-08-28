@@ -2,6 +2,8 @@
 
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import QualityFindings from './QualityFindings'
+import type { QualityReport } from '@/lib/content/qualityGate'
 
 
 export interface MonthlyReviewPost {
@@ -25,6 +27,15 @@ export interface MonthlyReviewPost {
   bc_post_id:          number | null
   bc_store_hash:       string | null
   isBc:                boolean
+  /** Set when the CMS copy was last written. See migration 200. */
+  last_pushed_at?:     string | null
+  /** Pre-publish quality gate result. See src/lib/content/qualityGate.ts. */
+  quality_report?:     QualityReport | null
+  /** Silo provenance — which keyword set produced this, on which term. */
+  silo?:               { id: string; name: string } | null
+  silo_keyword?:       { id: string; keyword: string } | null
+  /** Maintained by trg_content_posts_updated_at. */
+  updated_at?:         string | null
 }
 
 interface Props {
@@ -58,6 +69,15 @@ export default function MonthlyReviewPostCard({
   post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
+
+  // "Live, but the client's site is serving an older copy." Derived rather than
+  // stored, so it is correct the moment content changes. See migration 200.
+  const isLive = Boolean(post.wp_post_id || post.bc_post_id)
+  const isStaleLive =
+    isLive &&
+    !!post.updated_at &&
+    !!post.last_pushed_at &&
+    new Date(post.updated_at).getTime() > new Date(post.last_pushed_at).getTime()
 
   if (isCollapsed) {
     return null
@@ -125,6 +145,21 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
           </div>
+          {/* Silo provenance — which keyword set this came out of, and the term
+              it consumed. Otherwise a silo-driven post is indistinguishable from
+              an ad-hoc one by the time it reaches review. */}
+          {post.silo && (
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{
+                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
+                border: '1px solid rgba(139,92,246,0.28)',
+                padding: '0 5px', borderRadius: 3, fontWeight: 600,
+              }}>
+                silo: {post.silo.name}
+              </span>
+              {post.silo_keyword && <span>from &ldquo;{post.silo_keyword.keyword}&rdquo;</span>}
+            </div>
+          )}
           {/* Live-post links — shown once the post is on-site */}
           {(post.status === 'draft_saved' || post.status === 'published') && (() => {
             const live = viewLiveUrl(post)
@@ -149,13 +184,42 @@ export default function MonthlyReviewPostCard({
               </div>
             )
           })()}
+
+          {isStaleLive && (
+            <div style={{
+              marginTop: 6, padding: '4px 8px', borderRadius: 5,
+              background: '#fef3c7', border: '1px solid #fcd34d',
+              fontSize: 11.5, color: '#92400e', fontWeight: 600,
+            }}>
+              Live copy is out of date — the site still shows the previous version. Push to update it.
+            </div>
+          )}
+
+          {/* The human check that the spam-update reporting singled out as
+              protective. Shown before approval, with the reason, not just a score. */}
+          <QualityFindings report={post.quality_report} />
         </div>
 
         {/* Status / actions */}
         {isApproved ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
-            ✓ Approved
-          </span>
+          // Regenerate stays available AFTER approval on purpose: changing your
+          // mind about a post you just approved is the common case, and the
+          // button being absent here is why it looked like the feature was missing.
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
+              ✓ Approved
+            </span>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title={isLive
+                ? 'Generate a brand-new topic and article. The live copy stays up until you push the replacement.'
+                : 'Generate a brand-new topic and article for this slot'}
+              onClick={() => onRegenerate(post.id)}
+            >
+              ⟳ Regenerate
+            </button>
+          </div>
         ) : isRejected ? (
           <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             Rejected
@@ -174,13 +238,23 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <button
-            className="btn btn-sm"
-            disabled={isLoading}
-            onClick={() => onOpenEditor(post.id)}
-          >
-            Review →
-          </button>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title="Generate a brand-new topic and article for this slot"
+              onClick={() => onRegenerate(post.id)}
+            >
+              ⟳ Regenerate
+            </button>
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onOpenEditor(post.id)}
+            >
+              Review →
+            </button>
+          </div>
         )}
       </div>
     </div>

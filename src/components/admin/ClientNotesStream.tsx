@@ -1,7 +1,16 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { PushPin, Trash, PencilSimple, X, MagnifyingGlass } from '@phosphor-icons/react'
+import {
+  NOTE_TEMPLATES,
+  NOTE_TEMPLATE_LIST,
+  isNoteCategory,
+  noteSearchText,
+  type NoteCategory,
+} from '@/lib/note-templates'
+import { NoteTemplateFields, NoteFieldsReadout, NoteCategoryChip } from './NoteTemplateFields'
+import { NoteSecretInput, NoteSecretReveal } from './NoteSecretField'
 
 interface NoteUser {
   name:       string
@@ -12,6 +21,9 @@ interface Note {
   id:         string
   title:      string | null
   content:    string
+  category:   string
+  has_secret?: boolean
+  fields:     Record<string, string> | null
   pinned:     boolean
   created_at: string
   user_id:    string | null
@@ -19,6 +31,10 @@ interface Note {
   updated_by: string | null
   users:      NoteUser | null
   editor:     NoteUser | null
+}
+
+function templateFor(category: string) {
+  return NOTE_TEMPLATES[(isNoteCategory(category) ? category : 'general') as NoteCategory]
 }
 
 function relativeTime(iso: string): string {
@@ -59,22 +75,38 @@ function sortNotes(arr: Note[]): Note[] {
   })
 }
 
-export default function ClientNotesStream({ clientId }: { clientId: string }) {
+export default function ClientNotesStream({
+  clientId,
+  onContactLogged,
+}: {
+  clientId: string
+  /** Fired when a contact-log note stamps clients.last_contacted_at. */
+  onContactLogged?: (isoDate: string) => void
+}) {
   const [notes,    setNotes]    = useState<Note[]>([])
   const [loading,  setLoading]  = useState(true)
   const [search,   setSearch]   = useState('')
+  const [catFilter, setCatFilter] = useState<NoteCategory | 'all'>('all')
 
   // Add-note form
-  const [addingNote,   setAddingNote]   = useState(false)
-  const [draftTitle,   setDraftTitle]   = useState('')
-  const [draft,        setDraft]        = useState('')
-  const [saving,       setSaving]       = useState(false)
+  const [addingNote,    setAddingNote]    = useState(false)
+  const [draftTitle,    setDraftTitle]    = useState('')
+  const [draft,         setDraft]         = useState('')
+  const [draftCategory, setDraftCategory] = useState<NoteCategory>('general')
+  const [draftFields,   setDraftFields]   = useState<Record<string, string>>({})
+  const [draftSecret,   setDraftSecret]   = useState('')
+  const [saving,        setSaving]        = useState(false)
+  const [saveError,     setSaveError]     = useState<string | null>(null)
 
   // Expanded note popup
   const [expanded,     setExpanded]     = useState<Note | null>(null)
   const [editing,      setEditing]      = useState(false)
   const [editTitle,    setEditTitle]    = useState('')
   const [editContent,  setEditContent]  = useState('')
+  const [editFields,   setEditFields]   = useState<Record<string, string>>({})
+  const [editSecret,   setEditSecret]   = useState('')
+  // '' means "leave the stored credential alone", so clearing needs its own flag.
+  const [editSecretClear, setEditSecretClear] = useState(false)
   const [editSaving,   setEditSaving]   = useState(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -87,15 +119,29 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
       .finally(() => setLoading(false))
   }, [clientId])
 
+  const draftTemplate = NOTE_TEMPLATES[draftCategory]
+  const draftHasFields = Object.values(draftFields).some(v => v.trim() !== '')
+  const canSaveDraft   = draft.trim() !== '' || draftHasFields
+
+  function resetDraft() {
+    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftCategory('general'); setDraftSecret('')
+  }
+
   async function addNote() {
     const content = draft.trim()
-    if (!content || saving) return
+    if (!canSaveDraft || saving) return
     setSaving(true)
+
+    const cleanFields = Object.fromEntries(
+      Object.entries(draftFields).filter(([, v]) => v.trim() !== ''),
+    )
 
     const temp: Note = {
       id: `temp-${Date.now()}`,
       title:      draftTitle.trim() || null,
       content,
+      category:   draftCategory,
+      fields:     cleanFields,
       pinned:     false,
       created_at: new Date().toISOString(),
       user_id:    null,
@@ -105,24 +151,43 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
       editor:     null,
     }
     setNotes(prev => sortNotes([temp, ...prev]))
-    const savedTitle = draftTitle
-    setDraft('')
-    setDraftTitle('')
+    // The secret belongs in the snapshot too. It used to be cleared before the
+    // request and never restored, so a failed save silently threw away the
+    // password the user had just typed.
+    const snapshot = { title: draftTitle, category: draftCategory, fields: draftFields, secret: draftSecret }
+    setDraft(''); setDraftTitle(''); setDraftFields({}); setDraftSecret(''); setSaveError(null)
 
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/notes`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ content, title: savedTitle.trim() || null }),
+        body:    JSON.stringify({
+          content,
+          title:    snapshot.title.trim() || null,
+          category: snapshot.category,
+          fields:   cleanFields,
+          ...(snapshot.secret ? { secret: snapshot.secret } : {}),
+        }),
       })
-      if (!res.ok) throw new Error()
-      const { note } = await res.json() as { note: Note }
+      if (!res.ok) {
+        // The server explains exactly why (an unset CREDENTIAL_ENCRYPTION_KEY,
+        // an empty note, a DB error). Throwing that away is what made a failed
+        // save look like nothing happening at all.
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Could not save the note (HTTP ${res.status})`)
+      }
+      const { note, contactStampedAt } = await res.json() as { note: Note; contactStampedAt: string | null }
       setNotes(prev => sortNotes(prev.map(n => n.id === temp.id ? note : n)))
+      if (contactStampedAt) onContactLogged?.(contactStampedAt)
       setAddingNote(false)
-    } catch {
+      setDraftCategory('general')
+    } catch (e) {
       setNotes(prev => prev.filter(n => n.id !== temp.id))
       setDraft(content)
-      setDraftTitle(savedTitle)
+      setDraftTitle(snapshot.title)
+      setDraftFields(snapshot.fields)
+      setDraftSecret(snapshot.secret)
+      setSaveError(e instanceof Error ? e.message : 'Could not save the note')
     } finally {
       setSaving(false)
     }
@@ -151,27 +216,44 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
 
   async function saveEdit(note: Note) {
     const content = editContent.trim()
-    if (!content || editSaving) return
+    const cleanFields = Object.fromEntries(
+      Object.entries(editFields).filter(([, v]) => v.trim() !== ''),
+    )
+    if ((!content && Object.keys(cleanFields).length === 0) || editSaving) return
     setEditSaving(true)
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/notes/${note.id}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ content, title: editTitle.trim() || null }),
+        body:    JSON.stringify({
+          content,
+          title:    editTitle.trim() || null,
+          category: note.category,
+          fields:   cleanFields,
+          // Only send a secret when one was typed or explicitly cleared; omitting
+          // the key leaves the stored credential untouched.
+          ...(editSecret !== "" || editSecretClear ? { secret: editSecretClear ? "" : editSecret } : {}),
+        }),
       })
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Could not save the note (HTTP ${res.status})`)
+      }
       const { note: updated } = await res.json() as { note: Note }
       setNotes(prev => sortNotes(prev.map(n => n.id === note.id ? updated : n)))
       setExpanded(updated)
       setEditing(false)
-    } catch {
-      // leave edit mode open on failure
+      setSaveError(null)
+    } catch (e) {
+      // Stay in edit mode so nothing typed is lost, and say why.
+      setSaveError(e instanceof Error ? e.message : 'Could not save the note')
     } finally {
       setEditSaving(false)
     }
   }
 
   function openNote(note: Note) {
+    setSaveError(null)
     setExpanded(note)
     setEditing(false)
   }
@@ -180,22 +262,51 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
     if (!expanded) return
     setEditTitle(expanded.title ?? '')
     setEditContent(expanded.content)
+    setEditFields({ ...(expanded.fields ?? {}) })
+    setEditSecret(''); setEditSecretClear(false)
     setEditing(true)
   }
 
-  const filtered = search.trim()
-    ? notes.filter(n =>
-        n.content.toLowerCase().includes(search.toLowerCase()) ||
-        (n.title?.toLowerCase().includes(search.toLowerCase()) ?? false)
-      )
-    : notes
+  // Categories that actually appear on this client, so the chip row only offers
+  // filters that can return something.
+  const presentCategories = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const n of notes) counts.set(n.category, (counts.get(n.category) ?? 0) + 1)
+    return NOTE_TEMPLATE_LIST
+      .filter(t => counts.has(t.key))
+      .map(t => ({ template: t, count: counts.get(t.key) ?? 0 }))
+  }, [notes])
+
+  // The chip row is hidden when fewer than two categories remain, so a filter
+  // that no longer matches anything would be unclearable: deleting the last
+  // 'issue' note while filtering on it unmounts the row (including the only
+  // "All" button) and leaves the pane permanently empty until a page reload.
+  // Derive the effective filter instead of trusting the stored one.
+  const activeCatFilter = catFilter !== 'all' && !presentCategories.some(c => c.template.key === catFilter)
+    ? 'all'
+    : catFilter
+
+  useEffect(() => {
+    if (activeCatFilter !== catFilter) setCatFilter('all')
+  }, [activeCatFilter, catFilter])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return notes.filter(n => {
+      if (activeCatFilter !== 'all' && n.category !== activeCatFilter) return false
+      if (!q) return true
+      return noteSearchText(n).includes(q)
+    })
+  }, [notes, search, activeCatFilter])
 
   // ── Shared styles ────────────────────────────────────────────────────────
   const inp: React.CSSProperties = {
     width: '100%', padding: '0.4rem 0.6rem', boxSizing: 'border-box',
     background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text)', fontFamily: 'inherit',
+    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text-primary)', fontFamily: 'inherit',
   }
+
+  const expandedTemplate = expanded ? templateFor(expanded.category) : null
 
   return (
     <div>
@@ -208,12 +319,12 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
+            placeholder="Search..."
             style={{ ...inp, paddingLeft: 24, width: 130, fontSize: '0.72rem' }}
           />
         </div>
         <button
-          onClick={() => { setAddingNote(v => !v); setDraft(''); setDraftTitle('') }}
+          onClick={() => { setAddingNote(v => !v); resetDraft(); setSaveError(null) }}
           className="btn btn-secondary"
           style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
         >
@@ -221,9 +332,79 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
         </button>
       </div>
 
-      {/* Add note form — only shown when addingNote */}
+      {/* Category filter chips — only categories this client actually has */}
+      {presentCategories.length > 1 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+          <button
+            onClick={() => setCatFilter('all')}
+            style={{
+              padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
+              fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
+              background: activeCatFilter === 'all' ? 'var(--text-primary)' : 'transparent',
+              color:      activeCatFilter === 'all' ? 'var(--bg-surface)' : 'var(--text-muted)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            All {notes.length}
+          </button>
+          {presentCategories.map(({ template: t, count }) => {
+            const on = activeCatFilter === t.key
+            return (
+              <button
+                key={t.key}
+                onClick={() => setCatFilter(on ? 'all' : t.key)}
+                style={{
+                  padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
+                  fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
+                  background: on ? t.color : `${t.color}14`,
+                  color:      on ? '#fff' : t.color,
+                  border: `1px solid ${t.color}${on ? '' : '40'}`,
+                }}
+              >
+                {t.label} {count}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Add note form */}
       {addingNote && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: '0.75rem' }}>
+          {/* Category picker */}
+          <div>
+            <select
+              value={draftCategory}
+              onChange={e => {
+                const next = e.target.value as NoteCategory
+                setDraftCategory(next)
+                setDraftFields({})   // answers belong to the template that declared them
+              }}
+              style={{ ...inp, fontSize: '0.78rem', cursor: 'pointer' }}
+            >
+              {NOTE_TEMPLATE_LIST.map(t => (
+                <option key={t.key} value={t.key}>{t.label}</option>
+              ))}
+            </select>
+            <p style={{ margin: '3px 0 0', fontSize: '0.63rem', color: 'var(--text-faint)' }}>
+              {draftTemplate.hint}
+            </p>
+          </div>
+
+          <NoteTemplateFields
+            template={draftTemplate}
+            values={draftFields}
+            onChange={(k, v) => setDraftFields(prev => ({ ...prev, [k]: v }))}
+          />
+
+          {draftTemplate.hasSecret && (
+            <NoteSecretInput
+              hasSecret={false}
+              value={draftSecret}
+              onChange={setDraftSecret}
+            />
+          )}
+
           <input
             value={draftTitle}
             onChange={e => setDraftTitle(e.target.value)}
@@ -237,103 +418,131 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
             onKeyDown={e => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void addNote() }
             }}
-            placeholder="Add a note… (⌘↵ to save)"
+            placeholder={`${draftTemplate.bodyLabel}...`}
             rows={2}
             autoFocus
             style={{ ...inp, resize: 'vertical' }}
           />
-          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+          {saveError && (
+            <div style={{
+              padding: '6px 9px', borderRadius: 5,
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+              fontSize: '0.7rem', color: 'var(--red)', lineHeight: 1.5,
+            }}>
+              {saveError}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+            {draftTemplate.stampsContact && (
+              <span style={{ marginRight: 'auto', fontSize: '0.63rem', color: 'var(--text-faint)' }}>
+                Updates Last contacted
+              </span>
+            )}
             <button
-              onClick={() => { setAddingNote(false); setDraft(''); setDraftTitle('') }}
+              onClick={() => { setAddingNote(false); resetDraft() }}
               style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
             >
               Cancel
             </button>
             <button
               onClick={() => void addNote()}
-              disabled={!draft.trim() || saving}
+              disabled={!canSaveDraft || saving}
               style={{
                 padding: '0.25rem 0.75rem',
                 background: 'var(--blue)', color: '#fff', border: 'none',
                 borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-                opacity: !draft.trim() || saving ? 0.5 : 1,
+                opacity: !canSaveDraft || saving ? 0.5 : 1,
               }}
             >
-              {saving ? 'Saving…' : 'Save Note'}
+              {saving ? 'Saving...' : 'Save Note'}
             </button>
           </div>
         </div>
       )}
 
       {/* Notes list */}
-      {loading && <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Loading…</p>}
+      {loading && <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Loading...</p>}
       {!loading && filtered.length === 0 && (
         <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          {search.trim() ? 'No notes match your search.' : 'No notes yet.'}
+          {search.trim() || activeCatFilter !== 'all' ? 'No notes match this filter.' : 'No notes yet.'}
         </p>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: '14.5rem', overflowY: 'auto', paddingRight: 2 }}>
-        {filtered.map(note => (
-          <div
-            key={note.id}
-            onClick={() => openNote(note)}
-            style={{
-              padding: '0.5rem 0.625rem',
-              background: note.pinned ? 'var(--yellow-subtle, rgba(234,179,8,0.08))' : 'var(--bg-subtle)',
-              border: `1px solid ${note.pinned ? 'rgba(234,179,8,0.25)' : 'var(--border)'}`,
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
-          >
-            {/* Note header */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
-              <Avatar name={note.users?.name ?? null} avatarUrl={note.users?.avatar_url ?? null} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {note.title && (
-                  <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {note.title}
-                  </p>
-                )}
-                {/* Excerpt */}
-                <p style={{
-                  margin: 0, fontSize: '0.78rem', color: 'var(--text)',
-                  overflow: 'hidden',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  wordBreak: 'break-word',
-                }}>
-                  {note.content}
-                </p>
+        {filtered.map(note => {
+          const t = templateFor(note.category)
+          const fieldCount = Object.values(note.fields ?? {}).filter(v => String(v).trim() !== '').length
+          return (
+            <div
+              key={note.id}
+              onClick={() => openNote(note)}
+              style={{
+                padding: '0.5rem 0.625rem',
+                background: note.pinned ? 'var(--yellow-subtle, rgba(234,179,8,0.08))' : 'var(--bg-subtle)',
+                border: `1px solid ${note.pinned ? 'rgba(234,179,8,0.25)' : 'var(--border)'}`,
+                borderLeft: note.category !== 'general' ? `2px solid ${t.color}` : undefined,
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              {/* Note header */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
+                <Avatar name={note.users?.name ?? null} avatarUrl={note.users?.avatar_url ?? null} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {note.title && (
+                    <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {note.title}
+                    </p>
+                  )}
+                  {note.content
+                    ? (
+                      <p style={{
+                        margin: 0, fontSize: '0.78rem', color: 'var(--text-primary)',
+                        overflow: 'hidden',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        wordBreak: 'break-word',
+                      }}>
+                        {note.content}
+                      </p>
+                    )
+                    : fieldCount > 0 && (
+                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>
+                        {fieldCount} field{fieldCount === 1 ? '' : 's'} filled in
+                      </p>
+                    )}
+                </div>
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 1, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                  <button onClick={() => void togglePin(note)} title={note.pinned ? 'Unpin' : 'Pin'}
+                    style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: note.pinned ? 'var(--yellow, #ca8a04)' : 'var(--text-faint)', borderRadius: 4 }}>
+                    <PushPin size={11} weight={note.pinned ? 'fill' : 'regular'} aria-hidden />
+                  </button>
+                  <button onClick={() => void deleteNote(note.id)} title="Delete"
+                    style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', borderRadius: 4 }}>
+                    <Trash size={11} aria-hidden />
+                  </button>
+                </div>
               </div>
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 1, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                <button onClick={() => void togglePin(note)} title={note.pinned ? 'Unpin' : 'Pin'}
-                  style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: note.pinned ? 'var(--yellow, #ca8a04)' : 'var(--text-faint)', borderRadius: 4 }}>
-                  <PushPin size={11} weight={note.pinned ? 'fill' : 'regular'} aria-hidden />
-                </button>
-                <button onClick={() => void deleteNote(note.id)} title="Delete"
-                  style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', borderRadius: 4 }}>
-                  <Trash size={11} aria-hidden />
-                </button>
-              </div>
-            </div>
 
-            {/* Meta line */}
-            <div style={{ fontSize: '0.62rem', color: 'var(--text-faint)', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              <span>{note.users?.name ?? 'Admin'} · {relativeTime(note.created_at)}</span>
-              {note.updated_at && (
-                <span>· Edited by {note.editor?.name ?? 'Admin'} {relativeTime(note.updated_at)}</span>
-              )}
-              {note.pinned && <span style={{ color: 'var(--yellow, #ca8a04)' }}>· pinned</span>}
+              {/* Meta line */}
+              <div style={{ fontSize: '0.62rem', color: 'var(--text-faint)', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                {note.category !== 'general' && <NoteCategoryChip template={t} />}
+                <span>{note.users?.name ?? 'Admin'} · {relativeTime(note.created_at)}</span>
+                {note.updated_at && (
+                  <span>· Edited by {note.editor?.name ?? 'Admin'} {relativeTime(note.updated_at)}</span>
+                )}
+                {note.pinned && <span style={{ color: 'var(--yellow, #ca8a04)' }}>· pinned</span>}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* Expanded note popup */}
-      {expanded && (
+      {expanded && expandedTemplate && (
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 1100,
@@ -352,6 +561,9 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
             {/* Popup header */}
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ marginBottom: 4 }}>
+                  <NoteCategoryChip template={expandedTemplate} size="md" />
+                </div>
                 {editing ? (
                   <input
                     value={editTitle}
@@ -360,11 +572,11 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
                     style={{
                       width: '100%', background: 'var(--bg-subtle)', border: '1px solid var(--border)',
                       borderRadius: 5, padding: '0.3rem 0.5rem', fontSize: '0.9rem', fontWeight: 600,
-                      color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
+                      color: 'var(--text-primary)', fontFamily: 'inherit', boxSizing: 'border-box',
                     }}
                   />
                 ) : (
-                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text)', wordBreak: 'break-word' }}>
+                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
                     {expanded.title ?? '(no title)'}
                   </p>
                 )}
@@ -390,22 +602,58 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
             {/* Popup body */}
             <div style={{ flex: 1, overflow: 'auto', padding: '0.875rem 1rem' }}>
               {editing ? (
-                <textarea
-                  value={editContent}
-                  onChange={e => setEditContent(e.target.value)}
-                  rows={8}
-                  autoFocus
-                  style={{
-                    width: '100%', resize: 'vertical', background: 'var(--bg-subtle)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    padding: '0.5rem 0.625rem', fontSize: '0.85rem', color: 'var(--text)',
-                    fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: 1.6,
-                  }}
-                />
+                <>
+                  <div style={{ marginBottom: 8 }}>
+                    <NoteTemplateFields
+                      template={expandedTemplate}
+                      values={editFields}
+                      onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
+                    />
+                  </div>
+
+                  {expandedTemplate.hasSecret && (
+                    <div style={{ marginBottom: 8 }}>
+                      <NoteSecretInput
+                        hasSecret={!!expanded.has_secret && !editSecretClear}
+                        value={editSecret}
+                        onChange={v => { setEditSecret(v); setEditSecretClear(false) }}
+                        onClear={() => { setEditSecret(''); setEditSecretClear(true) }}
+                      />
+                      {editSecretClear && (
+                        <p style={{ fontSize: '0.66rem', color: 'var(--red)', margin: '4px 0 0' }}>
+                          The stored password will be removed when you save.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
+                    rows={8}
+                    style={{
+                      width: '100%', resize: 'vertical', background: 'var(--bg-subtle)',
+                      border: '1px solid var(--border)', borderRadius: 6,
+                      padding: '0.5rem 0.625rem', fontSize: '0.85rem', color: 'var(--text-primary)',
+                      fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: 1.6,
+                    }}
+                  />
+                </>
               ) : (
-                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
-                  {expanded.content}
-                </p>
+                <>
+                  {/* The credential is fetched on demand from the audited reveal
+                      endpoint — it is never part of the note payload. */}
+                  <NoteSecretReveal
+                    clientId={clientId}
+                    noteId={expanded.id}
+                    hasSecret={!!expanded.has_secret}
+                  />
+                  <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
+                  {expanded.content && (
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
+                      {expanded.content}
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
@@ -418,19 +666,28 @@ export default function ClientNotesStream({ clientId }: { clientId: string }) {
                 )}
               </div>
               {editing ? (
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                  {saveError && (
+                    <span style={{
+                      padding: '4px 8px', borderRadius: 5, maxWidth: 280,
+                      background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                      fontSize: '0.66rem', color: 'var(--red)', lineHeight: 1.4,
+                    }}>
+                      {saveError}
+                    </span>
+                  )}
                   <button
-                    onClick={() => setEditing(false)}
+                    onClick={() => { setEditing(false); setSaveError(null) }}
                     style={{ padding: '0.3rem 0.7rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={() => void saveEdit(expanded)}
-                    disabled={!editContent.trim() || editSaving}
-                    style={{ padding: '0.3rem 0.7rem', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', opacity: !editContent.trim() || editSaving ? 0.6 : 1 }}
+                    disabled={editSaving}
+                    style={{ padding: '0.3rem 0.7rem', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', opacity: editSaving ? 0.6 : 1 }}
                   >
-                    {editSaving ? 'Saving…' : 'Save'}
+                    {editSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               ) : (

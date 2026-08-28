@@ -26,3 +26,26 @@ export function styleTables(html: string): string {
     .replace(/<th(\s[^>]*)?>/gi,    (_m, a) => addStyle('th',    a || '', TH_STYLE))
     .replace(/<td(\s[^>]*)?>/gi,    (_m, a) => addStyle('td',    a || '', TD_STYLE))
 }
+
+/**
+ * Remove the editorial HTML comments the writer prompt asks for, before the
+ * article is pushed to a CMS.
+ *
+ * WRITER_QUALITY_RULES asks the model to mark original material with
+ * `<!-- INSIGHT: ... -->` / `<!-- EXPERIENCE: ... -->`, and editorialStandards
+ * asks for a `<!-- MEDIA: ... -->` brief. Those exist so a human editor can see
+ * where the value is and what to shoot — they are working notes, not content.
+ *
+ * Nothing was stripping them, so every one was published verbatim into the
+ * client's live page source, where anyone can View Source and read our internal
+ * annotations (and a "MEDIA:" brief describing photos that do not exist yet).
+ * Stripped at push time rather than at generation so the reviewer still sees
+ * them in the dashboard.
+ */
+export function stripEditorialMarkers(html: string): string {
+  if (!html) return html
+  return html
+    .replace(/<!--\s*(INSIGHT|EXPERIENCE|MEDIA)\s*:[\s\S]*?-->/gi, '')
+    // Collapse the blank lines the removals leave behind.
+    .replace(/\n{3,}/g, '\n\n')
+}

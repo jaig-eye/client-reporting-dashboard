@@ -10,6 +10,7 @@ interface BrandDna {
   target_audience: string
   geographic_focus: string
   brand_voice: string
+  founded_year: string
   years_in_business: string
   phone_number: string
   owner_details: string
@@ -77,7 +78,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   const [analyzeMsg,    setAnalyzeMsg]    = useState('')
   const [brand,         setBrand]         = useState<BrandDna>({
     business_background: '', services: '', target_audience: '',
-    geographic_focus: '', brand_voice: '', years_in_business: '',
+    geographic_focus: '', brand_voice: '', founded_year: '', years_in_business: '',
     phone_number: '', owner_details: '', licenses: '',
     guarantees: '', review_count: '', emergency_availability: false,
   })
@@ -250,6 +251,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         target_audience:     data.target_audience     ?? prev.target_audience,
         geographic_focus:    data.geographic_focus    ?? prev.geographic_focus,
         brand_voice:         data.brand_voice         ?? prev.brand_voice,
+        founded_year:        (data as Record<string, unknown>).founded_year as string ?? prev.founded_year,
         years_in_business:   (data as Record<string, unknown>).years_in_business as string ?? prev.years_in_business,
         phone_number:        (data as Record<string, unknown>).phone_number as string ?? prev.phone_number,
         owner_details:       (data as Record<string, unknown>).owner_details as string ?? prev.owner_details,
@@ -320,6 +322,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   async function saveSettings(wizardCompleted: boolean) {
     const eeatData = {
+      founded_year:           brand.founded_year,
       years_in_business:      brand.years_in_business,
       phone_number:           brand.phone_number,
       owner_details:          brand.owner_details,
@@ -923,8 +926,8 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
       <StepSub>These help the AI write with real authority. E-E-A-T signals significantly improve content quality and rankings for local businesses.</StepSub>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        <Field label="Years in Business">
-          <input type="text" value={brand.years_in_business} onChange={e => setBrand({ ...brand, years_in_business: e.target.value })} style={inputStyle} placeholder="15" />
+        <Field label="Year Founded">
+          <input type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
         </Field>
         <Field label="Phone Number">
           <input type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />

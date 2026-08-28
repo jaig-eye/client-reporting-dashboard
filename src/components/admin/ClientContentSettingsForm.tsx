@@ -21,6 +21,7 @@ interface BrandDnaForm {
 }
 
 const EMPTY_EEAT: EeatData = {
+  founded_year:           '',
   years_in_business:      '',
   licenses:               '',
   insurance:              '',
@@ -82,6 +83,7 @@ export default function ClientContentSettingsForm({
   const [aiError,     setAiError]     = useState('')
   const [aiSuggested, setAiSuggested] = useState(false)
   const [aiBlocked,     setAiBlocked]     = useState(false)
+  const [vertical,      setVertical]      = useState('')
   const [eeatOpen,      setEeatOpen]      = useState(false)  // auto-opens when AI fills EEAT fields
   const [siteUrlInput,  setSiteUrlInput]  = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
@@ -102,6 +104,7 @@ export default function ClientContentSettingsForm({
           phone_number:        String(d.phone_number        ?? ''),
           cta_list:            String(d.cta_list            ?? ''),
         })
+        setVertical(String(d.vertical ?? ''))
         if (d.eeat_data && typeof d.eeat_data === 'object') {
           setEeat({ ...EMPTY_EEAT, ...(d.eeat_data as Partial<EeatData>) })
         }
@@ -172,7 +175,7 @@ export default function ClientContentSettingsForm({
     }))
     // Merge any E-E-A-T signals the AI found — only overwrite non-empty values
     const EEAT_KEYS: (keyof EeatData)[] = [
-      'years_in_business','review_count','licenses','insurance','awards',
+      'founded_year','years_in_business','review_count','licenses','insurance','awards',
       'owner_details','team_experience','guarantees','brands_used','financing_options',
       'warranties','emergency_availability','case_studies','before_after_proof','common_objections',
     ]
@@ -200,6 +203,7 @@ export default function ClientContentSettingsForm({
         client_id: clientId,
         ...form,
         eeat_data: eeat,
+        vertical: vertical || null,
       }),
     })
     setSaving(false)
@@ -368,10 +372,37 @@ export default function ClientContentSettingsForm({
             These signals let the AI write as a genuine expert — not generic AI filler. Even a few filled fields make a noticeable difference in content quality.
           </p>
 
+          {/* Regulated vertical — a compliance switch, not a style preference.
+              Turning this on bans invented rates/requirements/outcomes in the
+              writer prompt AND enables figure detection in the quality gate. */}
+          <div>
+            <Label>Regulated vertical</Label>
+            <select
+              className="input"
+              style={{ width: '100%' }}
+              value={vertical}
+              onChange={e => setVertical(e.target.value)}
+            >
+              <option value="">Not regulated</option>
+              <option value="finance">Finance / lending</option>
+              <option value="insurance">Insurance</option>
+              <option value="medical">Medical / health</option>
+              <option value="legal">Legal</option>
+            </select>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              {vertical
+                ? 'The writer is forbidden from inventing rates, requirements, eligibility or outcomes, and generated posts are scanned for unsourced figures and approval promises before they can auto-publish.'
+                : 'Leave off unless the client operates in a regulated space. When on, the AI may not state any rate, requirement or outcome that was not supplied here.'}
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Years in Business</Label>
-              <input className="input" style={{ width: '100%' }} value={eeat.years_in_business} onChange={e => setEeatField('years_in_business', e.target.value)} placeholder="e.g. 22 years" />
+              <Label>Year Founded</Label>
+              <input className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
+              <p style={{ fontSize: '0.68rem', color: 'var(--text-faint)', marginTop: 3 }}>
+                Tenure is calculated from this, so it stays correct as years pass.
+              </p>
             </div>
             <div>
               <Label>Reviews (count &amp; rating)</Label>

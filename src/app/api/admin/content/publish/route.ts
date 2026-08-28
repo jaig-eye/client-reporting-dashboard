@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { publishPost, ensureTagIds } from '@/lib/connectors/wordpress'
 import { logActivity } from '@/lib/activity'
+import { stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 export async function POST(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value
@@ -79,7 +80,10 @@ export async function POST(request: NextRequest) {
 
     const result = await publishPost(siteUrl, auth, {
       title,
-      content,
+      // Internal <!-- INSIGHT/EXPERIENCE/MEDIA --> annotations must never reach a
+      // client site. Every other CMS write path strips them; this legacy route
+      // (still reachable from ContentEditor) did not.
+      content: stripEditorialMarkers(content),
       status:  wpStatus,
       slug:    slug    || undefined,
       author:  author_id || undefined,

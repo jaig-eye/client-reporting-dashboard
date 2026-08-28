@@ -8,8 +8,9 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { recheckPostQuality } from '@/lib/content/recheckQuality'
 
-const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
+const ALLOWED_STATUSES =['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
 
 type PatchBody = {
   status?:          string
@@ -63,8 +64,39 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
   const db = createAdminClient()
+
+  // Same guard as /content/status: rejecting a post that is live on a CMS here
+  // would hide it from the dashboard while leaving the article published, and
+  // only /dismiss knows how to ask what should happen to the live copy.
+  if (body.status === 'rejected') {
+    const { data: live } = await db
+      .from('content_posts')
+      .select('wp_post_id, bc_post_id')
+      .eq('id', id)
+      .maybeSingle()
+    const l = live as { wp_post_id?: number | null; bc_post_id?: number | null } | null
+    if (l?.wp_post_id || l?.bc_post_id) {
+      return NextResponse.json(
+        { error: 'This post is published on the client\'s site. Use Discard in the review view so you can choose whether to leave, unpublish, or delete the live article.' },
+        { status: 409 },
+      )
+    }
+  }
+
   const { error } = await db.from('content_posts').update(update).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // A content-bearing edit invalidates the quality report, and migration 206's
+  // trigger clears it — correctly, since a report about the old text says nothing
+  // about the new one. But the cron gate fails closed on a missing report, so
+  // without recomputing it here a single typo fix would disqualify an approved
+  // post from auto-publish forever, and the hold alert's own advice ("re-save it")
+  // would just clear the report again. Awaited so the caller's next read sees the
+  // new report rather than a transient null.
+  const CONTENT_FIELDS = ['content', 'title', 'seo_title', 'meta_description', 'slug', 'featured_image_url']
+  if (CONTENT_FIELDS.some(f => f in update)) {
+    await recheckPostQuality(db, id)
+  }
 
   logActivity(adminSession, 'updated', 'post', {
     resourceId: id,

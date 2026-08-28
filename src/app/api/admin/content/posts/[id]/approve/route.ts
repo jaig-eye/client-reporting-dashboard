@@ -7,13 +7,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
-import { publishBCPage } from '@/lib/connectors/bigcommerce'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
+import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
-import { styleTables }          from '@/lib/content/contentHtml'
+import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
+import { isPublicPermalink }   from '@/lib/content/postLinks'
 
 export async function POST(
   request: NextRequest,
@@ -42,7 +43,11 @@ export async function POST(
   // silo_id added after migration 164 (content_silos enhancements) applied to production
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, bc_post_id, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
+    // wp_site_url and bc_store_hash are NOT optional here. A republish targets an
+    // id that only means anything on the site it was created on, so the write has
+    // to go to the site the post RECORDS, not whatever connection the client
+    // happens to have active now. See the republish guards below.
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
     .eq('id', id)
     .maybeSingle()
 
@@ -52,12 +57,16 @@ export async function POST(
 
   const p = post as Record<string, unknown>
 
-  if (p.wp_post_id) {
-    return NextResponse.json({ error: 'Post is already uploaded to WordPress' }, { status: 400 })
-  }
-  if (p.bc_post_id) {
-    return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
-  }
+  // A post that is already on a CMS is UPDATED in place, not duplicated.
+  //
+  // This used to be a hard 400. That made "regenerate an already-live post" a
+  // dead end: full-regenerate keeps the platform id, so this route refused the
+  // row forever and the cron's `.is('wp_post_id', null)` filter excluded it too.
+  // The regenerated content simply never reached the client's site while the
+  // stale copy stayed live. See migration 200.
+  const existingWpId = p.wp_post_id ? Number(p.wp_post_id) : null
+  const existingBcId = p.bc_post_id ? Number(p.bc_post_id) : null
+  const isRepublish  = existingWpId !== null || existingBcId !== null
 
   // ─── approve_only: mark as admin-approved; cron will push on schedule ──────
   if (action === 'approve_only') {
@@ -150,6 +159,21 @@ export async function POST(
       return NextResponse.json({ error: 'BigCommerce credentials incomplete' }, { status: 400 })
     }
 
+    // A republish targets bc_post_id, which is only meaningful in the store the
+    // post was created in. BigCommerce ids are small sequential integers, so if
+    // the client has reconnected to a different store, id 42 there is almost
+    // certainly a real unrelated article — and we would silently overwrite the
+    // client's own content with ours, then rewrite bc_store_hash so the original
+    // could never be found again. Refuse instead; the operator can detach the
+    // post (regenerate → publish as new) if the move was intentional.
+    const recordedStoreHash = p.bc_store_hash ? String(p.bc_store_hash) : null
+    if (existingBcId !== null && recordedStoreHash && recordedStoreHash !== storeHash) {
+      return NextResponse.json(
+        { error: `This post was published to BigCommerce store ${recordedStoreHash}, but the client's active connection is store ${storeHash}. Re-pushing would overwrite an unrelated article in the new store. Regenerate it as a new post instead.` },
+        { status: 409 },
+      )
+    }
+
     const { data: csRowBc } = await db
       .from('content_settings')
       .select('publish_time, bc_author, blog_url_prefix')
@@ -206,33 +230,54 @@ export async function POST(
 
       if (isSaPage) {
         // Use BC pages API for service area pages
-        const bcPage = await publishBCPage(storeHash, accessToken, {
-          name:       String(p.title ?? ''),
-          body:       String((p as Record<string, unknown>).content ?? ''),
-          url:        postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
-          is_visible: false,
-        })
+        const pageBody = stripEditorialMarkers(String((p as Record<string, unknown>).content ?? ''))
+        const pagePath = postSlug.startsWith('/') ? postSlug : `/${postSlug}`
+
+        let bcPageId: number
+        let bcPagePath: string
+        if (existingBcId !== null) {
+          await updateBCPage(storeHash, accessToken, existingBcId, { body: pageBody, name: String(p.title ?? '') })
+          bcPageId   = existingBcId
+          bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
+        } else {
+          const bcPage = await publishBCPage(storeHash, accessToken, {
+            name:       String(p.title ?? ''),
+            body:       pageBody,
+            url:        pagePath,
+            is_visible: false,
+          })
+          bcPageId   = bcPage.id
+          bcPagePath = bcPage.url || pagePath
+        }
+
         const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
+        // The public permalink, not the admin panel — see migration 202.
+        const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPagePath)
 
         await db.from('content_posts').update({
-          bc_post_id:        bcPage.id,
+          bc_post_id:        bcPageId,
           bc_store_hash:     storeHash,
           status:            'draft_saved',
-          published_url:     bcEditUrl,
+          // Only overwrite when one was actually resolved — a transient /v2/store
+          // failure returns null, and writing that would wipe a permalink we
+          // already had, dropping the post out of link injection and "View live".
+          ...(publicUrl ? { published_url: publicUrl } : {}),
+          platform_edit_url: bcEditUrl,
+          last_pushed_at:    new Date().toISOString(),
           admin_approved_at: new Date().toISOString(),
         }).eq('id', id)
 
         const adminSession = await getAdminSession()
-        logActivity(adminSession, 'approved', 'post', {
+        logActivity(adminSession, isRepublish ? 'republished' : 'approved', 'post', {
           resourceId: id, clientId: String(p.client_id),
-          meta: { title: p.title, bc_page_id: bcPage.id },
+          meta: { title: p.title, bc_page_id: bcPageId, republished: isRepublish },
         })
 
         // Inject nearby-city links (fire-and-forget)
         injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
           .catch(() => {})
 
-        return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+        return NextResponse.json({ bc_post_id: bcPageId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
       }
 
       const blogUrl = (() => {
@@ -242,7 +287,7 @@ export async function POST(
       })()
       const bcPayload: Record<string, unknown> = {
         title:            String(p.title ?? ''),
-        body:             styleTables(String((p as Record<string, unknown>).content ?? '')),
+        body:             stripEditorialMarkers(styleTables(String((p as Record<string, unknown>).content ?? ''))),
         author:           bcAuthor,
         url:              blogUrl,
         is_published:     false,
@@ -253,40 +298,66 @@ export async function POST(
         ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
       }
 
-      const bcRes = await fetch(
-        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Auth-Token': accessToken, 'Accept': 'application/json' },
-          body: JSON.stringify(bcPayload),
+      let bcPostId:   number
+      let bcPostPath: string
+
+      if (existingBcId !== null) {
+        // Already live — replace the CMS copy in place, keeping the same post id
+        // (and therefore the same public URL, so nothing that links to it breaks).
+        const updated = await updateBCBlogPost(storeHash, accessToken, existingBcId, {
+          title:            String(bcPayload.title ?? ''),
+          body:             String(bcPayload.body ?? ''),
+          meta_description: String(bcPayload.meta_description ?? ''),
+          meta_keywords:    String(bcPayload.meta_keywords ?? ''),
+          tags:             bcPayload.tags as string[] | undefined,
+          ...(thumbnailPath ? { thumbnail_path: thumbnailPath } : {}),
+        })
+        bcPostId   = updated.id
+        bcPostPath = updated.url || blogUrl
+      } else {
+        const bcRes = await fetch(
+          `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': accessToken, 'Accept': 'application/json' },
+            body: JSON.stringify(bcPayload),
+          }
+        )
+        if (!bcRes.ok) {
+          const text = await bcRes.text()
+          throw new Error(bcRes.status === 401
+            ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+            : `BigCommerce API error ${bcRes.status}: ${text}`)
         }
-      )
-      if (!bcRes.ok) {
-        const text = await bcRes.text()
-        throw new Error(bcRes.status === 401
-          ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
-          : `BigCommerce API error ${bcRes.status}: ${text}`)
+        const bcPost = (await bcRes.json()) as Record<string, unknown>
+        bcPostId   = Number(bcPost.id)
+        bcPostPath = String(bcPost.url || blogUrl)
       }
 
-      const bcPost = (await bcRes.json()) as Record<string, unknown>
       const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
+      // published_url must be the PUBLIC permalink: internal-link injection reads
+      // it and used to emit this admin URL into client content. See migration 202.
+      const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPostPath)
 
       await db.from('content_posts').update({
-        bc_post_id:        Number(bcPost.id),
+        bc_post_id:        bcPostId,
         bc_store_hash:     storeHash,
         status:            'draft_saved',
-        published_url:     bcEditUrl,
+        // See above: never let a failed storefront lookup null out a good permalink.
+        ...(publicUrl ? { published_url: publicUrl } : {}),
+        platform_edit_url: bcEditUrl,
+        last_pushed_at:    new Date().toISOString(),
         admin_approved_at: new Date().toISOString(),
       }).eq('id', id)
 
       const adminSession = await getAdminSession()
-      logActivity(adminSession, 'approved', 'post', {
+      logActivity(adminSession, isRepublish ? 'republished' : 'approved', 'post', {
         resourceId: id,
         clientId: String(p.client_id),
-        meta: { title: p.title, bc_post_id: Number(bcPost.id) },
+        meta: { title: p.title, bc_post_id: bcPostId, republished: isRepublish },
       })
 
-      return NextResponse.json({ bc_post_id: Number(bcPost.id), bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+      return NextResponse.json({ bc_post_id: bcPostId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
     } catch (err) {
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
@@ -299,6 +370,22 @@ export async function POST(
 
   if (!siteUrl || !username || !appPassword) {
     return NextResponse.json({ error: 'WordPress credentials incomplete' }, { status: 400 })
+  }
+
+  // Same reasoning as the BigCommerce guard above: wp_post_id is only meaningful
+  // on the site it was created on. A client with two active WordPress connections
+  // resolves an arbitrary one through the .limit(1) fallback, and WordPress ids
+  // are small sequential integers, so re-pushing would overwrite whatever real
+  // article holds that id on the other site.
+  const recordedSiteUrl = p.wp_site_url ? String(p.wp_site_url) : null
+  const sameHost = (a: string, b: string) => {
+    try { return new URL(a).host.toLowerCase() === new URL(b).host.toLowerCase() } catch { return a === b }
+  }
+  if (existingWpId !== null && recordedSiteUrl && !sameHost(recordedSiteUrl, siteUrl)) {
+    return NextResponse.json(
+      { error: `This post was published to ${recordedSiteUrl}, but the client's active WordPress connection is ${siteUrl}. Re-pushing would overwrite an unrelated post on the new site. Regenerate it as a new post instead.` },
+      { status: 409 },
+    )
   }
 
   const auth = { username, app_password: appPassword }
@@ -393,9 +480,26 @@ export async function POST(
         wpParent = parentId
       }
 
-      result = await publishPage(siteUrl, auth, {
+      result = existingWpId !== null
+        // `status` is deliberately omitted, exactly as in the blog branch below:
+        // saStatus defaults to 'draft', so sending it would UN-PUBLISH a live
+        // service-area page every time its content was re-pushed.
+        ? await updatePage(siteUrl, auth, existingWpId, {
+            title:   String(p.title ?? ''),
+            content: stripEditorialMarkers(styleTables(String(p.content ?? ''))),
+            // `slug` omitted for the same reason as the blog branch: a republish
+            // must not move a URL that already has inbound links pointing at it.
+            // The Rank Math block goes with it, so a re-push also refreshes the
+            // live SEO title/description rather than leaving the first version.
+            meta: {
+              rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+              rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+              rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+            },
+          })
+        : await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
-        content: styleTables(String(p.content ?? '')),
+        content: stripEditorialMarkers(styleTables(String(p.content ?? ''))),
         status:  saStatus,
         date:    saDate,
         slug:    wpSlug,
@@ -476,22 +580,44 @@ export async function POST(
         }
       }
 
-      result = await publishPost(siteUrl, auth, {
-        title:          String(p.title ?? ''),
-        content:        styleTables(String(p.content ?? '')),
-        status:         wpPublishStatus,
-        date:           wpDate,
-        slug:           p.slug ? String(p.slug) : undefined,
-        tags:           tagIds.length > 0 ? tagIds : undefined,
-        featured_media: featuredMediaId,
-        author:         authorId,
-        categories:     postCategoryIds,
-        meta: {
-          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-        },
-      })
+      const wpMeta = {
+        rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+        rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+        rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+      }
+
+      result = existingWpId !== null
+        // Already live — overwrite in place so the URL and any links to it survive.
+        // `date` is deliberately omitted: re-pushing must not reschedule a post
+        // that has already gone out.
+        ? await updatePost(siteUrl, auth, existingWpId, {
+            title:          String(p.title ?? ''),
+            content:        stripEditorialMarkers(styleTables(String(p.content ?? ''))),
+            // `slug` is deliberately omitted, for the same reason the
+            // BigCommerce branch omits `url`: keeping the post id is only half of
+            // "the URL survives". full-regenerate writes a brand-new slug on
+            // every rewrite, so sending it renames the live permalink — every
+            // inbound link, every injected sibling link and every indexed SERP
+            // entry for the old URL 404s, with no redirect. The dashboard's slug
+            // still updates; it just stops being pushed to a URL that is already
+            // in the wild.
+            tags:           tagIds.length > 0 ? tagIds : undefined,
+            featured_media: featuredMediaId,
+            categories:     postCategoryIds,
+            meta:           wpMeta,
+          })
+        : await publishPost(siteUrl, auth, {
+            title:          String(p.title ?? ''),
+            content:        stripEditorialMarkers(styleTables(String(p.content ?? ''))),
+            status:         wpPublishStatus,
+            date:           wpDate,
+            slug:           p.slug ? String(p.slug) : undefined,
+            tags:           tagIds.length > 0 ? tagIds : undefined,
+            featured_media: featuredMediaId,
+            author:         authorId,
+            categories:     postCategoryIds,
+            meta:           wpMeta,
+          })
     }
 
     const wpEditUrl = isServiceArea
@@ -501,9 +627,21 @@ export async function POST(
     await db.from('content_posts').update({
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
-      wp_status:         isServiceArea ? result.status : wpPublishStatus,
+      // On a republish the WordPress status is deliberately NOT sent (so a live
+      // post is not knocked back to draft), which means wpPublishStatus is not
+      // what the site actually has. result.status is the value WP returned, so
+      // trust that whenever it is available.
+      wp_status:         isRepublish ? (result.status || wpPublishStatus)
+                        : isServiceArea ? result.status
+                        : wpPublishStatus,
       status:            'draft_saved',
-      published_url:     result.link || wpEditUrl,
+      // Only a real permalink goes in published_url; the wp-admin fallback lives
+      // in platform_edit_url so internal-link injection never emits it. And when
+      // WP returns no link at all, keep whatever was already stored rather than
+      // nulling a permalink that was previously correct.
+      ...(result.link ? { published_url: result.link } : {}),
+      platform_edit_url: wpEditUrl,
+      last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
     }).eq('id', id)
 
@@ -515,7 +653,15 @@ export async function POST(
 
     // Auto-update WP hub page if this post belongs to a silo (fire-and-forget).
     // p.silo_id is only populated once migration 149 (content_silos) is applied.
-    if ((p as Record<string, unknown>).silo_id) {
+    //
+    // !isRepublish is essential now that re-pushing a live post is allowed. This
+    // block appends a link to the client's hub page and only checks for the
+    // section marker, never for whether the link is already there — and
+    // append_silo_pending_link is a raw JSONB concat with no uniqueness test. So
+    // without this guard, every re-push adds another duplicate <li> to a live
+    // page: push N times, get N copies. The BigCommerce counterpart already
+    // carries the same guard.
+    if ((p as Record<string, unknown>).silo_id && !isRepublish) {
       ;(async () => {
         try {
           const { data: siloRaw } = await db
@@ -538,7 +684,18 @@ export async function POST(
           const hubId        = pages[0].id
           const hubStatus    = pages[0].status ?? 'draft'
           const current      = pages[0].content?.rendered ?? ''
-          const clusterUrl   = result.link || wpEditUrl
+          // A hub link is a PUBLIC href on the client's live site. The old
+          // `result.link || wpEditUrl` fallback wrote a wp-admin editor URL into
+          // that page — a login-gated 404 for every reader — and the same string
+          // then went into content_silos.pending_links and
+          // content_silo_pages.target_url, neither of which migration 202
+          // repairs. If WordPress did not return a real permalink there is
+          // nothing worth linking to, so skip rather than emit a broken link.
+          const clusterUrl   = result.link
+          if (!isPublicPermalink(clusterUrl)) {
+            console.warn(`[approve] silo hub link skipped for post ${id}: WordPress returned no public permalink`)
+            return
+          }
           const clusterTitle = String(p.title ?? '')
           const entity       = silo.central_entity || silo.name
           const safeTitle    = clusterTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -568,9 +725,12 @@ export async function POST(
     if (p.silo_id) {
       ;(async () => {
         try {
-          const publishedUrl = result.link || wpEditUrl
+          // target_url is rendered as a public link, so an admin URL must never
+          // land here — same reasoning as the hub-link guard above. Leave the
+          // column alone when WordPress returned no permalink.
+          const publishedUrl = isPublicPermalink(result.link) ? result.link : null
           await db.from('content_silo_pages')
-            .update({ status: 'published', target_url: publishedUrl, updated_at: new Date().toISOString() })
+            .update({ status: 'published', ...(publishedUrl ? { target_url: publishedUrl } : {}), updated_at: new Date().toISOString() })
             .eq('content_post_id', id)
             .eq('silo_id', String(p.silo_id))
         } catch (e) {
@@ -608,7 +768,11 @@ export async function POST(
       wp_post_id:    result.id,
       wp_site_url:   siteUrl,
       wp_edit_url:   wpEditUrl,
-      published_url: wpEditUrl,
+      // The DB write above deliberately keeps admin URLs out of published_url;
+      // returning wpEditUrl here put one straight back into the editor's local
+      // state, so the just-pushed post showed no 'View live' link until a full
+      // reload. Report exactly what was stored.
+      published_url: isPublicPermalink(result.link) ? result.link : null,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

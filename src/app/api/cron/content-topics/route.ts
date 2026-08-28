@@ -109,12 +109,15 @@ export async function GET(request: NextRequest) {
   // Load global notification settings once (used for batch emails)
   const { data: agencySettings } = await db
     .from('agency_settings')
-    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config')
+    .select('notification_email, agency_name, notify_topics_created, notify_topic_ready, notify_post_generated, discord_bot_token, discord_ops_channel_id, consolidated_email_notifications, notification_config, quality_gate_blocks_autopush')
     .single()
 
   const notifEmail          = (agencySettings?.notification_email          as string | null)  ?? null
   const agencyName          = (agencySettings?.agency_name                 as string | null)  ?? 'Agency Dashboard'
   const consolidatedEmail   = (agencySettings?.consolidated_email_notifications as boolean | null) ?? true
+  // Default true: unattended publishing is the risk, so the gate is on unless
+  // an agency explicitly opts out.
+  const qualityGateBlocksAutopush = (agencySettings?.quality_gate_blocks_autopush as boolean | null) ?? true
   const appUrl              = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
 
   // Ops channel: DB value preferred; env var as fallback for zero-downtime deploys
@@ -153,6 +156,27 @@ export async function GET(request: NextRequest) {
     .update({ status: 'approved', generation_error: 'Timed out — reset by cron. Click retry to regenerate.' })
     .eq('status', 'generating')
     .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
+
+  // Same for POSTS. full-regenerate claims a post by setting status='generating'
+  // and does the work in waitUntil; if that background job is KILLED rather than
+  // throwing (function timeout, instance recycle, deploy mid-flight) its catch
+  // never runs and the claim is never released. Every retry then matches the
+  // `.neq('status','generating')` guard, claims nothing, and returns
+  // 200 {queued:false,'Already regenerating'} — so the UI reports success while
+  // the post is stuck forever and silently dropped from the auto-push selector.
+  //
+  // maxDuration there is 300s, so an hour is comfortably past any real run.
+  // 'for_review' is the status a successful regenerate would have landed on.
+  const { data: reapedPosts } = await db
+    .from('content_posts')
+    .update({ status: 'for_review' })
+    .eq('status', 'generating')
+    .lt('updated_at', new Date(Date.now() - 3_600_000).toISOString())
+    .select('id, title')
+
+  if (reapedPosts && reapedPosts.length > 0) {
+    console.warn(`[content-topics] released ${reapedPosts.length} post(s) stuck in 'generating'`)
+  }
 
   // Per-client email accumulators
   const topicAccum = new Map<string, { clientName: string; items: TopicSummary[] }>()
@@ -426,17 +450,114 @@ export async function GET(request: NextRequest) {
     if (auto_push_posts) {
       const pushThreshold = new Date()
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
+      // NOTE: the platform-id filters that used to live here have been removed.
+      //
+      // `.is('wp_post_id', null)` meant a post that was regenerated after going
+      // live could never be picked up again — which was half of the dead end the
+      // approve route now fixes. A live post is eligible again only when its DB
+      // copy is genuinely newer than the CMS copy, which is filtered below rather
+      // than in SQL so the comparison stays in one place.
       const { data: duePosts } = await db
         .from('content_posts')
-        .select('id, title')
+        .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
         .eq('status', 'approved')
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
-        .is('wp_post_id', null)
-        .is('bc_post_id', null)
 
-      const allDuePosts = (duePosts ?? []) as { id: string; title: string | null }[]
+      type DuePost = {
+        id: string; title: string | null
+        quality_report?: { blocksAutoPush?: boolean; findings?: { severity: string; message: string }[] } | null
+        quality_hold_alerted_at?: string | null
+        wp_post_id?: number | null; bc_post_id?: number | null
+        updated_at?: string | null; last_pushed_at?: string | null
+      }
+      const dueRaw = ((duePosts ?? []) as unknown as DuePost[]).filter(p => {
+        const live = Boolean(p.wp_post_id || p.bc_post_id)
+        if (!live) return true            // never published — the normal case
+        // Already live: only re-push when the DB copy is actually newer, so a
+        // cron running every 2h cannot churn an unchanged article.
+        if (!p.updated_at || !p.last_pushed_at) return false
+        return new Date(p.updated_at).getTime() > new Date(p.last_pushed_at).getTime()
+      })
+
+      // QUALITY GATE — the whole point of this block.
+      //
+      // Reporting on the August 2026 spam update was blunt about the pattern:
+      // sites "automatically posting" end to end were "being filtered and dropped
+      // across the board", while publishers doing human checks before publishing
+      // were fine. Unattended publishing is the risk being managed here, so a post
+      // carrying a CRITICAL quality finding is held back for a human rather than
+      // shipped by a cron at 2am. It stays 'approved' and remains fully publishable
+      // by hand — nothing is rejected, only un-automated.
+      // FAILS CLOSED. A post is eligible only when it carries a report that
+      // explicitly passed — never merely because it has no report.
+      //
+      // `?.blocksAutoPush !== true` treated a MISSING report as a pass, so
+      // anything generated before the gate existed, generated by a path that
+      // skipped it, or whose report was cleared because its content changed,
+      // was auto-published to a client's site with no checking at all. Absence
+      // of evidence is not evidence of quality.
+      const gateOn      = qualityGateBlocksAutopush !== false
+      const passed      = (p: DuePost) => p.quality_report != null && p.quality_report.blocksAutoPush !== true
+      const held        = gateOn ? dueRaw.filter(p => !passed(p)) : []
+      const allDuePosts = gateOn ? dueRaw.filter(passed) : dueRaw
+
+      if (held.length > 0) {
+        console.log(`[content-topics] quality gate held ${held.length} post(s) from auto-push for client ${client_id}`)
+
+        // Batched, not one INSERT + one UPDATE per post. quality_report only
+        // exists from migration 203, so on the first run after deploy EVERY
+        // approved due post lands here — 30 clients x 5 posts was 300 serial
+        // round trips inside a budget already shared with AI generation.
+        const alertRows: Record<string, unknown>[] = []
+        const alertedIds: string[] = []
+
+        for (const p of held) {
+          // Alert ONCE per hold. A held post legitimately stays 'approved' and
+          // keeps matching the selector, so without this marker the same alert
+          // is re-raised every run — 12 times a day, indefinitely, per post.
+          if (p.quality_hold_alerted_at) continue
+
+          const reasons = (p.quality_report?.findings ?? [])
+            .filter(f => f.severity === 'critical')
+            .map(f => f.message)
+
+          // Distinguish "checked and failed" from "never checked" — the remedy
+          // differs, and telling someone a post was "flagged" when it simply has
+          // no report sends them looking for findings that do not exist.
+          // Every path that writes content now re-runs the gate (see
+          // lib/content/recheckQuality.ts), so a missing report means the post
+          // predates that or its last re-check failed. Saving it re-scores it —
+          // which is only true since the re-check went on the write path; the
+          // advice used to name a remedy that cleared the report again.
+          const body = p.quality_report == null
+            ? 'This post has no quality report, so it was not published automatically. Open it and save it to run the checks, then publish by hand.'
+            : `The quality gate flagged this post, so it was not published automatically. Review and publish it by hand.\n\n${reasons.join('\n')}`
+
+          alertRows.push({
+            type:      'content',
+            severity:  'warning',
+            client_id,
+            title:     `Held from auto-publish: ${p.title ?? 'Untitled post'}`,
+            body,
+            link_url:  '/admin/content',
+          })
+          alertedIds.push(p.id)
+        }
+
+        if (alertRows.length > 0) {
+          const { error: alertErr } = await db.from('admin_alerts').insert(alertRows)
+          if (alertErr) {
+            // Nothing is stamped, so the next run retries the whole batch.
+            console.error('[content-topics] hold alert insert failed', alertErr.message)
+          } else {
+            await db.from('content_posts')
+              .update({ quality_hold_alerted_at: new Date().toISOString() })
+              .in('id', alertedIds)
+          }
+        }
+      }
 
       // Resolve client name once for notifications
       let clientNameForPush = topicAccum.get(client_id)?.clientName ?? ''

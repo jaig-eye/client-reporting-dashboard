@@ -8,8 +8,9 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
-import { publishBCPage } from '@/lib/connectors/bigcommerce'
+import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { injectNearbyLinks } from '@/lib/content/injectNearbyLinks'
+import { stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -41,9 +42,11 @@ export async function POST(
 
   const p = post as Record<string, unknown>
 
-  if (p.bc_post_id) {
-    return NextResponse.json({ error: 'Post is already published to BigCommerce' }, { status: 400 })
-  }
+  // Already on BigCommerce => overwrite that post rather than refusing. Mirrors
+  // the same change in ../approve; see migration 200 for why the old 400 wedged
+  // any post that was regenerated after going live.
+  const existingBcId = p.bc_post_id ? Number(p.bc_post_id) : null
+  const isRepublish  = existingBcId !== null
 
   // Resolve BC connection: prefer stored connection_id, fall back to any active BC connection
   type ConnRow = { id: string; connector: { auth: Record<string, unknown>; config: Record<string, unknown> } }
@@ -130,7 +133,7 @@ export async function POST(
 
   const payload: Record<string, unknown> = {
     title:            String(p.title ?? ''),
-    body:             String(p.content ?? ''),
+    body:             stripEditorialMarkers(String(p.content ?? '')),
     author:           'Admin',
     url:              postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
     is_published:     false,
@@ -144,95 +147,140 @@ export async function POST(
   try {
     // Service area pages use the BC pages API, not the blog API
     if (p.content_type === 'service_area') {
-      const bcPage = await publishBCPage(storeHash, accessToken, {
-        name:       String(p.title ?? ''),
-        body:       String(p.content ?? ''),
-        url:        postSlug.startsWith('/') ? postSlug : `/${postSlug}`,
-        is_visible: false,
-      })
+      const pagePath = postSlug.startsWith('/') ? postSlug : `/${postSlug}`
+
+      let bcPageId:   number
+      let bcPagePath: string
+      if (existingBcId !== null) {
+        await updateBCPage(storeHash, accessToken, existingBcId, { body: stripEditorialMarkers(String(p.content ?? '')), name: String(p.title ?? '') })
+        bcPageId   = existingBcId
+        bcPagePath = (await fetchBCPage(storeHash, accessToken, existingBcId))?.url ?? pagePath
+      } else {
+        const bcPage = await publishBCPage(storeHash, accessToken, {
+          name:       String(p.title ?? ''),
+          body:       stripEditorialMarkers(String(p.content ?? '')),
+          url:        pagePath,
+          is_visible: false,
+        })
+        bcPageId   = bcPage.id
+        bcPagePath = bcPage.url || pagePath
+      }
+
       const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/pages`
+      const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPagePath)
 
       await db.from('content_posts').update({
-        bc_post_id:    bcPage.id,
-        bc_store_hash: storeHash,
-        status:        'draft_saved',
-        published_url: bcEditUrl,
+        bc_post_id:        bcPageId,
+        bc_store_hash:     storeHash,
+        status:            'draft_saved',
+        // Only overwrite when we actually resolved one - a transient storefront
+        // lookup failure must not wipe a permalink we already had.
+        ...(publicUrl ? { published_url: publicUrl } : {}),
+        platform_edit_url: bcEditUrl,
+        last_pushed_at:    new Date().toISOString(),
       }).eq('id', id)
 
       const adminSession = await getAdminSession()
-      logActivity(adminSession, 'published', 'post', {
+      logActivity(adminSession, isRepublish ? 'republished' : 'published', 'post', {
         resourceId: id,
         clientId: String(p.client_id),
-        meta: { title: p.title, bc_page_id: bcPage.id },
+        meta: { title: p.title, bc_page_id: bcPageId, republished: isRepublish },
       })
 
       injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
         .catch(() => {})
 
-      // Log cluster link to silo pending_links — atomic append to prevent race conditions
-      if (p.silo_id) {
+      // Log cluster link to silo pending_links — atomic append to prevent race
+      // conditions. Only a real permalink is worth linking to, and only once.
+      if (p.silo_id && publicUrl && !isRepublish) {
         Promise.resolve(db.rpc('append_silo_pending_link', {
           silo_id: String(p.silo_id),
-          link: { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
+          link: { url: publicUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
         })).catch(() => {})
       }
 
-      return NextResponse.json({ bc_post_id: bcPage.id, bc_edit_url: bcEditUrl, published_url: bcEditUrl })
+      return NextResponse.json({ bc_post_id: bcPageId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
     }
 
-    const res = await fetch(
-      `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
-      {
-        method:  'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Auth-Token': accessToken,
-          'Accept':       'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    )
+    let bcPostId:   number
+    let bcPostPath: string
 
-    if (!res.ok) {
-      const text = await res.text()
-      if (res.status === 401) {
-        throw new Error(
-          'BigCommerce rejected the access token (401). Reconnect the integration and ensure the API account has "Content: Modify" scope enabled.'
-        )
+    if (existingBcId !== null) {
+      const updated = await updateBCBlogPost(storeHash, accessToken, existingBcId, {
+        title:            String(payload.title ?? ''),
+        body:             String(payload.body ?? ''),
+        meta_description: String(payload.meta_description ?? ''),
+        meta_keywords:    String(payload.meta_keywords ?? ''),
+        tags:             payload.tags as string[] | undefined,
+      })
+      bcPostId   = updated.id
+      bcPostPath = updated.url || String(payload.url ?? '')
+    } else {
+      const res = await fetch(
+        `https://api.bigcommerce.com/stores/${storeHash}/v2/blog/posts`,
+        {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Auth-Token': accessToken,
+            'Accept':       'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      )
+
+      if (!res.ok) {
+        const text = await res.text()
+        if (res.status === 401) {
+          throw new Error(
+            'BigCommerce rejected the access token (401). Reconnect the integration and ensure the API account has "Content: Modify" scope enabled.'
+          )
+        }
+        throw new Error(`BigCommerce API error ${res.status}: ${text}`)
       }
-      throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+
+      const bcPost = (await res.json()) as Record<string, unknown>
+      bcPostId   = Number(bcPost.id)
+      bcPostPath = String(bcPost.url || payload.url || '')
     }
-
-    const bcPost = (await res.json()) as Record<string, unknown>
 
     const bcEditUrl = `https://store-${storeHash}.mybigcommerce.com/manage/content/blog`
+    const publicUrl = bcPermalink(await fetchBCStorefrontOrigin(storeHash, accessToken), bcPostPath)
 
     await db.from('content_posts').update({
-      bc_post_id:    Number(bcPost.id),
-      bc_store_hash: storeHash,
-      status:        'draft_saved',
-      published_url: bcEditUrl,
+      bc_post_id:        bcPostId,
+      bc_store_hash:     storeHash,
+      status:            'draft_saved',
+      // Only overwrite when we actually resolved one - a transient storefront
+      // lookup failure must not wipe a permalink we already had.
+      ...(publicUrl ? { published_url: publicUrl } : {}),
+      platform_edit_url: bcEditUrl,
+      last_pushed_at:    new Date().toISOString(),
     }).eq('id', id)
 
     const adminSession = await getAdminSession()
-    logActivity(adminSession, 'published', 'post', {
+    logActivity(adminSession, isRepublish ? 'republished' : 'published', 'post', {
       resourceId: id,
       clientId: String(p.client_id),
-      meta: { title: p.title, bc_post_id: Number(bcPost.id) },
+      meta: { title: p.title, bc_post_id: bcPostId, republished: isRepublish },
     })
 
-    // Log cluster link to silo pending_links — atomic append to prevent race conditions
-    if (p.silo_id) {
+    // Log cluster link to silo pending_links — atomic append to prevent race
+    // conditions. Only a real permalink is worth linking to, and only once.
+    if (p.silo_id && publicUrl && !isRepublish) {
       Promise.resolve(db.rpc('append_silo_pending_link', {
         silo_id: String(p.silo_id),
-        link: { url: bcEditUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
+        link: { url: publicUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
       })).catch(() => {})
     }
 
+    // The response always carries the key — the conditional spread above is a
+    // DB-write concern only; callers here expect published_url to be present.
     return NextResponse.json({
-      bc_post_id:    Number(bcPost.id),
+      bc_post_id:    bcPostId,
       bc_edit_url:   bcEditUrl,
-      published_url: bcEditUrl,
+      published_url: publicUrl,
+      republished:   isRepublish,
     })
   } catch (err) {
     console.error('[publish-bigcommerce]', err)

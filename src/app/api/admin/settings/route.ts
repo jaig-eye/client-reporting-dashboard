@@ -75,6 +75,8 @@ export async function PUT(request: NextRequest) {
     'ads_sync_frequency', 'ads_sync_hour_utc',
     'master_writing_prompt',
     'metric_alert_window_days',
+    'contact_stale_days',
+    'quality_gate_blocks_autopush',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
     'service_page_master_prompt',
@@ -87,6 +89,25 @@ export async function PUT(request: NextRequest) {
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
     if (body[key] !== undefined) patch[key] = body[key]
+  }
+
+  // contact_stale_days drives a cron that emails, Discords and alerts on every
+  // client it considers overdue, so a bad value is loud and self-sustaining.
+  // Zero is the realistic way to get one: clearing the number input sends '',
+  // and Number('') is 0, which then makes EVERY client stale on every run while
+  // also defeating the once-per-streak dedup (its re-arm window is `now - 0`).
+  // `min`/`max` on the input are browser hints only, and migration 198 put the
+  // 1..365 CHECK on clients.contact_stale_days but not on the agency default —
+  // so this is the only place it can be enforced.
+  if (patch.contact_stale_days !== undefined) {
+    const n = Math.trunc(Number(patch.contact_stale_days))
+    if (!Number.isFinite(n) || n < 1 || n > 365) {
+      return NextResponse.json(
+        { error: 'Contact window must be a whole number of days between 1 and 365.' },
+        { status: 400 },
+      )
+    }
+    patch.contact_stale_days = n
   }
 
   const db = createAdminClient()

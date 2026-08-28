@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
 import ClientLogoUpload from './ClientLogoUpload'
+import ClientRelationshipCard from './ClientRelationshipCard'
+import type { ClientTemperature } from '@/lib/types'
 
 interface AdminUser {
   id:         string
@@ -58,6 +60,10 @@ interface Props {
   website:          string | null
   logoUrl:          string | null
   accountManagerId: string | null
+  temperature:      ClientTemperature | null
+  lastContactedAt:  string | null
+  contactStaleDays: number | null
+  agencyStaleDays:  number
   adminUsers:       AdminUser[]
   contacts:         Contact[]
   dashUrl:          string
@@ -94,6 +100,7 @@ function normalizeUrl(url: string): string {
 export default function OverviewTab({
   clientId, name, address, phone, website, logoUrl,
   accountManagerId, adminUsers, contacts: initialContacts,
+  temperature, lastContactedAt, contactStaleDays, agencyStaleDays,
   dashUrl, adsLibraryUrl,
 }: Props) {
   const router = useRouter()
@@ -408,9 +415,23 @@ export default function OverviewTab({
           )}
         </div>
 
+        {/* Relationship: attention level + last contact */}
+        <ClientRelationshipCard
+          clientId={clientId}
+          temperature={temperature}
+          lastContactedAt={lastContactedAt}
+          contactStaleDays={contactStaleDays}
+          agencyStaleDays={agencyStaleDays}
+        />
+
         {/* Notes card */}
         <div className="card p-5">
-          <ClientNotesStream clientId={clientId} />
+          <ClientNotesStream
+            clientId={clientId}
+            // A contact-log note stamps last_contacted_at server-side; refresh so
+            // the Relationship card above reflects it without a manual reload.
+            onContactLogged={() => router.refresh()}
+          />
         </div>
 
         {/* Stripe invoice history */}
