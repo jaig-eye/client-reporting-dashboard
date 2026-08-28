@@ -3,8 +3,8 @@
 //
 // Two-tier by design:
 //   1. Upstash Redis (shared across all serverless instances) WHEN configured —
-//      set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN (the Vercel
-//      Marketplace "Upstash Redis" integration injects both). This closes the
+//      reads UPSTASH_REDIS_REST_URL/TOKEN or the KV_REST_API_URL/TOKEN pair the
+//      Vercel Marketplace "Upstash Redis" integration injects. This closes the
 //      distributed / instance-fan-out bypass the in-memory version cannot.
 //   2. In-memory per-instance fallback WHENEVER Upstash is absent OR a Redis call
 //      errors/times out. So with no integration configured the behaviour is
@@ -31,8 +31,12 @@ const MAX_KEYS = 5000
 const REDIS_TIMEOUT_MS = 1500
 
 function upstashEnv(): { url: string; token: string } | null {
-  const url   = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+  // Accept BOTH the native Upstash names and the KV_* names the Vercel Marketplace
+  // "Upstash Redis" integration injects — they point at the same Upstash REST
+  // endpoint and full-access (read/write) token. KV_REST_API_TOKEN, not the
+  // READ_ONLY one, because the limiter needs INCR.
+  const url   = process.env.UPSTASH_REDIS_REST_URL   || process.env.KV_REST_API_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
   return url && token ? { url: url.replace(/\/$/, ''), token } : null
 }
 
