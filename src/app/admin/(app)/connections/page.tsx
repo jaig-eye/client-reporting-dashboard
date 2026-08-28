@@ -25,6 +25,7 @@ import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
 import { resolveDfsCreds }  from '@/lib/connectors/dataforseo'
 import type { SeoDevice }   from '@/lib/connectors/dataforseo'
 import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
+import { SECRET_MASK }      from '@/lib/secretMask'
 import GoogleRefreshButton  from '@/components/admin/GoogleRefreshButton'
 
 export const dynamic = 'force-dynamic'
@@ -301,18 +302,18 @@ export default async function ConnectionsPage({
         {dfsHasCreds && <DataForSeoUsagePanel />}
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard
-          initialApiKey={agencySettings?.serp_api_key ?? ''}
+          initialApiKey={agencySettings?.serp_api_key ? SECRET_MASK : ''}
           initialProvider={agencySettings?.serp_api_provider ?? 'serpapi'}
         />
         {/* ── Discord (agency notifications) ────────────────────────────────── */}
         <DiscordAgencyCard
-          initialBotToken={agencySettings?.discord_bot_token ?? ''}
+          initialBotToken={agencySettings?.discord_bot_token ? SECRET_MASK : ''}
           initialOpsChannelId={agencySettings?.discord_ops_channel_id ?? ''}
         />
         {/* ── Stripe ────────────────────────────────────────────────── */}
         <StripeAgencyCard
-          initialApiKey={agencySettings?.stripe_api_key ?? ''}
-          initialWebhookSecret={agencySettings?.stripe_webhook_secret ?? ''}
+          initialApiKey={agencySettings?.stripe_api_key ? SECRET_MASK : ''}
+          initialWebhookSecret={agencySettings?.stripe_webhook_secret ? SECRET_MASK : ''}
         />
 
       </div>

@@ -5,6 +5,7 @@ import { cookies } from 'next/headers'
 import { getAdminSession, isAdminAuthed } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
+import { SECRET_FIELDS, maskSecrets, isUnchangedSecret } from '@/lib/secretMask'
 
 // This file used to define its OWN isAdminAuthed that shadowed the imported one
 // and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
@@ -15,26 +16,12 @@ import { parseBody }       from '@/lib/apiError'
 // is an unsalted SHA-256 of a six-digit OTP, i.e. brute-forceable offline in
 // under a second, so the backdoor completed super-admin 2FA without the email.
 
-// Third-party API keys/secrets never leave the server in cleartext. GET returns a
-// fixed MASK for any secret that is SET (so the UI still shows "configured"); PUT
-// treats an incoming value equal to the mask (or blank) as "unchanged" and does NOT
-// overwrite the stored key — so saving any other setting, or re-saving without
-// retyping, can never wipe a key. Previously GET shipped every live key to the
-// admin browser, so an admin-panel XSS or a compromised admin session exfiltrated
-// all of them at once.
-const SECRET_FIELDS = [
-  'ai_api_key', 'openai_api_key', 'discord_bot_token',
-  'stripe_api_key', 'stripe_webhook_secret', 'serp_api_key',
-] as const
-const SECRET_MASK = '••••••••'   // eight bullets — no real key looks like this
-
-function maskSecrets(row: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...row }
-  for (const f of SECRET_FIELDS) {
-    if (typeof out[f] === 'string' && (out[f] as string).length > 0) out[f] = SECRET_MASK
-  }
-  return out
-}
+// Third-party API keys/secrets never leave the server in cleartext (see
+// lib/secretMask): GET returns a fixed MASK for any secret that is SET (so the UI
+// still shows "configured"); PUT treats an incoming value equal to the mask (or
+// blank) as "unchanged" and does NOT overwrite the stored key — so saving any other
+// setting, or re-saving without retyping, can never wipe a key. The connections
+// page mirrors the same mask into its integration cards.
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -113,7 +100,7 @@ export async function PUT(request: NextRequest) {
     if (body[key] === undefined) continue
     // A secret returned as the mask (or blank) means "leave the stored key alone" —
     // never overwrite a live key with the mask or wipe it by omission.
-    if (secretKeys.includes(key) && (body[key] === SECRET_MASK || body[key] === '' || body[key] === null)) continue
+    if (secretKeys.includes(key) && isUnchangedSecret(body[key])) continue
     patch[key] = body[key]
   }
 
@@ -137,6 +124,18 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
+
+  // Nothing to change — e.g. an integration card was re-saved without editing its
+  // masked key, so every field it sent was skipped above. Skip the write (an empty
+  // PostgREST update can surface as a spurious error) and return current settings.
+  if (Object.keys(patch).length === 0) {
+    const { data: current } = await db.from('agency_settings').select('*').single()
+    const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+      (current ?? {}) as Record<string, unknown>
+    void super_admin_otp_hash; void super_admin_otp_expires_at
+    return NextResponse.json(maskSecrets(safe))
+  }
+
   const { data: existing } = await db.from('agency_settings').select('id').single()
   if (!existing?.id) {
     return NextResponse.json({ error: 'Settings row not found — run migrations' }, { status: 500 })
