@@ -108,13 +108,17 @@ export async function POST(request: NextRequest) {
   // For immediate delivery: fire generation for each topic.
   // waitUntil keeps the Vercel function alive until all fetches complete.
   if (delivery === 'immediate') {
-    // Derived from the incoming request, not an env var with a localhost default.
-    // The Cookie below carries a real 14-day super-admin session token, and the
-    // old `?? 'http://localhost:3000'` fallback would have sent it in cleartext
-    // HTTP to whatever happened to be listening on the container's own port 3000
-    // if NEXT_PUBLIC_APP_URL were unset. Using request.nextUrl.origin also means
-    // preview deployments call themselves rather than production.
-    const appUrl = request.nextUrl.origin
+    // Trusted base URL only. The Cookie below carries a real 14-day super-admin
+    // session token, so the target must NOT be derived from a request header:
+    // request.nextUrl.origin comes from Host / X-Forwarded-Host, which an
+    // authenticated regular admin can spoof to receive the super-admin credential
+    // (privilege escalation). Prefer the explicit app URL, then the platform-set
+    // VERCEL_URL (the deployment's own canonical host — trusted, and still points a
+    // preview deploy at itself rather than production). request.nextUrl.origin is a
+    // last resort only when neither env is present (e.g. local dev).
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '')
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : request.nextUrl.origin)
 
     // Minted ONCE per request, not once per topic inside the loop.
     const internalCookie = internalAdminCookie()

@@ -110,5 +110,14 @@ export async function PUT(request: NextRequest) {
 
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(patch) } })
-  return NextResponse.json(data)
+
+  // Strip the super-admin OTP columns from the response exactly as GET does. The
+  // bare .select() returns the full row, so while a super-admin login is mid-flight
+  // this PUT would hand any authenticated admin the live OTP hash — an unsalted
+  // SHA-256 of a six-digit code, recoverable offline in under a second — letting
+  // them complete super-admin 2FA without the email.
+  const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+    data as Record<string, unknown>
+  void super_admin_otp_hash; void super_admin_otp_expires_at
+  return NextResponse.json(safe)
 }

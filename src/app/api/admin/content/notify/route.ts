@@ -9,13 +9,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email'
-import { isAdminAuthed } from '@/lib/auth'
+import { isSuperAdminAuthed } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
   const session = cookieStore.get('admin_session')?.value
-  if (!isAdminAuthed(session)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Super admin only. This endpoint sends email to an arbitrary `to` with an
+  // arbitrary subject/html — an open relay if any authenticated admin can reach it.
+  // The settings "Send Test" button now uses /api/admin/settings/test-email (which
+  // pins non-super-admins to the configured address); this route has no other UI
+  // caller, and internal callers authenticate with the super-admin internal cookie,
+  // so restricting it to super admin closes the relay without breaking them.
+  if (!isSuperAdminAuthed(session)) {
+    return NextResponse.json({ error: 'Only the super admin can send mail through this endpoint.' }, { status: 403 })
   }
 
   const body = await request.json() as {
