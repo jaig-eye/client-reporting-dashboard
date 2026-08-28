@@ -8,11 +8,11 @@ import { issueResetCode } from '@/lib/passwordReset'
 import { createRateLimiter, clientIp } from '@/lib/rateLimit'
 
 
-const forgotLimiter = createRateLimiter({ max: 3, windowMs: 15 * 60 * 1000 })
+const forgotLimiter = createRateLimiter({ name: 'forgot', max: 3, windowMs: 15 * 60 * 1000 })
 
 export async function POST(request: NextRequest) {
   const ip = clientIp(request)
-  if (!forgotLimiter.take(ip)) {
+  if (!(await forgotLimiter.take(ip))) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }

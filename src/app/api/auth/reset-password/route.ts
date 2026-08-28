@@ -15,7 +15,7 @@ import { timingSafeEqual } from 'crypto'
 // many IPs or serverless instances the attacker spreads across. Either alone is
 // weak — six digits (~9x10^5) with a ten-minute life and a hit that rewrites the
 // password is a straight path to account takeover — so both apply.
-const resetLimiter = createRateLimiter({ max: 10, windowMs: 15 * 60 * 1000 })
+const resetLimiter = createRateLimiter({ name: 'reset', max: 10, windowMs: 15 * 60 * 1000 })
 
 // Guesses allowed against one issued code before it is burned. After this the
 // attacker must trigger a fresh (randomly different) code, and issuance is itself
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
 
   // take() reserves the attempt up front, so a burst of concurrent guesses cannot
   // all read the same pre-increment count.
-  if (!resetLimiter.take(ip)) {
+  if (!(await resetLimiter.take(ip))) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 },

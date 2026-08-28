@@ -1,18 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-IP rate limiting for auth endpoints.
+// Rate limiting for auth endpoints.
 //
-// There were three hand-rolled copies of this (admin-login, forgot-password,
-// reset-password) and they had already drifted in ways only a side-by-side diff
-// would reveal: inverted return polarity, two counting failures while one counted
-// every request, and only two carrying a cleanup sweep. One definition instead.
+// Two-tier by design:
+//   1. Upstash Redis (shared across all serverless instances) WHEN configured —
+//      set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN (the Vercel
+//      Marketplace "Upstash Redis" integration injects both). This closes the
+//      distributed / instance-fan-out bypass the in-memory version cannot.
+//   2. In-memory per-instance fallback WHENEVER Upstash is absent OR a Redis call
+//      errors/times out. So with no integration configured the behaviour is
+//      exactly as before, and a Redis hiccup can never lock a real admin out — it
+//      silently degrades to the local limiter rather than failing the request.
 //
-// IN-MEMORY, therefore PER SERVERLESS INSTANCE. That is a real limitation — a
-// wide concurrency fan-out gives an attacker a fresh empty counter per instance —
-// and it is the same limitation main has always had. The database-backed version
-// on fix/security-hardening was worse in practice: it failed OPEN on any query
-// error and its table was never applied, so it did nothing at all. Moving this to
-// Postgres is worth doing on its own, with the migration applied first and
-// failing CLOSED.
+// take()/reset() are async because the Redis path is a network call. The Redis
+// counter uses INCR + PEXPIRE, which is atomic server-side, so concurrent bursts
+// are counted correctly across instances.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { NextRequest } from 'next/server'
@@ -20,67 +21,103 @@ import type { NextRequest } from 'next/server'
 interface Entry { count: number; resetAt: number }
 
 export interface RateLimiter {
-  /**
-   * Reserve one attempt. Returns false when the caller is over the limit.
-   *
-   * The count is incremented HERE, at check time, not after the work completes.
-   * The previous shape read the counter at request entry and incremented only
-   * after `await request.json()`, a user lookup and a ~0.5s bcrypt compare — so a
-   * concurrent burst all observed count=0 and all proceeded, and the cap bounded
-   * nothing. JavaScript's single thread makes check-and-increment in one
-   * synchronous step genuinely atomic; splitting it across an await does not.
-   */
-  take(key: string): boolean
+  /** Reserve one attempt. Returns false when the caller is over the limit. */
+  take(key: string): Promise<boolean>
   /** Forget this key entirely — used after a genuine success. */
-  reset(key: string): void
+  reset(key: string): Promise<void>
 }
 
 const MAX_KEYS = 5000
+const REDIS_TIMEOUT_MS = 1500
 
-export function createRateLimiter({ max, windowMs }: { max: number; windowMs: number }): RateLimiter {
+function upstashEnv(): { url: string; token: string } | null {
+  const url   = process.env.UPSTASH_REDIS_REST_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+  return url && token ? { url: url.replace(/\/$/, ''), token } : null
+}
+
+/** POST a Redis command pipeline to Upstash's REST API, with a hard timeout. */
+async function upstashPipeline(
+  env: { url: string; token: string },
+  commands: (string | number)[][],
+): Promise<Array<{ result?: unknown; error?: unknown }> | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), REDIS_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${env.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(commands),
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    return await res.json() as Array<{ result?: unknown; error?: unknown }>
+  } catch {
+    return null   // network error / timeout → caller falls back to in-memory
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export function createRateLimiter(
+  { name, max, windowMs }: { name: string; max: number; windowMs: number },
+): RateLimiter {
   const entries = new Map<string, Entry>()
 
-  // forEach avoids the Array.from copy of the whole map that the previous version
-  // allocated on the hot auth path. Deleting during Map.forEach is safe, and unlike
-  // `for..of` it does not require the downlevelIteration tsconfig flag this repo lacks.
+  // forEach avoids the Array.from copy of the whole map; deleting during
+  // Map.forEach is safe and needs no downlevelIteration.
   function sweep(now: number): void {
-    entries.forEach((v, k) => {
-      if (now > v.resetAt) entries.delete(k)
-    })
+    entries.forEach((v, k) => { if (now > v.resetAt) entries.delete(k) })
   }
 
-  return {
-    take(key: string): boolean {
-      const now = Date.now()
-
-      const entry = entries.get(key)
-      if (entry && now <= entry.resetAt) {
-        if (entry.count >= max) return false
-        entry.count++
-        return true
-      }
-
-      // New (or expired) key — we are about to INSERT. Enforce a real hard cap
-      // here rather than only sweeping: under an IP-rotation flood every entry is
-      // still live, so a sweep frees nothing and the old code let `entries.set`
-      // grow the map without bound while paying an O(n) scan per request. Reclaim
-      // expired entries first, then, if still at the cap, evict the oldest
-      // (insertion-ordered) so memory is genuinely bounded by MAX_KEYS.
-      if (entries.size >= MAX_KEYS) {
-        sweep(now)
-        while (entries.size >= MAX_KEYS) {
-          const oldest = entries.keys().next().value
-          if (oldest === undefined) break
-          entries.delete(oldest)
-        }
-      }
-
-      entries.set(key, { count: 1, resetAt: now + windowMs })
+  // ── In-memory fallback (unchanged fixed-window with a hard key cap) ──────────
+  function memTake(key: string): boolean {
+    const now = Date.now()
+    const entry = entries.get(key)
+    if (entry && now <= entry.resetAt) {
+      if (entry.count >= max) return false
+      entry.count++
       return true
+    }
+    // New/expired key — enforce a real hard cap so an IP-rotation flood cannot
+    // grow the map without bound: reclaim expired entries, then evict oldest.
+    if (entries.size >= MAX_KEYS) {
+      sweep(now)
+      while (entries.size >= MAX_KEYS) {
+        const oldest = entries.keys().next().value
+        if (oldest === undefined) break
+        entries.delete(oldest)
+      }
+    }
+    entries.set(key, { count: 1, resetAt: now + windowMs })
+    return true
+  }
+  function memReset(key: string): void { entries.delete(key) }
+
+  const redisKey = (key: string) => `rl:${name}:${key}`
+
+  return {
+    async take(key: string): Promise<boolean> {
+      const env = upstashEnv()
+      if (env) {
+        // INCR the counter and (re)assert the window TTL. Unconditional PEXPIRE
+        // avoids depending on the PEXPIRE ... NX flag and can never leave a key
+        // without an expiry; a continuously-attacking key simply stays blocked
+        // until it goes quiet for windowMs.
+        const rk = redisKey(key)
+        const out = await upstashPipeline(env, [['INCR', rk], ['PEXPIRE', rk, windowMs]])
+        const count = out?.[0]?.result
+        if (typeof count === 'number') return count <= max
+        // else: Redis errored/timed out → fall through to in-memory.
+      }
+      return memTake(key)
     },
 
-    reset(key: string): void {
-      entries.delete(key)
+    async reset(key: string): Promise<void> {
+      memReset(key)   // always clear the local counter immediately
+      const env = upstashEnv()
+      if (env) await upstashPipeline(env, [['DEL', redisKey(key)]])
     },
   }
 }
@@ -88,15 +125,9 @@ export function createRateLimiter({ max, windowMs }: { max: number; windowMs: nu
 /**
  * The client IP, preferring the hop the platform sets.
  *
- * x-forwarded-for is a client-supplied header that Vercel APPENDS to, so its
- * leftmost value is whatever the caller wrote. Taking that first let an attacker
- * mint a fresh bucket per request (defeating the limit) or pin a victim's bucket
- * to lock them out. x-real-ip is set by the proxy, so it comes first; the
- * RIGHTMOST forwarded-for entry is the fallback because that is the hop nearest
- * the proxy rather than the one nearest the client.
- *
- * The two auth routes previously disagreed about this order, so the same client
- * was bucketed under different keys on different endpoints.
+ * x-forwarded-for is client-supplied and Vercel APPENDS to it, so its leftmost
+ * value is attacker-written. x-real-ip is set by the proxy; the RIGHTMOST
+ * forwarded-for entry is the fallback (nearest the proxy, not the client).
  */
 export function clientIp(request: NextRequest | Request): string {
   const h = request.headers

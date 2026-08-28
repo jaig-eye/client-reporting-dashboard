@@ -34,8 +34,8 @@ const COOKIE_OPTS = {
 //
 // ipLimiter is a coarse ceiling on total attempts from one source (horizontal
 // spraying across many accounts). It is NEVER reset, so a valid login cannot clear it.
-const accountLimiter = createRateLimiter({ max: 5,  windowMs: 15 * 60 * 1000 })
-const ipLimiter      = createRateLimiter({ max: 50, windowMs: 15 * 60 * 1000 })
+const accountLimiter = createRateLimiter({ name: 'login-account', max: 5,  windowMs: 15 * 60 * 1000 })
+const ipLimiter      = createRateLimiter({ name: 'login-ip',      max: 50, windowMs: 15 * 60 * 1000 })
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
 const OTP_TTL_MINUTES   = 10
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
 
   // Coarse per-IP reservation at entry, before any parsing or bcrypt. Never reset,
   // so it bounds total attempts from one source regardless of outcome.
-  if (!ipLimiter.take(ip)) {
+  if (!(await ipLimiter.take(ip))) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
   // another's failures. The super-admin path has an empty identifier — its own bucket.
   const identifier = email.toLowerCase().trim()
   const accountKey = `${ip}:${identifier}`
-  if (!accountLimiter.take(accountKey)) {
+  if (!(await accountLimiter.take(accountKey))) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 },
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         super_admin_otp_expires_at: null,
       })
 
-      accountLimiter.reset(accountKey)
+      await accountLimiter.reset(accountKey)
       return superAdminSessionResponse()
     }
 
@@ -334,7 +334,7 @@ export async function POST(request: NextRequest) {
     // password check AND has a usable code — clearing it before the outcome was
     // known made this whole branch unmetered. Per-account key, so this clears only
     // this user's bucket.
-    accountLimiter.reset(accountKey)
+    await accountLimiter.reset(accountKey)
 
     logActivity(
       { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email ?? undefined },
@@ -376,7 +376,7 @@ export async function POST(request: NextRequest) {
     'logged_in', 'user', { resourceId: user.id, meta: { email: user.email, ip } }
   )
 
-  accountLimiter.reset(accountKey)
+  await accountLimiter.reset(accountKey)
   const res = NextResponse.json({ ok: true, role: user.role })
   // admin_session carries the SIGNED identity; admin_user_id remains only as a
   // non-authoritative display hint (authorization no longer trusts it).
