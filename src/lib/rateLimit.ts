@@ -40,30 +40,42 @@ const MAX_KEYS = 5000
 export function createRateLimiter({ max, windowMs }: { max: number; windowMs: number }): RateLimiter {
   const entries = new Map<string, Entry>()
 
+  // forEach avoids the Array.from copy of the whole map that the previous version
+  // allocated on the hot auth path. Deleting during Map.forEach is safe, and unlike
+  // `for..of` it does not require the downlevelIteration tsconfig flag this repo lacks.
   function sweep(now: number): void {
-    for (const [k, v] of Array.from(entries.entries())) {
+    entries.forEach((v, k) => {
       if (now > v.resetAt) entries.delete(k)
-    }
+    })
   }
 
   return {
     take(key: string): boolean {
       const now = Date.now()
 
-      // Sweep BEFORE the branch, not after it. The previous version put the
-      // cleanup inside the "existing entry" path, which a request from a
-      // never-seen IP never reaches — so the guard meant to bound the map was
-      // unreachable from precisely the case that grows it, and an attacker
-      // rotating IPs could grow it without limit.
-      if (entries.size > MAX_KEYS) sweep(now)
-
       const entry = entries.get(key)
-      if (!entry || now > entry.resetAt) {
-        entries.set(key, { count: 1, resetAt: now + windowMs })
+      if (entry && now <= entry.resetAt) {
+        if (entry.count >= max) return false
+        entry.count++
         return true
       }
-      if (entry.count >= max) return false
-      entry.count++
+
+      // New (or expired) key — we are about to INSERT. Enforce a real hard cap
+      // here rather than only sweeping: under an IP-rotation flood every entry is
+      // still live, so a sweep frees nothing and the old code let `entries.set`
+      // grow the map without bound while paying an O(n) scan per request. Reclaim
+      // expired entries first, then, if still at the cap, evict the oldest
+      // (insertion-ordered) so memory is genuinely bounded by MAX_KEYS.
+      if (entries.size >= MAX_KEYS) {
+        sweep(now)
+        while (entries.size >= MAX_KEYS) {
+          const oldest = entries.keys().next().value
+          if (oldest === undefined) break
+          entries.delete(oldest)
+        }
+      }
+
+      entries.set(key, { count: 1, resetAt: now + windowMs })
       return true
     },
 

@@ -10,6 +10,7 @@ import { logActivity } from '@/lib/activity'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
 import { issueResetCode } from '@/lib/passwordReset'
 import { createRateLimiter, clientIp } from '@/lib/rateLimit'
+import { clearCookie } from '@/lib/clearSession'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 
@@ -21,13 +22,20 @@ const COOKIE_OPTS = {
   path: '/',
 }
 
-// Per-IP limit, shared implementation. take() reserves an attempt at request
-// ENTRY — the count and the check are one synchronous step, so a concurrent burst
-// cannot all slip through the way it could when the increment sat after ~0.5s of
-// awaits. A successful sign-in calls reset(), so the two POSTs a clean super-admin
-// login costs (password, then OTP) leave no residue, and colleagues behind one
-// office NAT do not lock each other out.
-const loginLimiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 })
+// Two throttles, both reserving at check time (one synchronous step, so a
+// concurrent burst cannot all observe count=0 the way it could when the increment
+// sat after ~0.5s of awaits).
+//
+// accountLimiter is the real brute-force cap: keyed by ip+identifier, so a
+// successful sign-in resets only THAT account's bucket. Keying it by IP alone (the
+// previous shape) let an attacker who holds one valid account log in to wipe a
+// shared per-IP counter and then keep guessing OTHER accounts for free; per-account
+// keying also means colleagues behind one office NAT never lock each other out.
+//
+// ipLimiter is a coarse ceiling on total attempts from one source (horizontal
+// spraying across many accounts). It is NEVER reset, so a valid login cannot clear it.
+const accountLimiter = createRateLimiter({ max: 5,  windowMs: 15 * 60 * 1000 })
+const ipLimiter      = createRateLimiter({ max: 50, windowMs: 15 * 60 * 1000 })
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
 const OTP_TTL_MINUTES   = 10
@@ -37,13 +45,18 @@ function hashOtp(code: string): string {
 }
 
 function generateOtp(): string {
-  return String(crypto.randomInt(100000, 999999))
+  // randomInt's upper bound is EXCLUSIVE; 1000000 gives the full 100000-999999 range.
+  return String(crypto.randomInt(100000, 1000000))
 }
 
 function superAdminSessionResponse(): NextResponse {
   const res = NextResponse.json({ ok: true, role: 'super_admin' })
   res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: true }), COOKIE_OPTS)
-  res.cookies.delete('admin_user_id')
+  // clearCookie, not res.cookies.delete: a bare delete emits no Secure/SameSite=None,
+  // so the browser rejects the deletion in the cross-origin CRM iframe and a stale
+  // admin_user_id from a prior regular-admin login survives. clearCookie mirrors the
+  // set attributes so the expiry actually lands.
+  clearCookie(res, 'admin_user_id')
   return res
 }
 
@@ -65,7 +78,9 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (!loginLimiter.take(ip)) {
+  // Coarse per-IP reservation at entry, before any parsing or bcrypt. Never reset,
+  // so it bounds total attempts from one source regardless of outcome.
+  if (!ipLimiter.take(ip)) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 }
@@ -89,6 +104,18 @@ export async function POST(request: NextRequest) {
 
   if (!password || typeof password !== 'string') {
     return NextResponse.json({ error: 'Password required' }, { status: 400 })
+  }
+
+  // Per-account reservation (ip+identifier). Reserved before the bcrypt compare so
+  // a burst cannot slip through, and keyed so one account's success cannot clear
+  // another's failures. The super-admin path has an empty identifier — its own bucket.
+  const identifier = email.toLowerCase().trim()
+  const accountKey = `${ip}:${identifier}`
+  if (!accountLimiter.take(accountKey)) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Try again in 15 minutes.' },
+      { status: 429 },
+    )
   }
 
   // ── Super admin path ────────────────────────────────────────────────────────
@@ -123,7 +150,7 @@ export async function POST(request: NextRequest) {
         super_admin_otp_expires_at: null,
       })
 
-      loginLimiter.reset(ip)
+      accountLimiter.reset(accountKey)
       return superAdminSessionResponse()
     }
 
@@ -184,8 +211,8 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Regular user path: email or username + password ───────────────────────
-  const identifier = email.toLowerCase().trim()
-  const isEmail    = identifier.includes('@')
+  // identifier / accountKey were computed above for rate limiting.
+  const isEmail = identifier.includes('@')
 
   // The error is CHECKED, and the missing-column case degrades instead of failing.
   //
@@ -202,12 +229,19 @@ export async function POST(request: NextRequest) {
   const BASE_COLS  = 'id, role, password_hash, is_active, email, name'
   const FULL_COLS  = `${BASE_COLS}, must_reset_password`
 
+  // Escape LIKE metacharacters before .ilike so they match literally. Unescaped,
+  // `%` and `_` in the identifier were treated as wildcards: a pattern like `_smith`
+  // could match a single username without knowing it, and a multi-match made
+  // .maybeSingle() error into a 503 that a probe could distinguish from the 401 a
+  // non-match returns — a username-enumeration oracle. (The email arm uses exact .eq.)
+  const usernamePattern = identifier.replace(/[\\%_]/g, '\\$&')
+
   async function lookup(cols: string) {
     return isEmail
       ? await db.from('users').select(cols)
           .eq('email', identifier).eq('is_active', true).maybeSingle()
       : await db.from('users').select(cols)
-          .ilike('username', identifier).eq('is_active', true).maybeSingle()
+          .ilike('username', usernamePattern).eq('is_active', true).maybeSingle()
   }
 
   let { data: userRow, error: lookupErr } = await lookup(FULL_COLS)
@@ -230,7 +264,7 @@ export async function POST(request: NextRequest) {
   } | null
 
   // verifyPassword equalizes timing when no user/hash exists (dummy bcrypt compare).
-  const { ok: hashMatch, needsUpgrade } = verifyPassword(password, user?.password_hash)
+  const { ok: hashMatch, needsUpgrade } = await verifyPassword(password, user?.password_hash)
   if (!user || !hashMatch) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
@@ -298,8 +332,9 @@ export async function POST(request: NextRequest) {
 
     // The rate limit is cleared only once the user is genuinely through the
     // password check AND has a usable code — clearing it before the outcome was
-    // known made this whole branch unmetered.
-    loginLimiter.reset(ip)
+    // known made this whole branch unmetered. Per-account key, so this clears only
+    // this user's bucket.
+    accountLimiter.reset(accountKey)
 
     logActivity(
       { isSuperAdmin: false, userId: user.id, name: user.name ?? undefined, email: user.email ?? undefined },
@@ -341,7 +376,7 @@ export async function POST(request: NextRequest) {
     'logged_in', 'user', { resourceId: user.id, meta: { email: user.email, ip } }
   )
 
-  loginLimiter.reset(ip)
+  accountLimiter.reset(accountKey)
   const res = NextResponse.json({ ok: true, role: user.role })
   // admin_session carries the SIGNED identity; admin_user_id remains only as a
   // non-authoritative display hint (authorization no longer trusts it).
