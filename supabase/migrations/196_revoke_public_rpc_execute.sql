@@ -33,8 +33,20 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- The actual leak. SECURITY DEFINER + anon EXECUTE = RLS bypass for the public.
-REVOKE ALL ON FUNCTION public.get_gsc_summary(uuid, uuid, date, date, integer)
-  FROM anon, authenticated, PUBLIC;
+--
+-- Guarded with to_regprocedure so the whole migration does not abort on a database
+-- where a named function is absent. These migrations run as one implicit
+-- transaction, so a bare statement against a missing function (see the
+-- set_content_posts_updated_at case below, which no migration in this repo
+-- creates) would roll the ENTIRE migration back — silently un-doing this very
+-- revoke on every fresh/staging/CI rebuild. A missing function cannot leak, so
+-- skipping it is correct.
+DO $$
+BEGIN
+  IF to_regprocedure('public.get_gsc_summary(uuid, uuid, date, date, integer)') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION public.get_gsc_summary(uuid, uuid, date, date, integer) FROM anon, authenticated, PUBLIC';
+  END IF;
+END $$;
 
 -- Defence in depth: these are SECURITY INVOKER and already return nothing to
 -- anon, but no caller uses the anon key, so nothing needs the grant.
@@ -57,12 +69,23 @@ END $$;
 -- referenced object with one of their own and have it execute as the owner. This
 -- is only exploitable by a role that can create objects, but a definer function
 -- with a mutable search_path is a standing hazard regardless.
-ALTER FUNCTION public.get_gsc_summary(uuid, uuid, date, date, integer)
-  SET search_path = public, pg_temp;
+--
+-- Each ALTER is guarded with to_regprocedure. set_content_posts_updated_at() in
+-- particular is created out-of-band (no migration in this repo defines it), so an
+-- unguarded ALTER FUNCTION — which has no IF EXISTS form — errored on every
+-- database provisioned from the migration chain and rolled the whole migration
+-- back, taking the get_gsc_summary revoke above with it.
+DO $$
+BEGIN
+  IF to_regprocedure('public.get_gsc_summary(uuid, uuid, date, date, integer)') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.get_gsc_summary(uuid, uuid, date, date, integer) SET search_path = public, pg_temp';
+  END IF;
 
--- Same hardening for the two other flagged functions (both INVOKER, so lower
--- stakes, but the linter is right that an unpinned search_path is a smell).
-ALTER FUNCTION public.append_silo_pending_link(uuid, jsonb)
-  SET search_path = public, pg_temp;
-ALTER FUNCTION public.set_content_posts_updated_at()
-  SET search_path = public, pg_temp;
+  IF to_regprocedure('public.append_silo_pending_link(uuid, jsonb)') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.append_silo_pending_link(uuid, jsonb) SET search_path = public, pg_temp';
+  END IF;
+
+  IF to_regprocedure('public.set_content_posts_updated_at()') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.set_content_posts_updated_at() SET search_path = public, pg_temp';
+  END IF;
+END $$;
