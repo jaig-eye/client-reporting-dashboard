@@ -7,13 +7,20 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES } from '@/lib/auth'
 import { hashResetCode } from '@/lib/passwordReset'
 import { createRateLimiter, clientIp } from '@/lib/rateLimit'
+import { timingSafeEqual } from 'crypto'
 
-// Per-IP limit on CODE VERIFICATION. This endpoint had none: six digits
-// (~9x10^5) with a ten-minute life, no attempt counter on the token, and a hit
-// rewrites the password outright — a straight path to account takeover that also
-// locks the owner out. forgot-password limits only ISSUANCE, which does nothing
-// to slow guessing against a code already sent.
+// Per-IP limit on CODE VERIFICATION. This is the FIRST of two throttles: the
+// per-IP limiter here slows a single source, and the per-TOKEN attempt cap below
+// (idx via migration 197) bounds total guesses against one code no matter how
+// many IPs or serverless instances the attacker spreads across. Either alone is
+// weak — six digits (~9x10^5) with a ten-minute life and a hit that rewrites the
+// password is a straight path to account takeover — so both apply.
 const resetLimiter = createRateLimiter({ max: 10, windowMs: 15 * 60 * 1000 })
+
+// Guesses allowed against one issued code before it is burned. After this the
+// attacker must trigger a fresh (randomly different) code, and issuance is itself
+// IP-rate-limited on forgot-password.
+const MAX_RESET_ATTEMPTS = 5
 
 export async function POST(request: NextRequest) {
   const ip = clientIp(request)
@@ -64,27 +71,71 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 
-  const { data: record } = await db
+  // Look up the user's LIVE code by user_id — NOT by the submitted hash. There is
+  // at most one (issueResetCode invalidates prior codes). Matching on user_id is
+  // what lets a WRONG guess still find the token and spend one of its attempts;
+  // the old shape matched on token_hash, so a wrong code found no row and cost the
+  // attacker nothing, leaving the six-digit space open to distributed guessing.
+  let { data: token, error: tokErr } = await db
     .from('password_reset_tokens')
-    .select('id')
+    .select('id, token_hash, attempts')
     .eq('user_id', user.id)
-    .eq('token_hash', hashResetCode(code))
     .is('used_at', null)
     .gt('expires_at', now)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
-  if (!record) {
+  // Deploy-ordering fallback: `attempts` only exists from migration 197. If the
+  // code shipped ahead of it, degrade to matching without the per-token counter
+  // rather than answering "invalid code" to everyone (a lockout). The per-IP
+  // limiter still applies in that window.
+  let attemptsTracked = true
+  if (tokErr && /attempts/i.test(tokErr.message)) {
+    attemptsTracked = false
+    ;({ data: token } = await db
+      .from('password_reset_tokens')
+      .select('id, token_hash')
+      .eq('user_id', user.id)
+      .is('used_at', null)
+      .gt('expires_at', now)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle())
+  }
+
+  if (!token) {
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 
-  // Burn the code FIRST, and only proceed if this request is the one that burned
-  // it. Writing the password first left a window where two concurrent requests
-  // with the same code could both succeed, and a failure after the password write
-  // would leave a still-valid code behind.
+  const submitted = hashResetCode(code)
+  const stored    = String(token.token_hash)
+  const codeOk =
+    submitted.length === stored.length &&
+    timingSafeEqual(Buffer.from(submitted), Buffer.from(stored))
+
+  if (!codeOk) {
+    // Charge the guess to the TOKEN. Once the budget is spent, burn the code so
+    // further guesses fail closed and the attacker must request a fresh one.
+    if (attemptsTracked) {
+      const spent = (Number(token.attempts) || 0) + 1
+      await db
+        .from('password_reset_tokens')
+        .update(spent >= MAX_RESET_ATTEMPTS ? { attempts: spent, used_at: now } : { attempts: spent })
+        .eq('id', token.id)
+        .then(null, () => {})
+    }
+    return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
+  }
+
+  // Correct code — burn it FIRST, and only proceed if this request is the one that
+  // burned it. Writing the password first left a window where two concurrent
+  // requests with the same code could both succeed, and a failure after the
+  // password write would leave a still-valid code behind.
   const { data: burned, error: burnErr } = await db
     .from('password_reset_tokens')
     .update({ used_at: now })
-    .eq('id', record.id)
+    .eq('id', token.id)
     .is('used_at', null)
     .select('id')
 
@@ -104,7 +155,7 @@ export async function POST(request: NextRequest) {
   let { error: pwErr } = await db
     .from('users')
     .update({
-      password_hash:       hashPasswordSecure(password),
+      password_hash:       await hashPasswordSecure(password),
       // Clears the forced rotation. This is the only self-service path that does,
       // which is what guarantees a flagged account ends up on a bcrypt hash.
       must_reset_password: false,
@@ -116,7 +167,7 @@ export async function POST(request: NextRequest) {
     console.warn('[reset-password] rotation columns missing (migration 195 not applied) — writing the password only')
     ;({ error: pwErr } = await db
       .from('users')
-      .update({ password_hash: hashPasswordSecure(password) })
+      .update({ password_hash: await hashPasswordSecure(password) })
       .eq('id', user.id))
   }
 
@@ -128,7 +179,7 @@ export async function POST(request: NextRequest) {
     // back on.
     await db.from('password_reset_tokens')
       .update({ used_at: null })
-      .eq('id', record.id)
+      .eq('id', token.id)
       .then(null, () => {})
 
     console.error('[reset-password] password write failed:', pwErr.message)

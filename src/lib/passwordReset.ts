@@ -26,7 +26,9 @@ export function hashResetCode(code: string): string {
 }
 
 function generateCode(): string {
-  return String(randomInt(100000, 999999))
+  // randomInt's upper bound is EXCLUSIVE, so 1000000 (not 999999) is needed for
+  // the full 100000-999999 range; 999999 would drop that one code and never be issued.
+  return String(randomInt(100000, 1000000))
 }
 
 export type IssueResult =
@@ -65,11 +67,11 @@ export async function issueResetCode(
   }
 
   const code = generateCode()
-  const { error: insertErr } = await db.from('password_reset_tokens').insert({
+  const { data: inserted, error: insertErr } = await db.from('password_reset_tokens').insert({
     user_id:    user.id,
     token_hash: hashResetCode(code),
     expires_at: new Date(Date.now() + RESET_CODE_TTL_MS).toISOString(),
-  })
+  }).select('id').single()
   if (insertErr) {
     console.error('[passwordReset] could not store the code:', insertErr.message)
     return { ok: false, reason: 'db_error', detail: insertErr.message }
@@ -111,6 +113,16 @@ export async function issueResetCode(
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e)
     console.error('[passwordReset] email send failed:', detail)
+    // Burn the code we just stored. A code that was never delivered must not be
+    // left live: the forced-rotation path in admin-login treats ANY live token as
+    // "already emailed" and, on the next login, tells the user to "check your
+    // inbox" for a message that never arrived — hiding the real SMTP failure and
+    // never resending. Removing it means the next attempt honestly reports the
+    // send failure and mints a fresh code once mail is fixed.
+    await db.from('password_reset_tokens')
+      .update({ used_at: new Date().toISOString() })
+      .eq('id', inserted.id)
+      .then(null, () => {})
     return { ok: false, reason: 'send_failed', detail }
   }
 }

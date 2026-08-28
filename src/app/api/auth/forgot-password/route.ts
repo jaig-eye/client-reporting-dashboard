@@ -19,9 +19,15 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { email } = await request.json() as { email?: string }
+  // Guard the parse and type-check email, matching the hardening on admin-login and
+  // reset-password. An unparseable body threw a SyntaxError, and a non-string email
+  // (e.g. {"email":123}) threw inside `.trim()` — both surfaced as a 500, breaking
+  // the uniform 200 this route promises so a prober could not learn anything from
+  // the response.
+  const body = await request.json().catch(() => null) as { email?: unknown } | null
+  const email = typeof body?.email === 'string' ? body.email : ''
 
-  if (!email?.trim()) return NextResponse.json({ ok: true })
+  if (!email.trim()) return NextResponse.json({ ok: true })
 
   const db         = createAdminClient()
   const identifier = email.toLowerCase().trim()
