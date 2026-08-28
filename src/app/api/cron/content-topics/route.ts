@@ -12,7 +12,7 @@
 
 export const maxDuration = 300
 
-import { internalAdminCookie } from '@/lib/session'
+import { internalAdminCookie, sessionSigningConfigured } from '@/lib/session'
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
@@ -88,6 +88,20 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (!verifyCronAuth(authHeader)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Fail closed with a clear error, not a crash. This cron authenticates with
+  // CRON_SECRET, so it runs even when SESSION_SECRET is unset — but internalCookie
+  // below calls signAdminSession, which THROWS on a missing secret in production.
+  // Unguarded, every scheduled run died as an opaque 500 (after doing no work),
+  // silently halting all topic/brief/post generation. Check up front like the
+  // login path does.
+  if (!sessionSigningConfigured()) {
+    console.error('[cron/content-topics] SESSION_SECRET is not set — cannot mint the internal admin session. Generate one with `openssl rand -hex 32`.')
+    return NextResponse.json(
+      { error: 'Server session secret is not configured — content generation is paused.' },
+      { status: 503 },
+    )
   }
 
   const db = createAdminClient()
