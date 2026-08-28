@@ -65,6 +65,17 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Guarantee the SERVICE ROLE can still execute every server-side function after the
+-- PUBLIC revoke above. The app calls ALL RPCs through the service-role key
+-- (createAdminClient) — spend rollups on both admin AND client magic-link dashboards
+-- (sum_meta_spend_by_client, sum_google_spend_by_client, daily_* …), silo linking,
+-- GSC summaries. On a standard Supabase project service_role already holds an
+-- explicit grant via default privileges, but any function whose only execute path
+-- for service_role was the default PUBLIC grant would 42501 after the revoke and
+-- silently take spend reporting offline. An explicit grant is independent of PUBLIC
+-- and idempotent, so this closes that gap without changing any behaviour.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+
 -- Pin search_path on the SECURITY DEFINER function so a caller cannot shadow a
 -- referenced object with one of their own and have it execute as the owner. This
 -- is only exploitable by a role that can create objects, but a definer function

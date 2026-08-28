@@ -76,33 +76,15 @@ export async function POST(request: NextRequest) {
   // what lets a WRONG guess still find the token and spend one of its attempts;
   // the old shape matched on token_hash, so a wrong code found no row and cost the
   // attacker nothing, leaving the six-digit space open to distributed guessing.
-  let { data: token, error: tokErr } = await db
+  const { data: token } = await db
     .from('password_reset_tokens')
-    .select('id, token_hash, attempts')
+    .select('id, token_hash')
     .eq('user_id', user.id)
     .is('used_at', null)
     .gt('expires_at', now)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-
-  // Deploy-ordering fallback: `attempts` only exists from migration 197. If the
-  // code shipped ahead of it, degrade to matching without the per-token counter
-  // rather than answering "invalid code" to everyone (a lockout). The per-IP
-  // limiter still applies in that window.
-  let attemptsTracked = true
-  if (tokErr && /attempts/i.test(tokErr.message)) {
-    attemptsTracked = false
-    ;({ data: token } = await db
-      .from('password_reset_tokens')
-      .select('id, token_hash')
-      .eq('user_id', user.id)
-      .is('used_at', null)
-      .gt('expires_at', now)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle())
-  }
 
   if (!token) {
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
@@ -115,16 +97,12 @@ export async function POST(request: NextRequest) {
     timingSafeEqual(Buffer.from(submitted), Buffer.from(stored))
 
   if (!codeOk) {
-    // Charge the guess to the TOKEN. Once the budget is spent, burn the code so
-    // further guesses fail closed and the attacker must request a fresh one.
-    if (attemptsTracked) {
-      const spent = (Number(token.attempts) || 0) + 1
-      await db
-        .from('password_reset_tokens')
-        .update(spent >= MAX_RESET_ATTEMPTS ? { attempts: spent, used_at: now } : { attempts: spent })
-        .eq('id', token.id)
-        .then(null, () => {})
-    }
+    // Charge the guess to the TOKEN atomically (migration 207 RPC: `attempts =
+    // attempts + 1 ... RETURNING`, burning the code at MAX_RESET_ATTEMPTS). A
+    // client-side read-modify-write would lose updates under concurrency and never
+    // reach the cap, so K parallel guesses would only advance the counter by 1.
+    // Swallowed if the RPC/column is not deployed yet — the per-IP limiter still applies.
+    await db.rpc('consume_reset_attempt', { p_token_id: token.id, p_max: MAX_RESET_ATTEMPTS }).then(null, () => {})
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 

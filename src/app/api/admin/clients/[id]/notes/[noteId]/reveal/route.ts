@@ -25,18 +25,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; noteId: string }> },
 ) {
-  // ROLE CHECK ON A VERIFIED IDENTITY, not just "is logged in".
+  // ROLE CHECK ON A VERIFIED, SIGNED SESSION — not just "is logged in".
   //
-  // isAdminAuthed only compares the shared admin_session cookie against
-  // ADMIN_PASSWORD, and admin-login hands that same cookie to a role='viewer'
-  // account — so it cannot distinguish roles at all. A plain getAdminSession()
-  // role check is not enough either: identity used to come from the unsigned
-  // admin_user_id cookie, whose absence meant super admin, so deleting one
-  // cookie in devtools was a promotion. requireVerifiedAdmin() checks the
-  // HMAC-signed identity cookie instead.
-  //
-  // Resolved BEFORE anything is decrypted, so an unauthorised caller never
-  // reaches the ciphertext.
+  // isAdminAuthed only verifies that admin_session is a valid HMAC-signed token; it
+  // cannot distinguish role, and admin-login issues that same token to role='viewer'
+  // accounts. requireVerifiedAdmin() goes through getAdminSession — which trusts only
+  // the signed token's claims (identity cannot be forged by editing a cookie),
+  // enforces is_active, and rejects a session older than the account's last password
+  // change — and then requires role 'admin' (or super admin). So a viewer, or a
+  // revoked/deactivated session, is refused BEFORE any ciphertext is decrypted.
   const gate = await requireVerifiedAdmin()
   if (!gate.ok) {
     return NextResponse.json({ error: gate.error }, { status: gate.status })

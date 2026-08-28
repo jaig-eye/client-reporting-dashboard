@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isAdminAuthed, getVerifiedUserId } from '@/lib/auth'
+import { requireWriteAdmin } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isNoteCategory, sanitizeNoteFields, categoryHoldsSecret } from '@/lib/note-templates'
 // One definition of what leaves the server and how a credential is sealed, shared
@@ -12,9 +12,11 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; noteId: string }> }
 ) {
-  const session = request.cookies.get('admin_session')?.value
-  if (!isAdminAuthed(session)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Permanent deletion of a note (which may hold an encrypted client credential) —
+  // gate on a verified, non-revoked, non-viewer session, not the role-blind sync check.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
 
   const { id: clientId, noteId } = await params
@@ -38,17 +40,17 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; noteId: string }> }
 ) {
-  const session = request.cookies.get('admin_session')?.value
-  if (!isAdminAuthed(session)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Editing a note (including clearing/overwriting an encrypted credential) — gate
+  // on a verified, non-revoked, non-viewer session.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
 
   const { id: clientId, noteId } = await params
-  // From the SIGNED session, never the admin_user_id cookie: that cookie is
-  // client-editable, so any authenticated admin could attribute a write to a
-  // colleague just by changing it. Returns null for the super admin, who has no
-  // user row — same as before.
-  const userId = getVerifiedUserId(session)
+  // Attribution from the verified signed session, never the client-editable
+  // admin_user_id cookie. Null for the super admin, who has no user row.
+  const userId = gate.admin.userId ?? null
 
   let body: {
     pinned?:   boolean

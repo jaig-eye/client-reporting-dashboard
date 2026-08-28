@@ -89,12 +89,25 @@ export async function getAdminSession(): Promise<AdminSession | null> {
 
   // Regular admin user — look up their record from the SIGNED userId claim.
   const db = createAdminClient()
-  const { data } = await db
-    .from('users')
-    .select('id, name, email, role, avatar_url, password_changed_at')
-    .eq('id', token.userId)
-    .eq('is_active', true)
-    .maybeSingle()
+  const cols = 'id, name, email, role, avatar_url'
+  type Row = {
+    id: string; name: string | null; email: string | null; role: string | null
+    avatar_url: string | null; password_changed_at?: string | null
+  }
+  const full = await db.from('users').select(`${cols}, password_changed_at`)
+    .eq('id', token.userId).eq('is_active', true).maybeSingle()
+
+  // Deploy-order fallback: password_changed_at only exists from migration 195. If the
+  // code is deployed before that migration is applied, PostgREST 400s on the unknown
+  // column, `data` is null, and getAdminSession would return null for EVERY regular
+  // admin — a broad lockout (bounced to /admin/login) and mislabel (rendered as the
+  // master account). Retry without the column, exactly like every sibling path does.
+  let data = full.data as Row | null
+  if (full.error && /password_changed_at/i.test(full.error.message)) {
+    const base = await db.from('users').select(cols)
+      .eq('id', token.userId).eq('is_active', true).maybeSingle()
+    data = base.data as Row | null
+  }
 
   if (!data) return null
 
@@ -117,10 +130,10 @@ export async function getAdminSession(): Promise<AdminSession | null> {
   return {
     isSuperAdmin: false,
     userId: data.id,
-    name: data.name,
-    email: data.email,
-    role: data.role,
-    avatarUrl: data.avatar_url,
+    name: data.name ?? undefined,
+    email: data.email ?? undefined,
+    role: data.role ?? undefined,
+    avatarUrl: data.avatar_url ?? undefined,
   }
 }
 
@@ -144,6 +157,28 @@ export async function requireVerifiedAdmin(): Promise<AdminGate> {
   if (admin.isSuperAdmin) return { ok: true, admin }
   if (admin.role !== 'admin') {
     return { ok: false, status: 403, error: 'This action requires an admin account.' }
+  }
+  return { ok: true, admin }
+}
+
+/**
+ * Gate for IRREVERSIBLE / destructive writes (data purge, credential-note deletion,
+ * API-token minting). Like requireVerifiedAdmin it runs through getAdminSession, so
+ * it enforces session revocation (password_changed_at) and is_active — a force-reset
+ * or deactivated admin holding a stale token is rejected here even though the
+ * synchronous isAdminAuthed gate would still admit it.
+ *
+ * It differs from requireVerifiedAdmin in ONE way, deliberately: it blocks only an
+ * EXPLICIT role='viewer'. An admin whose role is unset/legacy still passes, so
+ * tightening these routes cannot lock out a legitimately-provisioned operator whose
+ * row predates strict role assignment — it only removes destructive power from
+ * read-only viewers and from revoked sessions.
+ */
+export async function requireWriteAdmin(): Promise<AdminGate> {
+  const admin = await getAdminSession()
+  if (!admin) return { ok: false, status: 401, error: 'Unauthorized' }
+  if (!admin.isSuperAdmin && admin.role === 'viewer') {
+    return { ok: false, status: 403, error: 'This action requires an admin account (read-only viewers cannot perform it).' }
   }
   return { ok: true, admin }
 }
