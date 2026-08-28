@@ -1,8 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAdminSessionEdge } from './lib/session-edge'
 
+/**
+ * Origins allowed to make STATE-CHANGING calls to /api/admin/*. The admin cookie is
+ * SameSite=None (needed for the CRM iframe), so without this a malicious page could
+ * POST to an admin route and have the browser attach the cookie. Allowed: the app's
+ * own origin (same-origin fetch, including from inside the CRM iframe whose document
+ * IS the app), the CRM at golaunchlocal.com, and any origin in CSRF_ALLOWED_ORIGINS.
+ */
+function isAllowedOrigin(origin: string, request: NextRequest): boolean {
+  if (origin === request.nextUrl.origin) return true
+  let host: string
+  try { host = new URL(origin).hostname } catch { return false }
+  if (host === 'golaunchlocal.com' || host.endsWith('.golaunchlocal.com')) return true
+  const extra = process.env.CSRF_ALLOWED_ORIGINS
+  if (extra) {
+    for (const o of extra.split(',').map(s => s.trim()).filter(Boolean)) {
+      if (origin === o) return true
+    }
+  }
+  return false
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
+
+  // CSRF defense for state-changing admin API calls. A browser ALWAYS attaches an
+  // Origin header to a cross-site state-changing request, so: no Origin ⇒ not a
+  // browser cross-site call (a server-to-server internal fetch with internalAdminCookie,
+  // or a same-origin request) ⇒ allowed; an Origin present must be self or the CRM.
+  // Read-only methods are never CSRF-sensitive and pass through untouched.
+  if (pathname.startsWith('/api/admin')) {
+    const method = request.method
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      const origin = request.headers.get('origin')
+      if (origin && !isAllowedOrigin(origin, request)) {
+        return new NextResponse(
+          JSON.stringify({ error: 'Cross-origin request blocked' }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        )
+      }
+    }
+    return NextResponse.next()
+  }
 
   // Old magic-link verify path is gone — redirect to access page
   if (pathname === '/verify' || pathname.startsWith('/verify/')) {
@@ -48,11 +88,9 @@ export async function middleware(request: NextRequest) {
   return NextResponse.next()
 }
 
-// /api/admin/* is deliberately NOT matched. Nothing above acts on it — every
-// admin API route does its own isAdminAuthed() check — so matching it would add
-// an Edge invocation to every admin request for no decision. (The security
-// branch matched it to run a CSRF guard here; that guard is out of scope for
-// this change, so the match goes with it.)
+// /api/admin/* is matched ONLY to run the CSRF Origin guard above (a real
+// decision); it does not do session verification here — every admin API route
+// still does its own isAdminAuthed()/requireVerifiedAdmin() check.
 export const config = {
-  matcher: ['/', '/verify', '/verify/:path*', '/dashboard/:path*', '/admin/:path*'],
+  matcher: ['/', '/verify', '/verify/:path*', '/dashboard/:path*', '/admin/:path*', '/api/admin/:path*'],
 }

@@ -15,6 +15,27 @@ import { parseBody }       from '@/lib/apiError'
 // is an unsalted SHA-256 of a six-digit OTP, i.e. brute-forceable offline in
 // under a second, so the backdoor completed super-admin 2FA without the email.
 
+// Third-party API keys/secrets never leave the server in cleartext. GET returns a
+// fixed MASK for any secret that is SET (so the UI still shows "configured"); PUT
+// treats an incoming value equal to the mask (or blank) as "unchanged" and does NOT
+// overwrite the stored key — so saving any other setting, or re-saving without
+// retyping, can never wipe a key. Previously GET shipped every live key to the
+// admin browser, so an admin-panel XSS or a compromised admin session exfiltrated
+// all of them at once.
+const SECRET_FIELDS = [
+  'ai_api_key', 'openai_api_key', 'discord_bot_token',
+  'stripe_api_key', 'stripe_webhook_secret', 'serp_api_key',
+] as const
+const SECRET_MASK = '••••••••'   // eight bullets — no real key looks like this
+
+function maskSecrets(row: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...row }
+  for (const f of SECRET_FIELDS) {
+    if (typeof out[f] === 'string' && (out[f] as string).length > 0) out[f] = SECRET_MASK
+  }
+  return out
+}
+
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
@@ -34,7 +55,7 @@ export async function GET(request: NextRequest) {
     data as Record<string, unknown>
   void super_admin_otp_hash; void super_admin_otp_expires_at
 
-  return NextResponse.json(safe)
+  return NextResponse.json(maskSecrets(safe))
 }
 
 export async function PUT(request: NextRequest) {
@@ -87,8 +108,13 @@ export async function PUT(request: NextRequest) {
     'monthly_review_schedule',
   ]
   const patch: Record<string, unknown> = {}
+  const secretKeys = SECRET_FIELDS as readonly string[]
   for (const key of allowed) {
-    if (body[key] !== undefined) patch[key] = body[key]
+    if (body[key] === undefined) continue
+    // A secret returned as the mask (or blank) means "leave the stored key alone" —
+    // never overwrite a live key with the mask or wipe it by omission.
+    if (secretKeys.includes(key) && (body[key] === SECRET_MASK || body[key] === '' || body[key] === null)) continue
+    patch[key] = body[key]
   }
 
   // contact_stale_days drives a cron that emails, Discords and alerts on every
@@ -140,5 +166,5 @@ export async function PUT(request: NextRequest) {
   const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
     data as Record<string, unknown>
   void super_admin_otp_hash; void super_admin_otp_expires_at
-  return NextResponse.json(safe)
+  return NextResponse.json(maskSecrets(safe))
 }
