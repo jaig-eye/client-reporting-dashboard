@@ -17,8 +17,13 @@
 -- server (createAdminClient) from /api/auth/reset-password, never by anon.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- Output columns are named result_* and every table reference is qualified through
+-- the alias `t`, so no identifier in the body can be ambiguous between an OUT
+-- variable and a table column. (Naming an OUT column `attempts` — same as the
+-- table column — makes `SET attempts = attempts + 1` ambiguous, and stock Postgres
+-- runs plpgsql.variable_conflict = error, so the function would throw on first call.)
 CREATE OR REPLACE FUNCTION public.consume_reset_attempt(p_token_id uuid, p_max integer)
-RETURNS TABLE (attempts integer, burned boolean)
+RETURNS TABLE (result_attempts integer, result_burned boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -28,11 +33,11 @@ DECLARE
   v_burned   boolean := false;
 BEGIN
   -- Atomic increment. Only touches a still-live token; a burned/used one returns nothing.
-  UPDATE password_reset_tokens
-     SET attempts = attempts + 1
-   WHERE id = p_token_id
-     AND used_at IS NULL
-  RETURNING password_reset_tokens.attempts INTO v_attempts;
+  UPDATE password_reset_tokens AS t
+     SET attempts = t.attempts + 1
+   WHERE t.id = p_token_id
+     AND t.used_at IS NULL
+  RETURNING t.attempts INTO v_attempts;
 
   IF v_attempts IS NULL THEN
     -- Already used/burned or gone — nothing to charge.
@@ -42,10 +47,10 @@ BEGIN
 
   -- At or over the cap: burn the code so no further guess can succeed.
   IF v_attempts >= p_max THEN
-    UPDATE password_reset_tokens
+    UPDATE password_reset_tokens AS t
        SET used_at = now()
-     WHERE id = p_token_id
-       AND used_at IS NULL;
+     WHERE t.id = p_token_id
+       AND t.used_at IS NULL;
     v_burned := true;
   END IF;
 
