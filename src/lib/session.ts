@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createHmac, timingSafeEqual } from 'crypto'
+import { resolveSessionSecret } from './sessionSecret'
 
 export interface AdminSessionClaims {
   isSuperAdmin: boolean
@@ -47,26 +48,11 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14   // 14 days — matches co
  * and signing throws: nobody can log in. That is intentional. A five-minute
  * config fix is preferable to a silently forgeable session.
  */
+// Resolution lives in lib/sessionSecret.ts so the Edge verifier (session-edge.ts)
+// shares one definition — see that file for why there is no ADMIN_PASSWORD fallback
+// in production.
 function sessionSecret(): string {
-  const explicit = process.env.SESSION_SECRET
-  if (explicit) return explicit
-
-  // NO ADMIN_PASSWORD FALLBACK IN PRODUCTION.
-  //
-  // Until this change, `admin_session` literally WAS ADMIN_PASSWORD and was sent
-  // on every admin request — so that value may sit in Vercel request logs, WAF
-  // logs, HAR exports and support screenshots. Using it as the HMAC key would
-  // mean anyone holding an old cookie can sign `{"isSuperAdmin":true}` for
-  // themselves, bypassing both the password AND the email OTP. That is a worse
-  // position than the escalation this file exists to close.
-  //
-  // Failing closed here means a production deploy without SESSION_SECRET cannot
-  // mint or verify sessions: login returns a clear error and logs loudly. That
-  // is a five-minute fix; a silently forgeable session is not.
-  if (process.env.NODE_ENV === 'production') return ''
-
-  // Local/preview convenience only.
-  return process.env.ADMIN_PASSWORD || ''
+  return resolveSessionSecret()
 }
 
 /** True when session signing is usable. Checked by login to give a real error. */

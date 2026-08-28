@@ -86,12 +86,28 @@ export async function getAdminSession(): Promise<AdminSession | null> {
   const db = createAdminClient()
   const { data } = await db
     .from('users')
-    .select('id, name, email, role, avatar_url')
+    .select('id, name, email, role, avatar_url, password_changed_at')
     .eq('id', token.userId)
     .eq('is_active', true)
     .maybeSingle()
 
   if (!data) return null
+
+  // Session revocation. A token minted BEFORE the account's last password change —
+  // a self-service change, an admin-set password, or a force-reset (which stamps
+  // this column to evict compromised sessions) — is no longer valid. Without this
+  // check, forced rotation only blocked the NEXT login while every already-issued
+  // 14-day cookie kept working; this is what actually evicts a live session.
+  //
+  // Enforced here, at the async chokepoint that loads the full session (the admin
+  // UI layouts and the routes that call getAdminSession), NOT on the synchronous
+  // isAdminAuthed() crypto check, which does no DB read. iat is unix seconds;
+  // password_changed_at is a timestamp, and the compare is strict so a session
+  // re-issued in the same second as the change (see users/me/password) survives.
+  if (data.password_changed_at && typeof token.iat === 'number') {
+    const changedSec = Math.floor(new Date(data.password_changed_at as string).getTime() / 1000)
+    if (Number.isFinite(changedSec) && token.iat < changedSec) return null
+  }
 
   return {
     isSuperAdmin: false,
@@ -138,12 +154,13 @@ const BCRYPT_ROUNDS = 12
 //
 // Computed LAZILY on first use, never at module load: lib/auth.ts is imported by ~152 files
 // (including the client dashboard and /access, purely for the synchronous isAdminAuthed
-// check), and a cost-12 hashSync is ~0.5-1.5s of blocking CPU. At module scope that lands on
-// the cold start of nearly every serverless function — including the /dashboard render right
-// after a client clicks their magic link.
-let _dummyHash: string | null = null
-function dummyBcryptHash(): string {
-  if (_dummyHash === null) _dummyHash = bcrypt.hashSync('dummy-password-for-timing-equalization', BCRYPT_ROUNDS)
+// check), and a cost-12 hash is ~0.5-1.5s of CPU. At module scope that would land on the
+// cold start of nearly every serverless function — including the /dashboard render right
+// after a client clicks their magic link. The value is cached as a Promise so concurrent
+// first-callers share one hash rather than each computing their own.
+let _dummyHash: Promise<string> | null = null
+function dummyBcryptHash(): Promise<string> {
+  if (_dummyHash === null) _dummyHash = bcrypt.hash('dummy-password-for-timing-equalization', BCRYPT_ROUNDS)
   return _dummyHash
 }
 
@@ -169,38 +186,42 @@ export function passwordTooLong(password: string): boolean {
   return Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES
 }
 
-/** Hash a password for storage (bcrypt, salted). */
-export function hashPasswordSecure(password: string): string {
+/** Hash a password for storage (bcrypt, salted).
+ *  Async: the pure-JS bcryptjs blocks the event loop for the full ~0.5-1.5s of a
+ *  cost-12 hash when run synchronously, serializing every other request on the
+ *  instance behind a single login/reset. The promise API yields between rounds. */
+export async function hashPasswordSecure(password: string): Promise<string> {
   if (passwordTooLong(password)) {
     throw new Error(`Password must be ${MAX_PASSWORD_BYTES} bytes or fewer.`)
   }
-  return bcrypt.hashSync(password, BCRYPT_ROUNDS)
+  return bcrypt.hash(password, BCRYPT_ROUNDS)
 }
 
 /** Verify a password against a stored hash, supporting bcrypt and legacy SHA-256.
- *  `needsUpgrade` is true when the stored hash is legacy and should be re-hashed. */
-export function verifyPassword(
+ *  `needsUpgrade` is true when the stored hash is legacy and should be re-hashed.
+ *  Async for the same event-loop reason as hashPasswordSecure. */
+export async function verifyPassword(
   input: unknown,
   storedHash: string | null | undefined,
-): { ok: boolean; needsUpgrade: boolean } {
+): Promise<{ ok: boolean; needsUpgrade: boolean }> {
   // bcryptjs THROWS on a non-string ("Illegal arguments: number, string"), and
   // the login handler has no try/catch — so `{"password": 123}` produced a 500
   // before the failed attempt was ever recorded, making the guess free and
   // invisible to both the rate limiter and the audit log. Treat it as a failure.
   if (typeof input !== 'string') {
-    bcrypt.compareSync('', dummyBcryptHash())
+    await bcrypt.compare('', await dummyBcryptHash())
     return { ok: false, needsUpgrade: false }
   }
   if (!storedHash) {
     // Spend comparable time to avoid user-enumeration via timing.
-    bcrypt.compareSync(input, dummyBcryptHash())
+    await bcrypt.compare(input, await dummyBcryptHash())
     return { ok: false, needsUpgrade: false }
   }
   if (storedHash.startsWith('$2')) {
     // A corrupted or unsupported bcrypt hash also throws ("Illegal number of
     // rounds"), which would 500 the same way.
     try {
-      return { ok: bcrypt.compareSync(input, storedHash), needsUpgrade: false }
+      return { ok: await bcrypt.compare(input, storedHash), needsUpgrade: false }
     } catch {
       return { ok: false, needsUpgrade: false }
     }
@@ -212,6 +233,6 @@ export function verifyPassword(
   // Burn comparable time on the legacy path too. Without this, a ~5ms response (vs ~1s for
   // bcrypt/no-user) is a precise oracle marking exactly which accounts still hold an
   // unsalted SHA-256 hash — i.e. the ones worth attacking offline.
-  bcrypt.compareSync(input, dummyBcryptHash())
+  await bcrypt.compare(input, await dummyBcryptHash())
   return { ok, needsUpgrade: ok }
 }

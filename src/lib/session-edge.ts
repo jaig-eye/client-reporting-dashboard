@@ -7,6 +7,8 @@
 // whether the token is a valid, unexpired admin session; it does not need the claims.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { resolveSessionSecret } from './sessionSecret'
+
 interface EdgeSessionPayload {
   v: number
   isSuperAdmin?: boolean
@@ -42,13 +44,10 @@ function safeEqual(a: string, b: string): boolean {
 export async function verifyAdminSessionEdge(
   token: string | undefined | null,
 ): Promise<EdgeSessionPayload | null> {
-  // Must match lib/session.ts exactly, including the production rule: no
-  // ADMIN_PASSWORD fallback in production, because that value was the cookie
-  // itself until this change and may sit in logs. If the two resolvers ever
-  // disagree, middleware and the route handlers disagree about who is logged in.
-  const secret = process.env.SESSION_SECRET
-    || (process.env.NODE_ENV === 'production' ? '' : process.env.ADMIN_PASSWORD)
-    || ''
+  // Shared resolver with lib/session.ts (see lib/sessionSecret.ts) so middleware and
+  // the route handlers can never disagree about the secret — and thus about who is
+  // logged in. No ADMIN_PASSWORD fallback in production.
+  const secret = resolveSessionSecret()
   if (!token || !secret) return null
 
   const dot = token.indexOf('.')
