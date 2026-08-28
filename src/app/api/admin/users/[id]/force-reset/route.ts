@@ -61,10 +61,26 @@ export async function POST(
   // Flag FIRST. If the email then fails, the account is still correctly blocked
   // and the person can use the normal "forgot password" form to get a code —
   // whereas mailing first and failing to flag would leave the rotation optional.
-  const { error: flagErr } = await db
+  //
+  // Stamp password_changed_at too: forcing a rotation is the "this account may be
+  // compromised" action, so it must EVICT the account's existing sessions now
+  // (getAdminSession rejects tokens older than this stamp), not merely block the
+  // next login. The column is overwritten with the real change time when the user
+  // completes the reset. Using it as the session-invalidation epoch keeps the fix
+  // to the one column migration 195 already added.
+  const now = new Date().toISOString()
+  let { error: flagErr } = await db
     .from('users')
-    .update({ must_reset_password: true })
+    .update({ must_reset_password: true, password_changed_at: now })
     .eq('id', user.id)
+
+  // Deploy-ordering fallback: password_changed_at only exists from migration 195.
+  if (flagErr && /password_changed_at/i.test(flagErr.message)) {
+    ;({ error: flagErr } = await db
+      .from('users')
+      .update({ must_reset_password: true })
+      .eq('id', user.id))
+  }
 
   if (flagErr) {
     console.error('[force-reset] flag write failed:', flagErr.message)

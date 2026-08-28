@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
   }
+  // typeof, not just truthiness: a JSON number is truthy and would throw inside
+  // Buffer.byteLength (passwordTooLong) as an unhandled 500 instead of a 400.
+  if (typeof password !== 'string') {
+    return NextResponse.json({ error: 'Password must be text' }, { status: 400 })
+  }
   // hashPasswordSecure THROWS past 72 bytes (bcrypt truncates silently, so we
   // refuse rather than accept a password whose tail is ignored). Unguarded, that
   // throw is an opaque 500 with no field-level message.
@@ -62,7 +67,7 @@ export async function POST(req: NextRequest) {
     .insert({
       name,
       email:         email.toLowerCase().trim(),
-      password_hash: hashPasswordSecure(password),
+      password_hash: await hashPasswordSecure(password),
       role:          role ?? 'admin',
       is_active:     true,
       ...(username ? { username: username.toLowerCase().trim() } : {}),
