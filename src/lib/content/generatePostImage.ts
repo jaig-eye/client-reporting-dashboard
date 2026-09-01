@@ -19,15 +19,24 @@ type ClientSettings = {
   content_image_prompt: string | null
 }
 
-// Intent → concrete scene direction, so the image reflects the article's angle
-// rather than a generic "service work" stock shot.
+// Intent → concrete scene direction, so the image reflects the article's angle rather
+// than a generic "service work" stock shot.
+//
+// NONE of these may call for an object that carries writing. The cost/pricing direction
+// used to ask for "documents, a calculator, or materials laid out on a work surface",
+// which set the prompt against itself: it requested paperwork in frame while the
+// constraints forbade text, and the model resolved that by rendering paper covered in
+// malformed pseudo-lettering — the single most common and most obviously synthetic
+// failure in these images. Screens, signage, packaging, invoices and forms are out for
+// the same reason. Where an intent genuinely needs the idea of measurement or planning,
+// it is carried by tools and materials instead, which photograph better anyway.
 const INTENT_SCENE: Record<string, string> = {
-  how_to:           'the task being performed up close — hands and the relevant tools mid-action',
-  cost_pricing:     'a planning and estimating scene — documents, a calculator, or materials laid out on a work surface',
-  comparison:       'two contrasting options or materials placed side by side for comparison',
+  how_to:           'the task being performed up close — the relevant tools mid-action on the workpiece',
+  cost_pricing:     'the materials and equipment the job requires, arranged on a clean work surface — a tape measure and tools conveying estimation, with no paperwork, screens or written matter of any kind',
+  comparison:       'two contrasting options or materials placed side by side for comparison, unlabelled',
   faq:              'a clean, approachable establishing shot of the real work environment',
   problem_solution: 'the problem condition shown clearly in context (e.g. the item that needs repair or attention)',
-  buyer_education:  'a considered, well-lit detail shot of the product or material being explained',
+  buyer_education:  'a considered, well-lit detail shot of the product or material being explained, with any branding or labelling out of frame',
   informational:    'an editorial establishing shot of the subject in its real-world setting',
 }
 
