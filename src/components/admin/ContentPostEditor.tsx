@@ -1672,8 +1672,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       {stockModalOpen && (
         <StockImageSearchModal
           postId={postId}
-          initialCandidates={imageCandidates}
-          initialQuery={targetKeyword || seoTitle || title || ''}
+          initialCandidates={imageCandidates}
           onClose={() => setStockModalOpen(false)}
           onSelect={handleSelectStockImage}
           // Clear the inline caption alongside the list, or a stale "Found 5 free

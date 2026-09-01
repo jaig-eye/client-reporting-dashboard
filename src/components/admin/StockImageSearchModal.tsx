@@ -10,10 +10,12 @@
 // posts concurrently is exactly the burst that reaches it — so the reviewer-facing path
 // had to stop being a source of load.
 //
-// Fetching is therefore always explicit and always labelled: "Get new images" re-runs
-// the post's own topic, and typing a phrase searches for that instead. When a refetch
-// finds nothing new, the existing pool is kept rather than cleared — an empty grid is
-// never a better outcome than the images already banked.
+// Fetching is therefore explicit and labelled: "Get new images" re-runs the post's own
+// topic. There is deliberately no free-text search box — the query is derived from the
+// topic by lib/content/stockImages.ts, which condenses it to the concrete nouns a photo
+// library can actually match, and hand-typed phrases were both a quota drain and worse
+// at it. When a refetch finds nothing new, the existing pool is kept rather than
+// cleared: an empty grid is never a better outcome than the images already banked.
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
@@ -22,8 +24,6 @@ interface Props {
   postId: string
   /** The pool already banked on the post. Browsed for free; never refetched on open. */
   initialCandidates: StockImageCandidate[]
-  /** Seeds the search box — usually the post's target keyword. */
-  initialQuery: string
   onClose:   () => void
   /** Called with the chosen candidate id; the parent applies it. Rejects on failure. */
   onSelect:  (candidateId: string) => Promise<void>
@@ -42,9 +42,8 @@ const SOURCE_LABEL: Record<string, string> = {
 const PAGE_SIZE = 8
 
 export default function StockImageSearchModal({
-  postId, initialCandidates, initialQuery, onClose, onSelect, onResults,
+  postId, initialCandidates, onClose, onSelect, onResults,
 }: Props) {
-  const [query,      setQuery]      = useState('')
   const [pool,       setPool]       = useState<StockImageCandidate[]>(initialCandidates)
   const [page,       setPage]       = useState(0)
   const [loading,    setLoading]    = useState(false)
@@ -54,7 +53,6 @@ export default function StockImageSearchModal({
   const [error,      setError]      = useState('')
   const [applyError, setApplyError] = useState('')
   const [applying,   setApplying]   = useState<string | null>(null)
-  const inputRef  = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
   const pageCount = Math.max(1, Math.ceil(pool.length / PAGE_SIZE))
@@ -74,19 +72,14 @@ export default function StockImageSearchModal({
   }
 
   /** The only paths that spend quota. Always user-initiated, never on open. */
-  const fetchImages = useCallback(async (q?: string) => {
+  const fetchImages = useCallback(async () => {
     setLoading(true)
     setError('')
     setApplyError('')
     setMessage('')
     try {
-      const endpoint = q
-        ? `/api/admin/content/posts/${postId}/search-stock-images`
-        : `/api/admin/content/posts/${postId}/find-stock-images`
-      const res = await fetch(endpoint, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        ...(q ? { body: JSON.stringify({ query: q }) } : {}),
+      const res = await fetch(`/api/admin/content/posts/${postId}/find-stock-images`, {
+        method: 'POST',
       })
       const data = await res.json() as {
         candidates?: StockImageCandidate[]; message?: string; error?: string
@@ -116,7 +109,7 @@ export default function StockImageSearchModal({
     }
   }, [postId, onResults, pool.length])
 
-  useEffect(() => { inputRef.current?.focus() }, [])
+
 
   // Escape closes; Tab is trapped. aria-modal="true" tells assistive tech the background
   // is inert, so letting Tab walk out to Reject / Save Changes contradicts that — and
@@ -206,27 +199,6 @@ export default function StockImageSearchModal({
             </button>
           </div>
 
-          <form
-            onSubmit={e => { e.preventDefault(); if (query.trim().length >= 3) void fetchImages(query.trim()) }}
-            style={{ display: 'flex', gap: 8, marginTop: 10 }}
-          >
-            <input
-              ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
-              placeholder="Or search something else — e.g. workshop bench"
-              maxLength={120}
-              style={{
-                flex: 1, padding: '7px 10px', borderRadius: 6,
-                border: '1px solid var(--border)', background: 'var(--bg-base)',
-                color: 'var(--text-primary)', fontSize: '0.85rem',
-              }}
-            />
-            <button
-              type="submit" disabled={loading || query.trim().length < 3}
-              className="btn btn-primary" style={{ ...btn, minWidth: 88 }}
-            >
-              Search
-            </button>
-          </form>
 
           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
             {pool.length > 0

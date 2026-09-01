@@ -58,7 +58,7 @@ const MIN_TERM_HITS   = 2
  * a reviewer is waiting. Pexels' free tier is 200 requests/HOUR, and a backlog cron run
  * generating 15 posts concurrently is exactly the burst that can reach it.
  */
-const MAX_CANDIDATES  = 24
+const MAX_CANDIDATES  = 40
 /**
  * Rungs of the query ladder an automatic search is allowed to spend.
  *
@@ -68,20 +68,74 @@ const MAX_CANDIDATES  = 24
  * specific phrase plus two progressively broader ones, which is where essentially all
  * of the recall comes from. Bounded: 9 calls, worst case, per post.
  */
-const MAX_RUNGS       = 3
+const MAX_RUNGS       = 4
 /** Below this, an image is a thumbnail, icon or diagram rather than a usable photo. */
 const MIN_WIDTH  = 600
 const MIN_HEIGHT = 400
 
 const USER_AGENT = 'client-reporting-dashboard/1.0 (+https://dash.golaunchlocal.com)'
 
-/** Words that carry no visual meaning and would inflate the score for free. */
+/** Grammar words: no visual meaning, and they inflate the score for free. */
 const STOP_WORDS = new Set([
   'the','a','an','of','for','and','to','in','on','with','your','you','how','what','why',
   'is','are','was','were','be','best','guide','tips','need','know','should','can','do',
   'does','vs','versus','when','which','from','that','this','it','its','about','into',
   'complete','ultimate','top','right','choose','choosing','before','after','made','make',
   'requirements','checklist','explained','everything','common','things','ways','steps',
+])
+
+/**
+ * Words that are real nouns but CANNOT BE PHOTOGRAPHED, plus the framing vocabulary SEO
+ * titles are built from.
+ *
+ * This is the difference between a useful query and a useless one, and the old code had
+ * no equivalent — it just took the first two meaningful words, which are almost always
+ * the abstract ones. Measured against live production keywords:
+ *
+ *   "signs irrigation system needs repair"  ->  "signs irrigation"  ->  irrigation SIGNAGE
+ *   "spring sprinkler system start-up …"    ->  "spring sprinkler"  ->  Spring Grove Cemetery
+ *
+ * Stripping these first leaves "irrigation repair" and "sprinkler", which are things a
+ * camera can point at. Seasons are included because they read as the season, not the
+ * component — "spring" is what pulled in the cemetery.
+ */
+const NON_VISUAL_WORDS = new Set([
+  // framing / article vocabulary
+  'signs','sign','warning','checklist','guide','tips','ideas','idea','options','option',
+  'benefits','mistakes','factors','considerations','questions','answers','reasons',
+  'comparison','differences','difference','explained','overview','introduction',
+  'cost','costs','price','pricing','prices','budget','value','worth','cheap','affordable',
+  'process','method','methods','solution','solutions','approach',
+  // generic abstractions that survive the grammar list
+  'system','systems','service','services','type','types','style','styles','size','sizes',
+  'quality','issue','issues','problem','problems','tip','fact','facts','list',
+  // audience / possessive framing
+  'homeowner','homeowners','business','businesses','owner','owners','buyer','buyers',
+  'customer','customers','client','clients','company','companies','shop','shops',
+  // seasonal — reads as the season, not the component
+  'spring','summer','autumn','fall','winter','seasonal','season',
+  // temporal / vague qualifiers
+  'new','old','modern','latest','today','year','years','month','months','day','days',
+  'start','startup','begin','beginning','end','final',
+  // geography. The client's own service area is stripped separately, but the keyword
+  // often names a place the service-area field spells differently — "…checklist Florida"
+  // against a geographic_focus of "Melbourne, FL and Brevard County" left "florida" in
+  // the query, and "sprinkler florida" returned Florida pastures and rest areas.
+  'county','city','town','area','areas','region','local','nearby','near','me',
+  'alabama','alaska','arizona','arkansas','california','colorado','connecticut',
+  'delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas',
+  'kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota',
+  'mississippi','missouri','montana','nebraska','nevada','hampshire','jersey','mexico',
+  'york','carolina','dakota','ohio','oklahoma','oregon','pennsylvania','rhode','island',
+  'tennessee','texas','utah','vermont','virginia','washington','wisconsin','wyoming',
+  'usa','america','american','national','northern','southern','eastern','western',
+  // verbs. These survive the grammar list and, being early in a question-shaped
+  // keyword, used to become the query: "how to tell if irrigation system is leaking"
+  // searched for "tell" and returned tarot cards and archaeological tells.
+  'tell','telling','improve','improving','boost','boosting','avoid','avoiding','prevent',
+  'save','saving','understand','compare','comparing','pick','picking','find','finding',
+  'get','getting','use','using','install','maintain','maintaining','handle','ensure',
+  'consider','considering','decide','deciding','identify','spot','spotting','reduce',
 ])
 
 /** Which library a candidate came from. Distinct from `provider`, which is the UPSTREAM
@@ -110,8 +164,11 @@ export interface StockImageCandidate {
 
 function meaningfulTerms(q: string): string[] {
   return q.toLowerCase()
+    // Split on hyphens as well as spaces. Keeping them joined produced tokens like
+    // "start-up", which matched neither 'start' nor 'up' in the stop lists and so
+    // survived to become the search query.
     .replace(/[^a-z0-9\s-]/g, ' ')
-    .split(/\s+/)
+    .split(/[\s-]+/)
     .filter(t => t.length > 2 && !STOP_WORDS.has(t))
 }
 
@@ -136,7 +193,16 @@ function scoreAgainst(haystack: string, terms: string[]): number {
   const hay = haystack.toLowerCase()
   let hits = 0
   for (const t of terms) {
-    if (new RegExp(`\\b${escapeRegex(t)}`).test(hay)) hits++
+    // Match the term OR its singular form. A leading \b already lets a singular term
+    // match plural text ("sprinkler" hits "sprinklers"), but not the reverse — and the
+    // keywords are full of plurals. "awnings" failed to match Pexels captions saying
+    // "awning", so genuinely relevant photos were scored out and Commons' pictures of
+    // Commercial BANK buildings won the slot instead.
+    const singular = t.endsWith('s') && t.length > 3 ? t.slice(0, -1) : null
+    const pattern = singular
+      ? `\\b(?:${escapeRegex(t)}|${escapeRegex(singular)})`
+      : `\\b${escapeRegex(t)}`
+    if (new RegExp(pattern).test(hay)) hits++
   }
   if (hits < Math.min(MIN_TERM_HITS, terms.length)) return 0
   return hits / terms.length
@@ -205,7 +271,7 @@ async function searchOpenverse(
     license_type: 'commercial,modification',
     filter_dead:  'true',
     mature:       'false',
-    page_size:    '12',
+    page_size:    '30',
   })
   const { json, status } = await getJson(`${OPENVERSE_ENDPOINT}?${params}`)
   if (status === 429) return { results: [], rateLimited: true }
@@ -265,7 +331,7 @@ async function searchPexels(
 
   const params = new URLSearchParams({
     query: q,
-    per_page: '12',
+    per_page: '40',
     // Featured images render 16:9, so portrait results are wasted slots.
     orientation: 'landscape',
   })
@@ -360,7 +426,7 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
     generator: 'search',
     gsrsearch: q,
     gsrnamespace: '6',            // File: namespace
-    gsrlimit: '12',
+    gsrlimit: '30',
     prop: 'imageinfo',
     iiprop: 'url|size|extmetadata',
     iiurlwidth: '400',
@@ -427,7 +493,27 @@ function buildQueryLadder(ctx: {
   targetKeyword?: string | null
   imageConcept?:  string | null
   title?:         string | null
+  /** The client's own service area, stripped from queries — see below. */
+  geographicFocus?: string | null
+  /** The client's service list, used to anchor the query on the real subject. */
+  services?: string | null
 }): string[] {
+  // Place names are worse than useless in a stock library: no corpus indexes "Brevard
+  // County", so the term either matches nothing or, worse, matches something unrelated
+  // that happens to share a word. The client's configured service area is the reliable
+  // way to know which tokens are geography without trying to guess from capitalisation.
+  const geoTokens = new Set(
+    (ctx.geographicFocus ?? '')
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter(t => t.length > 2),
+  )
+
+  /** Reduce a phrase to the concrete, photographable nouns inside it. */
+  function visualTerms(phrase: string): string[] {
+    return meaningfulTerms(phrase).filter(t => !NON_VISUAL_WORDS.has(t) && !geoTokens.has(t))
+  }
+
   const seeds = [ctx.imageConcept, ctx.targetKeyword, ctx.title]
     .map(s => s?.trim())
     .filter((s): s is string => !!s && s.length > 2)
@@ -438,14 +524,70 @@ function buildQueryLadder(ctx: {
     if (norm.length > 2 && !ladder.some(x => x.toLowerCase() === norm)) ladder.push(q.trim())
   }
 
+  // SHORT QUERIES ONLY. The full phrase is deliberately never sent: these keywords are
+  // questions ("how to tell if irrigation system is leaking"), and every library ORs the
+  // terms, so a long query returns whatever matches its most generic word. Condensing to
+  // two concrete nouns and then one is what actually produces a usable set — Commons
+  // returned 1 photo for "powder coating oven" and 10 for "powder coating".
+  // ANCHOR ON THE CLIENT'S OWN SERVICES.
+  //
+  // Position alone cannot pick the subject, and both ends were tried against real
+  // keywords. First-N gives the modifier or the verb — "how to tell if irrigation system
+  // is leaking" searched "tell" and returned tarot cards. Last-N gives the tail —
+  // "signs irrigation system needs repair" searched "repair" and returned smartphone
+  // repair, dropping the one word that mattered.
+  //
+  // What reliably identifies the subject is the client's configured service list:
+  // "irrigation", "awnings", "powder coating". A term appearing in BOTH the topic and
+  // the services is the thing being written about, so it anchors the query and the
+  // nearest other concrete term qualifies it — "irrigation repair", "irrigation
+  // leaking", "commercial awnings".
+  //
+  // This is NOT the industry fallback that was removed earlier. That searched the
+  // industry ALONE, unrelated to the post, and filled a powder-coating article with
+  // photos of metalwork students. Here the anchor must occur in the post's own topic,
+  // and it is always paired with a term from that topic.
+  const domainTerms = new Set(meaningfulTerms(ctx.services ?? ''))
+
   for (const seed of seeds) {
-    push(seed)
-    const terms = meaningfulTerms(seed)
-    // Head noun phrase, then the two-word core. Anything shorter is too generic to stay
-    // on-subject and starts behaving like the industry fallback that was removed.
-    if (terms.length > 3) push(terms.slice(0, 3).join(' '))
-    if (terms.length > 2) push(terms.slice(0, 2).join(' '))
+    const terms = visualTerms(seed)
+    if (terms.length === 0) continue
+
+    const anchors = terms.filter(t => domainTerms.has(t))
+    if (anchors.length > 0) {
+      // LAST matching service term, not the first. With "commercial awnings" both words
+      // are services, and taking the first made the broad fallback rung "commercial" —
+      // which returned photographs of Commercial Bank buildings. The later word is the
+      // head noun and the specific one, so the fallback becomes "awnings".
+      const anchor = anchors[anchors.length - 1]
+      const qualifier = terms.find(t => t !== anchor)
+      // Keep the topic's own word order so the phrase reads naturally to the search
+      // engines, which do weight adjacency.
+      if (qualifier) {
+        const pair = terms.filter(t => t === anchor || t === qualifier)
+        push(pair.join(' '))
+      }
+      push(anchor)
+      continue
+    }
+
+    // No service match — fall back to the tail, which is the head noun more often than
+    // the head is at the front.
+    if (terms.length >= 2) push(terms.slice(-2).join(' '))
+    push(terms[terms.length - 1])
   }
+
+  // Nothing survived the filters — the topic is pure abstraction ("cost comparison
+  // guide"). Fall back to the raw meaningful words so the reviewer gets something rather
+  // than an empty picker.
+  if (ladder.length === 0) {
+    for (const seed of seeds) {
+      const terms = meaningfulTerms(seed)
+      if (terms.length >= 2) push(terms.slice(0, 2).join(' '))
+      else if (terms.length === 1) push(terms[0])
+    }
+  }
+
   return ladder
 }
 
@@ -471,10 +613,22 @@ function dedupe(list: StockImageCandidate[], limit: number): StockImageCandidate
   // snapshot, so ordering by relevance alone buried the better picture.
   const SOURCE_RANK: Record<StockSource, number> = { pexels: 0, wikimedia: 1, openverse: 2 }
 
+  // Specificity of the query that FOUND each candidate, ranked before relevance.
+  //
+  // A one-word query scores a perfect 1.00 against anything containing that word, so
+  // without this the broad fallback rung floods the pool and outranks the precise
+  // matches it was only meant to backfill. Measured: "repair" returned smartphone and
+  // engine repair above "irrigation repair"; "commercial" returned Commercial Bank above
+  // "commercial awnings"; "oven" returned croissants above "powder coating oven". Two
+  // matched terms is simply more evidence than one, so more terms sorts first.
+  const specificity = (c: StockImageCandidate) => c.matchedQuery.trim().split(/\s+/).length
+
   const seen = new Set<string>()
   const out: StockImageCandidate[] = []
   for (const c of [...list].sort((a, b) =>
-    (b.relevance - a.relevance) || (SOURCE_RANK[a.source] - SOURCE_RANK[b.source]))) {
+    (specificity(b) - specificity(a)) ||
+    (b.relevance - a.relevance) ||
+    (SOURCE_RANK[a.source] - SOURCE_RANK[b.source]))) {
     const words = meaningfulTerms(c.title.replace(/^file:/i, '').replace(/\.(jpe?g|png|webp)$/i, ''))
     const group = words.length >= 2 ? words.slice(0, 4).join(' ') : c.id
     if (seen.has(group)) continue
@@ -494,6 +648,11 @@ export async function findStockImageCandidates(
     targetKeyword?: string | null
     imageConcept?:  string | null
     title?:         string | null
+    /** The client's service area. Its tokens are stripped from queries — no stock
+     *  library indexes "Brevard County", so they match nothing or match wrongly. */
+    geographicFocus?: string | null
+    /** The client's service list — anchors the query on the post's actual subject. */
+    services?:      string | null
     /** Accepted for call-site compatibility and deliberately unused — see the header. */
     industry?:      string | null
   },
@@ -569,6 +728,8 @@ export async function searchAndStoreStockCandidates(
     targetKeyword?: string | null
     imageConcept?:  string | null
     title?:         string | null
+    geographicFocus?: string | null
+    services?:      string | null
   },
 ): Promise<StockImageCandidate[]> {
   try {

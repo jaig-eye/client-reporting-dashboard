@@ -37,21 +37,31 @@ export async function POST(
 
   const { data: post } = await db
     .from('content_posts')
-    .select('id, image_concept, seo_title, title, target_keyword')
+    .select('id, client_id, image_concept, seo_title, title, target_keyword')
     .eq('id', id)
     .maybeSingle()
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
 
   const row = post as {
+    client_id: string
     image_concept: string | null; seo_title: string | null
     title: string | null; target_keyword: string | null
   }
+
+  // Same geography stripping the automatic path uses, so a manual refetch builds the
+  // same query rather than a subtly worse one.
+  const { data: cs } = await db
+    .from('content_settings')
+    .select('geographic_focus, services')
+    .eq('client_id', row.client_id)
+    .maybeSingle()
 
   const candidates = await searchAndStoreStockCandidates(db, id, {
     targetKeyword: row.target_keyword,
     imageConcept:  row.image_concept,
     title:         row.seo_title ?? row.title,
+    geographicFocus: (cs as { geographic_focus?: string | null } | null)?.geographic_focus ?? null,
   })
 
   // An empty list is a legitimate, common answer rather than a failure — most

@@ -146,6 +146,9 @@ export async function generatePostImage(
     targetKeyword: post.target_keyword,
     imageConcept:  post.image_concept,
     title:         post.seo_title ?? post.title,
+    // Stripped from the query: no stock library indexes a service area, so those tokens
+    // either match nothing or match something unrelated that shares a word.
+    geographicFocus: (clientSettings as ClientSettings | null)?.geographic_focus ?? null,
   })
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
