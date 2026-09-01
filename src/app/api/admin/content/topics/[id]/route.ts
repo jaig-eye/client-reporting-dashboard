@@ -8,6 +8,7 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { suppressSlots, findPairedPostId } from '@/lib/content/slotSuppression'
 
 export async function GET(
   request: NextRequest,
@@ -126,9 +127,41 @@ export async function DELETE(
 
   const { id } = await params
   const db = createAdminClient()
+
+  // Read the pairing and the slot BEFORE deleting — both become unrecoverable after.
+  const { data: topic } = await db
+    .from('content_topics')
+    .select('id, client_id, post_id, target_publish_date')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (!topic) return NextResponse.json({ error: 'Topic not found' }, { status: 404 })
+  const row = topic as {
+    id: string; client_id: string; post_id: string | null; target_publish_date: string | null
+  }
+
+  // Cascade to the written post. The FK is ON DELETE SET NULL in both directions, so
+  // deleting only the topic left the post behind at status 'for_review' with a nulled
+  // topic_id — it vanished from the topic list but kept rendering on the calendar as a
+  // generated post, which reads exactly like the content coming back by itself.
+  const pairedPostId = await findPairedPostId(db, row)
+
   const { error } = await db.from('content_topics').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if (pairedPostId) {
+    const { error: postErr } = await db.from('content_posts').delete().eq('id', pairedPostId)
+    if (postErr) console.error(`[topics/${id}] topic deleted but paired post ${pairedPostId} was not:`, postErr.message)
+  }
+
+  // Stop the generator refilling this date. Without it, deleting is self-defeating —
+  // the empty slot is precisely what triggers regeneration on the next run.
+  await suppressSlots(db, [row], `topic ${id} deleted`)
+
   const adminSession = await getAdminSession()
-  logActivity(adminSession, 'deleted', 'topic', { resourceId: id })
-  return NextResponse.json({ ok: true })
+  logActivity(adminSession, 'deleted', 'topic', {
+    resourceId: id,
+    meta: { pairedPostId, slot: row.target_publish_date },
+  })
+  return NextResponse.json({ ok: true, deletedPostId: pairedPostId })
 }

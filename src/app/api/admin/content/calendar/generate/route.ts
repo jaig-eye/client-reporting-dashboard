@@ -32,18 +32,30 @@ export async function POST(request: NextRequest) {
   // ── Load saved schedule config ─────────────────────────────────────────────
   const { data: schedule } = await db
     .from('content_settings')
-    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead')
+    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead, schedule_start_date')
     .eq('client_id', client_id)
     .maybeSingle()
 
   const frequency  = (schedule?.schedule_frequency ?? 'weekly')
   const dayOfWeek  = (schedule?.schedule_day_of_week ?? 1)
   const weeksAhead = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
-  const anchor     = start_date ? new Date(start_date) : new Date()
+
+  // Anchor precedence: an explicit start_date from the caller, then the client's saved
+  // schedule_start_date, then today. The saved start date used to be ignored entirely,
+  // so callers that send no start_date — "Generate from Silo" is one — anchored a
+  // monthly series on whatever day the button happened to be clicked, producing an
+  // off-cadence series the cron will never reconcile (its slot guard matches on exact
+  // date, so both series then coexist and the client gets two posts that month).
+  const scheduleStartDate = (schedule?.schedule_start_date as string | null) ?? null
+  const anchor = start_date          ? new Date(start_date)
+               : scheduleStartDate   ? new Date(scheduleStartDate + 'T00:00:00Z')
+               : new Date()
 
   // ── Compute publish slots synchronously ────────────────────────────────────
   const monthlyPublishDay = (schedule?.monthly_publish_day as number | null) ?? null
-  const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay })
+  const slots: string[] = computeSlots({
+    anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay, scheduleStartDate,
+  })
 
   // Skip slots that already have topics assigned — prevents duplicate topics when the
   // wizard fires this endpoint twice (e.g. double-click, network retry).
@@ -54,10 +66,26 @@ export async function POST(request: NextRequest) {
     .in('target_publish_date', slots)
 
   const existingDates = new Set((existingTopics ?? []).map(t => t.target_publish_date as string))
-  const openSlots = slots.filter(s => !existingDates.has(s))
+
+  // Respect slots a human deliberately emptied (migration 209). Without this, manually
+  // regenerating a plan resurrects exactly the dates someone just deleted — the same
+  // trap the cron had.
+  const { data: sup, error: supErr } = await db
+    .from('content_slot_suppressions')
+    .select('target_publish_date')
+    .eq('client_id', client_id)
+    .in('target_publish_date', slots)
+  if (supErr) {
+    console.warn(`[calendar/generate] slot suppressions unavailable (apply migration 209): ${supErr.message}`)
+  }
+  const suppressedDates = new Set(
+    ((sup ?? []) as { target_publish_date: string }[]).map(s => s.target_publish_date),
+  )
+
+  const openSlots = slots.filter(s => !existingDates.has(s) && !suppressedDates.has(s))
 
   if (openSlots.length === 0) {
-    return NextResponse.json({ ok: true, queued: false, slots, reason: 'All slots already have topics' })
+    return NextResponse.json({ ok: true, queued: false, slots, reason: 'All slots already have topics or are suppressed' })
   }
 
   // Read admin session before returning — cookies are request-scoped and unavailable inside waitUntil.
@@ -137,8 +165,9 @@ function computeSlots(params: {
   frequency:  string
   dayOfWeek:  number
   monthlyPublishDay?: number | null
+  scheduleStartDate?: string | null
 }): string[] {
-  const { anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay = null } = params
+  const { anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay = null, scheduleStartDate = null } = params
   const end     = new Date(anchor.getTime() + weeksAhead * 7 * 86_400_000)
   const slots:  string[] = []
 
@@ -167,12 +196,20 @@ function computeSlots(params: {
     // falls back to the anchor's day otherwise. monthly_publish_day was already
     // being loaded from content_settings here and then ignored, so a client with an
     // explicit day still got slots on whatever day the caller happened to anchor to.
+    // monthly_end is 28 here to match the cron (content-topics computeFutureSlots).
+    // It was 31, so the two generators disagreed about what "end of month" means and
+    // produced different dates for the same client — 28 vs 30/31 in every month
+    // except the 31-day ones, and the cron never reconciles a stray date because its
+    // slot guard matches exactly. One definition, and 28 is the safe one: it exists
+    // in every month, so the series never shifts around February.
     const targetDay = frequency === 'monthly_first' ? 1
                     : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 31
+                    : frequency === 'monthly_end'   ? 28
                     : (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31
                         ? monthlyPublishDay
-                        : anchor.getDate())
+                        : scheduleStartDate
+                          ? new Date(scheduleStartDate + 'T00:00:00Z').getUTCDate()
+                          : anchor.getDate())
 
     let year  = anchor.getFullYear()
     let month = anchor.getMonth() // 0-indexed

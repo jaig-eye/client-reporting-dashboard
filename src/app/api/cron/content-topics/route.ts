@@ -34,7 +34,12 @@ function getCycleDays(frequency: string): number {
 }
 
 function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month + 1, 0)).getDate()
+  // getUTCDate, not getDate. Date.UTC builds the instant for midnight UTC on the
+  // month's last day; reading it back with the LOCAL getDate() returns the previous
+  // day in any negative-UTC-offset zone, so this reported 30 for a 31-day month when
+  // run outside UTC. Harmless on Vercel (UTC) and at day 25, but it silently
+  // mis-clamped day-29/30/31 schedules in local development and testing.
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
 }
 
 /**
@@ -58,6 +63,19 @@ function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: string |
     const d = new Date(startDate + 'T00:00:00Z')
     if (!Number.isNaN(d.getTime())) return d.getUTCDate()
   }
+  // Last resort, and it is the ORIGINAL BUG: with no anchor the day-of-month is
+  // whatever today happens to be, and because this cron runs every two hours, each
+  // new calendar day starts a fresh monthly series — producing a run of consecutive
+  // publish dates that repeats every month. Nothing can be done about it here without
+  // an anchor, but it must not fail silently the way it did before: this is the one
+  // configuration that still reproduces the burst, so say so loudly enough to find
+  // in the logs. Fix by setting content_settings.monthly_publish_day (or a
+  // schedule_start_date) for the client.
+  console.warn(
+    `[content-topics cron] MONTHLY CLIENT HAS NO ANCHOR — neither monthly_publish_day nor ` +
+    `schedule_start_date is set, so the publish day falls back to today (${now.getUTCDate()}) ` +
+    `and WILL drift on every calendar day, recreating the burst. Set monthly_publish_day.`,
+  )
   return now.getUTCDate()
 }
 
@@ -152,6 +170,15 @@ export async function GET(request: NextRequest) {
     .from('content_settings')
     .select('schedule_frequency, schedule_day_of_week')
     .is('client_id', null)
+    // order + limit(1) instead of a bare maybeSingle(). Production currently has TWO
+    // global-default rows, and maybeSingle() errors on multiple matches, so this
+    // silently returned null and every client without its own schedule fell back to
+    // the hardcoded 'weekly' below. That masked a live hazard: both global rows say
+    // 'monthly' with NO anchor, so the moment anyone de-duplicates them this lookup
+    // starts succeeding and hands anchorless monthly to every such client — which is
+    // exactly the drifting-anchor burst. Take the newest row deterministically.
+    .order('updated_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
   const globalFreq = (globalSettings as { schedule_frequency?: string } | null)?.schedule_frequency ?? 'weekly'
@@ -308,14 +335,54 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ── Slots a human deliberately emptied — never refill them ───────────────
+    // Deleting a scheduled topic used to be self-defeating: the slot guard below asks
+    // "does a topic exist for this date", so removing the row is precisely what frees
+    // the slot, and the next run (at most 2h later) generated a replacement. Deletion
+    // now records a suppression (migration 209) which survives the row, so delete
+    // means STOP rather than regenerate. Clearing the suppression re-opens the slot.
+    //
+    // Fetched once per client rather than per slot — this loop already does an AI call
+    // per slot and does not need N more round-trips.
+    const suppressed = new Set<string>()
+    {
+      const { data: sup, error: supErr } = await db
+        .from('content_slot_suppressions')
+        .select('target_publish_date')
+        .eq('client_id', client_id)
+        .in('target_publish_date', slots)
+      // Deploy-order fallback: the table only exists from migration 209. If the code
+      // ships first, PostgREST 404s the relation; treat that as "nothing suppressed"
+      // rather than letting it throw, but say so, because until the migration lands
+      // deleted slots WILL refill.
+      if (supErr) {
+        console.warn(`[content-topics cron] slot suppressions unavailable (apply migration 209): ${supErr.message}`)
+      } else {
+        for (const s of (sup ?? []) as { target_publish_date: string }[]) {
+          suppressed.add(s.target_publish_date)
+        }
+      }
+    }
+
     // ── Topic generation: cover every slot in the lead window ─────────────
     for (const slot of slots) {
+      if (suppressed.has(slot)) {
+        console.log(`[content-topics cron] slot ${slot} suppressed for ${client_id} — skipping`)
+        continue
+      }
+
+      // 'rejected' belongs in this list. It was previously absent, so a rejected
+      // topic left its slot looking empty and the very next run generated a
+      // replacement for the date a human had just turned down — the same
+      // regenerate-what-you-removed loop as deletion. Rejection is a full stop for
+      // the slot; the subject also stays in the avoid-list (see generateTopics.ts)
+      // so it is never suggested again anywhere.
       const { data: existing } = await db
         .from('content_topics')
         .select('id')
         .eq('client_id', client_id)
         .eq('target_publish_date', slot)
-        .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled'])
+        .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
         .limit(1)
 
       if (existing && existing.length > 0) continue
@@ -654,7 +721,28 @@ export async function GET(request: NextRequest) {
           const saLeadWindow = saCycle * 8 // 8-cycle look-ahead (same as wizard default)
           const saWeeksToScan = Math.ceil(saLeadWindow / 7) + 1
 
-          const saSlots = computeFutureSlots(saFrequency, saDayOfWeek, saWeeksToScan).filter(slot => {
+          // Look up this client's monthly anchor. saFrequency DEFAULTS to 'monthly'
+          // here, so without an anchor this branch fell straight through to
+          // now.getUTCDate() — the original drifting-anchor bug — and a service-area
+          // client would have produced the same once-a-month burst of consecutive
+          // dates. The SA settings row has no anchor columns of its own, so it comes
+          // from the client's content_settings, the same source the blog branch uses.
+          let saMonthlyDay: number | null = null
+          let saStartDate:  string | null = null
+          {
+            const { data: saAnchor } = await db
+              .from('content_settings')
+              .select('monthly_publish_day, schedule_start_date')
+              .eq('client_id', saClientId)
+              .maybeSingle()
+            const a = saAnchor as { monthly_publish_day: number | null; schedule_start_date: string | null } | null
+            saMonthlyDay = a?.monthly_publish_day ?? null
+            saStartDate  = a?.schedule_start_date ?? null
+          }
+
+          const saSlots = computeFutureSlots(
+            saFrequency, saDayOfWeek, saWeeksToScan, saMonthlyDay, saStartDate,
+          ).filter(slot => {
             const daysOut = Math.round((new Date(slot + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
             return daysOut > 0 && daysOut <= saLeadWindow
           })

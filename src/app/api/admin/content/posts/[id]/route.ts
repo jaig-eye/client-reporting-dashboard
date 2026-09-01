@@ -8,6 +8,7 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { suppressSlots } from '@/lib/content/slotSuppression'
 
 const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
 
@@ -117,12 +118,28 @@ export async function DELETE(
     client_id: string; target_publish_date: string | null
   }
 
-  // topic_id is only populated on about a third of existing posts, so relying on it
-  // alone would silently strand the topic for the majority — leaving the subject in
-  // the avoid-list and permanently un-regeneratable, which is the exact opposite of
-  // what deleting is meant to achieve. Fall back to the slot pairing the calendar
-  // itself uses: one topic per client per publish date.
+  // Resolve the topic through three links, strongest first. Neither FK cascades —
+  // content_posts.topic_id and content_topics.post_id are BOTH ON DELETE SET NULL —
+  // so nothing happens automatically, and a topic left behind keeps the subject in
+  // the avoid-list and permanently un-regeneratable, the opposite of what deleting is
+  // for.
+  //
+  //   1. content_posts.topic_id  — exact, but set on only ~29% of rows (50/175)
+  //   2. content_topics.post_id  — exact, and set on ~85% (118/139). Skipping this one
+  //                                stranded the topic for most posts.
+  //   3. client_id + publish date — the slot pairing the calendar displays, last resort
   let topicId = row.topic_id
+
+  if (!topicId) {
+    const { data: byPost } = await db
+      .from('content_topics')
+      .select('id')
+      .eq('post_id', id)
+      .limit(1)
+      .maybeSingle()
+    topicId = (byPost as { id: string } | null)?.id ?? null
+  }
+
   if (!topicId && row.target_publish_date) {
     const { data: slotTopic } = await db
       .from('content_topics')
@@ -146,10 +163,18 @@ export async function DELETE(
     }
   }
 
+  // Stop the generator refilling this date. Deleting a post frees its slot, and the
+  // slot being empty is exactly what triggers regeneration on the next cron run — so
+  // without this, deleting a post makes it come back.
+  await suppressSlots(db, [row], `post ${id} deleted`)
+
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'deleted', 'post', {
     resourceId: id,
-    meta: { title: row.title, topicId, topicMatchedBySlot: !row.topic_id && !!topicId },
+    meta: {
+      title: row.title, topicId, slot: row.target_publish_date,
+      topicMatchedBySlot: !row.topic_id && !!topicId,
+    },
   })
 
   return NextResponse.json({ ok: true, deletedTopic: !!topicId })

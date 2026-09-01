@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
+import { suppressSlots } from '@/lib/content/slotSuppression'
 import { isAdminAuthed } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
@@ -35,17 +36,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No ids provided' }, { status: 400 })
   }
 
-  // For topic IDs: fetch linked post_ids so we can cascade-delete them
+  // For topic IDs: fetch linked post_ids so we can cascade-delete them, plus the slot
+  // each one occupies so the generator can be told not to refill it.
   let linkedPostIds: string[] = []
+  const slotsToSuppress: { client_id: string; target_publish_date: string | null }[] = []
   if (topicIds.length > 0) {
     const { data: topics } = await db
       .from('content_topics')
-      .select('id, post_id')
+      .select('id, post_id, client_id, target_publish_date')
       .in('id', topicIds)
 
-    linkedPostIds = (topics ?? [])
-      .map(t => (t as { post_id: string | null }).post_id)
-      .filter((id): id is string => !!id)
+    const rows = (topics ?? []) as {
+      id: string; post_id: string | null; client_id: string; target_publish_date: string | null
+    }[]
+
+    linkedPostIds = rows.map(t => t.post_id).filter((id): id is string => !!id)
+    slotsToSuppress.push(...rows)
+  }
+
+  // Deleting POSTS directly (not via their topic) frees the same slot, so collect
+  // those too — otherwise clearing a batch of posts leaves the dates open and the
+  // cron rebuilds them within the hour.
+  if (postIds.length > 0) {
+    const { data: posts } = await db
+      .from('content_posts')
+      .select('client_id, target_publish_date')
+      .in('id', postIds)
+    slotsToSuppress.push(...((posts ?? []) as { client_id: string; target_publish_date: string | null }[]))
   }
 
   const allPostIdsToDelete = Array.from(new Set(linkedPostIds.concat(postIds)))
@@ -62,5 +79,14 @@ export async function POST(request: NextRequest) {
   if (topicsRes.error) return NextResponse.json({ error: topicsRes.error.message }, { status: 500 })
   if (postsRes.error)  return NextResponse.json({ error: postsRes.error.message },  { status: 500 })
 
-  return NextResponse.json({ deleted: topicIds.length + postIds.length })
+  // Suppress AFTER the rows are gone, so a failure here cannot block the delete.
+  // Without this the cron treats every emptied date as an open slot and regenerates
+  // it on the next run — which is what made bulk-deleting a burst look like it kept
+  // coming back.
+  await suppressSlots(db, slotsToSuppress, 'bulk delete')
+
+  return NextResponse.json({
+    deleted: topicIds.length + postIds.length,
+    suppressedSlots: slotsToSuppress.filter(s => s.target_publish_date).length,
+  })
 }

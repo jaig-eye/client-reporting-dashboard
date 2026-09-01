@@ -96,6 +96,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
     autoGenerate: true,
   })
+  // The client's already-saved schedule_start_date, if any. Completing the wizard must
+  // NOT move it: for a rolling-monthly client that date IS the publish-day anchor, so
+  // overwriting it with today silently shifts every future publish date.
+  const [existingStartDate, setExistingStartDate] = useState<string | null>(null)
   const [imageGen,    setImageGen]    = useState(false)
   const [imagePrompt, setImagePrompt] = useState('')
 
@@ -173,9 +177,30 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             service_page_topic_guidelines?: string | null
             regular_page_topic_guidelines?: string | null
             sitemap_url?: string | null
+            schedule_frequency?: string | null
+            schedule_day_of_week?: number | null
+            publish_time?: string | null
+            auto_generate?: boolean | null
+            schedule_start_date?: string | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
+
+          // Hydrate the SCHEDULE too. Step 5's state was initialised to a hardcoded
+          // weekly/Monday and never read the saved values, so re-opening the wizard on
+          // an already-configured client and clicking through silently downgraded a
+          // monthly client to weekly. Combined with the start-date reset below, a
+          // re-run could move a client's whole publish series to a different day.
+          if (cs.schedule_frequency || cs.schedule_day_of_week != null || cs.publish_time) {
+            setSchedule(prev => ({
+              frequency:    cs.schedule_frequency   ?? prev.frequency,
+              dayOfWeek:    cs.schedule_day_of_week ?? prev.dayOfWeek,
+              publishTime:  cs.publish_time         ?? prev.publishTime,
+              autoGenerate: cs.auto_generate ?? prev.autoGenerate,
+            }))
+          }
+          // Remember the existing anchor so completing the wizard does not move it.
+          if (cs.schedule_start_date) setExistingStartDate(cs.schedule_start_date)
           if (cs.service_page_topic_guidelines) setSpGuidelinesWiz(cs.service_page_topic_guidelines)
           if (cs.regular_page_topic_guidelines) setRpGuidelinesWiz(cs.regular_page_topic_guidelines)
           // Fall back to previously-saved sitemap URL when connections didn't provide a site URL
@@ -343,7 +368,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         sitemap_url:          sitemapUrl || undefined,
         schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
-        schedule_start_date:  new Date().toISOString().slice(0, 10),
+        // Keep the existing anchor on a re-run; only stamp today on first setup.
+        schedule_start_date:  existingStartDate ?? new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
         topics_per_run:  1,
         auto_generate:   schedule.autoGenerate,
