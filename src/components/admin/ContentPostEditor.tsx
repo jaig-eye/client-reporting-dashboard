@@ -322,6 +322,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
+  const [findingStock,    setFindingStock]    = useState(false)
+  const [stockMessage,    setStockMessage]    = useState('')
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -812,6 +814,29 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
+  // ── Stock image search (on demand) ──────────────────────────────────────────
+  // Candidates are normally captured at generation time, so posts written before this
+  // shipped — and clients who have AI images switched off — would otherwise never have
+  // any. Also useful after editing the target keyword, to re-aim the suggestions.
+  async function handleFindStockImages() {
+    setFindingStock(true)
+    setError('')
+    setStockMessage('')
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/find-stock-images`, { method: 'POST' })
+      const data = await res.json() as { candidates?: StockImageCandidate[]; message?: string; error?: string }
+      if (!res.ok || data.error) throw new Error(data.error ?? 'Search failed')
+      setImageCandidates(data.candidates ?? [])
+      // Finding nothing is a normal outcome for niche topics, so it is reported as a
+      // message rather than an error.
+      setStockMessage(data.message ?? '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not search for free images')
+    } finally {
+      setFindingStock(false)
+    }
+  }
+
   // ── Stock image selection ───────────────────────────────────────────────────
   // The server copies the chosen file into our own storage and writes
   // featured_image_url itself, so this does NOT markDirty — the change is already
@@ -1140,6 +1165,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {imageUploadingMsg || 'Upload Image'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
+                  <button type="button" onClick={handleFindStockImages} disabled={findingStock} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Search Openverse for free, commercially-usable photos matching this topic">
+                    {findingStock ? 'Searching…' : '⌕ Find free images'}
+                  </button>
                   {featuredImageUrl && (
                     <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
                       ✕ Remove
@@ -1156,10 +1184,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     actually cleared the relevance floor — for niche technical topics
                     the honest answer is usually nothing, and an empty section says
                     that more clearly than a row of irrelevant photos. */}
+                {/* Reported outcome of an explicit search, including "found nothing",
+                    which is a normal result for specialised topics and should not look
+                    like a failure. */}
+                {stockMessage && imageCandidates.length === 0 && (
+                  <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    {stockMessage}
+                  </div>
+                )}
+
                 {imageCandidates.length > 0 && (
                   <div style={{ marginTop: 14 }}>
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                       Free stock alternatives · {imageCandidates.length} found
+                      <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · secondary options, the AI image stays selected until you pick one</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
                       {imageCandidates.map(c => {

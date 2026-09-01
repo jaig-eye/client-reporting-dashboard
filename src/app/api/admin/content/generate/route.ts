@@ -13,6 +13,7 @@ import { sendDiscordMessage } from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { scoreSeoPost } from '@/lib/content/scoreSeoPost'
 import { generatePostImage } from '@/lib/content/generatePostImage'
+import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
 import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES } from '@/lib/content/blogStrategy'
 import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
@@ -1134,6 +1135,18 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     if (imageEnabled && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
       waitUntil(
         generatePostImage(db, savedPost.id, agencySettings.openai_api_key, imagePromptOverride).catch(() => {})
+      )
+    } else {
+      // AI images are off (or no key) — still look for free stock candidates, because
+      // this is exactly the client who wants a non-AI option. generatePostImage does
+      // this itself when it runs, so the two paths are mutually exclusive rather than
+      // duplicated. Costs nothing: Openverse is free and failures are swallowed.
+      waitUntil(
+        searchAndStoreStockCandidates(db, savedPost.id, {
+          targetKeyword: topicData.target_keyword ?? null,
+          imageConcept:  (topicData as { image_concept?: string | null }).image_concept ?? null,
+          title:         parsed.title ?? null,
+        }).then(() => {}).catch(() => {})
       )
     }
 

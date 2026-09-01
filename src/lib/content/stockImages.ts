@@ -214,3 +214,42 @@ export async function findStockImageCandidates(ctx: {
   }
   return deduped
 }
+
+/**
+ * Search for a post's stock candidates and store them on the row.
+ *
+ * Deliberately independent of AI image generation. The obvious place for this was
+ * inside generatePostImage, but that is gated on content_settings.content_image_generation
+ * — so the clients who have turned AI images OFF, precisely the ones who most want a
+ * non-AI option, would never have been offered any. It is also what makes the
+ * on-demand "Find free images" button work for the posts that already exist.
+ *
+ * Never throws: a stock search failing must not take down whatever called it.
+ * Returns the candidates so a caller can respond with them directly.
+ */
+export async function searchAndStoreStockCandidates(
+  db: { from: (t: string) => any },   // eslint-disable-line @typescript-eslint/no-explicit-any
+  postId: string,
+  ctx: {
+    targetKeyword?: string | null
+    imageConcept?:  string | null
+    title?:         string | null
+  },
+): Promise<StockImageCandidate[]> {
+  try {
+    const candidates = await findStockImageCandidates(ctx)
+    const { error } = await db.from('content_posts')
+      .update({ image_candidates: candidates })
+      .eq('id', postId)
+    if (error) {
+      // Deploy-order tolerant: image_candidates only exists from migration 210.
+      console.warn(`[stockImages] could not store candidates for ${postId} (apply migration 210): ${error.message}`)
+    } else if (candidates.length === 0) {
+      console.log(`[stockImages] nothing cleared the relevance floor for post ${postId}`)
+    }
+    return candidates
+  } catch (e) {
+    console.warn('[stockImages] candidate search failed:', e instanceof Error ? e.message : e)
+    return []
+  }
+}

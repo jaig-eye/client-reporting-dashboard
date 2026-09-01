@@ -2,7 +2,7 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { findStockImageCandidates } from '@/lib/content/stockImages'
+import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 
 type PostRow = {
   id:             string
@@ -129,29 +129,15 @@ export async function generatePostImage(
 
   // ── Stock alternatives, searched with the SAME context as the AI prompt ─────
   // Runs alongside generation rather than instead of it, so the reviewer always has
-  // both options. Deliberately not awaited before the AI call: Openverse is a
-  // third-party API on anonymous rate limits and must never delay or fail image
-  // generation. Failures inside findStockImageCandidates are already swallowed and
-  // logged there; the catch here covers the write-back.
-  const settings = clientSettings as ClientSettings | null
-  const candidatesPromise = findStockImageCandidates({
+  // both options. Started here and awaited before every return: Openverse is a
+  // third-party API on anonymous rate limits and must never delay the AI call, but a
+  // serverless instance is frozen once the handler resolves, so an un-awaited promise
+  // would simply be dropped and nothing would be written.
+  const candidatesPromise = searchAndStoreStockCandidates(db, postId, {
     targetKeyword: post.target_keyword,
     imageConcept:  post.image_concept,
     title:         post.seo_title ?? post.title,
-    industry:      settings?.services?.split(',')[0]?.trim() ?? null,
   })
-    .then(async candidates => {
-      const { error } = await db.from('content_posts')
-        .update({ image_candidates: candidates })
-        .eq('id', postId)
-      // Deploy-order tolerant: image_candidates only exists from migration 210.
-      if (error) {
-        console.warn(`[generatePostImage] could not store stock candidates (apply migration 210): ${error.message}`)
-      } else if (candidates.length === 0) {
-        console.log(`[generatePostImage] no stock candidates cleared the relevance floor for post ${postId}`)
-      }
-    })
-    .catch(e => console.warn('[generatePostImage] stock candidate search failed:', e))
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
