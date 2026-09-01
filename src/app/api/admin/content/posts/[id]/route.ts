@@ -103,24 +103,44 @@ export async function DELETE(
   const { id } = await params
   const db = createAdminClient()
 
-  // Read the topic link BEFORE deleting the post — content_posts.topic_id is the
-  // only pointer between them, so it is unrecoverable afterwards.
+  // Resolve the topic BEFORE deleting the post — the links are unrecoverable after.
   const { data: post } = await db
     .from('content_posts')
-    .select('id, topic_id, title')
+    .select('id, topic_id, title, client_id, target_publish_date')
     .eq('id', id)
     .maybeSingle()
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
 
+  const row = post as {
+    topic_id: string | null; title: string | null
+    client_id: string; target_publish_date: string | null
+  }
+
+  // topic_id is only populated on about a third of existing posts, so relying on it
+  // alone would silently strand the topic for the majority — leaving the subject in
+  // the avoid-list and permanently un-regeneratable, which is the exact opposite of
+  // what deleting is meant to achieve. Fall back to the slot pairing the calendar
+  // itself uses: one topic per client per publish date.
+  let topicId = row.topic_id
+  if (!topicId && row.target_publish_date) {
+    const { data: slotTopic } = await db
+      .from('content_topics')
+      .select('id')
+      .eq('client_id', row.client_id)
+      .eq('target_publish_date', row.target_publish_date)
+      .limit(1)
+      .maybeSingle()
+    topicId = (slotTopic as { id: string } | null)?.id ?? null
+  }
+
   const { error } = await db.from('content_posts').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const topicId = (post as { topic_id: string | null }).topic_id
   if (topicId) {
     const { error: topicErr } = await db.from('content_topics').delete().eq('id', topicId)
-    // Non-fatal: the post is already gone, and reporting failure here would invite a
-    // retry that 404s. Log it — an orphaned topic keeps the subject in the avoid-list.
+    // Non-fatal: the post is already gone, and failing here would invite a retry that
+    // 404s. Log it — an orphaned topic keeps the subject in the avoid-list.
     if (topicErr) {
       console.error(`[posts/${id}] post deleted but topic ${topicId} was not:`, topicErr.message)
     }
@@ -129,7 +149,7 @@ export async function DELETE(
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'deleted', 'post', {
     resourceId: id,
-    meta: { title: (post as { title?: string | null }).title ?? null, topicId },
+    meta: { title: row.title, topicId, topicMatchedBySlot: !row.topic_id && !!topicId },
   })
 
   return NextResponse.json({ ok: true, deletedTopic: !!topicId })
