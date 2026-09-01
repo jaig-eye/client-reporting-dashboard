@@ -127,7 +127,7 @@ interface OpenverseResult {
   tags?: { name?: string }[]
 }
 
-async function searchOpenverse(q: string, terms: string[]): Promise<StockImageCandidate[]> {
+async function searchOpenverse(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
   const params = new URLSearchParams({
     q,
     // BOTH filters, not just 'commercial'. Commercial alone still returns NoDerivatives
@@ -149,7 +149,7 @@ async function searchOpenverse(q: string, terms: string[]): Promise<StockImageCa
     if (!r.id || !r.url || !r.thumbnail) continue
     if (!bigEnough(r.width ?? null, r.height ?? null)) continue
     const relevance = scoreAgainst(`${r.title ?? ''} ${(r.tags ?? []).map(t => t.name ?? '').join(' ')}`, terms)
-    if (relevance < RELEVANCE_FLOOR) continue
+    if (relevance < floor) continue
     out.push({
       id: `ov:${r.id}`,
       title: r.title ?? '(untitled)',
@@ -190,7 +190,7 @@ interface PexelsPhoto {
  * commercial use with modification and requires no attribution, so there is nothing to
  * render alongside the image.
  */
-async function searchPexels(q: string, terms: string[]): Promise<StockImageCandidate[]> {
+async function searchPexels(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
   const key = process.env.PEXELS_API_KEY
   if (!key) return []
 
@@ -232,7 +232,7 @@ async function searchPexels(q: string, terms: string[]): Promise<StockImageCandi
     // good ("Technician applying powder coating to metal pipes in a workshop"), which
     // makes it a far better scoring target than a filename.
     const relevance = scoreAgainst(p.alt ?? '', terms)
-    if (relevance < RELEVANCE_FLOOR) continue
+    if (relevance < floor) continue
 
     out.push({
       id: `px:${p.id}`,
@@ -283,7 +283,7 @@ interface CommonsPage {
   }[]
 }
 
-async function searchCommons(q: string, terms: string[]): Promise<StockImageCandidate[]> {
+async function searchCommons(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
   const params = new URLSearchParams({
     action: 'query',
     generator: 'search',
@@ -318,7 +318,7 @@ async function searchCommons(q: string, terms: string[]): Promise<StockImageCand
     // Commons search matches the file's whole description page, so score against the
     // title and the categories rather than trusting the search rank.
     const relevance = scoreAgainst(`${title} ${md.Categories?.value ?? ''}`, terms)
-    if (relevance < RELEVANCE_FLOOR) continue
+    if (relevance < floor) continue
 
     const artistHtml = md.Artist?.value ?? ''
     const creator    = artistHtml.replace(/<[^>]*>/g, '').trim() || null
@@ -382,13 +382,29 @@ function buildQueryLadder(ctx: {
  * Find stock candidates for a post, using the same context the AI image prompt is built
  * from so both paths aim at the same picture.
  */
-export async function findStockImageCandidates(ctx: {
-  targetKeyword?: string | null
-  imageConcept?:  string | null
-  title?:         string | null
-  /** Accepted for call-site compatibility and deliberately unused — see the header. */
-  industry?:      string | null
-}): Promise<StockImageCandidate[]> {
+export async function findStockImageCandidates(
+  ctx: {
+    targetKeyword?: string | null
+    imageConcept?:  string | null
+    title?:         string | null
+    /** Accepted for call-site compatibility and deliberately unused — see the header. */
+    industry?:      string | null
+  },
+  opts?: {
+    /**
+     * Override the relevance floor. Automatic searches keep the strict default,
+     * because an unattended result becomes a suggestion the reviewer has to
+     * disbelieve. A MANUAL search is different — the person typed the query and is
+     * looking at thumbnails, so they are the filter and a stricter floor just hides
+     * things they asked for.
+     */
+    minRelevance?: number
+    /** Manual searches want breadth; the automatic strip wants a short, strong set. */
+    limit?: number
+  },
+): Promise<StockImageCandidate[]> {
+  const floor = opts?.minRelevance ?? RELEVANCE_FLOOR
+  const limit = opts?.limit ?? MAX_CANDIDATES
   const ladder = buildQueryLadder(ctx)
   if (ladder.length === 0) return []
 
@@ -401,9 +417,9 @@ export async function findStockImageCandidates(ctx: {
     // All three in parallel — they are independent, so the rung costs one round trip
     // rather than three. Pexels self-skips when no key is configured.
     const [px, ov, wc] = await Promise.all([
-      searchPexels(q, terms),
-      searchOpenverse(q, terms),
-      searchCommons(q, terms),
+      searchPexels(q, terms, floor),
+      searchOpenverse(q, terms, floor),
+      searchCommons(q, terms, floor),
     ])
 
     for (const c of [...px, ...ov, ...wc]) {
@@ -411,7 +427,7 @@ export async function findStockImageCandidates(ctx: {
       if (!existing || existing.relevance < c.relevance) byId.set(c.id, c)
     }
 
-    if (byId.size >= MAX_CANDIDATES) break
+    if (byId.size >= limit) break
   }
 
   // Collapse near-duplicates before trimming. Providers hold whole photo sets under one
@@ -445,7 +461,7 @@ export async function findStockImageCandidates(ctx: {
     if (seenGroup.has(group)) continue
     seenGroup.add(group)
     deduped.push(c)
-    if (deduped.length >= MAX_CANDIDATES) break
+    if (deduped.length >= limit) break
   }
   return deduped
 }

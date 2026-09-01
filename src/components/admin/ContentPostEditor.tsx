@@ -5,6 +5,7 @@ import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
+import StockImageSearchModal from '@/components/admin/StockImageSearchModal'
 
 interface Site {
   connectionId:  string
@@ -324,6 +325,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   const [findingStock,    setFindingStock]    = useState(false)
   const [stockMessage,    setStockMessage]    = useState('')
+  const [stockModalOpen,  setStockModalOpen]  = useState(false)
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -1165,8 +1167,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {imageUploadingMsg || 'Upload Image'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-                  <button type="button" onClick={handleFindStockImages} disabled={findingStock} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Search Openverse for free, commercially-usable photos matching this topic">
+                  <button type="button" onClick={handleFindStockImages} disabled={findingStock} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Find free, commercially-usable photos matching this post's topic">
                     {findingStock ? 'Searching…' : '⌕ Find free images'}
+                  </button>
+                  <button type="button" onClick={() => setStockModalOpen(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Search Pexels, Openverse and Wikimedia Commons by your own keywords">
+                    Browse library…
                   </button>
                   {featuredImageUrl && (
                     <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
@@ -1668,6 +1673,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           )
         )}
       </div>
+
+      {/* Mounted at the drawer root rather than inside the image section so the overlay
+          is not clipped by the section's own scroll container. */}
+      {stockModalOpen && (
+        <StockImageSearchModal
+          postId={postId}
+          initialQuery={targetKeyword || seoTitle || title || ''}
+          onClose={() => setStockModalOpen(false)}
+          onSelect={handleSelectStockImage}
+          onResults={setImageCandidates}
+        />
+      )}
     </>
   )
 }
