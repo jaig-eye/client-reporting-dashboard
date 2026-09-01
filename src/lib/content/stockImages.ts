@@ -170,6 +170,92 @@ async function searchOpenverse(q: string, terms: string[]): Promise<StockImageCa
   return out
 }
 
+// ── Pexels ───────────────────────────────────────────────────────────────────
+
+interface PexelsPhoto {
+  id?: number; url?: string; alt?: string | null
+  photographer?: string | null; photographer_url?: string | null
+  width?: number; height?: number
+  src?: { large2x?: string; large?: string; original?: string; medium?: string }
+}
+
+/**
+ * Modern commercial stock. Needs a free API key (PEXELS_API_KEY); absent, this source
+ * is simply skipped and the two keyless sources still run.
+ *
+ * Ranked above the others when relevance ties, because the quality gap is not marginal:
+ * for "powder coating oven" Openverse offered Palak Paneer, Commons offered a public-
+ * domain photo of an oven interior, and Pexels offered "Worker in protective gear
+ * applying powder coating to metal" at 6000x4000. The Pexels licence also allows
+ * commercial use with modification and requires no attribution, so there is nothing to
+ * render alongside the image.
+ */
+async function searchPexels(q: string, terms: string[]): Promise<StockImageCandidate[]> {
+  const key = process.env.PEXELS_API_KEY
+  if (!key) return []
+
+  const params = new URLSearchParams({
+    query: q,
+    per_page: '12',
+    // Featured images are rendered 16:9, so portrait results are wasted slots.
+    orientation: 'landscape',
+  })
+
+  const ctrl  = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS)
+  let json: { photos?: PexelsPhoto[] } | null = null
+  try {
+    const res = await fetch(`https://api.pexels.com/v1/search?${params}`, {
+      headers: { Authorization: key, 'User-Agent': USER_AGENT },
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    if (!res.ok) {
+      console.warn(`[stockImages] Pexels returned ${res.status} for "${q}"`)
+      return []
+    }
+    json = await res.json()
+  } catch (e) {
+    console.warn('[stockImages] Pexels request failed:', e instanceof Error ? e.message : e)
+    return []
+  } finally {
+    clearTimeout(timer)
+  }
+
+  const out: StockImageCandidate[] = []
+  for (const p of json?.photos ?? []) {
+    const full = p.src?.large2x ?? p.src?.original ?? p.src?.large
+    if (!p.id || !full) continue
+    if (!bigEnough(p.width ?? null, p.height ?? null)) continue
+
+    // Pexels supplies a written description rather than tags, and it is unusually
+    // good ("Technician applying powder coating to metal pipes in a workshop"), which
+    // makes it a far better scoring target than a filename.
+    const relevance = scoreAgainst(p.alt ?? '', terms)
+    if (relevance < RELEVANCE_FLOOR) continue
+
+    out.push({
+      id: `px:${p.id}`,
+      title: p.alt?.trim() || 'Pexels photo',
+      url: full,
+      thumbnail: p.src?.medium ?? p.src?.large ?? full,
+      creator: p.photographer ?? null,
+      license: 'Pexels',
+      licenseUrl: 'https://www.pexels.com/license/',
+      sourceUrl: p.url ?? null,
+      provider: 'pexels',
+      width: p.width ?? null,
+      height: p.height ?? null,
+      // No attribution is required by the Pexels licence, but crediting the
+      // photographer is good practice and costs nothing to record.
+      attribution: p.photographer ? `Photo by ${p.photographer} on Pexels` : 'Photo from Pexels',
+      relevance,
+      matchedQuery: q,
+    })
+  }
+  return out
+}
+
 // ── Wikimedia Commons ────────────────────────────────────────────────────────
 
 /**
@@ -312,13 +398,15 @@ export async function findStockImageCandidates(ctx: {
     const terms = meaningfulTerms(q)
     if (terms.length === 0) continue
 
-    // Both sources in parallel — they are independent and this halves the wall time.
-    const [ov, wc] = await Promise.all([
+    // All three in parallel — they are independent, so the rung costs one round trip
+    // rather than three. Pexels self-skips when no key is configured.
+    const [px, ov, wc] = await Promise.all([
+      searchPexels(q, terms),
       searchOpenverse(q, terms),
       searchCommons(q, terms),
     ])
 
-    for (const c of [...ov, ...wc]) {
+    for (const c of [...px, ...ov, ...wc]) {
       const existing = byId.get(c.id)
       if (!existing || existing.relevance < c.relevance) byId.set(c.id, c)
     }
@@ -331,9 +419,17 @@ export async function findStockImageCandidates(ctx: {
   // "Metal Fabrication students of Coonabarabran" five — so without this a single set
   // consumes every slot and the reviewer is shown one picture eight times instead of a
   // choice. Keyed on creator + title stem, which is what those sets share.
+  // Sort by relevance, then by source quality. The tiebreak matters: at equal relevance
+  // a Pexels photograph is a professionally shot, correctly exposed, licence-clean image
+  // and an Openverse hit is often a 1024px Flickr snapshot, so ordering by relevance
+  // alone would bury the better picture below an equally-scoring worse one.
+  const SOURCE_RANK: Record<string, number> = { pexels: 0, wikimedia: 1 }
+  const rank = (c: StockImageCandidate) => SOURCE_RANK[c.provider ?? ''] ?? 2
+
   const seenGroup = new Set<string>()
   const deduped: StockImageCandidate[] = []
-  for (const c of Array.from(byId.values()).sort((a, b) => b.relevance - a.relevance)) {
+  for (const c of Array.from(byId.values())
+    .sort((a, b) => (b.relevance - a.relevance) || (rank(a) - rank(b)))) {
     // Openverse INDEXES Wikimedia Commons, so querying both surfaces the same photograph
     // twice under slightly different titles — one carrying Commons' "File:" prefix and
     // extension. Normalise those away before grouping, or the reviewer sees the same
