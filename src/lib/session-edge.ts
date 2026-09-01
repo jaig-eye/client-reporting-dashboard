@@ -13,6 +13,9 @@ interface EdgeSessionPayload {
   v: number
   isSuperAdmin?: boolean
   userId?: string
+  /** Issued-at, unix seconds. Compared against the account's password_changed_at
+   *  by lib/sessionRevocation.ts to evict sessions minted before a rotation. */
+  iat?: number
   exp?: number
 }
 

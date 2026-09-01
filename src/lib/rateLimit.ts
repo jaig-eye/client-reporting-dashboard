@@ -105,14 +105,34 @@ export function createRateLimiter(
     async take(key: string): Promise<boolean> {
       const env = upstashEnv()
       if (env) {
-        // INCR the counter and (re)assert the window TTL. Unconditional PEXPIRE
-        // avoids depending on the PEXPIRE ... NX flag and can never leave a key
-        // without an expiry; a continuously-attacking key simply stays blocked
-        // until it goes quiet for windowMs.
         const rk = redisKey(key)
-        const out = await upstashPipeline(env, [['INCR', rk], ['PEXPIRE', rk, windowMs]])
-        const count = out?.[0]?.result
-        if (typeof count === 'number') return count <= max
+        // SET ... NX PX creates the key WITH its expiry only when absent, then INCR
+        // counts within it. The window is therefore fixed from the first attempt and
+        // drains on schedule, matching the in-memory tier's semantics exactly.
+        //
+        // An unconditional PEXPIRE (the previous form) re-armed the full TTL on EVERY
+        // attempt including already-blocked ones, turning the Redis tier into a
+        // sliding block that never expires while traffic continues. Combined with
+        // ipLimiter — keyed on IP alone and deliberately never reset, so successful
+        // logins consume it too — that locks every admin behind a shared office NAT
+        // or VPN out of admin-login indefinitely, with no way back in: each retry
+        // pushes the expiry another windowMs out. PEXPIRE ... NX would also fix it
+        // but needs Redis 7+; SET ... NX is universal, and one pipeline either way.
+        const out = await upstashPipeline(env, [
+          ['SET', rk, 0, 'PX', windowMs, 'NX'],
+          ['INCR', rk],
+        ])
+        const count = out?.[1]?.result
+        if (typeof count === 'number') {
+          // Mirror into the local map so the in-memory tier stays WARM. Without this
+          // the Redis success path returns before memTake ever runs, `entries` is
+          // permanently empty, and the "fallback" is a cold counter: the first Redis
+          // timeout hands an already-blocked attacker a fresh full budget on every
+          // instance. The return value is intentionally discarded — Redis is the
+          // authority while it is reachable; this only keeps the understudy in sync.
+          memTake(key)
+          return count <= max
+        }
         // else: Redis errored/timed out → fall through to in-memory.
       }
       return memTake(key)

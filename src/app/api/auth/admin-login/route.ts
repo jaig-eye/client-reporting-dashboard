@@ -135,11 +135,21 @@ export async function POST(request: NextRequest) {
       const storedHash = (settings as Record<string, unknown> | null)?.super_admin_otp_hash as string | null
       const expiresAt  = (settings as Record<string, unknown> | null)?.super_admin_otp_expires_at as string | null
 
+      // Length-guard BEFORE timingSafeEqual: it THROWS RangeError on a byte-length
+      // mismatch rather than returning false. Buffer.from(x, 'hex') silently
+      // truncates at the first non-hex character, so any malformed or truncated
+      // stored hash produced an unhandled 500 on every super-admin login — and
+      // because the OTP row is only cleared on SUCCESS, that state could never
+      // self-heal. Every other timingSafeEqual site in this repo guards length first.
+      const submittedOtp = Buffer.from(hashOtp(String(code)), 'hex')
+      const storedOtp    = storedHash ? Buffer.from(storedHash, 'hex') : Buffer.alloc(0)
+
       if (
         !storedHash ||
         !expiresAt ||
         new Date(expiresAt) < new Date() ||
-        !crypto.timingSafeEqual(Buffer.from(hashOtp(String(code)), 'hex'), Buffer.from(storedHash, 'hex'))
+        submittedOtp.length !== storedOtp.length ||
+        !crypto.timingSafeEqual(submittedOtp, storedOtp)
       ) {
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }
@@ -234,7 +244,14 @@ export async function POST(request: NextRequest) {
   // could match a single username without knowing it, and a multi-match made
   // .maybeSingle() error into a 503 that a probe could distinguish from the 401 a
   // non-match returns — a username-enumeration oracle. (The email arm uses exact .eq.)
-  const usernamePattern = identifier.replace(/[\\%_]/g, '\\$&')
+  //
+  // `*` MUST be in this class alongside % and _: PostgREST documents `*` as its own
+  // alias for `%` inside like/ilike values and rewrites it before SQL sees the
+  // pattern. Escaping only the SQL metacharacters therefore left the oracle fully
+  // reachable through `a*`, and also let one account be probed through unlimited
+  // distinct accountLimiter buckets (the key is `${ip}:${identifier}`, so bob, bo*
+  // and b*b are three separate 5-per-15min budgets against the same user).
+  const usernamePattern = identifier.replace(/[\\%_*]/g, '\\$&')
 
   async function lookup(cols: string) {
     return isEmail
@@ -249,6 +266,18 @@ export async function POST(request: NextRequest) {
     console.warn('[admin-login] must_reset_password column missing (migration 195 not applied) — falling back; legacy hashes still force a rotation')
     ;({ data: userRow, error: lookupErr } = await lookup(BASE_COLS))
   }
+  // A multi-row result is NOT an outage — it is a pattern that matched more than one
+  // account, and answering it with a distinguishable 503 is the enumeration oracle
+  // itself. Escaping the metacharacters above should make this unreachable; treating
+  // it as "no match" as well means no future gap in that escaping can reopen the
+  // oracle, because there is no longer a response that differs from a plain miss.
+  const MULTI_ROW = 'PGRST116'
+  if (lookupErr && (lookupErr.code === MULTI_ROW || /multiple \(or no\) rows/i.test(lookupErr.message))) {
+    console.warn('[admin-login] identifier matched multiple accounts — treating as no match:', lookupErr.message)
+    userRow   = null
+    lookupErr = null
+  }
+
   if (lookupErr) {
     console.error('[admin-login] user lookup failed:', lookupErr.message)
     return NextResponse.json(

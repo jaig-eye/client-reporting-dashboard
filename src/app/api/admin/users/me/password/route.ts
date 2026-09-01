@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, getVerifiedUserId, verifyPassword, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
+import { verifyPassword, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
 import { signAdminSession, SESSION_TTL_SECONDS } from '@/lib/session'
 import { logActivity } from '@/lib/activity'
 
@@ -16,12 +16,23 @@ const COOKIE_OPTS = {
 }
 
 export async function POST(req: NextRequest) {
-  const session = req.cookies.get('admin_session')?.value
-
-  if (!isAdminAuthed(session)) {
+  // getAdminSession, NOT isAdminAuthed. This route clears must_reset_password and
+  // re-issues the cookie, so gating it on the revocation-blind HMAC check let a
+  // session UN-REVOKE ITSELF: after a force-reset (password_changed_at stamped,
+  // every issued cookie rejected by getAdminSession, the account refused at login),
+  // whoever held the stolen cookie plus the current password could POST here,
+  // pass the pure-crypto check, clear the forced-rotation flag, and walk away with
+  // a freshly signed 14-day session — defeating the exact eviction the flag exists
+  // to perform, and locking the real owner out behind the attacker's new password.
+  //
+  // getAdminSession re-reads the row, so it enforces is_active AND the
+  // password_changed_at cutoff. It is deliberately not requireVerifiedAdmin: every
+  // role, viewers included, must be able to change their OWN password.
+  const adminSession = await getAdminSession()
+  if (!adminSession) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const userId = getVerifiedUserId(session)
+  const userId = adminSession.userId
   if (!userId) {
     return NextResponse.json({ error: 'Super admin password is set via environment variable' }, { status: 403 })
   }
@@ -43,11 +54,16 @@ export async function POST(req: NextRequest) {
   }
 
   const db = createAdminClient()
+  // is_active filter: without it a DEACTIVATED admin could still rotate their own
+  // password here and be handed a freshly signed session, re-authenticating an
+  // account that was switched off. maybeSingle per CLAUDE.md — .single() 406s
+  // rather than returning null when the row is filtered out.
   const { data: user } = await db
     .from('users')
     .select('id, role, password_hash')
     .eq('id', userId)
-    .single()
+    .eq('is_active', true)
+    .maybeSingle()
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
@@ -56,10 +72,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 })
   }
 
-  // Capture identity for the audit row BEFORE stamping password_changed_at — the
-  // stamp revokes sessions minted before it, so getAdminSession would reject this
-  // request's own cookie afterwards.
-  const adminSession = await getAdminSession()
+  // Identity for the audit row was captured by the gate at the top of this handler,
+  // which is also BEFORE password_changed_at is stamped — re-reading it here would
+  // return null, because the stamp revokes every session minted before it including
+  // this request's own cookie.
 
   // Stamp password_changed_at so a self-service change also satisfies forced
   // rotation and invalidates OTHER sessions; must_reset_password:false clears any

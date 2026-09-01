@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import { getAdminSession, isAdminAuthed } from '@/lib/auth'
+import { getAdminSession, isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
-import { SECRET_FIELDS, maskSecrets, isUnchangedSecret } from '@/lib/secretMask'
+import { SECRET_FIELDS, maskSecrets, isUnchangedSecret, isClearedSecret } from '@/lib/secretMask'
 
 // This file used to define its OWN isAdminAuthed that shadowed the imported one
 // and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
@@ -46,10 +46,17 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // requireWriteAdmin, not isAdminAuthed. This route writes every agency credential
+  // — stripe_api_key, stripe_webhook_secret, ai_api_key, serp_api_key — plus
+  // notification_email and the cron flags. isAdminAuthed is a pure HMAC check: it
+  // reads no row, so it cannot see role (a read-only viewer passed it and could
+  // substitute the agency's payment and AI credentials and redirect every alert),
+  // and it cannot see password_changed_at or is_active either, so a force-reset or
+  // deactivated account holding a stale 14-day cookie wrote here too. The same gate
+  // already protects lower-value actions in this branch: purge, note-delete, and
+  // MCP-token minting.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
 
   const body = await parseBody<Record<string, unknown>>(request)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
@@ -98,9 +105,14 @@ export async function PUT(request: NextRequest) {
   const secretKeys = SECRET_FIELDS as readonly string[]
   for (const key of allowed) {
     if (body[key] === undefined) continue
-    // A secret returned as the mask (or blank) means "leave the stored key alone" —
-    // never overwrite a live key with the mask or wipe it by omission.
-    if (secretKeys.includes(key) && isUnchangedSecret(body[key])) continue
+    if (secretKeys.includes(key)) {
+      // The mask means "untouched card re-saved" — never overwrite a live key with
+      // the mask itself.
+      if (isUnchangedSecret(body[key])) continue
+      // A deliberately blanked field means REVOKE. Persist null rather than '' so
+      // the column reads as unset to maskSecrets and to every `!!value` check.
+      if (isClearedSecret(body[key])) { patch[key] = null; continue }
+    }
     patch[key] = body[key]
   }
 

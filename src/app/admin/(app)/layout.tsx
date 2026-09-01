@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import type { Metadata } from 'next'
+import { redirect } from 'next/navigation'
 import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'
@@ -35,7 +36,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // dropped unreliably in the cross-origin iframe, so a stale value could outlive
   // the session that set it.
   const adminSession = await getAdminSession()
-  const userId = adminSession?.userId ?? null
+
+  // No session means unauthenticated, deactivated, or revoked (getAdminSession
+  // enforces is_active and the password_changed_at cutoff). Without this redirect
+  // the layout carried on and every `?? default` below took over: the shell rendered
+  // in full and the sidebar labelled the visitor "Super Admin / Master account",
+  // which is both a broken gate and the most misleading possible way to fail.
+  // Middleware bounces these requests first; this is the defence in depth that does
+  // not depend on the matcher staying correct.
+  if (!adminSession) redirect('/admin')
+
+  const userId = adminSession.userId ?? null
 
   // Resolve current user, agency settings, and unread alert count concurrently
   const [settingsResult, sessionUserResult, alertCountResult] = await Promise.all([

@@ -21,8 +21,23 @@ export function resolveSessionSecret(): string {
   const explicit = process.env.SESSION_SECRET
   if (explicit) return explicit
 
-  if (process.env.NODE_ENV === 'production') return ''
+  // Any deployment on Vercel — production AND preview — gets NO fallback.
+  //
+  // The previous test was NODE_ENV === 'production', which Vercel also sets on
+  // PREVIEW builds, so the "local/preview convenience" fallback below was already
+  // unreachable there: a preview without its own SESSION_SECRET returned '', which
+  // 503s login and puts middleware into a redirect loop. Widening the fallback to
+  // cover preview would be the wrong repair, because previews point at the SAME
+  // Supabase project as production — signing with ADMIN_PASSWORD, a value that rode
+  // on every admin request before signed sessions shipped and may sit in Vercel/WAF
+  // logs and HAR exports, would let anyone holding an old cookie mint
+  // { isSuperAdmin: true } against live data.
+  //
+  // So: set SESSION_SECRET in Vercel for ALL environments (Production, Preview and
+  // Development). VERCEL is set on every Vercel runtime and unset locally, which is
+  // exactly the line we want the fallback to stop at.
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') return ''
 
-  // Local/preview convenience only.
+  // Local `npm run dev` only.
   return process.env.ADMIN_PASSWORD || ''
 }

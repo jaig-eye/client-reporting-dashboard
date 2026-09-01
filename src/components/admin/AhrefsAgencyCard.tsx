@@ -3,8 +3,13 @@
 import { useState } from 'react'
 import IntegrationCard  from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
+import { SECRET_MASK }  from '@/lib/secretMask'
 
 interface Props {
+  /** SECRET_MASK when a key is stored, '' when not — NEVER the key itself. This is
+   *  a client component, so anything passed here is serialized into the RSC flight
+   *  payload embedded in the page HTML and into React state: readable by any
+   *  extension, any saved HAR, any screenshot, and anyone who can render the page. */
   initialApiKey:   string
   connectorId?:    string
 }
@@ -16,12 +21,22 @@ export default function AhrefsAgencyCard({ initialApiKey, connectorId }: Props) 
   const [justSaved,   setJustSaved]   = useState(false)
 
   async function handleSave() {
-    const url  = connectorId
-      ? `/api/admin/connectors/${connectorId}`
-      : '/api/admin/connections/new'
+    // The field still holds the mask ⇒ the key was not retyped ⇒ nothing to save.
+    // Returning early also avoids the PATCH route's "No fields to update" 400.
+    const trimmed = apiKey.trim()
+    if (trimmed === SECRET_MASK) { setIsConnected(true); return }
+
+    // Endpoints and body shape must match DataForSeoAgencyCard, which is the working
+    // reference. This card previously POSTed to /api/admin/connections/new — a path
+    // with no route file, so creating an Ahrefs connector 404'd — and PATCHed
+    // `{ auth: … }`, which the connectors route ignores entirely (it reads
+    // `auth_patch`, merging into the stored object so OAuth tokens are not clobbered),
+    // leaving `update` empty and returning 400 "No fields to update". Saving an
+    // Ahrefs key therefore failed in both directions.
+    const url  = connectorId ? `/api/admin/connectors/${connectorId}` : '/api/admin/connectors'
     const body = connectorId
-      ? { auth: { api_key: apiKey.trim() } }
-      : { type: 'ahrefs', label: 'Ahrefs', auth: { api_key: apiKey.trim() } }
+      ? { auth_patch: { api_key: trimmed } }
+      : { type: 'ahrefs', label: 'Ahrefs', auth: { api_key: trimmed } }
 
     const res = await fetch(url, {
       method:  connectorId ? 'PATCH' : 'POST',
@@ -32,7 +47,7 @@ export default function AhrefsAgencyCard({ initialApiKey, connectorId }: Props) 
       const d = await res.json().catch(() => ({}))
       throw new Error((d as { error?: string }).error || 'Save failed')
     }
-    setIsConnected(!!apiKey.trim())
+    setIsConnected(!!trimmed)
   }
 
   return (

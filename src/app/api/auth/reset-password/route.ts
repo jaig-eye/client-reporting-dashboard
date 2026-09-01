@@ -101,8 +101,26 @@ export async function POST(request: NextRequest) {
     // attempts + 1 ... RETURNING`, burning the code at MAX_RESET_ATTEMPTS). A
     // client-side read-modify-write would lose updates under concurrency and never
     // reach the cap, so K parallel guesses would only advance the counter by 1.
-    // Swallowed if the RPC/column is not deployed yet — the per-IP limiter still applies.
-    await db.rpc('consume_reset_attempt', { p_token_id: token.id, p_max: MAX_RESET_ATTEMPTS }).then(null, () => {})
+    //
+    // The error is INSPECTED, not swallowed. supabase-js RESOLVES with
+    // { data: null, error } on a Postgres/PostgREST failure rather than rejecting,
+    // so the previous `.then(null, () => {})` rejection handler was dead code: if
+    // this RPC is missing (code deployed ahead of migration 207 — every sibling
+    // path here carries a deploy-order fallback for exactly that reason) PostgREST
+    // answers PGRST202, nothing is logged, the route returns its usual 400, and the
+    // per-token cap is silently inert. That leaves a 6-digit code with a 10-minute
+    // life bounded only by the per-IP limiter, which this file's own header notes a
+    // distributed guesser sidesteps. Log loudly so a half-deployed state is visible.
+    const { error: chargeErr } = await db.rpc('consume_reset_attempt', {
+      p_token_id: token.id,
+      p_max: MAX_RESET_ATTEMPTS,
+    })
+    if (chargeErr) {
+      console.error(
+        '[reset-password] consume_reset_attempt failed — the per-token brute-force cap is NOT being enforced. ' +
+        'Apply migrations 197 and 207. Error:', chargeErr.message,
+      )
+    }
     return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 })
   }
 

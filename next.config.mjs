@@ -42,6 +42,12 @@ const nextConfig = {
         source: '/admin/:path*',
         headers: [
           { key: 'Cache-Control', value: 'no-store, no-cache, max-age=0, must-revalidate' },
+          // Same allowlist as the /admin block above, which only matched the exact
+          // login path — so every page that actually holds data (/admin/dashboard,
+          // /admin/clients/[id], /admin/connections, /admin/settings) shipped with
+          // no frame-ancestors at all and could be framed by any origin. Identical
+          // value, so the CRM iframe at golaunchlocal.com is unaffected.
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self' https://golaunchlocal.com https://*.golaunchlocal.com" },
         ],
       },
       {

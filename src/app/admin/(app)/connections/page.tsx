@@ -50,9 +50,14 @@ export default async function ConnectionsPage({
     discord_bot_token?: string; discord_ops_channel_id?: string
   } | null
 
-  // Ahrefs connector (if any)
+  // Ahrefs connector (if any). Only ever expose WHETHER a key is set, never the key:
+  // AhrefsAgencyCard is a client component, so its props are serialized into the RSC
+  // flight payload embedded in this page's HTML. The agency_settings secrets a few
+  // lines below are masked for exactly this reason; the connector key sat on the same
+  // page, in the same render, in cleartext.
   const ahrefsConnector = existing.find(c => c.type === 'ahrefs')
-  const ahrefsApiKey    = ahrefsConnector ? String((ahrefsConnector.auth as Record<string, unknown>)?.api_key ?? '') : ''
+  const ahrefsHasKey    = !!String((ahrefsConnector?.auth as Record<string, unknown> | undefined)?.api_key ?? '')
+  const ahrefsApiKey    = ahrefsHasKey ? SECRET_MASK : ''
 
   // DataForSEO connector (if any)
   const dfsConnector = existing.find(c => c.type === 'dataforseo')
