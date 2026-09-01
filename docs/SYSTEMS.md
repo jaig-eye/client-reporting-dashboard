@@ -18,7 +18,7 @@
 | `CRON_SECRET` | yes | Bearer token for Vercel cron job authorization | All `/api/cron/*` routes |
 | `INGEST_SECRET` | yes | `x-ingest-secret` header for MCC push endpoints | `/api/ingest/google`, `/api/ingest/meta` |
 | `ADFUEL_API_KEY` | yes | `x-api-key` header for the GHL sidebar widget | `/api/adfuel` |
-| `PEXELS_API_KEY` | no (recommended) | Free stock photos offered in the review drawer as an alternative to the AI-generated featured image. Openverse and Wikimedia Commons always run and need no key; Pexels is the highest-quality source and is the only one that covers industrial/B2B topics well. Free key from pexels.com/api, 25k req/month. Unset ⇒ Pexels is skipped and the other two still work. | `lib/content/stockImages.ts` |
+| `PEXELS_API_KEY` | no (recommended) | Free stock photos offered in the review drawer as an alternative to the AI-generated featured image. Openverse and Wikimedia Commons always run and need no key; Pexels is the highest-quality source and is the only one that covers industrial/B2B topics well. Free key from pexels.com/api; the free tier is 200 req/hour and 20,000/month, and the hourly cap is the reachable one. Unset ⇒ Pexels is skipped and the other two still work. | `lib/content/stockImages.ts` |
 | `MAILGUN_SMTP_HOST` | yes | SMTP host (default `smtp.mailgun.org`) | `lib/email.ts` |
 | `MAILGUN_SMTP_PORT` | yes | SMTP port (default `587`) | `lib/email.ts` |
 | `MAILGUN_SMTP_USER` | yes | SMTP username | `lib/email.ts` |

@@ -858,6 +858,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setFeaturedImageUrl(data.url ?? '')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not apply that image')
+      // RETHROW. The modal awaits this and closes on resolve, so swallowing the error
+      // here made a failed apply look identical to a success — the modal shut and the
+      // only signal was an error banner at the top of a scrolled-down panel, reading as
+      // "my click didn't register". Failures are real: a dead provider CDN 502s, a slow
+      // one times out, a stale candidate id 400s. The modal catches this and stays open.
+      throw err
     } finally {
       setApplyingStockId(null)
     }
@@ -870,7 +876,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     setError('')
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/generate-image`, { method: 'POST' })
-      const data = await res.json() as { url?: string; error?: string }
+      const data = await res.json() as { url?: string; error?: string; candidates?: StockImageCandidate[] }
+      // Generating also REWRITES the stored candidates as a side effect, so adopt the
+      // returned list even when generation failed. Without this the strip keeps showing
+      // tiles that no longer exist server-side, and each one 400s on click.
+      if (data.candidates) { setImageCandidates(data.candidates); setStockMessage('') }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Image generation failed')
       setFeaturedImageUrl(data.url ?? '')
       setIsDirty(true)
@@ -1212,7 +1222,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             key={c.id}
                             type="button"
                             disabled={!!applyingStockId}
-                            onClick={() => handleSelectStockImage(c.id)}
+                            // handleSelectStockImage rethrows so the modal can stay open
+                            // on failure; it has already set the error banner by then,
+                            // so the inline strip just needs to absorb the rejection.
+                            onClick={() => { void handleSelectStockImage(c.id).catch(() => {}) }}
                             title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} (CC ${c.license.toUpperCase()})`}
                             style={{
                               padding: 0, border: '1px solid var(--border)', borderRadius: 6,
@@ -1682,7 +1695,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           initialQuery={targetKeyword || seoTitle || title || ''}
           onClose={() => setStockModalOpen(false)}
           onSelect={handleSelectStockImage}
-          onResults={setImageCandidates}
+          // Clear the inline caption alongside the list, or a stale "Found 5 free
+          // images." is unhidden above an empty strip when a modal search finds nothing.
+          onResults={c => { setImageCandidates(c); setStockMessage('') }}
         />
       )}
     </>

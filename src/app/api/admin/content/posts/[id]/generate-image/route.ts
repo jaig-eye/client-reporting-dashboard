@@ -26,8 +26,24 @@ export async function POST(
 
   const result = await generatePostImage(db, id, (agency as { openai_api_key?: string | null } | null)?.openai_api_key)
 
-  if (!result.ok)
-    return NextResponse.json({ error: result.error }, { status: 422 })
+  // generatePostImage ALSO rewrites image_candidates as a side effect (it awaits the
+  // stock search before returning), at the strict automatic floor and cap. Read the new
+  // list back and return it so the client can re-render its picker: a reviewer who had
+  // just run a manual search would otherwise be looking at up to 24 tiles of which only
+  // the first 8 still exist in the stored list, and every stale tile 400s on click with
+  // nothing on screen explaining why. Returned on the failure path too, because the
+  // overwrite happens there as well.
+  const { data: fresh } = await db
+    .from('content_posts')
+    .select('image_candidates')
+    .eq('id', id)
+    .maybeSingle()
+  const candidates = Array.isArray((fresh as { image_candidates?: unknown } | null)?.image_candidates)
+    ? (fresh as { image_candidates: unknown[] }).image_candidates
+    : []
 
-  return NextResponse.json({ url: result.url, prompt: result.prompt, provider: result.provider })
+  if (!result.ok)
+    return NextResponse.json({ error: result.error, candidates }, { status: 422 })
+
+  return NextResponse.json({ url: result.url, prompt: result.prompt, provider: result.provider, candidates })
 }

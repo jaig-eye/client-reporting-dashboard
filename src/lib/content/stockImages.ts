@@ -4,31 +4,32 @@
 // An alternative to AI generation, not a replacement: the reviewer picks a real
 // photograph when one genuinely fits, and keeps the generated image when none does.
 //
-// TWO SOURCES, BECAUSE THEY FAIL IN OPPOSITE PLACES
-//   • Openverse  — ~700M images, mostly Flickr/Wikimedia consumer photography. Strong
-//                  on consumer and outdoor subjects (lawn care, detailing, awnings).
-//   • Wikimedia Commons — reference and documentary photography. Strong on exactly the
-//                  industrial and technical subjects Openverse cannot serve.
-// Measured on the live APIs: "powder coating" returns Palak Paneer, baked aubergine and
-// blondies from Openverse, and ten genuinely on-topic industrial photographs from
-// Commons. Querying only one source is why coverage felt so thin.
-// Neither needs an API key.
+// THREE SOURCES, BECAUSE THEY FAIL IN DIFFERENT PLACES
+//   • Pexels   — modern commercial stock, by far the highest quality, and the only one
+//                that covers industrial/B2B subjects well. Needs a free API key; absent,
+//                it self-skips and the other two still run.
+//   • Openverse — ~700M CC images, mostly Flickr. Strong on consumer/outdoor subjects.
+//   • Wikimedia Commons — reference and documentary photography. Strong on technical
+//                subjects. No key.
+// Measured on the live APIs, "powder coating oven" returns: Palak Paneer and baked
+// aubergine from Openverse, a public-domain oven interior from Commons, and three
+// 6000x4000 frames of a technician applying powder coating from Pexels.
 //
 // RELEVANCE IS THE WHOLE PROBLEM AND IT IS HANDLED HERE
-// Openverse ORs query terms across its corpus, so a niche query returns confident
-// nonsense. Ranking by term overlap against title+tags and discarding anything below
-// RELEVANCE_FLOOR separates signal from noise cleanly. Returning NOTHING is always
-// better than returning a plausible wrong photo, so the floor is never relaxed to fill
-// slots — a reviewer offered six irrelevant images stops trusting the feature.
+// These APIs OR the query terms across large general corpora, so a niche query returns
+// confident nonsense. Candidates must clear both a ratio floor AND an absolute minimum
+// number of matched terms. Returning NOTHING is always better than returning a
+// plausible wrong photo — a reviewer shown six irrelevant images stops trusting the
+// feature — so the bar is never lowered to fill slots.
 //
 // QUERY LADDER
-// Long queries are the other half of the recall problem: "powder coating oven" found 1
-// photo on Commons, "powder coating" found 10. So queries are tried specific-first and
-// progressively shortened, stopping as soon as enough candidates are found. Shortened
-// queries are still derived from the POST's own topic, which is what makes them safe —
-// an earlier version fell back to the client's *industry*, and a powder-coating article
-// filled every slot with photos of school metalwork students that scored perfectly
-// against "metal fabrication". An industry is not a subject.
+// Long queries are the other half of the recall problem: Commons found 1 photo for
+// "powder coating oven" and 10 for "powder coating". Queries are tried specific-first
+// and progressively shortened, stopping once enough DISTINCT candidates exist. Every
+// rung is still derived from THIS post's topic, never the client's industry — an
+// earlier version fell back to the industry and a powder-coating article filled every
+// slot with photos of school metalwork students that scored perfectly against "metal
+// fabrication". An industry is not a subject.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -38,6 +39,16 @@ const COMMONS_ENDPOINT   = 'https://commons.wikimedia.org/w/api.php'
 const REQUEST_TIMEOUT_MS = 6000
 /** Fraction of the query's meaningful terms that must appear in title/tags. */
 const RELEVANCE_FLOOR = 0.5
+/**
+ * Absolute number of terms that must match, independent of the ratio.
+ *
+ * Without this the bar silently HALVES as the ladder shortens the query: the score is
+ * hits/terms.length, so the requirement falls from 4-of-8 to 2-of-3 to 1-of-2 while the
+ * floor stays at 0.5. A photo captioned "Baking powder, flour and sugar for blondies"
+ * scores exactly 0.5 against the rung "powder coating" and was admitted — the very
+ * result this module exists to reject.
+ */
+const MIN_TERM_HITS   = 2
 const MAX_CANDIDATES  = 8
 /** Below this, an image is a thumbnail, icon or diagram rather than a usable photo. */
 const MIN_WIDTH  = 600
@@ -54,8 +65,14 @@ const STOP_WORDS = new Set([
   'requirements','checklist','explained','everything','common','things','ways','steps',
 ])
 
+/** Which library a candidate came from. Distinct from `provider`, which is the UPSTREAM
+ *  host Openverse aggregated it from ('flickr', 'museumsvictoria', …) and is therefore
+ *  useless for ranking or labelling. */
+export type StockSource = 'pexels' | 'openverse' | 'wikimedia'
+
 export interface StockImageCandidate {
   id:          string
+  source:      StockSource
   title:       string
   url:         string
   thumbnail:   string
@@ -63,6 +80,7 @@ export interface StockImageCandidate {
   license:     string
   licenseUrl:  string | null
   sourceUrl:   string | null
+  /** Upstream host, for display detail only. */
   provider:    string | null
   width:       number | null
   height:      number | null
@@ -78,11 +96,30 @@ function meaningfulTerms(q: string): string[] {
     .filter(t => t.length > 2 && !STOP_WORDS.has(t))
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Term-overlap score, 0-1, with two guards that plain substring matching lacks.
+ *
+ * WORD-PREFIX MATCHING, not `includes()`. Bare substring matching scored 'oven' against
+ * "A proven method", 'led' against "Newly installed lighting" and 'ice' against
+ * "Customer service desk" — and because Openverse's haystack is the whole tag list, a
+ * food photo tagged "oven, coating, service" scored 0.667 for "powder coating oven" on
+ * pure noise. A leading \b is the right boundary rather than \b…\b: it still matches
+ * "sprinklers" for 'sprinkler', which a trailing boundary would reject.
+ *
+ * ABSOLUTE MINIMUM, not just the ratio — see MIN_TERM_HITS.
+ */
 function scoreAgainst(haystack: string, terms: string[]): number {
   if (terms.length === 0) return 0
   const hay = haystack.toLowerCase()
   let hits = 0
-  for (const t of terms) if (hay.includes(t)) hits++
+  for (const t of terms) {
+    if (new RegExp(`\\b${escapeRegex(t)}`).test(hay)) hits++
+  }
+  if (hits < Math.min(MIN_TERM_HITS, terms.length)) return 0
   return hits / terms.length
 }
 
@@ -93,7 +130,9 @@ function bigEnough(w: number | null, h: number | null): boolean {
   return w >= MIN_WIDTH && h >= MIN_HEIGHT
 }
 
-async function getJson(url: string): Promise<unknown | null> {
+interface FetchResult { json: unknown | null; status: number }
+
+async function getJson(url: string): Promise<FetchResult> {
   const ctrl  = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -102,16 +141,23 @@ async function getJson(url: string): Promise<unknown | null> {
       signal: ctrl.signal,
       cache: 'no-store',
     })
-    // Both APIs are anonymous and rate-limited. Any failure yields no candidates and
-    // must never delay or break image generation.
+    // Every source is rate-limited. Any failure yields no candidates and must never
+    // delay or break image generation. The status is returned so the caller can tell a
+    // throttle apart from a genuine miss.
     if (!res.ok) {
       console.warn(`[stockImages] ${new URL(url).hostname} returned ${res.status}`)
-      return null
+      return { json: null, status: res.status }
     }
-    return await res.json()
+    try {
+      return { json: await res.json(), status: res.status }
+    } catch {
+      // A source returning an HTML error page with a 200 would otherwise throw here.
+      console.warn(`[stockImages] ${new URL(url).hostname} returned unparseable JSON`)
+      return { json: null, status: res.status }
+    }
   } catch (e) {
     console.warn(`[stockImages] request failed:`, e instanceof Error ? e.message : e)
-    return null
+    return { json: null, status: 0 }
   } finally {
     clearTimeout(timer)
   }
@@ -127,31 +173,36 @@ interface OpenverseResult {
   tags?: { name?: string }[]
 }
 
-async function searchOpenverse(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
+async function searchOpenverse(
+  q: string, terms: string[], floor: number,
+): Promise<{ results: StockImageCandidate[]; rateLimited: boolean }> {
   const params = new URLSearchParams({
     q,
     // BOTH filters, not just 'commercial'. Commercial alone still returns NoDerivatives
     // (by-nd) results — verified: "What the grass sees...", "Retractable Patio Cover"
     // and "TVR Tuscan detail" all came back under it. A featured image gets cropped and
     // resized, which is exactly what ND forbids, so those are unusable here even though
-    // the commercial box is ticked. Adding 'modification' restricts to licences that
-    // permit both, which is what publishing on a client's site actually requires.
+    // the commercial box is ticked.
     license_type: 'commercial,modification',
     filter_dead:  'true',
     mature:       'false',
     page_size:    '12',
   })
-  const json = await getJson(`${OPENVERSE_ENDPOINT}?${params}`) as { results?: OpenverseResult[] } | null
-  if (!json?.results) return []
+  const { json, status } = await getJson(`${OPENVERSE_ENDPOINT}?${params}`)
+  if (status === 429) return { results: [], rateLimited: true }
+
+  const results = (json as { results?: OpenverseResult[] } | null)?.results
+  if (!results) return { results: [], rateLimited: false }
 
   const out: StockImageCandidate[] = []
-  for (const r of json.results) {
+  for (const r of results) {
     if (!r.id || !r.url || !r.thumbnail) continue
     if (!bigEnough(r.width ?? null, r.height ?? null)) continue
     const relevance = scoreAgainst(`${r.title ?? ''} ${(r.tags ?? []).map(t => t.name ?? '').join(' ')}`, terms)
     if (relevance < floor) continue
     out.push({
       id: `ov:${r.id}`,
+      source: 'openverse',
       title: r.title ?? '(untitled)',
       url: r.url,
       thumbnail: r.thumbnail,
@@ -159,7 +210,7 @@ async function searchOpenverse(q: string, terms: string[], floor: number): Promi
       license: r.license ?? 'unknown',
       licenseUrl: r.license_url ?? null,
       sourceUrl: r.foreign_landing_url ?? null,
-      provider: r.provider ?? 'openverse',
+      provider: r.provider ?? null,
       width: r.width ?? null,
       height: r.height ?? null,
       attribution: r.attribution ?? null,
@@ -167,7 +218,7 @@ async function searchOpenverse(q: string, terms: string[], floor: number): Promi
       matchedQuery: q,
     })
   }
-  return out
+  return { results: out, rateLimited: false }
 }
 
 // ── Pexels ───────────────────────────────────────────────────────────────────
@@ -180,24 +231,23 @@ interface PexelsPhoto {
 }
 
 /**
- * Modern commercial stock. Needs a free API key (PEXELS_API_KEY); absent, this source
- * is simply skipped and the two keyless sources still run.
+ * Modern commercial stock. Needs a free API key (PEXELS_API_KEY); absent, this source is
+ * skipped and the two keyless sources still run.
  *
- * Ranked above the others when relevance ties, because the quality gap is not marginal:
- * for "powder coating oven" Openverse offered Palak Paneer, Commons offered a public-
- * domain photo of an oven interior, and Pexels offered "Worker in protective gear
- * applying powder coating to metal" at 6000x4000. The Pexels licence also allows
- * commercial use with modification and requires no attribution, so there is nothing to
- * render alongside the image.
+ * Ranked above the others when relevance ties, because the quality gap is not marginal.
+ * The Pexels licence also allows commercial use with modification and requires no
+ * attribution, so there is nothing that must be rendered alongside the image.
  */
-async function searchPexels(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
+async function searchPexels(
+  q: string, terms: string[], floor: number,
+): Promise<{ results: StockImageCandidate[]; rateLimited: boolean }> {
   const key = process.env.PEXELS_API_KEY
-  if (!key) return []
+  if (!key) return { results: [], rateLimited: false }
 
   const params = new URLSearchParams({
     query: q,
     per_page: '12',
-    // Featured images are rendered 16:9, so portrait results are wasted slots.
+    // Featured images render 16:9, so portrait results are wasted slots.
     orientation: 'landscape',
   })
 
@@ -210,14 +260,18 @@ async function searchPexels(q: string, terms: string[], floor: number): Promise<
       signal: ctrl.signal,
       cache: 'no-store',
     })
+    if (res.status === 429) {
+      console.warn('[stockImages] Pexels rate limit reached (200/hour) — skipping remaining rungs')
+      return { results: [], rateLimited: true }
+    }
     if (!res.ok) {
       console.warn(`[stockImages] Pexels returned ${res.status} for "${q}"`)
-      return []
+      return { results: [], rateLimited: false }
     }
     json = await res.json()
   } catch (e) {
     console.warn('[stockImages] Pexels request failed:', e instanceof Error ? e.message : e)
-    return []
+    return { results: [], rateLimited: false }
   } finally {
     clearTimeout(timer)
   }
@@ -228,14 +282,15 @@ async function searchPexels(q: string, terms: string[], floor: number): Promise<
     if (!p.id || !full) continue
     if (!bigEnough(p.width ?? null, p.height ?? null)) continue
 
-    // Pexels supplies a written description rather than tags, and it is unusually
-    // good ("Technician applying powder coating to metal pipes in a workshop"), which
-    // makes it a far better scoring target than a filename.
+    // Pexels supplies a written description rather than tags, and it is unusually good
+    // ("Technician applying powder coating to metal pipes in a workshop"), which makes
+    // it a far better scoring target than a filename.
     const relevance = scoreAgainst(p.alt ?? '', terms)
     if (relevance < floor) continue
 
     out.push({
       id: `px:${p.id}`,
+      source: 'pexels',
       title: p.alt?.trim() || 'Pexels photo',
       url: full,
       thumbnail: p.src?.medium ?? p.src?.large ?? full,
@@ -246,26 +301,23 @@ async function searchPexels(q: string, terms: string[], floor: number): Promise<
       provider: 'pexels',
       width: p.width ?? null,
       height: p.height ?? null,
-      // No attribution is required by the Pexels licence, but crediting the
-      // photographer is good practice and costs nothing to record.
       attribution: p.photographer ? `Photo by ${p.photographer} on Pexels` : 'Photo from Pexels',
       relevance,
       matchedQuery: q,
     })
   }
-  return out
+  return { results: out, rateLimited: false }
 }
 
 // ── Wikimedia Commons ────────────────────────────────────────────────────────
 
 /**
- * Licences that are unambiguously safe to publish on a client's commercial site.
+ * Licences unambiguously safe to publish on a client's commercial site.
  *
  * Commons mixes far more than CC. The probe surfaced GFDL and "Copyrighted free use"
  * alongside the clean ones — GFDL obliges you to reproduce the entire licence text,
- * which nobody is going to do on a blog post, and the vaguer tags are not worth
- * interpreting on a client's behalf. Anything not matched here is dropped: an
- * unusable photo is worse than no photo, because it looks usable.
+ * which nobody does on a blog post. Anything not matched here is dropped: an unusable
+ * photo is worse than no photo, because it looks usable.
  */
 function commonsLicenceOk(raw: string): boolean {
   const l = raw.toLowerCase()
@@ -292,11 +344,11 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
     gsrlimit: '12',
     prop: 'imageinfo',
     iiprop: 'url|size|extmetadata',
-    iiurlwidth: '400',            // gives us a thumbnail
+    iiurlwidth: '400',
     format: 'json',
   })
-  const json = await getJson(`${COMMONS_ENDPOINT}?${params}`) as { query?: { pages?: Record<string, CommonsPage> } } | null
-  const pages = json?.query?.pages
+  const { json } = await getJson(`${COMMONS_ENDPOINT}?${params}`)
+  const pages = (json as { query?: { pages?: Record<string, CommonsPage> } } | null)?.query?.pages
   if (!pages) return []
 
   const out: StockImageCandidate[] = []
@@ -304,9 +356,9 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
     const ii = page.imageinfo?.[0]
     if (!ii?.url) continue
 
-    // Commons holds SVG diagrams, PDFs, audio and video in the same namespace. Match
-    // the extension allowing for the tracking query-string Commons appends — anchoring
-    // on end-of-string alone silently rejected every single result.
+    // Commons holds SVG diagrams, PDFs, audio and video in the same namespace. Match the
+    // extension allowing for the tracking query-string Commons appends — anchoring on
+    // end-of-string alone silently rejected every single result.
     if (!/\.(jpe?g|png|webp)(\?|$)/i.test(ii.url)) continue
     if (!bigEnough(ii.width ?? null, ii.height ?? null)) continue
 
@@ -315,16 +367,16 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
     if (!commonsLicenceOk(licence)) continue
 
     const title = (page.title ?? '').replace(/^File:/, '').replace(/\.(jpe?g|png|webp)$/i, '')
-    // Commons search matches the file's whole description page, so score against the
-    // title and the categories rather than trusting the search rank.
+    // Commons search matches the whole description page, so score against the title and
+    // categories rather than trusting the search rank.
     const relevance = scoreAgainst(`${title} ${md.Categories?.value ?? ''}`, terms)
     if (relevance < floor) continue
 
-    const artistHtml = md.Artist?.value ?? ''
-    const creator    = artistHtml.replace(/<[^>]*>/g, '').trim() || null
+    const creator = (md.Artist?.value ?? '').replace(/<[^>]*>/g, '').trim() || null
 
     out.push({
       id: `wc:${title}`,
+      source: 'wikimedia',
       title,
       url: ii.url,
       thumbnail: ii.thumburl ?? ii.url,
@@ -349,8 +401,8 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
  * Build the query ladder: specific first, then progressively shorter.
  *
  * Shortening is what rescues narrow topics — Commons found 1 photo for "powder coating
- * oven" and 10 for "powder coating". Every rung is still derived from THIS post's
- * topic, never from the client's industry, so a broader rung stays on-subject.
+ * oven" and 10 for "powder coating". Every rung is still derived from THIS post's topic,
+ * never the client's industry, so a broader rung stays on-subject.
  */
 function buildQueryLadder(ctx: {
   targetKeyword?: string | null
@@ -370,12 +422,48 @@ function buildQueryLadder(ctx: {
   for (const seed of seeds) {
     push(seed)
     const terms = meaningfulTerms(seed)
-    // Head noun phrase, then the two-word core. Anything shorter is too generic to
-    // stay on-subject and starts behaving like the industry fallback that was removed.
+    // Head noun phrase, then the two-word core. Anything shorter is too generic to stay
+    // on-subject and starts behaving like the industry fallback that was removed.
     if (terms.length > 3) push(terms.slice(0, 3).join(' '))
     if (terms.length > 2) push(terms.slice(0, 2).join(' '))
   }
   return ladder
+}
+
+/**
+ * Collapse near-duplicates.
+ *
+ * Providers hold whole photo sets under one title — "Visit to Atlantic Canvas and
+ * Awning" returned four consecutive frames — so without this a single set consumes every
+ * slot and the reviewer sees one picture eight times instead of a choice.
+ *
+ * Grouped on the first four MEANINGFUL title words. Using raw words collapsed three
+ * distinct Commons photos onto "mowing the lawn geographorguk", where the distinguishing
+ * id was the fifth token, and collided unrelated Pexels photos whose alt sentences share
+ * an opening like "Close-up of vibrant coloured…". Titles too short to yield two
+ * meaningful words fall back to the id, which never collides.
+ *
+ * Openverse also INDEXES Commons, so the same photograph can arrive twice under slightly
+ * different titles; normalising the "File:" prefix and extension catches that.
+ */
+function dedupe(list: StockImageCandidate[], limit: number): StockImageCandidate[] {
+  // Relevance first, then source quality. The tiebreak matters: at equal relevance a
+  // Pexels photo is professionally shot while an Openverse hit is often a 1024px Flickr
+  // snapshot, so ordering by relevance alone buried the better picture.
+  const SOURCE_RANK: Record<StockSource, number> = { pexels: 0, wikimedia: 1, openverse: 2 }
+
+  const seen = new Set<string>()
+  const out: StockImageCandidate[] = []
+  for (const c of [...list].sort((a, b) =>
+    (b.relevance - a.relevance) || (SOURCE_RANK[a.source] - SOURCE_RANK[b.source]))) {
+    const words = meaningfulTerms(c.title.replace(/^file:/i, '').replace(/\.(jpe?g|png|webp)$/i, ''))
+    const group = words.length >= 2 ? words.slice(0, 4).join(' ') : c.id
+    if (seen.has(group)) continue
+    seen.add(group)
+    out.push(c)
+    if (out.length >= limit) break
+  }
+  return out
 }
 
 /**
@@ -392,78 +480,54 @@ export async function findStockImageCandidates(
   },
   opts?: {
     /**
-     * Override the relevance floor. Automatic searches keep the strict default,
-     * because an unattended result becomes a suggestion the reviewer has to
-     * disbelieve. A MANUAL search is different — the person typed the query and is
-     * looking at thumbnails, so they are the filter and a stricter floor just hides
-     * things they asked for.
+     * Override the relevance floor. Automatic searches keep the strict default, because
+     * an unattended result becomes a suggestion the reviewer has to disbelieve. A MANUAL
+     * search is different — the person typed the query and is looking at thumbnails, so
+     * they are the filter and a stricter floor just hides what they asked for.
      */
     minRelevance?: number
     /** Manual searches want breadth; the automatic strip wants a short, strong set. */
     limit?: number
   },
 ): Promise<StockImageCandidate[]> {
-  const floor = opts?.minRelevance ?? RELEVANCE_FLOOR
-  const limit = opts?.limit ?? MAX_CANDIDATES
+  const floor  = opts?.minRelevance ?? RELEVANCE_FLOOR
+  const limit  = opts?.limit ?? MAX_CANDIDATES
   const ladder = buildQueryLadder(ctx)
   if (ladder.length === 0) return []
 
   const byId = new Map<string, StockImageCandidate>()
+  // Once a source has throttled, every further rung against it is a guaranteed 429 that
+  // costs latency and burns quota for nothing. Openverse's anonymous allowance in
+  // particular is small (about 5 requests/hour burst), so a single ladder can exhaust it.
+  let pexelsBlocked    = false
+  let openverseBlocked = false
 
   for (const q of ladder) {
     const terms = meaningfulTerms(q)
     if (terms.length === 0) continue
 
-    // All three in parallel — they are independent, so the rung costs one round trip
-    // rather than three. Pexels self-skips when no key is configured.
+    // Sources run in parallel — they are independent, so a rung costs one round trip
+    // rather than three.
     const [px, ov, wc] = await Promise.all([
-      searchPexels(q, terms, floor),
-      searchOpenverse(q, terms, floor),
+      pexelsBlocked    ? Promise.resolve({ results: [], rateLimited: false }) : searchPexels(q, terms, floor),
+      openverseBlocked ? Promise.resolve({ results: [], rateLimited: false }) : searchOpenverse(q, terms, floor),
       searchCommons(q, terms, floor),
     ])
+    if (px.rateLimited) pexelsBlocked    = true
+    if (ov.rateLimited) openverseBlocked = true
 
-    for (const c of [...px, ...ov, ...wc]) {
+    for (const c of [...px.results, ...ov.results, ...wc]) {
       const existing = byId.get(c.id)
       if (!existing || existing.relevance < c.relevance) byId.set(c.id, c)
     }
 
-    if (byId.size >= limit) break
+    // Break on the DEDUPLICATED count, not on byId.size. Counting raw entries let a
+    // single photo set fill the quota, stop the ladder, and then collapse to two or
+    // three tiles — skipping the broader rungs that exist to rescue exactly that case.
+    if (dedupe(Array.from(byId.values()), limit).length >= limit) break
   }
 
-  // Collapse near-duplicates before trimming. Providers hold whole photo sets under one
-  // title — "Visit to Atlantic Canvas and Awning" returned four consecutive frames, and
-  // "Metal Fabrication students of Coonabarabran" five — so without this a single set
-  // consumes every slot and the reviewer is shown one picture eight times instead of a
-  // choice. Keyed on creator + title stem, which is what those sets share.
-  // Sort by relevance, then by source quality. The tiebreak matters: at equal relevance
-  // a Pexels photograph is a professionally shot, correctly exposed, licence-clean image
-  // and an Openverse hit is often a 1024px Flickr snapshot, so ordering by relevance
-  // alone would bury the better picture below an equally-scoring worse one.
-  const SOURCE_RANK: Record<string, number> = { pexels: 0, wikimedia: 1 }
-  const rank = (c: StockImageCandidate) => SOURCE_RANK[c.provider ?? ''] ?? 2
-
-  const seenGroup = new Set<string>()
-  const deduped: StockImageCandidate[] = []
-  for (const c of Array.from(byId.values())
-    .sort((a, b) => (b.relevance - a.relevance) || (rank(a) - rank(b)))) {
-    // Openverse INDEXES Wikimedia Commons, so querying both surfaces the same photograph
-    // twice under slightly different titles — one carrying Commons' "File:" prefix and
-    // extension. Normalise those away before grouping, or the reviewer sees the same
-    // picture in two adjacent tiles. Creator is excluded from the key here because the
-    // two sources attribute the same image differently.
-    const stem = c.title
-      .toLowerCase()
-      .replace(/^file:/, '')
-      .replace(/\.(jpe?g|png|webp)$/i, '')
-      .replace(/[^a-z0-9\s]/g, '')
-      .split(/\s+/).filter(Boolean).slice(0, 4).join(' ')
-    const group = stem
-    if (seenGroup.has(group)) continue
-    seenGroup.add(group)
-    deduped.push(c)
-    if (deduped.length >= limit) break
-  }
-  return deduped
+  return dedupe(Array.from(byId.values()), limit)
 }
 
 /**
@@ -472,8 +536,7 @@ export async function findStockImageCandidates(
  * Deliberately independent of AI image generation. The obvious home for this was inside
  * generatePostImage, but that is gated on content_settings.content_image_generation — so
  * the clients who have AI images switched OFF, precisely the ones who want a non-AI
- * option, would never have been offered any. It is also what makes the on-demand
- * "Find free images" button work for posts that already exist.
+ * option, would never have been offered any.
  *
  * Never throws: a stock search failing must not take down whatever called it.
  */

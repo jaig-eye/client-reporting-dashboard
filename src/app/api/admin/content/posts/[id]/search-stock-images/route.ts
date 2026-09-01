@@ -59,19 +59,29 @@ export async function POST(
     { minRelevance: MANUAL_SEARCH_FLOOR, limit: MANUAL_SEARCH_LIMIT },
   )
 
-  const { error } = await db.from('content_posts')
-    .update({ image_candidates: candidates })
-    .eq('id', id)
+  // NEVER persist an empty result. The modal auto-runs its seeded query on open, so an
+  // unconditional write meant merely OPENING the picker could wipe a good set of stored
+  // candidates — and three ways to get an empty list have nothing to do with the user's
+  // intent: every source timing out or throttling inside the same 6s window, a seed made
+  // entirely of stop words (which skips the rung without a single network call), or a
+  // genuinely-zero query. Leaving the stored set alone costs nothing: the reviewer still
+  // sees "nothing matched" for this search, and the candidates they already had — which
+  // are still selectable — survive.
+  if (candidates.length > 0) {
+    const { error } = await db.from('content_posts')
+      .update({ image_candidates: candidates })
+      .eq('id', id)
 
-  if (error) {
-    // Deploy-order tolerant: image_candidates only exists from migration 210. Without
-    // the column the results cannot be selected, so say so rather than showing a grid
-    // whose tiles would all fail.
-    console.warn(`[search-stock-images] could not store results (apply migration 210): ${error.message}`)
-    return NextResponse.json(
-      { error: 'Could not save the search results. Apply migration 210 and try again.' },
-      { status: 500 },
-    )
+    if (error) {
+      // Deploy-order tolerant: image_candidates only exists from migration 210. Without
+      // the column the results cannot be selected, so say so rather than showing a grid
+      // whose tiles would all fail.
+      console.warn(`[search-stock-images] could not store results (apply migration 210): ${error.message}`)
+      return NextResponse.json(
+        { error: 'Could not save the search results. Apply migration 210 and try again.' },
+        { status: 500 },
+      )
+    }
   }
 
   return NextResponse.json({
