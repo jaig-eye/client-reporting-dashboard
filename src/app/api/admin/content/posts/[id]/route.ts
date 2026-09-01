@@ -74,3 +74,63 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true })
 }
+
+// DELETE /api/admin/content/posts/[id]
+//
+// Hard-deletes a post AND its originating topic, which is what makes the subject
+// eligible to be generated again.
+//
+// This is the counterpart to reject, and the difference is deliberate:
+//
+//   REJECT (PATCH status='rejected') keeps the row. It is an editorial signal that a
+//   human saw this specific angle and did not want it, so the topic avoid-list in
+//   lib/content/generateTopics.ts keeps it and it is never suggested again.
+//
+//   DELETE removes it. It means "forget this ever happened" — a duplicate, a
+//   mis-generation, a test — where nothing about the subject itself was wrong. The
+//   topic row goes too, because leaving it behind would keep the subject in the
+//   avoid-list and quietly prevent it from ever being regenerated, which is the
+//   opposite of what deleting is for.
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const db = createAdminClient()
+
+  // Read the topic link BEFORE deleting the post — content_posts.topic_id is the
+  // only pointer between them, so it is unrecoverable afterwards.
+  const { data: post } = await db
+    .from('content_posts')
+    .select('id, topic_id, title')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+
+  const { error } = await db.from('content_posts').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const topicId = (post as { topic_id: string | null }).topic_id
+  if (topicId) {
+    const { error: topicErr } = await db.from('content_topics').delete().eq('id', topicId)
+    // Non-fatal: the post is already gone, and reporting failure here would invite a
+    // retry that 404s. Log it — an orphaned topic keeps the subject in the avoid-list.
+    if (topicErr) {
+      console.error(`[posts/${id}] post deleted but topic ${topicId} was not:`, topicErr.message)
+    }
+  }
+
+  const adminSession = await getAdminSession()
+  logActivity(adminSession, 'deleted', 'post', {
+    resourceId: id,
+    meta: { title: (post as { title?: string | null }).title ?? null, topicId },
+  })
+
+  return NextResponse.json({ ok: true, deletedTopic: !!topicId })
+}

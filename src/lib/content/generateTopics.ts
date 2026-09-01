@@ -121,13 +121,29 @@ export async function generateTopicsForClient(
   // Build avoid-list queries scoped to the same content_type when one is provided.
   // Blog generation avoids blog posts/topics only; SA generation avoids SA only —
   // so neither wastes avoid-list slots on the other content type.
+  // DELETED vs REJECTED — deliberately different, because they mean different things.
+  //
+  //   DELETED  → the row is hard-deleted, so it is absent from these queries and the
+  //              topic is free to be suggested again. "Deleted" means "forget this
+  //              ever happened", e.g. a mistake or a duplicate, and nothing about the
+  //              subject was wrong.
+  //   REJECTED → the row is kept with status='rejected'. That is an editorial signal:
+  //              a human looked at this specific angle and did not want it. Offering
+  //              it again wastes a slot and a review cycle.
+  //
+  // This query previously carried `.not('status','eq','rejected')`, which had it
+  // exactly backwards — rejected topics were excluded from the avoid-list and so were
+  // free to be regenerated, and the only way to stop a topic coming back was to
+  // delete it. Rejected rows are now included in the avoid-list; deletion remains the
+  // way to make something eligible again.
   let existingTopicsQ = db.from('content_topics')
     .select('topic, target_keyword')
     .eq('client_id', clientId)
-    .not('status', 'eq', 'rejected')
   if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
 
-  // No date cap — include all posts ever generated for this client so nothing is recycled.
+  // No date cap — include all posts ever generated for this client so nothing is
+  // recycled. Rejected posts are included for the same reason as rejected topics;
+  // deleted posts are gone from the table and therefore already excluded.
   let existingPostsQ = db.from('content_posts')
     .select('title, focus_topic, target_keyword')
     .eq('client_id', clientId)

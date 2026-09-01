@@ -42,7 +42,8 @@ export async function POST(request: NextRequest) {
   const anchor     = start_date ? new Date(start_date) : new Date()
 
   // ── Compute publish slots synchronously ────────────────────────────────────
-  const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek })
+  const monthlyPublishDay = (schedule?.monthly_publish_day as number | null) ?? null
+  const slots: string[] = computeSlots({ anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay })
 
   // Skip slots that already have topics assigned — prevents duplicate topics when the
   // wizard fires this endpoint twice (e.g. double-click, network retry).
@@ -135,8 +136,9 @@ function computeSlots(params: {
   weeksAhead: number
   frequency:  string
   dayOfWeek:  number
+  monthlyPublishDay?: number | null
 }): string[] {
-  const { anchor, weeksAhead, frequency, dayOfWeek } = params
+  const { anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay = null } = params
   const end     = new Date(anchor.getTime() + weeksAhead * 7 * 86_400_000)
   const slots:  string[] = []
 
@@ -161,10 +163,16 @@ function computeSlots(params: {
   }
 
   if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
+    // Rolling monthly uses the configured publish day when there is one, and only
+    // falls back to the anchor's day otherwise. monthly_publish_day was already
+    // being loaded from content_settings here and then ignored, so a client with an
+    // explicit day still got slots on whatever day the caller happened to anchor to.
     const targetDay = frequency === 'monthly_first' ? 1
                     : frequency === 'monthly_mid'   ? 15
                     : frequency === 'monthly_end'   ? 31
-                    : anchor.getDate() // rolling: same day each month
+                    : (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31
+                        ? monthlyPublishDay
+                        : anchor.getDate())
 
     let year  = anchor.getFullYear()
     let month = anchor.getMonth() // 0-indexed

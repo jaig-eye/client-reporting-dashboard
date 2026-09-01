@@ -51,6 +51,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   })
   const [rejectedIds,    setRejectedIds]    = useState<Set<string>>(new Set())
   const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
+  // Deleted posts are filtered out of the list entirely rather than badged, because
+  // unlike reject/discard there is nothing left to act on or restore.
+  const [deletedIds,     setDeletedIds]     = useState<Set<string>>(new Set())
   const [loadingId,      setLoadingId]      = useState<string | null>(null)
   const [editorPostId, setEditorPostId] = useState<string | null>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
@@ -134,6 +137,27 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       setLoadingId(null)
     }
   }, [])
+
+  // Delete — permanently removes the post AND its topic, which frees the subject to
+  // be generated again. Deliberately different from reject/discard, which keep the
+  // row as an editorial signal so the topic is never suggested again. The card asks
+  // for confirmation before calling this.
+  const handleDelete = useCallback(async (postId: string) => {
+    setLoadingId(postId)
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      // Hide immediately, then resync from the server so counts and the month's
+      // grouping reflect the deletion without a manual reload.
+      setDeletedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+      router.refresh()
+    } catch (e) {
+      console.error('Delete failed:', e)
+      alert('Failed to delete post. Please try again.')
+    } finally {
+      setLoadingId(null)
+    }
+  }, [router])
 
   const handleRestore = useCallback(async (postId: string) => {
     setLoadingId(postId)
@@ -308,7 +332,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
             </div>
           ) : (
             clientIds.map(clientId => {
-              const posts = postsByClient.get(clientId) ?? []
+              const posts = (postsByClient.get(clientId) ?? []).filter(p => !deletedIds.has(p.id))
+              if (posts.length === 0) return null
               return (
                 <MonthlyReviewClientSection
                   key={clientId}
@@ -325,6 +350,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   onOpenEditor={handleOpenEditor}
                   onRestore={handleRestore}
                   onRegenerate={handleCardRegenerate}
+                  onDelete={handleDelete}
                 />
               )
             })

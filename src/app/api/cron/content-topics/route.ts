@@ -37,7 +37,37 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getDate()
 }
 
-function computeFutureSlots(frequency: string, dayOfWeek: number, weeksLookahead: number): string[] {
+/**
+ * The day-of-month a rolling-monthly schedule publishes on.
+ *
+ * This MUST be stable across runs. It used to be `now.getUTCDate()` — today's date —
+ * and because this cron runs every day, every run anchored a brand-new monthly
+ * series on a different day: run on the 25th and you get the 25th of each month,
+ * run on the 26th and you get the 26th as well, and so on. After a week of runs a
+ * "monthly" client had seven consecutive publish dates, repeating every month —
+ * a week-long burst once a month instead of one post a month.
+ *
+ * Preference order: the explicitly configured monthly_publish_day, then the day
+ * component of the schedule's start date (what the Start date field in the UI
+ * means), and only then today — which is now merely a last resort for a client
+ * with neither configured, rather than the normal path.
+ */
+function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: string | null, now: Date): number {
+  if (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31) return monthlyPublishDay
+  if (startDate) {
+    const d = new Date(startDate + 'T00:00:00Z')
+    if (!Number.isNaN(d.getTime())) return d.getUTCDate()
+  }
+  return now.getUTCDate()
+}
+
+function computeFutureSlots(
+  frequency: string,
+  dayOfWeek: number,
+  weeksLookahead: number,
+  monthlyPublishDay: number | null = null,
+  scheduleStartDate: string | null = null,
+): string[] {
   const now  = new Date()
   const end  = new Date(now.getTime() + weeksLookahead * 7 * 86_400_000)
   const slots: string[] = []
@@ -61,7 +91,7 @@ function computeFutureSlots(frequency: string, dayOfWeek: number, weeksLookahead
     const targetDay = frequency === 'monthly_first' ? 1
                     : frequency === 'monthly_mid'   ? 15
                     : frequency === 'monthly_end'   ? 28
-                    : now.getUTCDate()
+                    : rollingMonthlyDay(monthlyPublishDay, scheduleStartDate, now)
     let y = now.getUTCFullYear(), m = now.getUTCMonth()
     while (true) {
       const candidate = new Date(Date.UTC(y, m, Math.min(targetDay, daysInMonth(y, m))))
@@ -109,7 +139,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages')
+    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -158,19 +188,55 @@ export async function GET(request: NextRequest) {
       schedule_frequency,
       schedule_day_of_week,
       weeks_ahead           = 1,
-      auto_approve_topics   = true,  // legacy default: auto_generate implies auto_approve
-      auto_push_posts       = false,
       generate_service_pages = false,
       generate_regular_pages = false,
+      monthly_publish_day   = null,
+      schedule_start_date   = null,
     } = row as {
       client_id:              string
       schedule_frequency:     string | null
       schedule_day_of_week:   number | null
       weeks_ahead:            number
-      auto_approve_topics:    boolean
+      auto_approve_topics:    boolean | null
       auto_push_posts:        boolean
       generate_service_pages: boolean
       generate_regular_pages: boolean
+      monthly_publish_day:    number | null
+      schedule_start_date:    string | null
+    }
+
+    // Legacy self-heal, server side.
+    //
+    // auto_generate is the single switch the UI exposes ("generates topics, approves,
+    // and publishes automatically"). auto_approve_topics and auto_push_posts were
+    // added later, so rows written before them can sit at auto_generate=true with the
+    // sub-flags false or null. Reading auto_approve_topics with a destructure default
+    // of `true` did NOT rescue those rows — a JS default fires only on `undefined`,
+    // never on `false` or `null` — so a legacy client generated topics forever and
+    // approved none of them, with nothing logged.
+    //
+    // ClientContentSettings already repairs this, but only in the browser and only for
+    // the one client whose settings page a human happens to open. Irrigation Inc and
+    // Van Nuys Awning each accumulated a month of stuck 'pending' topics that way, and
+    // were only fixed by someone opening their settings while investigating. Repair it
+    // here so correctness never depends on a page visit, and persist the repair so it
+    // is a one-time correction rather than a per-run override.
+    //
+    // Every row in settingsRows already has auto_generate=true — it is the query filter.
+    const legacyRow  = row as { auto_approve_topics: boolean | null; auto_push_posts: boolean | null }
+    let auto_approve_topics = legacyRow.auto_approve_topics === true
+    let auto_push_posts     = legacyRow.auto_push_posts === true
+    if (!auto_approve_topics || !auto_push_posts) {
+      console.warn(`[content-topics cron] client ${client_id}: auto_generate=true but sub-flags lag (approve=${legacyRow.auto_approve_topics}, push=${legacyRow.auto_push_posts}) — healing legacy row`)
+      const { error: healErr } = await db.from('content_settings')
+        .update({ auto_approve_topics: true, auto_push_posts: true })
+        .eq('client_id', client_id)
+      if (healErr) {
+        console.error(`[content-topics cron] heal failed for ${client_id}:`, healErr.message)
+      } else {
+        auto_approve_topics = true
+        auto_push_posts     = true
+      }
     }
 
     const frequency = (schedule_frequency as string | null) ?? globalFreq
@@ -180,7 +246,7 @@ export async function GET(request: NextRequest) {
     const leadWindow = cycle * Math.max(weeks_ahead, 1)
     const weeksToScan = Math.ceil(leadWindow / 7) + 1
 
-    const slots = computeFutureSlots(frequency, dayOfWeek, weeksToScan).filter(slot => {
+    const slots = computeFutureSlots(frequency, dayOfWeek, weeksToScan, monthly_publish_day, schedule_start_date).filter(slot => {
       const ms = new Date(slot + 'T00:00:00Z').getTime() - Date.now()
       const d  = Math.round(ms / 86_400_000)
       return d > 0 && d <= leadWindow

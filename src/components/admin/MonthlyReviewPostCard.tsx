@@ -41,6 +41,10 @@ interface Props {
   onOpenEditor:     (id: string) => void
   onRestore:        (id: string) => void
   onRegenerate:     (id: string) => void
+  /** Optional: permanently delete the post AND its topic, freeing the subject to be
+   *  generated again. Distinct from onReject, which keeps it as an editorial signal
+   *  so the topic is never suggested again. */
+  onDelete?:        (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -55,7 +59,7 @@ function fmtDate(iso: string): string {
 }
 
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
@@ -174,13 +178,36 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <button
-            className="btn btn-sm"
-            disabled={isLoading}
-            onClick={() => onOpenEditor(post.id)}
-          >
-            Review →
-          </button>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {/* Delete is distinct from Reject. Reject keeps the post as an editorial
+                signal so the topic is never suggested again; Delete removes the post
+                and its topic so the subject becomes eligible again. Used for
+                duplicates and mis-generations, where nothing about the subject was
+                wrong. Destructive and unrecoverable, hence the confirm. */}
+            {onDelete && (
+              <button
+                className="btn btn-sm"
+                disabled={isLoading}
+                title="Delete permanently — frees the topic to be generated again"
+                aria-label={`Delete ${post.title ?? 'post'} permanently`}
+                onClick={() => {
+                  if (confirm('Delete this post and its topic permanently?\n\nThe subject becomes available to generate again. Use Reject instead if you do not want it suggested again.')) {
+                    onDelete(post.id)
+                  }
+                }}
+                style={{ color: '#dc2626' }}
+              >
+                Delete
+              </button>
+            )}
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              onClick={() => onOpenEditor(post.id)}
+            >
+              Review →
+            </button>
+          </div>
         )}
       </div>
     </div>

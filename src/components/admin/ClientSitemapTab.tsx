@@ -43,6 +43,8 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
   const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
+  // url → display index, captured at load. See snapshotOrder / the render sort.
+  const [displayOrder, setDisplayOrder] = useState<Map<string, number>>(new Map())
   const [bulkBusy, setBulkBusy] = useState(false)
 
   // Sitemap config state
@@ -102,6 +104,22 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   }
   function removeManualLink(i: number)                         { setManualLinks(p => p.filter((_, idx) => idx !== i)) }
 
+  /**
+   * Capture the grouped display order (priority → normal → excluded, then A-Z) ONCE
+   * per load. The render sorts by this snapshot instead of by the live flags, so
+   * toggling a flag restyles the row in place rather than relocating it.
+   */
+  function snapshotOrder(data: SitemapPage[]) {
+    const ordered = [...data].sort((a, b) => {
+      if (a.isPriority && !b.isPriority) return -1
+      if (!a.isPriority && b.isPriority) return 1
+      if (a.isExcluded && !b.isExcluded) return 1
+      if (!a.isExcluded && b.isExcluded) return -1
+      return a.url.localeCompare(b.url)
+    })
+    setDisplayOrder(new Map(ordered.map((p, i) => [p.url, i])))
+  }
+
   async function loadPages() {
     setLoading(true)
     setError('')
@@ -110,6 +128,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to load')
       const data = await res.json() as SitemapPage[]
       setPages(data)
+      snapshotOrder(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load pages')
     } finally {
@@ -125,6 +144,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       if (!res.ok) throw new Error((await res.json()).error || 'Failed')
       const data = await res.json() as SitemapPage[]
       setPages(data)
+      snapshotOrder(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch sitemap')
     } finally {
@@ -199,12 +219,21 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
     (p.title ?? '').toLowerCase().includes(search.toLowerCase())
   )
 
-  // Sort: priority first, then normal, then excluded last
+  // Sort by the order captured at load time, NOT by the live flags.
+  //
+  // Sorting on isPriority/isExcluded directly meant every star/exclude click
+  // re-ordered the list underneath the cursor: the row you just clicked jumped to
+  // the top or the bottom, everything below it shifted up, and the viewport
+  // appeared to leap. Freezing the order until the next load keeps the row exactly
+  // where it is — the icon and styling still update instantly, so the click is
+  // clearly acknowledged without moving anything. The new grouping is applied the
+  // next time the list is loaded or re-fetched.
   const sorted = [...filtered].sort((a, b) => {
-    if (a.isPriority && !b.isPriority) return -1
-    if (!a.isPriority && b.isPriority) return 1
-    if (a.isExcluded && !b.isExcluded) return 1
-    if (!a.isExcluded && b.isExcluded) return -1
+    const ai = displayOrder.get(a.url)
+    const bi = displayOrder.get(b.url)
+    if (ai !== undefined && bi !== undefined) return ai - bi
+    if (ai !== undefined) return -1          // known rows before newly-appeared ones
+    if (bi !== undefined) return 1
     return a.url.localeCompare(b.url)
   })
 

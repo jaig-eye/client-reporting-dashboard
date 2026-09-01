@@ -18,12 +18,14 @@ interface Props {
   onOpenEditor:    (id: string) => void
   onRestore:       (id: string) => void
   onRegenerate:    (id: string) => void
+  /** Permanently delete the post and its topic, freeing the subject for regeneration. */
+  onDelete?:       (id: string) => void
 }
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
 export default function MonthlyReviewClientSection({
-  clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate,
+  clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
@@ -143,6 +145,7 @@ export default function MonthlyReviewClientSection({
               onOpenEditor={onOpenEditor}
               onRestore={onRestore}
               onRegenerate={onRegenerate}
+              onDelete={onDelete}
             />
           ))}
         </div>
