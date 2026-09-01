@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import type { StockImageCandidate } from '@/lib/content/stockImages'
 
 interface Site {
   connectionId:  string
@@ -66,6 +67,7 @@ interface PostDetail {
   bcPostId:         number | null
   bcStoreHash:      string | null
   featuredImageUrl:          string | null
+  imageCandidates?:          StockImageCandidate[]
   targetPublishDate:         string | null
   topicId:                   string | null
   postConnectionId:          string | null
@@ -316,6 +318,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // Featured image
   const [featuredImageUrl, setFeaturedImageUrl] = useState('')
+  // Openverse suggestions stored on the post at generation time. Empty is the normal
+  // result for specialised topics — see lib/content/stockImages.ts.
+  const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
+  const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -393,6 +399,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setBcAuthorName(data.scheduleBcAuthor ?? '')
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
+        setImageCandidates(data.imageCandidates ?? [])
         // Seed connection: post's stored connection > schedule default > first BC site > first any site
         const autoSite = sites.find(s => s.connectorType === 'bigcommerce') ?? sites[0]
         setConnectionId(data.postConnectionId ?? defaultConnectionId ?? autoSite?.connectionId ?? '')
@@ -805,6 +812,30 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
+  // ── Stock image selection ───────────────────────────────────────────────────
+  // The server copies the chosen file into our own storage and writes
+  // featured_image_url itself, so this does NOT markDirty — the change is already
+  // persisted, and flagging the form dirty would invite a save that overwrites the
+  // freshly-stored URL with whatever the editor had before.
+  async function handleSelectStockImage(candidateId: string) {
+    setApplyingStockId(candidateId)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/select-stock-image`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ candidateId }),
+      })
+      const data = await res.json() as { url?: string; error?: string }
+      if (!res.ok || data.error) throw new Error(data.error ?? 'Could not apply that image')
+      setFeaturedImageUrl(data.url ?? '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not apply that image')
+    } finally {
+      setApplyingStockId(null)
+    }
+  }
+
   // ── Image generation ────────────────────────────────────────────────────────
   async function handleGenerateImage() {
     setGeneratingImage(true)
@@ -1118,6 +1149,57 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
                 {featuredImageUrl && (
                   <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
+                )}
+
+                {/* Free stock alternatives found on Openverse at generation time, using
+                    the same topic context as the AI prompt. Only shown when something
+                    actually cleared the relevance floor — for niche technical topics
+                    the honest answer is usually nothing, and an empty section says
+                    that more clearly than a row of irrelevant photos. */}
+                {imageCandidates.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Free stock alternatives · {imageCandidates.length} found
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+                      {imageCandidates.map(c => {
+                        const busy = applyingStockId === c.id
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            disabled={!!applyingStockId}
+                            onClick={() => handleSelectStockImage(c.id)}
+                            title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} (CC ${c.license.toUpperCase()})`}
+                            style={{
+                              padding: 0, border: '1px solid var(--border)', borderRadius: 6,
+                              overflow: 'hidden', background: 'var(--bg-subtle)',
+                              cursor: applyingStockId ? 'default' : 'pointer',
+                              opacity: busy ? 0.5 : 1, textAlign: 'left',
+                            }}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={c.thumbnail}
+                              alt={c.title}
+                              style={{ width: '100%', height: 78, objectFit: 'cover', display: 'block' }}
+                            />
+                            <div style={{ padding: '4px 6px', fontSize: '0.65rem', lineHeight: 1.3 }}>
+                              <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-primary)' }}>
+                                {busy ? 'Applying…' : c.title}
+                              </div>
+                              <div style={{ color: 'var(--text-muted)' }}>
+                                CC {c.license.toUpperCase()}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                      Selecting copies the image into your own storage and records its licence and attribution.
+                    </div>
+                  </div>
                 )}
               </div>
             </CollapsibleSection>

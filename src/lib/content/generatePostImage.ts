@@ -2,6 +2,7 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { findStockImageCandidates } from '@/lib/content/stockImages'
 
 type PostRow = {
   id:             string
@@ -64,9 +65,25 @@ export function buildImagePrompt(
   const realism =
     'Photojournalistic realism — an authentic candid photograph taken on location, shot on a full-frame camera with a 35mm lens, natural available light with soft directional shadows, true-to-life muted color and neutral white balance, subtle natural film grain, real textures and worn, lived-in materials, unstaged with slight natural asymmetry.'
   const avoid =
-    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details.'
+    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details. ' +
+    'Repeating the two hard rules because they are the most common failure: no rendered text or lettering anywhere, and no visible people or faces.'
+  // Text and people are the two things these models get visibly wrong, so both are
+  // stated first (models weight early instruction most heavily), in absolute terms,
+  // and repeated in the negative list rather than mentioned once in passing.
+  //
+  // TEXT: image models render text as malformed pseudo-lettering. Any signage, label
+  // or UI in frame is a giveaway that the picture is synthetic, and it cannot be
+  // corrected after the fact.
+  //
+  // PEOPLE: the previous wording banned only "human faces", which still permitted
+  // full bodies — and bodies are where the tells are (extra fingers, broken limbs,
+  // impossible posture). The subject of these articles is the work and the equipment,
+  // so people are almost never necessary; where the scene genuinely requires a human
+  // (a task being demonstrated), hands and forearms alone carry it.
   const constraints =
-    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. No text, words, letters, numbers, logos, watermarks, or signage. No human faces (crop, shoot from behind, or focus on hands and the work instead). 16:9 wide landscape.'
+    'ABSOLUTELY NO TEXT of any kind anywhere in the image — no words, letters, numbers, captions, labels, signage, packaging text, screens, logos, or watermarks; every surface that would normally carry writing must be blank. ' +
+    'NO PEOPLE unless the subject cannot be shown without one — prefer the equipment, materials and workspace by themselves. If a person is unavoidable, show only hands and forearms performing the task, tightly cropped; never a face, never a full body, never a group. ' +
+    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. 16:9 wide landscape.'
 
   if (promptOverride?.trim()) {
     // Client creative direction leads; post context anchors it to the topic, and the
@@ -109,6 +126,32 @@ export async function generatePostImage(
 
   const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
   const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt)
+
+  // ── Stock alternatives, searched with the SAME context as the AI prompt ─────
+  // Runs alongside generation rather than instead of it, so the reviewer always has
+  // both options. Deliberately not awaited before the AI call: Openverse is a
+  // third-party API on anonymous rate limits and must never delay or fail image
+  // generation. Failures inside findStockImageCandidates are already swallowed and
+  // logged there; the catch here covers the write-back.
+  const settings = clientSettings as ClientSettings | null
+  const candidatesPromise = findStockImageCandidates({
+    targetKeyword: post.target_keyword,
+    imageConcept:  post.image_concept,
+    title:         post.seo_title ?? post.title,
+    industry:      settings?.services?.split(',')[0]?.trim() ?? null,
+  })
+    .then(async candidates => {
+      const { error } = await db.from('content_posts')
+        .update({ image_candidates: candidates })
+        .eq('id', postId)
+      // Deploy-order tolerant: image_candidates only exists from migration 210.
+      if (error) {
+        console.warn(`[generatePostImage] could not store stock candidates (apply migration 210): ${error.message}`)
+      } else if (candidates.length === 0) {
+        console.log(`[generatePostImage] no stock candidates cleared the relevance floor for post ${postId}`)
+      }
+    })
+    .catch(e => console.warn('[generatePostImage] stock candidate search failed:', e))
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
@@ -201,6 +244,12 @@ export async function generatePostImage(
       lastError = `Gemini request failed: ${e instanceof Error ? e.message : String(e)}`
     }
   }
+
+  // Settle the stock search before ANY return. On a serverless runtime the function
+  // instance is frozen once the handler resolves, so an un-awaited promise is simply
+  // dropped and image_candidates would never be written. It matters most on exactly
+  // this path: when AI generation fails, the stock options are all the reviewer has.
+  await candidatesPromise
 
   if (!imageUrl)
     return { ok: false, error: lastError || 'Image generation failed — configure an API key in Agency Settings → AI → Image Generation' }

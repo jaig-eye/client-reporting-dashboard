@@ -21,11 +21,26 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const { data, error } = await db
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id'
+
+  let { data, error } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id')
+    .select(`${BASE_COLS}, image_candidates`)
     .eq('id', id)
     .single()
+
+  // Deploy-order fallback: image_candidates only exists from migration 210, and
+  // migrations here are applied by hand. Without this the whole review drawer would
+  // 404 on every post until the migration lands — a far worse outcome than losing the
+  // stock-image picker, which simply renders empty.
+  if (error && /image_candidates/i.test(error.message)) {
+    console.warn('[content/post] image_candidates missing (migration 210 not applied) — stock picker disabled')
+    ;({ data, error } = await db
+      .from('content_posts')
+      .select(BASE_COLS)
+      .eq('id', id)
+      .single())
+  }
 
   if (error || !data) {
     return NextResponse.json({ error: 'Post not found' }, { status: 404 })
@@ -77,6 +92,9 @@ export async function GET(request: NextRequest) {
     targetPublishDate:   p.target_publish_date ? String(p.target_publish_date) : null,
     postConnectionId:    p.connection_id ? String(p.connection_id) : null,
     topicId:             p.topic_id ? String(p.topic_id) : null,
+    // Openverse suggestions captured at generation time. Array = searched, [] = nothing
+    // relevant enough, null/undefined = never searched (or migration 210 not applied).
+    imageCandidates:     Array.isArray(p.image_candidates) ? p.image_candidates : [],
     scheduleDefaultAuthorId,
     schedulePublishMode,
     scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
