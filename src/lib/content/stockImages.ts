@@ -49,7 +49,26 @@ const RELEVANCE_FLOOR = 0.5
  * result this module exists to reject.
  */
 const MIN_TERM_HITS   = 2
-const MAX_CANDIDATES  = 8
+/**
+ * How many candidates one automatic search banks.
+ *
+ * Generation happens once per post; review happens repeatedly. So it is worth banking a
+ * POOL rather than the handful the strip shows, because every look through that pool
+ * afterwards is then free — no upstream call, no quota, and nothing that can fail while
+ * a reviewer is waiting. Pexels' free tier is 200 requests/HOUR, and a backlog cron run
+ * generating 15 posts concurrently is exactly the burst that can reach it.
+ */
+const MAX_CANDIDATES  = 24
+/**
+ * Rungs of the query ladder an automatic search is allowed to spend.
+ *
+ * The ladder can be up to 9 rungs across 3 seeds, and each rung costs one call PER
+ * SOURCE — so an unbounded run was up to 27 upstream calls for a single post, and the
+ * cost peaked precisely on the niche topics that yield nothing. Three rungs is the
+ * specific phrase plus two progressively broader ones, which is where essentially all
+ * of the recall comes from. Bounded: 9 calls, worst case, per post.
+ */
+const MAX_RUNGS       = 3
 /** Below this, an image is a thumbnail, icon or diagram rather than a usable photo. */
 const MIN_WIDTH  = 600
 const MIN_HEIGHT = 400
@@ -486,13 +505,16 @@ export async function findStockImageCandidates(
      * they are the filter and a stricter floor just hides what they asked for.
      */
     minRelevance?: number
-    /** Manual searches want breadth; the automatic strip wants a short, strong set. */
+    /** Cap on candidates banked. */
     limit?: number
+    /** Cap on ladder rungs, i.e. on upstream calls. See MAX_RUNGS. */
+    maxRungs?: number
   },
 ): Promise<StockImageCandidate[]> {
   const floor  = opts?.minRelevance ?? RELEVANCE_FLOOR
   const limit  = opts?.limit ?? MAX_CANDIDATES
-  const ladder = buildQueryLadder(ctx)
+  const rungCap = opts?.maxRungs ?? MAX_RUNGS
+  const ladder = buildQueryLadder(ctx).slice(0, rungCap)
   if (ladder.length === 0) return []
 
   const byId = new Map<string, StockImageCandidate>()
@@ -551,6 +573,24 @@ export async function searchAndStoreStockCandidates(
 ): Promise<StockImageCandidate[]> {
   try {
     const candidates = await findStockImageCandidates(ctx)
+
+    // An empty result NEVER overwrites a non-empty pool. This function is called both at
+    // generation time (nothing to lose) and from the reviewer's "Get new images" (plenty
+    // to lose), and an empty list is not always a real answer — every source throttling
+    // inside the same 6s window produces one too. Writing [] over a good pool would
+    // destroy usable images because a third party was briefly busy. Writing [] over
+    // null/absent IS meaningful, since it records "searched, found nothing" rather than
+    // "never searched", so that case still persists.
+    if (candidates.length === 0) {
+      const { data: existing } = await db
+        .from('content_posts').select('image_candidates').eq('id', postId).maybeSingle()
+      const current = (existing as { image_candidates?: unknown } | null)?.image_candidates
+      if (Array.isArray(current) && current.length > 0) {
+        console.log(`[stockImages] no new matches for post ${postId} — keeping the ${current.length} already banked`)
+        return current as StockImageCandidate[]
+      }
+    }
+
     const { error } = await db.from('content_posts')
       .update({ image_candidates: candidates })
       .eq('id', postId)

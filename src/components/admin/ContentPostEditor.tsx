@@ -7,6 +7,10 @@ import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 import StockImageSearchModal from '@/components/admin/StockImageSearchModal'
 
+/** Tiles the inline strip previews. The banked pool holds up to 24; the rest are
+ *  reachable through the picker, which pages them without spending any API quota. */
+const INLINE_STOCK_PREVIEW = 8
+
 interface Site {
   connectionId:  string
   siteUrl:       string
@@ -322,9 +326,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Openverse suggestions stored on the post at generation time. Empty is the normal
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
-  const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
-  const [findingStock,    setFindingStock]    = useState(false)
-  const [stockMessage,    setStockMessage]    = useState('')
+  const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   const [stockModalOpen,  setStockModalOpen]  = useState(false)
 
   // AI re-edit
@@ -816,29 +818,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  // ── Stock image search (on demand) ──────────────────────────────────────────
-  // Candidates are normally captured at generation time, so posts written before this
-  // shipped — and clients who have AI images switched off — would otherwise never have
-  // any. Also useful after editing the target keyword, to re-aim the suggestions.
-  async function handleFindStockImages() {
-    setFindingStock(true)
-    setError('')
-    setStockMessage('')
-    try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/find-stock-images`, { method: 'POST' })
-      const data = await res.json() as { candidates?: StockImageCandidate[]; message?: string; error?: string }
-      if (!res.ok || data.error) throw new Error(data.error ?? 'Search failed')
-      setImageCandidates(data.candidates ?? [])
-      // Finding nothing is a normal outcome for niche topics, so it is reported as a
-      // message rather than an error.
-      setStockMessage(data.message ?? '')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not search for free images')
-    } finally {
-      setFindingStock(false)
-    }
-  }
-
   // ── Stock image selection ───────────────────────────────────────────────────
   // The server copies the chosen file into our own storage and writes
   // featured_image_url itself, so this does NOT markDirty — the change is already
@@ -880,7 +859,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       // Generating also REWRITES the stored candidates as a side effect, so adopt the
       // returned list even when generation failed. Without this the strip keeps showing
       // tiles that no longer exist server-side, and each one 400s on click.
-      if (data.candidates) { setImageCandidates(data.candidates); setStockMessage('') }
+      if (data.candidates) { setImageCandidates(data.candidates) }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Image generation failed')
       setFeaturedImageUrl(data.url ?? '')
       setIsDirty(true)
@@ -1177,11 +1156,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {imageUploadingMsg || 'Upload Image'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-                  <button type="button" onClick={handleFindStockImages} disabled={findingStock} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Find free, commercially-usable photos matching this post's topic">
-                    {findingStock ? 'Searching…' : '⌕ Find free images'}
-                  </button>
-                  <button type="button" onClick={() => setStockModalOpen(true)} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} title="Search Pexels, Openverse and Wikimedia Commons by your own keywords">
-                    Browse library…
+                  {/* One entry point. There used to be a separate "Find free images"
+                      button beside this, but the picker's own "Get new images" hits the
+                      same endpoint — two controls for one action, and the standalone one
+                      spent quota without showing what it bought. */}
+                  <button
+                    type="button"
+                    onClick={() => setStockModalOpen(true)}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem' }}
+                    title="Browse free stock photos from Pexels, Openverse and Wikimedia Commons"
+                  >
+                    ⌕ Free images{imageCandidates.length > 0 ? ` (${imageCandidates.length})` : ''}
                   </button>
                   {featuredImageUrl && (
                     <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
@@ -1202,20 +1188,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 {/* Reported outcome of an explicit search, including "found nothing",
                     which is a normal result for specialised topics and should not look
                     like a failure. */}
-                {stockMessage && imageCandidates.length === 0 && (
-                  <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    {stockMessage}
-                  </div>
-                )}
-
                 {imageCandidates.length > 0 && (
                   <div style={{ marginTop: 14 }}>
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                      Free stock alternatives · {imageCandidates.length} found
-                      <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · secondary options, the AI image stays selected until you pick one</span>
+                      Free stock alternatives · {Math.min(imageCandidates.length, INLINE_STOCK_PREVIEW)} of {imageCandidates.length}
+                      <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · secondary options, the AI image stays selected until you pick one. Open “Free images” to see the rest.</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
-                      {imageCandidates.map(c => {
+                      {imageCandidates.slice(0, INLINE_STOCK_PREVIEW).map(c => {
                         const busy = applyingStockId === c.id
                         return (
                           <button
@@ -1692,12 +1672,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       {stockModalOpen && (
         <StockImageSearchModal
           postId={postId}
+          initialCandidates={imageCandidates}
           initialQuery={targetKeyword || seoTitle || title || ''}
           onClose={() => setStockModalOpen(false)}
           onSelect={handleSelectStockImage}
           // Clear the inline caption alongside the list, or a stale "Found 5 free
           // images." is unhidden above an empty strip when a modal search finds nothing.
-          onResults={c => { setImageCandidates(c); setStockMessage('') }}
+          onResults={c => { setImageCandidates(c) }}
         />
       )}
     </>
