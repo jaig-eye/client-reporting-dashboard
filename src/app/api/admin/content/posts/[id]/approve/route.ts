@@ -47,7 +47,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, bc_author_name')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
     .eq('id', id)
     .maybeSingle()
 
@@ -184,9 +184,16 @@ export async function POST(
     const bcPublishTime = csRowBcTyped?.publish_time ?? '09:00'
     // Per-post byline wins, then the client default, then 'Admin'. The reviewer typing a
     // name in the drawer is the most specific intent available.
-    const bcAuthor      = (p.bc_author_name as string | null)?.trim()
-                       || csRowBcTyped?.bc_author
-                       || 'Admin'
+    //
+    // Fetched separately and tolerantly: bc_author_name arrives in migration 212, and naming
+    // it in the main select above would fail that query outright and break publishing.
+    const { data: bcRow } = await db
+      .from('content_posts')
+      .select('bc_author_name')
+      .eq('id', id)
+      .maybeSingle()
+    const perPostAuthor = (bcRow as { bc_author_name?: string | null } | null)?.bc_author_name
+    const bcAuthor      = perPostAuthor?.trim() || csRowBcTyped?.bc_author || 'Admin'
     const bcBlogPrefix  = (() => {
       const raw = csRowBcTyped?.blog_url_prefix?.trim()
       if (!raw) return '/blog/'

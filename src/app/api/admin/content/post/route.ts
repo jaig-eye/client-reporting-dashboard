@@ -21,25 +21,44 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id, bc_author_name'
+  // bc_author_name is appended only when migration 212 has landed. Naming a missing column
+  // fails the WHOLE select with 42703, which turned the review drawer into "Failed to load
+  // post" for an optional field.
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id'
 
-  let { data, error } = await db
-    .from('content_posts')
-    .select(`${BASE_COLS}, image_candidates`)
-    .eq('id', id)
-    .single()
+  // Deploy-order fallback. Migrations here are applied by hand, so code can be live before
+  // its column exists — and naming a missing column does not degrade, it fails the WHOLE
+  // select with 42703. Losing the drawer entirely because one optional field is unavailable
+  // is far worse than losing that field, so each optional column is dropped and retried
+  // individually until the query succeeds.
+  const OPTIONAL_COLS: { col: string; migration: string; lost: string }[] = [
+    { col: 'image_candidates', migration: '210', lost: 'stock image picker' },
+    { col: 'bc_author_name',   migration: '212', lost: 'per-post BigCommerce byline' },
+  ]
 
-  // Deploy-order fallback: image_candidates only exists from migration 210, and
-  // migrations here are applied by hand. Without this the whole review drawer would
-  // 404 on every post until the migration lands — a far worse outcome than losing the
-  // stock-image picker, which simply renders empty.
-  if (error && /image_candidates/i.test(error.message)) {
-    console.warn('[content/post] image_candidates missing (migration 210 not applied) — stock picker disabled')
+  const available = OPTIONAL_COLS.map(o => o.col)
+  let data: unknown = null
+  let error: { message: string } | null = null
+
+  for (;;) {
+    const cols = [BASE_COLS, ...available].join(', ')
     ;({ data, error } = await db
       .from('content_posts')
-      .select(BASE_COLS)
+      .select(cols)
       .eq('id', id)
       .single())
+
+    if (!error) break
+
+    const culprit = OPTIONAL_COLS.find(
+      o => available.includes(o.col) && new RegExp(o.col, 'i').test(error!.message),
+    )
+    if (!culprit) break
+
+    console.warn(
+      `[content/post] ${culprit.col} missing (apply migration ${culprit.migration}) — ${culprit.lost} disabled`,
+    )
+    available.splice(available.indexOf(culprit.col), 1)
   }
 
   if (error || !data) {
@@ -99,7 +118,7 @@ export async function GET(request: NextRequest) {
     schedulePublishMode,
     scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
     // Per-post override (migration 212). Null means "use scheduleBcAuthor".
-    bcAuthorName:     p.bc_author_name ? String(p.bc_author_name) : null,
+    bcAuthorName:     p.bc_author_name ? String(p.bc_author_name) : null,   // undefined pre-212
   })
 }
 

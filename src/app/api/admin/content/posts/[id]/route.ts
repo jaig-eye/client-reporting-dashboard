@@ -90,7 +90,17 @@ export async function PATCH(
     }
   }
 
-  const { error } = await db.from('content_posts').update(update).eq('id', id)
+  let { error } = await db.from('content_posts').update(update).eq('id', id)
+
+  // Deploy-order fallback, same reasoning as the select in /api/admin/content/post: naming a
+  // column that migration 212 has not created yet fails the entire update, so a save would
+  // 500 and the reviewer would lose their edits over an optional byline. Drop it and retry.
+  if (error && /bc_author_name/i.test(error.message)) {
+    console.warn('[posts/[id]] bc_author_name missing (apply migration 212) — byline not saved')
+    delete update.bc_author_name
+    ;({ error } = await db.from('content_posts').update(update).eq('id', id))
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // A content-bearing edit invalidates the quality report, and migration 206's
