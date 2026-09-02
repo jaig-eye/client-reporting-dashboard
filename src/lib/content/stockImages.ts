@@ -78,7 +78,7 @@ const MAX_CANDIDATES  = 40
  * specific phrase plus two progressively broader ones, which is where essentially all
  * of the recall comes from. Bounded: 9 calls, worst case, per post.
  */
-const MAX_RUNGS       = 4
+const MAX_RUNGS       = 5
 /** Below this, an image is a thumbnail, icon or diagram rather than a usable photo. */
 const MIN_WIDTH  = 600
 const MIN_HEIGHT = 400
@@ -119,6 +119,7 @@ const NON_VISUAL_WORDS = new Set([
   // generic abstractions that survive the grammar list
   'system','systems','service','services','type','types','style','styles','size','sizes',
   'quality','issue','issues','problem','problems','tip','fact','facts','list',
+  'custom','professional','expert','trusted','reliable','premium','advanced','general',
   // audience / possessive framing
   'homeowner','homeowners','business','businesses','owner','owners','buyer','buyers',
   'customer','customers','client','clients','company','companies','shop','shops',
@@ -400,8 +401,24 @@ async function searchPexels(
     clearTimeout(timer)
   }
 
+  // Pexels ranks semantically; the other two match keywords. Scoring Pexels purely
+  // lexically fights a better engine: for "downpipe tuning" it returns turbocharger and
+  // engine-bay photos captioned "customized car engine featuring a turbocharger", which
+  // contain neither query word and were therefore all discarded — leaving the bare
+  // "downpipe" rung, whose results are rain gutters on churches.
+  //
+  // So the top few Pexels hits for a MULTI-TERM query are trusted on their ranking alone.
+  // Multi-term only, because a one-word query matches almost anything and its top hits
+  // are exactly the generic results the lexical bar exists to reject. They are scored
+  // just below an exact lexical match so a caption that really does say the words still
+  // leads.
+  const TRUST_TOP_N = terms.length >= 2 ? 3 : 0
+  const TRUSTED_RELEVANCE = 0.9
+
   const out: StockImageCandidate[] = []
+  let rank = -1
   for (const p of json?.photos ?? []) {
+    rank++
     const full = p.src?.large2x ?? p.src?.original ?? p.src?.large
     if (!p.id || !full) continue
     if (!bigEnough(p.width ?? null, p.height ?? null)) continue
@@ -409,7 +426,10 @@ async function searchPexels(
     // Pexels supplies a written description rather than tags, and it is unusually good
     // ("Technician applying powder coating to metal pipes in a workshop"), which makes
     // it a far better scoring target than a filename.
-    const relevance = scoreAgainst(p.alt ?? '', terms)
+    const lexical = scoreAgainst(p.alt ?? '', terms)
+    const relevance = lexical >= floor
+      ? lexical
+      : (rank < TRUST_TOP_N ? TRUSTED_RELEVANCE : lexical)
     if (relevance < (terms.length === 1 ? SINGLE_TERM_FLOOR : floor)) continue
 
     out.push({
@@ -596,6 +616,42 @@ function buildQueryLadder(ctx: {
   // photos of metalwork students. Here the anchor must occur in the post's own topic,
   // and it is always paired with a term from that topic.
   const domainSet = new Set(meaningfulTerms(ctx.services ?? ''))
+
+  /**
+   * The single word that best says what industry this client is in — the most frequent
+   * concrete noun across their service list, longest winning a tie.
+   *
+   * It exists to disambiguate a bare one-word rung. Trade vocabulary is full of
+   * homographs, and a lone noun carries no domain: measured on Pexels, "downpipe"
+   * returns rain gutters on churches while "downpipe tuning" returns car engines, and
+   * "repair" returns smartphone repair while "repair sprinkler" returns irrigation.
+   *
+   * This is NOT the industry fallback removed earlier. That searched the industry ALONE,
+   * unrelated to the post; this only ever qualifies a term taken from the post's topic.
+   */
+  const domainContext = (() => {
+    const counts = new Map<string, number>()
+    for (const t of meaningfulTerms(ctx.services ?? '')) {
+      if (isExcludedWord(t)) continue
+      counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+    // forEach rather than for..of — this project's tsconfig target predates
+    // downlevelIteration, so iterating a Map directly does not compile.
+    let best: string | null = null
+    let bestCount = 0
+    counts.forEach((n, t) => {
+      if (n > bestCount || (n === bestCount && best !== null && t.length > best.length)) {
+        best = t; bestCount = n
+      }
+    })
+    return best
+  })()
+
+  /** Push the bare term, then the same term qualified by the client's domain. */
+  const pushSingleTerm = (term: string) => {
+    push(term)
+    if (domainContext && domainContext !== term) push(`${term} ${domainContext}`)
+  }
   /** Service-list membership, tolerant of singular/plural. The topic says "brush guard"
    *  while the services say "Brush guards", so exact matching missed the head noun and
    *  the qualifier fell to "polycarbonate" instead. */
@@ -636,14 +692,14 @@ function buildQueryLadder(ctx: {
         const pair = terms.filter(t => t === anchor || t === qualifier)
         push(pair.join(' '))
       }
-      push(anchor)
+      pushSingleTerm(anchor)
       continue
     }
 
     // No service match — fall back to the tail, which is the head noun more often than
     // the head is at the front.
     if (terms.length >= 2) push(terms.slice(-2).join(' '))
-    push(terms[terms.length - 1])
+    pushSingleTerm(terms[terms.length - 1])
   }
 
   // Nothing survived the filters — the topic is pure abstraction ("cost comparison
