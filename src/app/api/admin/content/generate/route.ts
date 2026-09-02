@@ -1146,6 +1146,11 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
           targetKeyword: topicData.target_keyword ?? null,
           imageConcept:  (topicData as { image_concept?: string | null }).image_concept ?? null,
           title:         parsed.title ?? null,
+          // Both are load-bearing: services anchors the query on the post's real subject,
+          // geographic_focus keeps place names out of it. Omitting them silently fell
+          // back to positional guessing, which is what these fields exist to replace.
+          services:        (clientSettings as Record<string, unknown> | null)?.services as string | null ?? null,
+          geographicFocus: (clientSettings as Record<string, unknown> | null)?.geographic_focus as string | null ?? null,
         }).then(() => {}).catch(() => {})
       )
     }

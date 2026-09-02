@@ -149,6 +149,8 @@ export async function generatePostImage(
     // Stripped from the query: no stock library indexes a service area, so those tokens
     // either match nothing or match something unrelated that shares a word.
     geographicFocus: (clientSettings as ClientSettings | null)?.geographic_focus ?? null,
+    // Anchors the query on the post's actual subject — see buildQueryLadder.
+    services:        (clientSettings as ClientSettings | null)?.services ?? null,
   })
 
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY

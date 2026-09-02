@@ -50,6 +50,16 @@ const RELEVANCE_FLOOR = 0.5
  */
 const MIN_TERM_HITS   = 2
 /**
+ * Extra relevance a SINGLE-TERM rung must clear.
+ *
+ * With one term the absolute minimum collapses to 1 and the ratio is 1/1, so every
+ * caption containing that word scores a perfect 1.00 — including, for the rung "table",
+ * every dining table on Pexels. The rung still earns its place on narrow topics where
+ * nothing else returns anything, so it is not removed; it just has to match the word in
+ * a title rather than anywhere in a tag soup, which is what this threshold buys.
+ */
+const SINGLE_TERM_FLOOR = 1.0
+/**
  * How many candidates one automatic search banks.
  *
  * Generation happens once per post; review happens repeatedly. So it is worth banking a
@@ -126,9 +136,14 @@ const NON_VISUAL_WORDS = new Set([
   'delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas',
   'kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota',
   'mississippi','missouri','montana','nebraska','nevada','hampshire','jersey','mexico',
-  'york','carolina','dakota','ohio','oklahoma','oregon','pennsylvania','rhode','island',
-  'tennessee','texas','utah','vermont','virginia','washington','wisconsin','wyoming',
+  'york','carolina','dakota','ohio','oklahoma','oregon','pennsylvania','rhode',
+  'tennessee','texas','utah','vermont','wisconsin','wyoming',
   'usa','america','american','national','northern','southern','eastern','western',
+  // NOT listed, deliberately, despite being state names: 'island' (Rhode Island),
+  // 'washington' and 'virginia'. Each is a common subject word — an island kitchen, a
+  // washington-named business, virginia creeper — and stripping it would delete the
+  // subject to remove a place. The remaining half of those names ('rhode') is enough to
+  // neutralise the pair, and the client's own geographic_focus is stripped separately.
   // verbs. These survive the grammar list and, being early in a question-shaped
   // keyword, used to become the query: "how to tell if irrigation system is leaking"
   // searched for "tell" and returned tarot cards and archaeological tells.
@@ -136,6 +151,9 @@ const NON_VISUAL_WORDS = new Set([
   'save','saving','understand','compare','comparing','pick','picking','find','finding',
   'get','getting','use','using','install','maintain','maintaining','handle','ensure',
   'consider','considering','decide','deciding','identify','spot','spotting','reduce',
+  'needs','need','much','many','long','last','lasts','expect','remove','removing','open',
+  'close','closing','hard','easy','prepare','preparing','buy','buying','sell','selling',
+  'work','works','working','look','looks','looking','keep','keeping','take','takes',
 ])
 
 /** Which library a candidate came from. Distinct from `provider`, which is the UPSTREAM
@@ -160,6 +178,22 @@ export interface StockImageCandidate {
   attribution: string | null
   relevance:   number
   matchedQuery: string
+}
+
+/**
+ * True when the word, or its singular form, appears in either exclusion list.
+ *
+ * The lists carry singulars, so "needs" slipped past 'need' and became half a query:
+ * the rung "needs repair" scores 1.00 against "Derelict cottage that needs repair" and,
+ * being two terms, sorts ahead of the real subject under the specificity rule.
+ */
+function isExcludedWord(t: string): boolean {
+  if (STOP_WORDS.has(t) || NON_VISUAL_WORDS.has(t)) return true
+  if (t.endsWith('s') && t.length > 3) {
+    const singular = t.slice(0, -1)
+    if (STOP_WORDS.has(singular) || NON_VISUAL_WORDS.has(singular)) return true
+  }
+  return false
 }
 
 function meaningfulTerms(q: string): string[] {
@@ -283,8 +317,13 @@ async function searchOpenverse(
   for (const r of results) {
     if (!r.id || !r.url || !r.thumbnail) continue
     if (!bigEnough(r.width ?? null, r.height ?? null)) continue
-    const relevance = scoreAgainst(`${r.title ?? ''} ${(r.tags ?? []).map(t => t.name ?? '').join(' ')}`, terms)
-    if (relevance < floor) continue
+    const relevance = terms.length === 1
+      // One-term rungs score against the TITLE only. Openverse concatenates the whole
+      // tag list into the haystack, so a single incidental tag was enough for a perfect
+      // score and the broad rung drowned the specific ones.
+      ? scoreAgainst(r.title ?? '', terms)
+      : scoreAgainst(`${r.title ?? ''} ${(r.tags ?? []).map(t => t.name ?? '').join(' ')}`, terms)
+    if (relevance < (terms.length === 1 ? SINGLE_TERM_FLOOR : floor)) continue
     out.push({
       id: `ov:${r.id}`,
       source: 'openverse',
@@ -371,7 +410,7 @@ async function searchPexels(
     // ("Technician applying powder coating to metal pipes in a workshop"), which makes
     // it a far better scoring target than a filename.
     const relevance = scoreAgainst(p.alt ?? '', terms)
-    if (relevance < floor) continue
+    if (relevance < (terms.length === 1 ? SINGLE_TERM_FLOOR : floor)) continue
 
     out.push({
       id: `px:${p.id}`,
@@ -454,8 +493,11 @@ async function searchCommons(q: string, terms: string[], floor: number): Promise
     const title = (page.title ?? '').replace(/^File:/, '').replace(/\.(jpe?g|png|webp)$/i, '')
     // Commons search matches the whole description page, so score against the title and
     // categories rather than trusting the search rank.
-    const relevance = scoreAgainst(`${title} ${md.Categories?.value ?? ''}`, terms)
-    if (relevance < floor) continue
+    // Same rule as Openverse: Commons categories are a long incidental list.
+    const relevance = terms.length === 1
+      ? scoreAgainst(title, terms)
+      : scoreAgainst(`${title} ${md.Categories?.value ?? ''}`, terms)
+    if (relevance < (terms.length === 1 ? SINGLE_TERM_FLOOR : floor)) continue
 
     const creator = (md.Artist?.value ?? '').replace(/<[^>]*>/g, '').trim() || null
 
@@ -502,16 +544,22 @@ function buildQueryLadder(ctx: {
   // County", so the term either matches nothing or, worse, matches something unrelated
   // that happens to share a word. The client's configured service area is the reliable
   // way to know which tokens are geography without trying to guess from capitalisation.
+  const serviceTokens = new Set(meaningfulTerms(ctx.services ?? ''))
   const geoTokens = new Set(
     (ctx.geographicFocus ?? '')
       .toLowerCase()
       .split(/[^a-z]+/)
-      .filter(t => t.length > 2),
+      .filter(t => t.length > 2)
+      // A token that also appears in the SERVICES is a subject word, not a place. The
+      // field is free text and clients do not respect its name: 5 Star Tuning's reads
+      // "dyno tuning and in-shop service…", which deleted 'dyno' and 'tuning' from every
+      // query and reduced "custom dyno tuning benefits" to the single word "custom".
+      .filter(t => !serviceTokens.has(t)),
   )
 
   /** Reduce a phrase to the concrete, photographable nouns inside it. */
   function visualTerms(phrase: string): string[] {
-    return meaningfulTerms(phrase).filter(t => !NON_VISUAL_WORDS.has(t) && !geoTokens.has(t))
+    return meaningfulTerms(phrase).filter(t => !isExcludedWord(t) && !geoTokens.has(t))
   }
 
   const seeds = [ctx.imageConcept, ctx.targetKeyword, ctx.title]
@@ -547,7 +595,17 @@ function buildQueryLadder(ctx: {
   // industry ALONE, unrelated to the post, and filled a powder-coating article with
   // photos of metalwork students. Here the anchor must occur in the post's own topic,
   // and it is always paired with a term from that topic.
-  const domainTerms = new Set(meaningfulTerms(ctx.services ?? ''))
+  const domainSet = new Set(meaningfulTerms(ctx.services ?? ''))
+  /** Service-list membership, tolerant of singular/plural. The topic says "brush guard"
+   *  while the services say "Brush guards", so exact matching missed the head noun and
+   *  the qualifier fell to "polycarbonate" instead. */
+  const domainTerms = {
+    has(t: string): boolean {
+      if (domainSet.has(t)) return true
+      if (t.endsWith('s') && t.length > 3 && domainSet.has(t.slice(0, -1))) return true
+      return domainSet.has(`${t}s`)
+    },
+  }
 
   for (const seed of seeds) {
     const terms = visualTerms(seed)
@@ -560,7 +618,18 @@ function buildQueryLadder(ctx: {
       // which returned photographs of Commercial Bank buildings. The later word is the
       // head noun and the specific one, so the fallback becomes "awnings".
       const anchor = anchors[anchors.length - 1]
-      const qualifier = terms.find(t => t !== anchor)
+      const anchorAt = terms.lastIndexOf(anchor)
+      // Nearest by distance, preferring another service term at equal distance. The
+      // leftmost non-anchor term is often an unrelated verb or modifier from the far end
+      // of a question-shaped keyword.
+      const qualifier = terms
+        .filter(t => t !== anchor)
+        .sort((a, b) => {
+          const da = Math.abs(terms.indexOf(a) - anchorAt)
+          const db = Math.abs(terms.indexOf(b) - anchorAt)
+          if (da !== db) return da - db
+          return (domainTerms.has(b) ? 1 : 0) - (domainTerms.has(a) ? 1 : 0)
+        })[0]
       // Keep the topic's own word order so the phrase reads naturally to the search
       // engines, which do weight adjacency.
       if (qualifier) {
@@ -649,10 +718,14 @@ export async function findStockImageCandidates(
     imageConcept?:  string | null
     title?:         string | null
     /** The client's service area. Its tokens are stripped from queries — no stock
-     *  library indexes "Brevard County", so they match nothing or match wrongly. */
-    geographicFocus?: string | null
-    /** The client's service list — anchors the query on the post's actual subject. */
-    services?:      string | null
+     *  library indexes "Brevard County", so they match nothing or match wrongly.
+     *  REQUIRED (may be null) so a call site cannot silently omit it. */
+    geographicFocus: string | null
+    /** The client's service list — anchors the query on the post's actual subject.
+     *  REQUIRED (may be null): when this was optional, all three call sites omitted it,
+     *  nothing type-errored, and the entire anchor branch was unreachable in production
+     *  while the tests — which passed it directly — showed it working. */
+    services:       string | null
     /** Accepted for call-site compatibility and deliberately unused — see the header. */
     industry?:      string | null
   },
@@ -728,8 +801,9 @@ export async function searchAndStoreStockCandidates(
     targetKeyword?: string | null
     imageConcept?:  string | null
     title?:         string | null
-    geographicFocus?: string | null
-    services?:      string | null
+    /** REQUIRED (may be null) — see findStockImageCandidates. */
+    geographicFocus: string | null
+    services:       string | null
   },
 ): Promise<StockImageCandidate[]> {
   try {

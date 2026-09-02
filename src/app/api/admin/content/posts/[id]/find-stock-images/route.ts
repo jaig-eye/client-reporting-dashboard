@@ -62,6 +62,8 @@ export async function POST(
     imageConcept:  row.image_concept,
     title:         row.seo_title ?? row.title,
     geographicFocus: (cs as { geographic_focus?: string | null } | null)?.geographic_focus ?? null,
+    // Was SELECTed and then dropped on the floor, which left the anchor branch dead.
+    services:        (cs as { services?: string | null } | null)?.services ?? null,
   })
 
   // An empty list is a legitimate, common answer rather than a failure — most

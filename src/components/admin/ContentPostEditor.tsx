@@ -329,7 +329,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
-  const [findingStock,    setFindingStock]    = useState(false)
+  const [findingStock,    setFindingStock]    = useState(false)
+  /** Inline, non-error outcome of a stock search ("nothing new matched"). */
+  const [stockNote,       setStockNote]       = useState('')
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -826,14 +828,23 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   async function handleFindStockImages() {
     setFindingStock(true)
     setError('')
+    setStockNote('')
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/find-stock-images`, { method: 'POST' })
       const data = await res.json() as { candidates?: StockImageCandidate[]; message?: string; error?: string }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Search failed')
       // An empty result leaves the existing set alone — the server declines to persist
       // one too, so clearing here would hide images the post still holds.
-      if (data.candidates && data.candidates.length > 0) setImageCandidates(data.candidates)
-      else setError(data.message ?? 'No new images matched this topic.')
+      if (data.candidates && data.candidates.length > 0) {
+        setImageCandidates(data.candidates)
+        setStockNote('')
+      } else {
+        // Finding nothing is expected on a narrow topic — the route calls it "a
+        // legitimate, common answer rather than a failure" — so it is a note, not an
+        // error, and it renders next to the button rather than in the banner at the top
+        // of a panel the reviewer has scrolled past.
+        setStockNote(data.message ?? 'No new images matched this topic.')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not search for free images')
     } finally {
@@ -1218,6 +1229,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       </button>
                     </div>
 
+                    {stockNote && (
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                        {stockNote}
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, scrollSnapType: 'x proximity' }}>
                       {imageCandidates.map(c => {
                         const busy = applyingStockId === c.id
@@ -1275,7 +1292,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       {findingStock ? 'Searching…' : '⌕ Find free stock images'}
                     </button>
                     <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                      Free, commercially usable photos as an alternative to the AI image.
+                      {stockNote || 'Free, commercially usable photos as an alternative to the AI image.'}
                     </span>
                   </div>
                 )}
