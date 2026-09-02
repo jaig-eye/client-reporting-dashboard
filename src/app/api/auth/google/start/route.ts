@@ -5,12 +5,37 @@
 // All params are encoded into the OAuth state so the callback can restore them.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/server'
 
 export async function GET(request: NextRequest) {
-  const appUrl         = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-  const connectorType  = request.nextUrl.searchParams.get('connector_type') ?? ''
-  const developerToken = request.nextUrl.searchParams.get('developer_token') ?? ''
-  const mccCustomerId  = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
+  const appUrl        = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const connectorType = request.nextUrl.searchParams.get('connector_type') ?? ''
+  const mccCustomerId = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
+  const connectorId   = request.nextUrl.searchParams.get('connector_id') ?? ''
+
+  // Resolve the developer token SERVER-SIDE from the connector row.
+  //
+  // It used to arrive as a query parameter, which the reconnect link built client-side
+  // from connector.auth — so the token was rendered into an href and then travelled in a
+  // URL: browser history, Vercel access logs, any referrer. It is still encoded into the
+  // OAuth `state` below and therefore reaches Google's logs, but that is a payload we
+  // control; a URL the browser navigates to is not.
+  //
+  // The query parameter is still accepted so links already rendered in an open tab keep
+  // working, but nothing generates one any more.
+  let developerToken = request.nextUrl.searchParams.get('developer_token') ?? ''
+  if (!developerToken && connectorId) {
+    try {
+      const db = createAdminClient()
+      const { data } = await db
+        .from('connectors').select('auth').eq('id', connectorId).maybeSingle()
+      const auth = (data as { auth?: Record<string, unknown> } | null)?.auth ?? {}
+      developerToken = String(auth.developer_token ?? '')
+    } catch {
+      // Non-fatal: without it Google Ads reconnect proceeds and the callback keeps
+      // whatever token is already stored.
+    }
+  }
 
   // If connector_type is absent or 'google', use unified mode:
   // the callback will upsert all 4 Google connector types at once.

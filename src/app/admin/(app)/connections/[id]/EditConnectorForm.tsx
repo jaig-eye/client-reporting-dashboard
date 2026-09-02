@@ -9,11 +9,12 @@ function ReconnectSection({ connector }: { connector: Connector }) {
   if (connector.type === 'google_ads') {
     const config = (connector.config ?? {}) as Record<string, string>
     const mcc    = config.mcc_customer_id ?? ''
-    const auth   = (connector.auth   ?? {}) as Record<string, string>
-    const devTok = auth.developer_token ?? ''
-    const params = new URLSearchParams({ connector_type: 'google_ads' })
-    if (devTok) params.set('developer_token', devTok)
-    if (mcc)    params.set('mcc_customer_id', mcc)
+    // Send the connector ID, never the token. This link is an href, so anything in it
+    // ends up in browser history and server access logs — and reading the token here at
+    // all required shipping connector.auth into a client component, which put every
+    // credential on the row into the page HTML. The route now looks it up server-side.
+    const params = new URLSearchParams({ connector_type: 'google_ads', connector_id: connector.id })
+    if (mcc) params.set('mcc_customer_id', mcc)
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>

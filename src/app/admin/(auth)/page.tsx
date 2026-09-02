@@ -12,7 +12,18 @@ const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
 function AdminLoginForm() {
   const router       = useRouter()
   const searchParams = useSearchParams()
-  const returnUrl    = searchParams.get('returnUrl') ?? '/admin/dashboard'
+  // Same-origin paths only. This lands in router.push() straight after a successful
+  // sign-in, so an unvalidated value made the real login page a redirector: a
+  // /admin?returnUrl=https://evil.example link authenticates the admin for real, then
+  // hands them to the attacker's page — and middleware itself mints ?returnUrl= links,
+  // so the shape looks routine. '//host' and '/\host' are protocol-relative and
+  // must be rejected along with absolute URLs.
+  const rawReturn    = searchParams.get('returnUrl')
+  const returnUrl    =
+    rawReturn && rawReturn.startsWith('/')
+    && !rawReturn.startsWith('//') && !rawReturn.startsWith('/\\')
+      ? rawReturn
+      : '/admin/dashboard'
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [code,     setCode]     = useState('')

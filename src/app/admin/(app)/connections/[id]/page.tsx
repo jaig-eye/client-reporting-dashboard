@@ -18,7 +18,21 @@ export default async function ConnectorDetailPage({
   const { id } = await params
   const db = createAdminClient()
 
-  const { data } = await db.from('connectors').select('*').eq('id', id).single()
+  // Explicit column list, NOT select('*'). EditConnectorForm is a client component, so
+  // every column handed to it is serialized into the RSC flight payload inside the page
+  // HTML — and `auth` holds the live credential for each connector: Google Ads
+  // access/refresh/developer tokens, GA4, GSC and GBP refresh tokens, Meta and Ahrefs
+  // keys. Anyone who can render this page, any browser extension, any saved HAR or
+  // support screenshot had them in plain text, including a read-only viewer.
+  //
+  // Nothing is lost by omitting it: the form initialises its credential inputs to EMPTY
+  // strings (it never displays a stored secret), and the one place that did read
+  // auth.developer_token now passes connector_id and lets the server resolve it.
+  const { data } = await db
+    .from('connectors')
+    .select('id, type, label, status, config, last_checked_at, created_at, updated_at')
+    .eq('id', id)
+    .single()
   const connector = data as Connector | null
   if (!connector) notFound()
 

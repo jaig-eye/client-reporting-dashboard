@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAdminSessionEdge } from './lib/session-edge'
 import { isSessionRevoked } from './lib/sessionRevocation'
+import { clearCookie } from './lib/clearSession'
 
 /**
  * Cookie-authenticated, state-changing API routes that live OUTSIDE /api/admin.
@@ -74,7 +75,7 @@ export async function middleware(request: NextRequest) {
         JSON.stringify({ error: 'Session expired. Please sign in again.' }),
         { status: 401, headers: { 'content-type': 'application/json' } },
       )
-      res.cookies.delete('admin_session')
+      clearCookie(res, 'admin_session')
       return res
     }
     return NextResponse.next()
@@ -101,12 +102,34 @@ export async function middleware(request: NextRequest) {
   // /dashboard/* — requires client_token; if admin session present without token, go to /admin
   if (pathname.startsWith('/dashboard')) {
     const token = request.cookies.get('client_token')?.value
+    const admin = await verifyAdminSessionEdge(request.cookies.get('admin_session')?.value)
+
+    // Revocation has to be checked HERE too, not only on /admin and /api/admin.
+    // dashboard/layout.tsx and actions/rawMode.ts both gate the admin bar on
+    // isAdminAuthed(), which verifies the HMAC and reads no row — so without this a
+    // revoked admin still gets an elevated view of any client dashboard for the full
+    // 14-day cookie TTL. Strip the cookie and let them continue as a plain client
+    // session if they hold a client_token; the page then renders with no admin bar.
+    const revoked = admin !== null && await isSessionRevoked(admin.userId, admin.iat)
+
     if (!token) {
-      const isAdmin = (await verifyAdminSessionEdge(request.cookies.get('admin_session')?.value)) !== null
-      if (isAdmin) {
+      if (admin !== null && !revoked) {
         return NextResponse.redirect(new URL('/admin', request.url))
       }
-      return NextResponse.redirect(new URL('/access', request.url))
+      const res = NextResponse.redirect(new URL('/access', request.url))
+      if (revoked) clearCookie(res, 'admin_session')
+      return res
+    }
+
+    if (revoked) {
+      // Strip it from the REQUEST, not just the response. Clearing it on the response
+      // alone is too late: this same request still renders, and layout.tsx reads
+      // cookies() off the request, so the admin bar would paint one final time. A
+      // redirect-to-self would avoid that but risks a loop if the clearing header is
+      // ever dropped; rewriting the header cannot loop.
+      request.cookies.delete('admin_session')
+      const res = NextResponse.next({ request: { headers: request.headers } })
+      return clearCookie(res, 'admin_session')
     }
   }
 
@@ -124,7 +147,7 @@ export async function middleware(request: NextRequest) {
       const loginUrl = new URL('/admin', request.url)
       loginUrl.searchParams.set('returnUrl', pathname + request.nextUrl.search)
       const res = NextResponse.redirect(loginUrl)
-      if (revoked) res.cookies.delete('admin_session')
+      if (revoked) clearCookie(res, 'admin_session')
       return res
     }
   }

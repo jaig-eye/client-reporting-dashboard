@@ -39,6 +39,11 @@ const ipLimiter      = createRateLimiter({ name: 'login-ip',      max: 50, windo
 
 const SUPER_ADMIN_EMAIL = 'support@golaunchlocal.com'
 const OTP_TTL_MINUTES   = 10
+// Guesses allowed against ONE issued code before it is burned. Mirrors
+// MAX_RESET_ATTEMPTS in /api/auth/reset-password; enforced DB-side by
+// consume_super_admin_otp_attempt (migration 211) so the count survives across
+// serverless instances and cannot be raced.
+const MAX_OTP_ATTEMPTS  = 5
 
 function hashOtp(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex')
@@ -49,7 +54,12 @@ function generateOtp(): string {
   return String(crypto.randomInt(100000, 1000000))
 }
 
-function superAdminSessionResponse(): NextResponse {
+function superAdminSessionResponse(ip?: string): NextResponse {
+  // Audited like every other sign-in. The super admin is the one account with
+  // unlimited privilege, no users row and no revocation path, and it was the only
+  // one whose logins left no server-side record at all — /admin/system renders a
+  // 'logged_in' filter that could never match it.
+  logActivity({ isSuperAdmin: true }, 'logged_in', 'user', { ip })
   const res = NextResponse.json({ ok: true, role: 'super_admin' })
   res.cookies.set('admin_session', signAdminSession({ isSuperAdmin: true }), COOKIE_OPTS)
   // clearCookie, not res.cookies.delete: a bare delete emits no Secure/SameSite=None,
@@ -122,6 +132,7 @@ export async function POST(request: NextRequest) {
   if (!email || email.trim() === '') {
     if (!timingSafeCompare(password, process.env.ADMIN_PASSWORD ?? '')) {
       // No second take(): the attempt was already reserved at request entry.
+      logActivity({ isSuperAdmin: true }, 'login_failed', 'user', { ip, meta: { reason: 'bad_password' } })
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
 
@@ -151,6 +162,18 @@ export async function POST(request: NextRequest) {
         submittedOtp.length !== storedOtp.length ||
         !crypto.timingSafeEqual(submittedOtp, storedOtp)
       ) {
+        const { error: chargeErr } = await db.rpc('consume_super_admin_otp_attempt', {
+          p_max: MAX_OTP_ATTEMPTS,
+        })
+        if (chargeErr) {
+          // Fail loudly rather than silently: with the RPC missing, PostgREST answers
+          // PGRST202, this route returns its usual 401, and the per-code cap is inert.
+          console.error(
+            '[admin-login] consume_super_admin_otp_attempt failed — the per-code brute-force cap is NOT ' +
+            'being enforced. Apply migration 211. Error:', chargeErr.message,
+          )
+        }
+        logActivity({ isSuperAdmin: true }, 'login_failed', 'user', { ip, meta: { reason: 'bad_otp' } })
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 401 })
       }
 
@@ -158,10 +181,11 @@ export async function POST(request: NextRequest) {
       await db.from('agency_settings').update({
         super_admin_otp_hash:       null,
         super_admin_otp_expires_at: null,
+        super_admin_otp_attempts:   0,
       })
 
       await accountLimiter.reset(accountKey)
-      return superAdminSessionResponse()
+      return superAdminSessionResponse(ip)
     }
 
     // If email isn't configured, OTP cannot be delivered — block login rather than
@@ -187,6 +211,7 @@ export async function POST(request: NextRequest) {
     await db.from('agency_settings').update({
       super_admin_otp_hash:       hashOtp(otp),
       super_admin_otp_expires_at: expiresAt,
+      super_admin_otp_attempts:   0,
     })
 
     try {
@@ -210,6 +235,7 @@ export async function POST(request: NextRequest) {
       await db.from('agency_settings').update({
         super_admin_otp_hash:       null,
         super_admin_otp_expires_at: null,
+        super_admin_otp_attempts:   0,
       })
       return NextResponse.json(
         { error: 'Failed to send verification code. Please try again.' },

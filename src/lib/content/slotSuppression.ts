@@ -97,7 +97,12 @@ export async function unsuppressSlot(
  */
 export async function findPairedPostId(
   db: SupabaseClient,
-  topic: { id: string; post_id?: string | null; client_id: string; target_publish_date: string | null },
+  topic: {
+    id: string; post_id?: string | null; client_id: string
+    target_publish_date: string | null
+    /** Narrows the slot fallback — a blog topic and a service-area page can share a date. */
+    content_type?: string | null
+  },
 ): Promise<string | null> {
   if (topic.post_id) return topic.post_id
 
@@ -105,11 +110,32 @@ export async function findPairedPostId(
     .from('content_posts').select('id').eq('topic_id', topic.id).limit(1).maybeSingle()
   if ((byTopic as { id: string } | null)?.id) return (byTopic as { id: string }).id
 
+  // Last-resort slot match, deliberately narrow. This result gets HARD-DELETED by the
+  // caller, so a loose match destroys a post nobody asked to remove:
+  //   - same content_type, because a blog topic and a service-area page can share a date
+  //   - topic_id must be null or this topic, never another topic's post
+  //   - never a published one, since deleting our row would leave the article live on the
+  //     client's site with no record of it
+  // If more than one row still matches, the pairing is ambiguous and nothing is returned —
+  // orphaning a topic is recoverable, deleting the wrong article is not.
   if (!topic.target_publish_date) return null
-  const { data: bySlot } = await db
-    .from('content_posts').select('id')
+  let q = db
+    .from('content_posts').select('id, topic_id')
     .eq('client_id', topic.client_id)
     .eq('target_publish_date', topic.target_publish_date)
-    .limit(1).maybeSingle()
-  return (bySlot as { id: string } | null)?.id ?? null
+    .is('wp_post_id', null)
+    .is('bc_post_id', null)
+    .limit(2)
+  if (topic.content_type) q = q.eq('content_type', topic.content_type)
+
+  const { data: bySlot } = await q
+  const rows = (bySlot ?? []) as { id: string; topic_id: string | null }[]
+  const candidates = rows.filter(r => !r.topic_id || r.topic_id === topic.id)
+  if (candidates.length !== 1) {
+    if (candidates.length > 1) {
+      console.warn(`[slotSuppression] ambiguous slot pairing for topic ${topic.id} — not deleting any post`)
+    }
+    return null
+  }
+  return candidates[0].id
 }

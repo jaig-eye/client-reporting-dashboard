@@ -118,10 +118,23 @@ export function createRateLimiter(
         // or VPN out of admin-login indefinitely, with no way back in: each retry
         // pushes the expiry another windowMs out. PEXPIRE ... NX would also fix it
         // but needs Redis 7+; SET ... NX is universal, and one pipeline either way.
+        // PTTL rides along to catch the one gap SET...NX cannot close. An Upstash
+        // /pipeline is sequential, not MULTI/EXEC, so the key can expire BETWEEN the
+        // SET (which found it present and refused) and the INCR (which then recreates
+        // it). A key born from INCR has no expiry at all — PTTL -1 — and since
+        // login-ip, forgot and reset are never reset(), nothing in the application
+        // could ever drain it: that IP stays blocked until someone DELs the key by
+        // hand. Re-arming only on ttl === -1 fixes it without reintroducing the
+        // sliding-block bug described above, which came from re-arming every attempt.
         const out = await upstashPipeline(env, [
           ['SET', rk, 0, 'PX', windowMs, 'NX'],
           ['INCR', rk],
+          ['PTTL', rk],
         ])
+        const ttl = out?.[2]?.result
+        if (ttl === -1) {
+          await upstashPipeline(env, [['PEXPIRE', rk, windowMs]])
+        }
         const count = out?.[1]?.result
         if (typeof count === 'number') {
           // Mirror into the local map so the in-memory tier stays WARM. Without this

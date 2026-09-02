@@ -6,10 +6,14 @@ import { ShareNetwork, Coins, Coin, Printer, Envelope, CaretDown } from '@phosph
 import { setRawMode } from '@/app/actions/rawMode'
 import ReportModal from './ReportModal'
 
+// No dashboard_token. This is a client component, so every field here is serialized
+// into the page HTML — and dashboard_token is a permanent bearer credential: pasted
+// into /api/auth/access it mints a 90-day client_token for that client, no login.
+// The switcher below reads only id and name, and switching goes through
+// /api/admin/preview/[clientId], which re-checks the admin session server-side.
 interface Client {
   id: string
   name: string
-  dashboard_token: string
 }
 
 interface Props {

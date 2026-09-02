@@ -139,7 +139,7 @@ export async function DELETE(
   // Resolve the topic BEFORE deleting the post — the links are unrecoverable after.
   const { data: post } = await db
     .from('content_posts')
-    .select('id, topic_id, title, client_id, target_publish_date')
+    .select('id, topic_id, title, client_id, target_publish_date, wp_post_id, bc_post_id')
     .eq('id', id)
     .maybeSingle()
 
@@ -148,6 +148,7 @@ export async function DELETE(
   const row = post as {
     topic_id: string | null; title: string | null
     client_id: string; target_publish_date: string | null
+    wp_post_id: number | null; bc_post_id: number | null
   }
 
   // Resolve the topic through three links, strongest first. Neither FK cascades —
@@ -181,6 +182,26 @@ export async function DELETE(
       .limit(1)
       .maybeSingle()
     topicId = (slotTopic as { id: string } | null)?.id ?? null
+  }
+
+  // A LIVE article cannot be deleted from here.
+  //
+  // PATCH already refuses to reject a published post (same reason, same file), because
+  // removing the row does NOT take the article off the client's site — it only removes
+  // our record of it. Deleting was worse than rejecting: it left the article published
+  // with nothing in content_posts, so it was invisible to the dashboard, to /dismiss
+  // (the only unpublish path) and to the cannibalisation avoid-list, which would then
+  // happily commission a competing article on the same subject.
+  //
+  // Discard/unpublish first, which takes it down properly, then delete.
+  if (row.wp_post_id || row.bc_post_id) {
+    return NextResponse.json(
+      {
+        error: 'This post is published on the client’s site. Use Discard to take it down first — '
+             + 'deleting here would remove our record while leaving the article live.',
+      },
+      { status: 409 },
+    )
   }
 
   const { error } = await db.from('content_posts').delete().eq('id', id)

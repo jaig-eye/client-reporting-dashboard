@@ -30,13 +30,28 @@ function ForgotPasswordForm() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    await fetch('/api/auth/forgot-password', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email: email.trim() }),
-    }).catch(() => {})
-    setLoading(false)
-    setStep('code')
+    // Advance ONLY on a real 200. This used to discard the response entirely and
+    // setStep('code') unconditionally, so a 429 from the rate limiter, a 500, or a
+    // dropped connection all rendered as 'Enter the code we sent to your email' and
+    // 'expires in 10 minutes' for a code that was never sent — on the one page a
+    // locked-out admin depends on.
+    try {
+      const res  = await fetch('/api/auth/forgot-password', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: email.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(data.error || 'Could not send a reset code. Please try again in a few minutes.')
+        return
+      }
+      setStep('code')
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleReset(e: React.FormEvent) {
@@ -180,6 +195,12 @@ function ForgotPasswordForm() {
                 placeholder="admin@agency.com"
               />
             </div>
+
+            {error && (
+              <div className="rounded-lg px-3 py-2 text-sm" style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}>
+                {error}
+              </div>
+            )}
 
             <button type="submit" disabled={loading} className="btn btn-primary w-full justify-center" style={{ padding: '0.625rem' }}>
               {loading ? 'Sending…' : 'Send code'}

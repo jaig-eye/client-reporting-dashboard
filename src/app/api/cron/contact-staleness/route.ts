@@ -30,6 +30,7 @@ interface ClientRow {
   last_contacted_at:     string | null
   contact_stale_days:    number | null
   last_contact_alert_at: string | null
+  created_at: string | null
 }
 
 /** High-attention clients lead the digest — they are the ones that hurt to forget. */
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
       .select('discord_bot_token, discord_ops_channel_id, notification_config, notification_email, contact_stale_days, agency_name')
       .maybeSingle(),
     db.from('clients')
-      .select('id, name, temperature, last_contacted_at, contact_stale_days, last_contact_alert_at'),
+      .select('id, name, temperature, last_contacted_at, contact_stale_days, last_contact_alert_at, created_at'),
   ])
 
   const settings    = settingsRes.data as Record<string, unknown> | null
@@ -84,7 +85,19 @@ export async function GET(request: NextRequest) {
     const contacted = c.last_contacted_at ? new Date(c.last_contacted_at).getTime() : null
     const days      = contacted === null ? null : Math.floor((now - contacted) / DAY_MS)
 
-    const isStale = days === null || days >= threshold
+    // A client with no contact logged is measured from when it was ADDED, not
+    // treated as infinitely overdue. Without this, "never contacted" alone made a
+    // client stale, so one added an hour ago appeared on the very next 08:00 run
+    // alongside genuinely neglected accounts — the alert's job is to separate those.
+    // The displayed age stays "never logged"; only the decision uses this clock.
+    const createdAt = c.created_at ? new Date(c.created_at).getTime() : null
+    const sinceDays = days !== null
+      ? days
+      : createdAt !== null ? Math.floor((now - createdAt) / DAY_MS) : null
+
+    // sinceDays === null means no contact AND no created_at — nothing to measure
+    // against, so fall back to flagging it rather than silently dropping the client.
+    const isStale = sinceDays === null || sinceDays >= threshold
     if (!isStale) continue
 
     // Alert once per stale streak, then re-nudge no more often than the

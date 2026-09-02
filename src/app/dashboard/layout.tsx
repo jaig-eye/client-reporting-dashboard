@@ -109,11 +109,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   // Load admin bar data when admin session is active
-  let adminClients: { id: string; name: string; dashboard_token: string }[] = []
+  // id and name only. dashboard_token used to be selected here and handed to
+  // AdminDashboardBar, a client component, which put all 23 clients' permanent
+  // access tokens in the page HTML of every admin dashboard view. The bar never
+  // read them — it switches clients via /api/admin/preview/[clientId].
+  let adminClients: { id: string; name: string }[] = []
   if (isAdmin) {
     const { data } = await db
       .from('clients')
-      .select('id, name, dashboard_token')
+      .select('id, name')
       .order('name')
     adminClients = (data ?? []) as typeof adminClients
   }

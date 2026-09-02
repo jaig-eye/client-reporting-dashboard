@@ -21,7 +21,12 @@ export default async function ConnectionSettingsPage({
   const [clientRes, connectionRes] = await Promise.all([
     db.from('clients').select('id, name').eq('id', id).single(),
     db.from('client_connections')
-      .select('*, connector:connectors(*)')
+      // Explicit columns, and the connector WITHOUT its auth. ConnectionSettingsForm is a
+      // client component, so `select('*, connector:connectors(*)')` serialized every
+      // per-client credential into the page HTML — 21 GoHighLevel API keys, WordPress
+      // application passwords, BigCommerce access tokens. The form reads only
+      // connector.type and config.page_filter_*, so none of it was ever needed.
+      .select('id, client_id, connector_id, external_id, external_name, status, last_synced_at, sync_from, config, connector:connectors(id, type, label, status, config)')
       .eq('id', connectionId)
       .eq('client_id', id)
       .single(),

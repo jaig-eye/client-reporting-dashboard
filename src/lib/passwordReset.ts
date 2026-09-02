@@ -32,7 +32,7 @@ function generateCode(): string {
 }
 
 export type IssueResult =
-  | { ok: true }
+  | { ok: true; reused?: boolean }
   | { ok: false; reason: 'email_not_configured' | 'send_failed' | 'db_error'; detail?: string }
 
 /**
@@ -54,6 +54,29 @@ export async function issueResetCode(
     console.error('[passwordReset] MAILGUN_SMTP_* not configured — cannot send a reset code')
     return { ok: false, reason: 'email_not_configured' }
   }
+
+  // If a live code is already outstanding, KEEP it and send nothing.
+  //
+  // Issuance is throttled per source IP only (3/15min in /api/auth/forgot-password),
+  // never per account, and the invalidate below kills every outstanding code for the
+  // user. Unconditionally minting therefore let anyone who knows an admin's email
+  // address hold that admin's reset shut indefinitely from a couple of IPs: each
+  // request silently voided the code the victim was in the middle of typing. For an
+  // account flagged must_reset_password the code is the ONLY way back in, so that is
+  // a remote lockout, and an unmetered mail-bomb besides.
+  //
+  // Same resolution admin-login's forced-rotation branch already uses. It costs the
+  // legitimate "the email never arrived" case a wait for the 10-minute expiry, which
+  // is the right trade against an unbounded lockout.
+  const { data: liveCode } = await db
+    .from('password_reset_tokens')
+    .select('id')
+    .eq('user_id', user.id)
+    .is('used_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .limit(1)
+    .maybeSingle()
+  if (liveCode) return { ok: true, reused: true }
 
   // One live code at a time, so an older email cannot still be redeemed.
   const { error: invalidateErr } = await db
