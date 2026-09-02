@@ -6,6 +6,18 @@ function esc(s: string | null | undefined): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/**
+ * Escape for HTML email bodies. Exported so callers outside this file stop
+ * hand-rolling their own — there are already several copies in the repo and they
+ * disagree about the apostrophe.
+ *
+ * Not cosmetic: MAILGUN_FROM is documented as `Agency Name <noreply@...>`, so
+ * interpolating it raw makes the mail client parse the address as an unknown tag
+ * and DROP it — the value vanishes from the one diagnostic whose job is to
+ * report it.
+ */
+export const escapeEmailHtml = esc
+
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', {
@@ -34,6 +46,40 @@ function wrapper(agencyName: string, clientName: string, body: string): string {
     <!-- Footer -->
     <div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;">
       <p style="margin:0;color:#9ca3af;font-size:11px;">${esc(agencyName)} &middot; Content Automation</p>
+    </div>
+
+  </div>
+</body>
+</html>`
+}
+
+/**
+ * The same shell as the per-client emails, for agency-wide notifications that
+ * are not about a single client.
+ *
+ * Without it, an ops digest ships as unstyled default-serif HTML while every
+ * other notification carries the agency header and footer — so the one alert
+ * about our own follow-up discipline is the one that looks like spam, and a
+ * future change to the email shell never reaches it.
+ */
+export function buildAgencyEmail(agencyName: string, heading: string, bodyHtml: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:24px 16px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+
+    <div style="background:#1e3a8a;padding:22px 28px;">
+      <p style="margin:0 0 4px;color:#93c5fd;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">${esc(agencyName)}</p>
+      <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.3;">${esc(heading)}</h1>
+    </div>
+
+    <div style="padding:28px;">
+      ${bodyHtml}
+    </div>
+
+    <div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+      <p style="margin:0;color:#9ca3af;font-size:11px;">${esc(agencyName)}</p>
     </div>
 
   </div>

@@ -5,6 +5,8 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { updatePage }        from '@/lib/connectors/wordpress'
 import { updateBCPage }      from '@/lib/connectors/bigcommerce'
+import { isPublicPermalink }  from '@/lib/content/postLinks'
+import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 interface NearbyLinkPost {
   id:             string
@@ -42,6 +44,29 @@ export async function injectNearbyLinks(
 
   const db = createAdminClient()
 
+  // Honour the per-silo internal-linking switch.
+  //
+  // Without this the toggle would only soften a sentence in the generation
+  // prompt while this injector kept writing cross-links directly into live CMS
+  // pages — i.e. "linking off" would not actually turn linking off.
+  const { data: ownerPost } = await db
+    .from('content_posts')
+    .select('silo_id')
+    .eq('id', currentPostId)
+    .maybeSingle()
+
+  const ownerSiloId = (ownerPost as { silo_id?: string | null } | null)?.silo_id ?? null
+  if (ownerSiloId) {
+    const { data: silo } = await db
+      .from('content_silos')
+      .select('inject_internal_links')
+      .eq('id', ownerSiloId)
+      .maybeSingle()
+    // Only an explicit false opts out; a missing column (migration 201 not yet
+    // applied) leaves the previous always-on behaviour intact.
+    if ((silo as { inject_internal_links?: boolean } | null)?.inject_internal_links === false) return
+  }
+
   // Find all pushed sibling SA pages for the same service
   const { data: siblings } = await db
     .from('content_posts')
@@ -57,12 +82,20 @@ export async function injectNearbyLinks(
   // Get the current post's URL for linking back
   const { data: currentPost } = await db
     .from('content_posts')
-    .select('city, state_abbr, published_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash')
+    // `content` is NOT optional here. This row is spread into allPosts below and
+    // later written back as `post.content ?? ''` + the links section. Omitting it
+    // meant the current post was rewritten to nothing but the nearby-links list —
+    // destroying the article in the CMS *and* in the database.
+    .select('city, state_abbr, published_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, content')
     .eq('id', currentPostId)
     .single()
 
   const allPosts = [...(siblings as NearbyLinkPost[]), { ...(currentPost as NearbyLinkPost), id: currentPostId }]
-    .filter(p => p.published_url)
+    // A published_url must be a PUBLIC permalink before it can become an href.
+    // Before migration 202 every BigCommerce post carried the store-admin URL here,
+    // so this injector emitted links into client content that pointed at the
+    // BigCommerce control panel. Filter on the predicate, not on truthiness.
+    .filter(p => isPublicPermalink(p.published_url ?? null))
 
   // Resolve connection auth for WP
   const wpSiteUrl = (currentPost as NearbyLinkPost | null)?.wp_site_url
@@ -108,7 +141,7 @@ export async function injectNearbyLinks(
     const postId = post.id === currentPostId ? currentPostId : post.id
     const others = allPosts.filter(p => {
       const pid = p.id === currentPostId ? currentPostId : p.id
-      return pid !== postId && p.city && p.published_url
+      return pid !== postId && p.city && isPublicPermalink(p.published_url ?? null)
     })
 
     if (others.length === 0) continue
@@ -119,22 +152,72 @@ export async function injectNearbyLinks(
       url:   o.published_url!,
     }))
 
+    // Refuse to append to a body we do not actually have.
+    //
+    // This function only ever APPENDS, so an empty `content` can only mean the
+    // row was not loaded with its body — never that the article is genuinely
+    // empty (an empty article could not have been published). Writing in that
+    // state replaces a real page with a bare list, on the live site and in the
+    // database, with no way back. A missing body is a bug in the caller, so skip
+    // loudly rather than destroy the page.
     const existingContent = post.content ?? ''
+    if (existingContent.trim() === '') {
+      console.error(`[injectNearbyLinks] refusing to write post ${post.id}: content missing from the loaded row`)
+      continue
+    }
     if (alreadyHasNearbySection(existingContent)) continue
 
     const updatedContent = existingContent + buildNearbySection(links)
 
+    // The CMS gets the same treatment the approve route applies. That route
+    // pushes stripEditorialMarkers(styleTables(content)); this one re-reads the
+    // RAW column and pushes it straight back, so without the same transform it
+    // silently undoes both — re-publishing our internal <!-- INSIGHT --> /
+    // <!-- MEDIA --> annotations into the client's live page source seconds
+    // after they were stripped, and reverting the table styling. The DB keeps
+    // the unstripped copy, which is the same split approve maintains.
+    const cmsBody = stripEditorialMarkers(styleTables(updatedContent))
+
     // Update via WP
+    let pushedToCms = false
     if (post.wp_post_id && wpAuth && wpSiteUrl) {
-      await updatePage(wpSiteUrl, wpAuth, post.wp_post_id, { content: updatedContent }).catch(() => {})
+      const ok = await updatePage(wpSiteUrl, wpAuth, post.wp_post_id, { content: cmsBody })
+        .then(() => true).catch(() => false)
+      pushedToCms = pushedToCms || ok
     }
 
     // Update via BC
     if (post.bc_post_id && bcStoreHash && bcAccessToken) {
-      await updateBCPage(bcStoreHash, bcAccessToken, post.bc_post_id, { body: updatedContent }).catch(() => {})
+      const ok = await updateBCPage(bcStoreHash, bcAccessToken, post.bc_post_id, { body: cmsBody })
+        .then(() => true).catch(() => false)
+      pushedToCms = pushedToCms || ok
     }
 
-    // Update DB content cache
-    await db.from('content_posts').update({ content: updatedContent }).eq('id', postId).then(null, () => {})
+    // Nothing reached the CMS, so leave the row exactly as it was.
+    //
+    // Caching the appended body here would be worse than doing nothing: the
+    // alreadyHasNearbySection check above reads this column, so the next run
+    // would see the links as already injected and skip — the live page never
+    // gets them and injection can never be retried. It would also trip the
+    // content-changed branch of trg_content_posts_updated_at, which stamps
+    // updated_at without last_pushed_at (permanent "Live copy is out of date")
+    // and nulls quality_report (permanent hold from auto-push). A transient 502
+    // must not become a permanent state.
+    if (!pushedToCms) {
+      console.error(`[injectNearbyLinks] no CMS write succeeded for post ${post.id}; leaving the row unchanged so it can retry`)
+      continue
+    }
+
+    // Update DB content cache.
+    //
+    // last_pushed_at moves too, because this function IS a push: it rewrote the
+    // live CMS copy from exactly the HTML being cached here. Without it the
+    // trigger would stamp updated_at newer than last_pushed_at and every
+    // service-area page would read as "live copy is out of date" forever, even
+    // though the site is perfectly in sync.
+    await db.from('content_posts').update({
+      content:        updatedContent,
+      last_pushed_at: new Date().toISOString(),
+    }).eq('id', postId).then(null, () => {})
   }
 }

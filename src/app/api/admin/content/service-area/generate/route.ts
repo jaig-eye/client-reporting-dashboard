@@ -2,6 +2,8 @@
 // Generates a service area landing page from an approved SA topic.
 // Body: { topic_id: string }
 
+import { describeTenure } from '@/lib/content/eeat'
+import type { EeatData } from '@/lib/content/types'
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil }                 from '@vercel/functions'
 import { cookies }                   from 'next/headers'
@@ -13,6 +15,7 @@ import { stripHallucinatedLinks }                      from '@/lib/content/linkU
 import { generatePostImage }                           from '@/lib/content/generatePostImage'
 import { sendDiscordMessage }                          from '@/lib/discord'
 import { getNotif, type NotifConfig }                  from '@/lib/notificationConfig'
+import { recheckPostQuality }                          from '@/lib/content/recheckQuality'
 
 export const maxDuration = 300
 
@@ -99,7 +102,7 @@ function formatEeat(eeatRaw: unknown): string {
   if (!e || typeof e !== 'object') return ''
   const r = e as Record<string, unknown>
   const parts: string[] = []
-  if (r.years_in_business)      parts.push(`${r.years_in_business} years in business`)
+  { const tenure = describeTenure(r as Partial<EeatData>); if (tenure) parts.push(tenure) }
   if (r.licenses)               parts.push(`licensed: ${r.licenses}`)
   if (r.review_count)           parts.push(`${r.review_count} reviews`)
   if (r.guarantees)             parts.push(`guarantees: ${r.guarantees}`)
@@ -517,6 +520,11 @@ Return ONLY valid JSON — no markdown fences, no explanation:
   await db.from('content_topics')
     .update({ status: 'generated', post_id: post.id })
     .eq('id', topicId)
+
+  // Service-area pages went in with no quality report at all, and the cron
+  // auto-push gate fails closed on a missing one — so every SA page was held
+  // and alerted with no way to clear it. Scored on the same terms as blogs.
+  await recheckPostQuality(db, post.id as string)
 
   // Generate featured image if configured (mirrors blog pipeline)
   const openaiKey = agency?.openai_api_key as string | null

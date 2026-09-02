@@ -1,0 +1,122 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Signed admin session tokens (Node runtime).
+//
+// The `admin_session` cookie used to hold the raw ADMIN_PASSWORD, and identity
+// (super-admin vs regular, which user) was derived from the UNSIGNED `admin_user_id`
+// cookie — both client-editable. That allowed privilege escalation (delete
+// admin_user_id → super-admin) and impersonation (set it to another id).
+//
+// Now `admin_session` holds an HMAC-signed token that carries the identity claims.
+// Tampering with the payload invalidates the signature, so the server no longer
+// trusts the client for authorization.
+//
+// Edge (middleware) verification lives in `session-edge.ts` — it must NOT import
+// node:crypto, so the two runtimes have separate, format-compatible implementations.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { createHmac, timingSafeEqual } from 'crypto'
+import { resolveSessionSecret } from './sessionSecret'
+
+export interface AdminSessionClaims {
+  isSuperAdmin: boolean
+  userId?: string
+  role?: string
+}
+
+export interface AdminSessionToken extends AdminSessionClaims {
+  v: 1
+  iat: number   // issued-at (unix seconds)
+  exp: number   // expiry    (unix seconds)
+}
+
+export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14   // 14 days — matches cookie maxAge
+
+/**
+ * HMAC key.
+ *
+ * ⚠️ `SESSION_SECRET` IS REQUIRED IN PRODUCTION — `openssl rand -hex 32`.
+ *
+ * There is no ADMIN_PASSWORD fallback in production, and that is the whole point:
+ * until signed sessions shipped, `admin_session` literally WAS the raw
+ * ADMIN_PASSWORD and was sent on every admin request, so that value may sit in
+ * HAR exports, proxy/WAF logs, Vercel request logs and support screenshots.
+ * Signing with it would let anyone holding an old cookie mint
+ * `{ isSuperAdmin: true }` for themselves, bypassing both the password and the
+ * OTP — a worse position than the escalation signed sessions exist to close.
+ *
+ * With it unset in production this returns '', both verifiers reject everything,
+ * and signing throws: nobody can log in. That is intentional. A five-minute
+ * config fix is preferable to a silently forgeable session.
+ */
+// Resolution lives in lib/sessionSecret.ts so the Edge verifier (session-edge.ts)
+// shares one definition — see that file for why there is no ADMIN_PASSWORD fallback
+// in production.
+function sessionSecret(): string {
+  return resolveSessionSecret()
+}
+
+/** True when session signing is usable. Checked by login to give a real error. */
+export function sessionSigningConfigured(): boolean {
+  return sessionSecret() !== ''
+}
+
+function hmac(body: string): string {
+  return createHmac('sha256', sessionSecret()).update(body).digest('base64url')
+}
+
+/** Sign a session token (Node). */
+export function signAdminSession(claims: AdminSessionClaims): string {
+  // Both verifiers return null on an empty secret, so signing with one would mint a cookie
+  // that can never verify — login returns 200, middleware bounces back to /admin, and the
+  // admin is stuck in a silent redirect loop with no error anywhere. Fail loudly instead.
+  if (!sessionSecret()) {
+    throw new Error('[session] Cannot sign admin session: set SESSION_SECRET (or ADMIN_PASSWORD).')
+  }
+  const nowSec = Math.floor(Date.now() / 1000)
+  const payload: AdminSessionToken = {
+    v: 1,
+    isSuperAdmin: claims.isSuperAdmin,
+    ...(claims.userId ? { userId: claims.userId } : {}),
+    ...(claims.role ? { role: claims.role } : {}),
+    iat: nowSec,
+    exp: nowSec + SESSION_TTL_SECONDS,
+  }
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  return `${body}.${hmac(body)}`
+}
+
+/**
+ * Cookie header value for INTERNAL server-to-server calls that need to authenticate as
+ * admin (cron jobs and admin routes that fetch our own /api/admin endpoints).
+ *
+ * These previously sent the raw ADMIN_PASSWORD as the cookie value, which only worked while
+ * `admin_session` WAS the password. Now that the cookie holds a signed token, they must mint
+ * a real one — otherwise every internal call 401s. Server-side fetches send no Origin header,
+ * so the middleware CSRF guard allows them.
+ */
+export function internalAdminCookie(): string {
+  return `admin_session=${signAdminSession({ isSuperAdmin: true })}`
+}
+
+/** Verify + decode a session token (Node, synchronous). Returns null when invalid/expired. */
+export function verifyAdminSessionNode(token: string | undefined | null): AdminSessionToken | null {
+  if (!token || !sessionSecret()) return null
+  const dot = token.indexOf('.')
+  if (dot <= 0) return null
+  const body = token.slice(0, dot)
+  const sig  = token.slice(dot + 1)
+  const expected = hmac(body)
+
+  const sigBuf = Buffer.from(sig)
+  const expBuf = Buffer.from(expected)
+  if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) return null
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as AdminSessionToken
+    if (!payload || payload.v !== 1) return null
+    if (typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) return null
+    return payload
+  } catch {
+    return null
+  }
+}

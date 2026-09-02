@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed } from '@/lib/auth'
+import { requireWriteAdmin } from '@/lib/auth'
 
 const VALID_SOURCES = [
   'google_ads',
@@ -63,9 +63,11 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = request.cookies.get('admin_session')?.value
-  if (!isAdminAuthed(session)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Irreversible cross-source data deletion — gate on a verified, non-revoked,
+  // non-viewer session (requireWriteAdmin), not the role-blind sync isAdminAuthed.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
 
   const { id } = await params

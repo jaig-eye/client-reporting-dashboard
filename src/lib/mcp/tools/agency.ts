@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Tool, ToolResult } from '../types'
 import { ok, fail, fmt } from '../types'
+import { maskSecrets } from '@/lib/secretMask'
 
 export const tools: Tool[] = [
   {
@@ -32,16 +33,30 @@ export const tools: Tool[] = [
   },
 ]
 
-const REDACTED_KEYS = new Set([
-  'openai_api_key', 'anthropic_api_key', 'discord_bot_token',
-  'stripe_secret_key', 'google_client_secret', 'meta_app_secret',
-  'wp_app_password', 'app_password', 'cron_secret',
+// Hand-maintained name lists drift away from the schema. This one had: only TWO of
+// its nine entries were real columns of agency_settings ('stripe_secret_key' is not
+// one — the column is stripe_api_key), so select('*') returned ai_api_key,
+// stripe_api_key, stripe_webhook_secret, serp_api_key and both Meta tokens in
+// cleartext through an MCP token, which is precisely the leak the settings REST
+// route was fixed to close. Drive it off the SHARED SECRET_FIELDS constant instead,
+// so a credential column added to the masking list is covered here automatically.
+const LEGACY_REDACTED_KEYS = new Set([
+  'anthropic_api_key', 'stripe_secret_key', 'google_client_secret',
+  'meta_app_secret', 'wp_app_password', 'app_password', 'cron_secret',
 ])
 
+// Never leaves the server under any circumstances. super_admin_otp_hash is an
+// UNSALTED SHA-256 of six digits — trivially reversed offline — so exposing it lets
+// the holder of any MCP token complete super-admin 2FA without the emailed code.
+// It is dropped rather than masked because no caller has a reason to see it exists.
+const NEVER_EXPOSE = new Set(['super_admin_otp_hash', 'super_admin_otp_expires_at'])
+
 function redact(obj: Record<string, unknown>): Record<string, unknown> {
+  const masked = maskSecrets(obj)
   const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(obj)) {
-    out[k] = REDACTED_KEYS.has(k) ? '[redacted]' : v
+  for (const [k, v] of Object.entries(masked)) {
+    if (NEVER_EXPOSE.has(k)) continue
+    out[k] = LEGACY_REDACTED_KEYS.has(k) ? '[redacted]' : v
   }
   return out
 }

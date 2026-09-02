@@ -27,6 +27,27 @@ export async function POST(request: NextRequest) {
 
   const db = createAdminClient()
 
+  // Rejecting a LIVE post through this route would flip it to 'rejected' and
+  // remove it from every view while the article stayed published on the client's
+  // site — with nothing left in the UI able to reach it. That is exactly the
+  // orphaned-content state cmsLifecycle exists to prevent, and only /dismiss is
+  // wired to it. Refuse here and point at the flow that asks what should happen
+  // to the live copy.
+  if (status === 'rejected') {
+    const { data: live } = await db
+      .from('content_posts')
+      .select('wp_post_id, bc_post_id')
+      .eq('id', post_id)
+      .maybeSingle()
+    const l = live as { wp_post_id?: number | null; bc_post_id?: number | null } | null
+    if (l?.wp_post_id || l?.bc_post_id) {
+      return NextResponse.json(
+        { error: 'This post is published on the client\'s site. Use Discard in the review view so you can choose whether to leave, unpublish, or delete the live article.' },
+        { status: 409 },
+      )
+    }
+  }
+
   const updateFields: Record<string, unknown> = { status }
   if (status === 'approved' || status === 'rejected') {
     updateFields.reviewed_at = new Date().toISOString()

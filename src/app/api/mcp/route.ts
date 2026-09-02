@@ -49,17 +49,48 @@ async function isAuthed(req: NextRequest): Promise<boolean> {
   const db = createAdminClient()
   const { data } = await db
     .from('mcp_tokens')
-    .select('id')
+    .select('id, user_id, created_at')
     .eq('token_hash', tokenHash)
     .is('revoked_at', null)
     .maybeSingle()
 
-  if (data?.id) {
-    void db.from('mcp_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id)
-    return true
+  if (!data?.id) return false
+
+  // revoked_at alone is not enough. Nothing anywhere sets it except the manual
+  // /admin/mcp-tokens/[id] DELETE, so force-resetting or deactivating an account
+  // left its bearer tokens fully live — and these are long-lived credentials that
+  // reach all 23 tools through the service-role client. Apply the SAME revocation
+  // rules the cookie sessions get, with the token's created_at standing in for a
+  // session's iat.
+  const row = data as { id: string; user_id: string | null; created_at: string | null }
+  if (row.user_id) {
+    const cols = 'is_active'
+    let owner = await db.from('users').select(`${cols}, password_changed_at`)
+      .eq('id', row.user_id).maybeSingle()
+    // Deploy-order fallback: password_changed_at only exists from migration 195.
+    if (owner.error && /password_changed_at/i.test(owner.error.message)) {
+      owner = await db.from('users').select(cols).eq('id', row.user_id).maybeSingle()
+    }
+    const user = owner.data as { is_active?: boolean; password_changed_at?: string | null } | null
+    if (!user || user.is_active === false) return false
+
+    if (user.password_changed_at && row.created_at) {
+      const changed = new Date(user.password_changed_at).getTime()
+      const minted  = new Date(row.created_at).getTime()
+      if (Number.isFinite(changed) && Number.isFinite(minted) && minted < changed) return false
+    }
   }
 
-  return false
+  // AWAIT the stamp. An un-awaited supabase-js builder is a lazy thenable: it
+  // issues no HTTP request at all, so `void db.from(...).update(...)` never wrote
+  // last_used_at and the column has been silently null for every token. Fire it
+  // without blocking the response but with a real subscription to the promise.
+  void db.from('mcp_tokens')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .then(({ error }) => { if (error) console.error('[mcp] last_used_at update failed:', error.message) })
+
+  return true
 }
 
 async function handleOne(req: JRpcReq): Promise<JRpcRes | null> {

@@ -32,6 +32,9 @@ export interface Topic {
   cluster_group?:        string | null
   generation_error?:     string | null
   post?:                 { id: string; title: string | null; status: string; published_url: string | null } | null
+  /** Silo provenance — which set this topic came out of, and on which keyword. */
+  silo?:                 { id: string; name: string; hub_page_url: string | null } | null
+  silo_keyword?:         { id: string; keyword: string } | null
 }
 
 export interface Post {
@@ -257,6 +260,21 @@ export default function PipelineCard(props: Props) {
             <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 }}>
               {t.target_keyword}
               {t.cluster_group && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '0 5px', borderRadius: 3 }}>{t.cluster_group}</span>}
+            </div>
+          )}
+          {/* Where this topic came from: which keyword set, and the exact term it
+              consumed. Without this, a silo-driven topic is indistinguishable from
+              an ad-hoc one once it reaches the queue. */}
+          {t.silo && (
+            <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+              <span style={{
+                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
+                border: '1px solid rgba(139,92,246,0.28)',
+                padding: '0 5px', borderRadius: 3, fontWeight: 600,
+              }}>
+                silo: {t.silo.name}
+              </span>
+              {t.silo_keyword && <span>from &ldquo;{t.silo_keyword.keyword}&rdquo;</span>}
             </div>
           )}
         </div>

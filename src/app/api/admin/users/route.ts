@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, hashPassword, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, isSuperAdminAuthed, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { parseBody }   from '@/lib/apiError'
 
@@ -26,10 +26,9 @@ export async function GET(req: NextRequest) {
 }
 
 function isSuperAdmin(req: NextRequest): boolean {
-  // Super admin = authenticated but no admin_user_id cookie
-  const session = req.cookies.get('admin_session')?.value
-  const userId  = req.cookies.get('admin_user_id')?.value
-  return isAdminAuthed(session) && !userId
+  // Super admin is a SIGNED claim in the session token — not the absence of a
+  // client-editable cookie (which previously allowed trivial escalation).
+  return isSuperAdminAuthed(req.cookies.get('admin_session')?.value)
 }
 
 export async function POST(req: NextRequest) {
@@ -44,6 +43,17 @@ export async function POST(req: NextRequest) {
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
   }
+  // typeof, not just truthiness: a JSON number is truthy and would throw inside
+  // Buffer.byteLength (passwordTooLong) as an unhandled 500 instead of a 400.
+  if (typeof password !== 'string') {
+    return NextResponse.json({ error: 'Password must be text' }, { status: 400 })
+  }
+  // hashPasswordSecure THROWS past 72 bytes (bcrypt truncates silently, so we
+  // refuse rather than accept a password whose tail is ignored). Unguarded, that
+  // throw is an opaque 500 with no field-level message.
+  if (passwordTooLong(password)) {
+    return NextResponse.json({ error: `Password is too long — it must be ${MAX_PASSWORD_BYTES} bytes or fewer (roughly ${MAX_PASSWORD_BYTES} characters, fewer if you use emoji or accents).` }, { status: 400 })
+  }
   if (password.length < 8) {
     return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
   }
@@ -57,7 +67,7 @@ export async function POST(req: NextRequest) {
     .insert({
       name,
       email:         email.toLowerCase().trim(),
-      password_hash: hashPassword(password),
+      password_hash: await hashPasswordSecure(password),
       role:          role ?? 'admin',
       is_active:     true,
       ...(username ? { username: username.toLowerCase().trim() } : {}),

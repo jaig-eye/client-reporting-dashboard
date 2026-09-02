@@ -30,10 +30,24 @@ export async function PATCH(
     'auto_pause_ads', 'auto_resume_ads', 'campaigns_paused_at',
     'bc_daily_report',
     'address', 'phone', 'website', 'account_manager_id',
+    'temperature', 'last_contacted_at', 'contact_stale_days',
   ]
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
+  }
+
+  // Same reasoning as the contact stamp in the notes route: a future
+  // last_contacted_at silently drops the client out of the staleness digest
+  // until that date arrives, with no alert and nothing to surface the typo. The
+  // relationship card writes this field directly, so it needs the same clamp.
+  if (patch.last_contacted_at) {
+    const d = new Date(String(patch.last_contacted_at))
+    if (isNaN(d.getTime())) {
+      return NextResponse.json({ error: 'last_contacted_at is not a valid date.' }, { status: 400 })
+    }
+    const now = new Date()
+    patch.last_contacted_at = (d > now ? now : d).toISOString()
   }
 
   const db = createAdminClient()

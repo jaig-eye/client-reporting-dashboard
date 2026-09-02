@@ -11,11 +11,15 @@
 // A waitUntil background job handles topic generation + AI + DB update,
 // then flips status back to 'for_review' when done.
 
+import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
+import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
+import { runQualityGate } from '@/lib/content/qualityGate'
+import { isRegulatedVertical } from '@/lib/content/editorialStandards'
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession, requireVerifiedAdmin } from '@/lib/auth'
 import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
@@ -122,18 +126,51 @@ export async function POST(
   }
 
   const { id: postId } = await params
-  const body = await request.json().catch(() => ({})) as { edit_notes?: string }
+  const body = await request.json().catch(() => ({})) as {
+    edit_notes?: string
+    /**
+     * Only meaningful when the post is already live:
+     *   'replace'    — keep the platform id; the next push overwrites the live
+     *                  article in place, preserving its URL and inbound links.
+     *   'new_keep'   — detach from the live article and publish the rewrite as a
+     *                  SEPARATE post. The old one stays up untouched.
+     *   'new_remove' — detach, and unpublish/trash the old article first.
+     */
+    live_mode?: 'replace' | 'new_keep' | 'new_remove'
+    /** Removal style for 'new_remove'. */
+    cms?: string
+  }
   const { edit_notes } = body
+  const liveMode = body.live_mode ?? 'replace'
+
+  // Same reasoning as the dismiss route: 'new_remove' unpublishes or permanently
+  // deletes a page from the client's live site, and isAdminAuthed cannot tell an
+  // admin from a viewer. 'replace' and 'new_keep' leave the live article alone.
+  if (liveMode === 'new_remove') {
+    const gate = await requireVerifiedAdmin()
+    if (!gate.ok) {
+      return NextResponse.json({ error: gate.error }, { status: gate.status })
+    }
+  }
 
   const db = createAdminClient()
 
   const { data: post } = await db
     .from('content_posts')
-    .select('id, client_id, topic_id, target_publish_date, status, content_type')
+    .select('id, client_id, topic_id, target_publish_date, status, content_type, silo_id, wp_post_id, bc_post_id, admin_approved_at')
     .eq('id', postId)
     .maybeSingle()
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+
+  // Regenerating a post that is already on the client's site is allowed, but the
+  // caller needs to know the live copy will go stale until it is re-pushed. The
+  // platform ids and admin_approved_at are deliberately PRESERVED: they record
+  // that a CMS copy exists and that a human approved it, both still true. The
+  // "live copy is out of date" state is then derived from updated_at >
+  // last_pushed_at rather than being smuggled into `status`. See migration 200.
+  const pr        = post as Record<string, unknown>
+  const isLive    = Boolean(pr.wp_post_id || pr.bc_post_id)
 
   // Mark as generating atomically — the neq guard acts as the idempotency check so two
   // concurrent requests can't both claim the slot (no TOCTOU window)
@@ -146,6 +183,37 @@ export async function POST(
   if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
   if (!claimed?.length) return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
 
+  // ORDER MATTERS: this runs only AFTER the claim succeeds.
+  //
+  // Doing it first meant a losing double-click could delete the article from the
+  // client's site and erase every reference to it, then return
+  // "Already regenerating" as though nothing had happened. Removal is
+  // irreversible on BigCommerce, so it must never run on a request that is about
+  // to bail out.
+  //
+  // It still runs BEFORE generation, so the decision holds even if the rewrite
+  // itself later fails. 'replace' does nothing here: keeping the platform id is
+  // what makes the next push overwrite in place rather than duplicate.
+  if (isLive && liveMode !== 'replace') {
+    if (liveMode === 'new_remove') {
+      const removal = isCmsAction(body.cms) && body.cms !== 'leave' ? body.cms : 'unpublish'
+      const res = await applyCmsAction(db, postId, removal)
+      if (!res.ok) {
+        // Release the claim so the post is not stranded in 'generating'.
+        await db.from('content_posts').update({ status: post.status ?? 'for_review' }).eq('id', postId)
+        return NextResponse.json(
+          { error: `Could not update the live article: ${res.message}` },
+          { status: 502 },
+        )
+      }
+      // A successful delete already cleared the refs; unpublish did not.
+      if (removal === 'unpublish') await clearPlatformRefs(db, postId)
+    } else {
+      // new_keep: the old article stays live and simply stops being ours.
+      await clearPlatformRefs(db, postId)
+    }
+  }
+
   // Capture admin session before returning — cookies are request-scoped
   const adminSession = await getAdminSession()
 
@@ -156,6 +224,12 @@ export async function POST(
     try {
       // 1. Generate a fresh topic — generateTopicsForClient builds its own avoid list
       //    from existing topics, so it naturally avoids the current topic.
+      //
+      //    siloId is carried over deliberately. Without it the queue path in
+      //    generateTopics is skipped entirely (it is gated on opts.siloId), so the
+      //    replacement topic claims no keyword — while the old topic's keyword was
+      //    just released. The silo then counted a free slot whose article is live
+      //    and handed the same term to a second topic on the next run.
       const topicResult = await generateTopicsForClient(
         db,
         post.client_id as string,
@@ -164,6 +238,7 @@ export async function POST(
         {
           suppressEmail: true,
           contentType:   (post.content_type as string | undefined) ?? undefined,
+          ...(post.silo_id ? { siloId: String(post.silo_id) } : {}),
         }
       )
 
@@ -183,6 +258,9 @@ export async function POST(
         await db.from('content_topics')
           .update({ post_id: null, status: 'rejected' })
           .eq('id', post.topic_id as string)
+        // The superseded topic hands its silo keyword back to the queue; the new
+        // topic claims its own. Skipping this strands the term as used forever.
+        await releaseKeywordForTopic(db, post.topic_id as string).catch(() => {})
       }
 
       // 3. Fetch full topic data (TopicSummary only has a few fields)
@@ -200,7 +278,9 @@ export async function POST(
           .select('ai_provider, ai_model, ai_api_key, agency_name')
           .maybeSingle(),
         db.from('content_settings')
-          .select('topic_guidelines, target_length')
+          // `vertical` rides along so the quality gate below does not need its
+          // own round trip for one column.
+          .select('topic_guidelines, target_length, vertical')
           .eq('client_id', post.client_id)
           .maybeSingle(),
       ])
@@ -287,10 +367,44 @@ Requirements:
       parsed.content = stripDangerousHtml(parsed.content)
       parsed.content = styleTables(parsed.content)
 
+      // Re-run the quality gate: the content is entirely new, so the stored
+      // report describes an article that no longer exists. Leaving it would show
+      // the reviewer findings for text they are not looking at, and could let a
+      // clean-looking old report wave a bad rewrite through the auto-push gate.
+      // Only the siblings need fetching here. The site URLs came back with the
+      // allow-list at step 4 and the vertical rides along with the settings read
+      // at step 3 — re-querying them cost two extra serial round trips and a
+      // second, unbounded read of content_sitemap_pages (the first one caps at
+      // 200) on every regenerate.
+      const { data: qgSiblings } = await db
+        .from('content_posts')
+        .select('id, title, content')
+        .eq('client_id', post.client_id as string)
+        .eq('content_type', (post.content_type as string | null) ?? 'blog')
+        .in('status', ['draft_saved', 'published'])
+        .neq('id', postId)
+        .order('generated_at', { ascending: false })
+        .limit(20)
+
+      const quality = runQualityGate({
+        html:          parsed.content,
+        title:         parsed.title,
+        targetKeyword: (newTopic.target_keyword as string | null) ?? null,
+        slug:          parsed.slug,
+        siteUrls:      Array.from(allowedUrls),
+        siblings:      (qgSiblings ?? []) as { id: string; title: string | null; content: string | null }[],
+        regulated:     isRegulatedVertical((settingsRes.data as { vertical?: string | null } | null)?.vertical),
+      })
+
       // 8. Update post in-place with new content + mark new topic as fully generated
       const { error: saveErr } = await db.from('content_posts').update({
         title:            parsed.title,
         content:          parsed.content,
+        quality_report:     quality,
+        quality_score:      quality.score,
+        quality_checked_at: new Date().toISOString(),
+        // A fresh hold is a fresh alert.
+        quality_hold_alerted_at: null,
         meta_description: parsed.metaDescription,
         slug:             parsed.slug,
         target_keyword:   newTopic.target_keyword,
@@ -350,5 +464,7 @@ Requirements:
     }
   })())
 
-  return NextResponse.json({ ok: true, queued: true })
+  // wasLive tells the UI to warn that the client's site still shows the old copy
+  // until the regenerated post is pushed again.
+  return NextResponse.json({ ok: true, queued: true, wasLive: isLive, liveMode })
 }

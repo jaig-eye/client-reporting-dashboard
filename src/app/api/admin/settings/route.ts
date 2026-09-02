@@ -2,13 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
-import { getAdminSession, timingSafeCompare } from '@/lib/auth'
+import { getAdminSession, isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
+import { SECRET_FIELDS, maskSecrets, isUnchangedSecret, isClearedSecret } from '@/lib/secretMask'
 
-function isAdminAuthed(session: string | undefined) {
-  return timingSafeCompare(session, process.env.ADMIN_PASSWORD)
-}
+// This file used to define its OWN isAdminAuthed that shadowed the imported one
+// and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
+// typechecks, the sweep that converted every other route to signed sessions
+// silently skipped it — leaving a check that (a) can never pass for a real
+// signed session, and (b) accepts the old ADMIN_PASSWORD value, which
+// `select('*')` below turns into a disclosure of super_admin_otp_hash. That hash
+// is an unsalted SHA-256 of a six-digit OTP, i.e. brute-forceable offline in
+// under a second, so the backdoor completed super-admin 2FA without the email.
+
+// Third-party API keys/secrets never leave the server in cleartext (see
+// lib/secretMask): GET returns a fixed MASK for any secret that is SET (so the UI
+// still shows "configured"); PUT treats an incoming value equal to the mask (or
+// blank) as "unchanged" and does NOT overwrite the stored key — so saving any other
+// setting, or re-saving without retyping, can never wipe a key. The connections
+// page mirrors the same mask into its integration cards.
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -19,14 +32,31 @@ export async function GET(request: NextRequest) {
   const db = createAdminClient()
   const { data, error } = await db.from('agency_settings').select('*').single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // The live super-admin OTP never leaves the server. It is an unsalted SHA-256
+  // of a six-digit code, so anyone who reads the hash can recover the code
+  // offline in well under a second and complete super-admin 2FA without ever
+  // receiving the email. No UI reads these two columns; `select('*')` was simply
+  // sweeping them up.
+  const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+    data as Record<string, unknown>
+  void super_admin_otp_hash; void super_admin_otp_expires_at
+
+  return NextResponse.json(maskSecrets(safe))
 }
 
 export async function PUT(request: NextRequest) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // requireWriteAdmin, not isAdminAuthed. This route writes every agency credential
+  // — stripe_api_key, stripe_webhook_secret, ai_api_key, serp_api_key — plus
+  // notification_email and the cron flags. isAdminAuthed is a pure HMAC check: it
+  // reads no row, so it cannot see role (a read-only viewer passed it and could
+  // substitute the agency's payment and AI credentials and redirect every alert),
+  // and it cannot see password_changed_at or is_active either, so a force-reset or
+  // deactivated account holding a stale 14-day cookie wrote here too. The same gate
+  // already protects lower-value actions in this branch: purge, note-delete, and
+  // MCP-token minting.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
 
   const body = await parseBody<Record<string, unknown>>(request)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
@@ -60,6 +90,8 @@ export async function PUT(request: NextRequest) {
     'ads_sync_frequency', 'ads_sync_hour_utc',
     'master_writing_prompt',
     'metric_alert_window_days',
+    'contact_stale_days',
+    'quality_gate_blocks_autopush',
     'serp_api_key', 'serp_api_provider',
     'service_area_master_prompt',
     'service_page_master_prompt',
@@ -70,11 +102,52 @@ export async function PUT(request: NextRequest) {
     'monthly_review_schedule',
   ]
   const patch: Record<string, unknown> = {}
+  const secretKeys = SECRET_FIELDS as readonly string[]
   for (const key of allowed) {
-    if (body[key] !== undefined) patch[key] = body[key]
+    if (body[key] === undefined) continue
+    if (secretKeys.includes(key)) {
+      // The mask means "untouched card re-saved" — never overwrite a live key with
+      // the mask itself.
+      if (isUnchangedSecret(body[key])) continue
+      // A deliberately blanked field means REVOKE. Persist null rather than '' so
+      // the column reads as unset to maskSecrets and to every `!!value` check.
+      if (isClearedSecret(body[key])) { patch[key] = null; continue }
+    }
+    patch[key] = body[key]
+  }
+
+  // contact_stale_days drives a cron that emails, Discords and alerts on every
+  // client it considers overdue, so a bad value is loud and self-sustaining.
+  // Zero is the realistic way to get one: clearing the number input sends '',
+  // and Number('') is 0, which then makes EVERY client stale on every run while
+  // also defeating the once-per-streak dedup (its re-arm window is `now - 0`).
+  // `min`/`max` on the input are browser hints only, and migration 198 put the
+  // 1..365 CHECK on clients.contact_stale_days but not on the agency default —
+  // so this is the only place it can be enforced.
+  if (patch.contact_stale_days !== undefined) {
+    const n = Math.trunc(Number(patch.contact_stale_days))
+    if (!Number.isFinite(n) || n < 1 || n > 365) {
+      return NextResponse.json(
+        { error: 'Contact window must be a whole number of days between 1 and 365.' },
+        { status: 400 },
+      )
+    }
+    patch.contact_stale_days = n
   }
 
   const db = createAdminClient()
+
+  // Nothing to change — e.g. an integration card was re-saved without editing its
+  // masked key, so every field it sent was skipped above. Skip the write (an empty
+  // PostgREST update can surface as a spurious error) and return current settings.
+  if (Object.keys(patch).length === 0) {
+    const { data: current } = await db.from('agency_settings').select('*').single()
+    const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+      (current ?? {}) as Record<string, unknown>
+    void super_admin_otp_hash; void super_admin_otp_expires_at
+    return NextResponse.json(maskSecrets(safe))
+  }
+
   const { data: existing } = await db.from('agency_settings').select('id').single()
   if (!existing?.id) {
     return NextResponse.json({ error: 'Settings row not found — run migrations' }, { status: 500 })
@@ -95,5 +168,14 @@ export async function PUT(request: NextRequest) {
 
   const adminSession = await getAdminSession()
   logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(patch) } })
-  return NextResponse.json(data)
+
+  // Strip the super-admin OTP columns from the response exactly as GET does. The
+  // bare .select() returns the full row, so while a super-admin login is mid-flight
+  // this PUT would hand any authenticated admin the live OTP hash — an unsalted
+  // SHA-256 of a six-digit code, recoverable offline in under a second — letting
+  // them complete super-admin 2FA without the email.
+  const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
+    data as Record<string, unknown>
+  void super_admin_otp_hash; void super_admin_otp_expires_at
+  return NextResponse.json(maskSecrets(safe))
 }

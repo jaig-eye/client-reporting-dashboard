@@ -1,15 +1,21 @@
 // Admin Preview Layout — sidebar shell for /admin/preview/* pages.
 // Full-width main area (no max-w-5xl constraint) so dashboard content renders properly.
 
-import { cookies } from 'next/headers'
+import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
 
 export default async function PreviewLayout({ children }: { children: React.ReactNode }) {
   const db = createAdminClient()
-  const cookieStore = await cookies()
-  const userId = cookieStore.get('admin_user_id')?.value
+  // Identity from the SIGNED session, never the admin_user_id cookie. That cookie
+  // is client-editable, so the sidebar could be made to show a colleague's name and
+  // avatar, and the super-admin flag flipped on simply by
+  // deleting it — the UI lying about privilege in both directions. It is also
+  // dropped unreliably in the cross-origin iframe, so a stale value could outlive
+  // the session that set it.
+  const adminSession = await getAdminSession()
+  const userId = adminSession?.userId ?? null
 
   const [settingsResult, sessionUserResult] = await Promise.all([
     db.from('agency_settings').select('agency_name, agency_logo_url, app_version').single(),
@@ -30,7 +36,7 @@ export default async function PreviewLayout({ children }: { children: React.Reac
         userName={sessionUser?.name   ?? 'Super Admin'}
         userEmail={sessionUser?.email ?? 'Master account'}
         userAvatarUrl={sessionUser?.avatar_url ?? undefined}
-        isSuperAdmin={!userId}
+        isSuperAdmin={adminSession?.isSuperAdmin === true}
       />
       <NavigationRefresher />
       {/* Full-width — no max-w or padding so dashboard content uses full viewport */}

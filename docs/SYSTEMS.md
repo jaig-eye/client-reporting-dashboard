@@ -14,7 +14,10 @@
 | `META_APP_ID` | yes | Facebook App ID | `lib/meta-ads.ts`, `lib/connectors/meta-ads.ts` |
 | `META_APP_SECRET` | yes | Facebook App Secret | Same as above |
 | `NEXT_PUBLIC_APP_URL` | yes | Full app URL (e.g. `https://dash.golaunchlocal.com`) | OAuth redirect URIs, email links |
-| `ADMIN_PASSWORD` | yes | Master password for super-admin login and `admin_session` cookie value | `lib/auth.ts`, all API routes using `isAdminAuthed` |
+| `ADMIN_PASSWORD` | yes | Master password for super-admin login (with emailed OTP). **Not** the cookie value any more. | `api/auth/admin-login` |
+| `SESSION_SECRET` | **yes (production)** | HMAC key for admin session tokens (`openssl rand -hex 32`). No fallback on any Vercel runtime — unset means nobody can sign in. Set it for **Production, Preview and Development**; a preview without it 503s login and redirect-loops. | `lib/session.ts`, `lib/session-edge.ts`, `lib/sessionSecret.ts` |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | no (recommended) | Shared cross-instance auth rate limiting. `KV_REST_API_URL` / `KV_REST_API_TOKEN` (injected by the Vercel Upstash integration) are accepted as aliases. Use the full-access token — the limiter needs `INCR`. Absent, it degrades to a per-instance in-memory Map. | `lib/rateLimit.ts` |
+| `CSRF_ALLOWED_ORIGINS` | no | Extra comma-separated origins allowed to make state-changing calls to cookie-authenticated API routes. Own origin and `*.golaunchlocal.com` are always allowed. | `middleware.ts` |
 | `CRON_SECRET` | yes | Bearer token for Vercel cron job authorization | All `/api/cron/*` routes |
 | `INGEST_SECRET` | yes | `x-ingest-secret` header for MCC push endpoints | `/api/ingest/google`, `/api/ingest/meta` |
 | `ADFUEL_API_KEY` | yes | `x-api-key` header for the GHL sidebar widget | `/api/adfuel` |
@@ -226,6 +229,9 @@ Columns: `id`, `client_id` (FK unique), `connection_id` (FK nullable), `slug_str
 | `lifetime_meta_spend_by_client` | `(cutoff_date DATE)` | Same for Meta. |
 | `get_client_data_coverage` | `(p_client_id UUID)` | Returns table of `(source, min_date, max_date, days_with_data)` for each metric table. |
 | `latest_campaign_budget_by_client` | `()` | Returns `(client_id, google_daily_budget, meta_daily_budget)` from the most-recent date in campaign metric tables. |
+| `consume_reset_attempt` | `(p_token_id UUID, p_max INTEGER)` → `(result_attempts INT, result_burned BOOL)` | Atomically increments `password_reset_tokens.attempts` and burns the token (`used_at`) once `p_max` is reached. `SECURITY DEFINER`, `search_path` pinned, EXECUTE granted to `service_role` only. Called from `/api/auth/reset-password` on a wrong code. Migration 207. |
+
+**Function privileges.** Every function in `public` is revoked from `anon`, `authenticated` and `PUBLIC`, and granted to `service_role` only (migrations 196 and 208). Migration 208 also sets `ALTER DEFAULT PRIVILEGES`, so functions created by later migrations inherit that automatically — a new RPC does **not** need its own `REVOKE`. All app RPC calls go through `createAdminClient()` (service-role key), including the client magic-link dashboards.
 
 ---
 

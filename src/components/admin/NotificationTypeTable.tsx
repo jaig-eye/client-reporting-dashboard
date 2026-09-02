@@ -68,6 +68,14 @@ const GROUPS: { title: string; rows: NotifRow[] }[] = [
       { key: 'sync_connector_error', label: 'Connector auth error', description: 'An OAuth token expired or was revoked', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
+  {
+    // hasClient is false on purpose: this is about OUR follow-up discipline.
+    // "Nobody has called them in 30 days" must never reach the client's channel.
+    title: 'Client Comms',
+    rows: [
+      { key: 'client_contact_stale', label: 'Client due a check-in', description: 'Daily digest of clients past their contact window', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
+    ],
+  },
 ]
 
 // ── Toggle pill ────────────────────────────────────────────────────────────────

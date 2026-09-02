@@ -2,6 +2,7 @@
 // Wizard submission handler — creates content_topics for service/regular pages
 // and optionally fires generation immediately.
 
+import { internalAdminCookie } from '@/lib/session'
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil }                 from '@vercel/functions'
 import { isAdminAuthed }             from '@/lib/auth'
@@ -107,7 +108,21 @@ export async function POST(request: NextRequest) {
   // For immediate delivery: fire generation for each topic.
   // waitUntil keeps the Vercel function alive until all fetches complete.
   if (delivery === 'immediate') {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+    // Trusted base URL only. The Cookie below carries a real 14-day super-admin
+    // session token, so the target must NOT be derived from a request header:
+    // request.nextUrl.origin comes from Host / X-Forwarded-Host, which an
+    // authenticated regular admin can spoof to receive the super-admin credential
+    // (privilege escalation). Prefer the explicit app URL, then the platform-set
+    // VERCEL_URL (the deployment's own canonical host — trusted, and still points a
+    // preview deploy at itself rather than production). request.nextUrl.origin is a
+    // last resort only when neither env is present (e.g. local dev).
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '')
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : request.nextUrl.origin)
+
+    // Minted ONCE per request, not once per topic inside the loop.
+    const internalCookie = internalAdminCookie()
+
     waitUntil(
       Promise.allSettled(
         (inserted as { id: string }[]).map(async (topic) => {
@@ -117,7 +132,7 @@ export async function POST(request: NextRequest) {
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Cookie': `admin_session=${process.env.ADMIN_PASSWORD}`,
+                'Cookie': internalCookie,
               },
               body: JSON.stringify({ topic_id: topic.id, suppress_email: true }),
             })

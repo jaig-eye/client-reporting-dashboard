@@ -86,6 +86,9 @@ export interface ClientBrandDna {
 
 // E-E-A-T trust signals — stored as JSONB in content_settings.eeat_data
 export interface EeatData {
+  /** Durable fact; tenure is derived from it at prompt time. See describeTenure(). */
+  founded_year:           string
+  /** @deprecated Legacy free-text tenure. Still read for back-compat; write founded_year. */
   years_in_business:      string
   licenses:               string
   insurance:              string

@@ -2,11 +2,13 @@
 // Generates an SEO brief for an approved topic and stores it in content_topics.seo_brief.
 // Called by the content-topics cron and can be triggered manually from the UI.
 
+import { describeTenure } from '@/lib/content/eeat'
 import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { verifyCronAuth } from '@/lib/auth'
 import type { SeoBrief }             from '@/lib/content/types'
 
 export const maxDuration = 120
@@ -16,7 +18,7 @@ type Params = { params: Promise<{ id: string }> }
 export async function POST(request: NextRequest, { params }: Params) {
   const cookieStore = await cookies()
   const authHeader  = request.headers.get('authorization')
-  const isCron      = authHeader === `Bearer ${process.env.CRON_SECRET}`
+  const isCron      = verifyCronAuth(authHeader)
   if (!isCron && !isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -86,7 +88,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const eeat = cs?.eeat_data as Record<string, unknown> | null
   const eeatLines: string[] = []
   if (eeat) {
-    if (eeat.years_in_business) eeatLines.push(`Years in business: ${eeat.years_in_business}`)
+    { const tenure = describeTenure(eeat); if (tenure) eeatLines.push(`Tenure: ${tenure}`) }
     if (eeat.licenses)          eeatLines.push(`Licenses: ${eeat.licenses}`)
     if (eeat.insurance)         eeatLines.push(`Insurance: ${eeat.insurance}`)
     if (eeat.review_count)      eeatLines.push(`Reviews: ${eeat.review_count}`)

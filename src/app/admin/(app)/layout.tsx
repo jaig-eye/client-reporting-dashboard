@@ -3,7 +3,8 @@
 export const dynamic = 'force-dynamic'
 
 import type { Metadata } from 'next'
-import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/admin/Sidebar'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
@@ -28,8 +29,24 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const db = createAdminClient()
-  const cookieStore = await cookies()
-  const userId = cookieStore.get('admin_user_id')?.value
+  // Identity from the SIGNED session, never the admin_user_id cookie. That cookie
+  // is client-editable, so the sidebar could be made to show a colleague's name and
+  // avatar, and the super-admin flag flipped on simply by
+  // deleting it — the UI lying about privilege in both directions. It is also
+  // dropped unreliably in the cross-origin iframe, so a stale value could outlive
+  // the session that set it.
+  const adminSession = await getAdminSession()
+
+  // No session means unauthenticated, deactivated, or revoked (getAdminSession
+  // enforces is_active and the password_changed_at cutoff). Without this redirect
+  // the layout carried on and every `?? default` below took over: the shell rendered
+  // in full and the sidebar labelled the visitor "Super Admin / Master account",
+  // which is both a broken gate and the most misleading possible way to fail.
+  // Middleware bounces these requests first; this is the defence in depth that does
+  // not depend on the matcher staying correct.
+  if (!adminSession) redirect('/admin')
+
+  const userId = adminSession.userId ?? null
 
   // Resolve current user, agency settings, and unread alert count concurrently
   const [settingsResult, sessionUserResult, alertCountResult] = await Promise.all([
@@ -65,7 +82,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           userName={userName}
           userEmail={userEmail}
           userAvatarUrl={avatarUrl}
-          isSuperAdmin={!userId}
+          isSuperAdmin={adminSession?.isSuperAdmin === true}
           unreadAlertCount={unreadAlertCount}
         />
         <NavigationRefresher />

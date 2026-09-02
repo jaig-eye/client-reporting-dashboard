@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { isAdminAuthed }             from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId } from '@/lib/auth'
 
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
+  const session = req.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const userId = req.cookies.get('admin_user_id')?.value
+  const userId = getVerifiedUserId(session)
   if (!userId) return NextResponse.json({ error: 'No user account' }, { status: 403 })
 
   const { id } = await params

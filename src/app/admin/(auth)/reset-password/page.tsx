@@ -1,20 +1,38 @@
 'use client'
 
+// Set a new password using the six-digit code emailed by /api/auth/forgot-password
+// or by the forced rotation on sign-in.
+//
+// This page used to read a `token` query param and POST { token, password }. The
+// API has never accepted that shape — it wants { email, code, password } — so
+// every submission 400'd and the page was unreachable anyway (nothing links to it
+// with a token). It matters now because the forced rotation sends people here.
+//
+// `email` is prefilled from the query string when we know it (the login page
+// passes it through) so the common path is: read code from email, type it, choose
+// a password.
+
 import { Suspense, useState, useEffect, lazy } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
 
 function ResetPasswordForm() {
+  const router       = useRouter()
   const searchParams = useSearchParams()
-  const token        = searchParams.get('token') ?? ''
 
-  const [password,  setPassword]  = useState('')
-  const [confirm,   setConfirm]   = useState('')
-  const [loading,   setLoading]   = useState(false)
-  const [success,   setSuccess]   = useState(false)
-  const [error,     setError]     = useState('')
-  const [branding,  setBranding]  = useState<{ agency_name: string }>({ agency_name: 'Agency Dashboard' })
+  const [email,    setEmail]    = useState(searchParams.get('email') ?? '')
+  const [code,     setCode]     = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm,  setConfirm]  = useState('')
+  const [loading,  setLoading]  = useState(false)
+  const [success,  setSuccess]  = useState(false)
+  const [error,    setError]    = useState('')
+  const [branding, setBranding] = useState<{ agency_name: string }>({ agency_name: 'Agency Dashboard' })
+
+  // Set when the user arrived here because sign-in required a rotation, so the
+  // copy can explain why they are here rather than implying they asked for it.
+  const forced = searchParams.get('forced') === '1'
 
   useEffect(() => {
     fetch('/api/settings/branding')
@@ -27,28 +45,30 @@ function ResetPasswordForm() {
     e.preventDefault()
     setError('')
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
-      return
-    }
-    if (password !== confirm) {
-      setError('Passwords do not match')
-      return
-    }
+    if (!email.trim())          { setError('Enter the email address the code was sent to'); return }
+    if (!code.trim())           { setError('Enter the 6-digit code from your email');       return }
+    if (password.length < 8)    { setError('Password must be at least 8 characters');       return }
+    if (password !== confirm)   { setError('Passwords do not match');                       return }
 
     setLoading(true)
-    const res = await fetch('/api/auth/reset-password', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token, password }),
-    })
-    setLoading(false)
-
-    if (res.ok) {
-      setSuccess(true)
-    } else {
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: email.trim(), code: code.trim(), password }),
+      })
+      if (res.ok) {
+        setSuccess(true)
+        // Straight back to sign-in — they now have a working password.
+        setTimeout(() => router.push('/admin'), 1500)
+        return
+      }
       const d = await res.json().catch(() => ({})) as { error?: string }
-      setError(d.error || 'Reset failed — the link may have expired')
+      setError(d.error || 'Reset failed — the code may have expired')
+    } catch {
+      setError('Network error — please try again.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -61,18 +81,46 @@ function ResetPasswordForm() {
           <div className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-3" style={{ background: 'var(--blue)' }}>
             {branding.agency_name.charAt(0).toUpperCase()}
           </div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>New password</h1>
+          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            {forced ? 'Update your password' : 'New password'}
+          </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {success ? 'Password updated — sign in with your new password.' : 'Choose a new password (min 8 characters).'}
+            {success
+              ? 'Password updated — signing you in…'
+              : forced
+                ? 'Your password needs updating for security. Enter the code we emailed you and choose a new one.'
+                : 'Enter the code from your email and choose a new password.'}
           </p>
         </div>
 
-        {!token && (
-          <p className="text-sm" style={{ color: 'var(--red)' }}>Invalid reset link — no token found.</p>
-        )}
-
-        {token && !success && (
+        {!success && (
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+                autoComplete="username"
+                className="input"
+                placeholder="you@agency.com"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>6-digit code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                className="input"
+                placeholder="123456"
+                style={{ letterSpacing: '0.3em', fontFamily: 'monospace' }}
+              />
+            </div>
             <div>
               <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>New password</label>
               <input
@@ -110,10 +158,17 @@ function ResetPasswordForm() {
           </form>
         )}
 
-        <div className="text-center mt-4">
-          <a href="/admin" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
-            {success ? 'Sign in →' : '← Back to sign in'}
-          </a>
+        <div className="text-center mt-4 space-y-1">
+          <div>
+            <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
+              Need a new code?
+            </a>
+          </div>
+          <div>
+            <a href="/admin" className="text-xs" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
+              ← Back to sign in
+            </a>
+          </div>
         </div>
       </div>
     </div>

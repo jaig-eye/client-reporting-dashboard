@@ -141,7 +141,7 @@ export async function POST(request: Request) {
 - Use `parseBody<T>()` rather than `request.json()` directly — it returns null on parse failure.
 - Always use `errorResponse(err)` in the catch block — it handles `ApiError` status codes automatically.
 - Fire-and-forget `logActivity()` for all mutations (insert, update, delete).
-- Super-admin-only routes additionally check `!cookieStore.get('admin_user_id')?.value`.
+- Super-admin-only routes use `isSuperAdminAuthed(session)`. Never check for the absence of `admin_user_id` — that cookie is client-editable, so its absence proves nothing.
 
 ---
 
@@ -225,22 +225,32 @@ If `split_override` is set on a ledger entry (between 0 and 1), it overrides the
 Clients access via `client_token` cookie, set by `GET /api/auth/access?token=UUID`. Cookie is HttpOnly, Secure, SameSite=None, 1-year maxAge. All dashboard pages read this cookie in `dashboard/layout.tsx` to load the client row.
 
 ### Admin auth — session vs user
-Two admin types share the same `admin_session` cookie value (always `ADMIN_PASSWORD`):
-- **Super admin:** `admin_session` set, `admin_user_id` cookie absent. `isSuperAdmin: true`.
-- **Regular admin:** Both `admin_session` and `admin_user_id` set. Looked up from `users` table.
+`admin_session` holds an **HMAC-signed token** (`lib/session.ts`) carrying `{ isSuperAdmin, userId, role, iat, exp }`. It is NOT the raw `ADMIN_PASSWORD` — that was the old scheme, and it meant cookie theft handed over the password itself.
 
-`isAdminAuthed(session)` only checks that session matches `ADMIN_PASSWORD`. It does NOT tell you whether the user is super admin vs regular admin. For super-admin-only routes, additionally check `!admin_user_id` cookie.
+- **Super admin:** token claims `isSuperAdmin: true`. No `users` row.
+- **Regular admin:** token carries `userId` and `role`, looked up from `users`.
 
-Use `getAdminSession()` when you need the user's role, name, or email (e.g., for activity logs).
+| Need | Use |
+|---|---|
+| "is anyone signed in?" | `isAdminAuthed(session)` — synchronous, no DB |
+| "is this the super admin?" | `isSuperAdminAuthed(session)` |
+| "which user is acting?" | `getVerifiedUserId(session)` |
+| role / name / email | `await getAdminSession()` |
+
+**Never derive identity or privilege from the `admin_user_id` cookie.** It is unsigned and client-editable; it survives only as a non-authoritative display hint. Deleting it used to promote any admin to super admin, and setting it to a colleague's uuid attributed your writes to them.
+
+`SESSION_SECRET` is required in production — there is no `ADMIN_PASSWORD` fallback, because that value was the cookie itself until this change and may sit in request logs.
 
 ### Cron auth
-Cron routes use `Authorization: Bearer CRON_SECRET` in the header. Never use `isAdminAuthed` in cron routes. Pattern:
+Cron routes use `Authorization: Bearer CRON_SECRET`. Never use `isAdminAuthed` in cron routes. Always go through the helper:
 ```ts
-const authHeader = request.headers.get('Authorization')
-if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+import { verifyCronAuth } from '@/lib/auth'
+
+if (!verifyCronAuth(request.headers.get('authorization'))) {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
 ```
+Do **not** hand-roll the comparison. Interpolating an unset `CRON_SECRET` into a Bearer template produces the literal string `"Bearer undefined"`, which is truthy — so the old inline check let anyone sending that exact header authenticate as the cron. A bare `===` also short-circuits on the first differing byte, leaking the secret to a timing probe. `verifyCronAuth` fails closed on a missing secret and compares in constant time.
 
 ### `cleanup-rejected-topics` cron uses a different auth pattern
 ```ts
@@ -399,7 +409,7 @@ GSC's `fetchMetrics` adapter method is a **no-op stub** that returns `{ rows: []
 
 3. **Cookie security flags:** In production, cookies are `Secure: true`, `SameSite: 'none'` (required for cross-domain use). In development, `Secure: false`, `SameSite: 'lax'`. The `NODE_ENV` check in `auth.ts` controls this.
 
-4. **Admin cookie value:** The `admin_session` cookie value IS the `ADMIN_PASSWORD` environment variable — not a session token or JWT. This means cookie theft = full admin access. The cookie is HttpOnly to prevent JS access.
+4. **Admin cookie value:** `admin_session` is an HMAC-signed session token (`lib/session.ts`), signed with `SESSION_SECRET`. It is HttpOnly. Cookie theft still grants admin for the token lifetime (14 days) — there is no server-side revocation list — but it no longer discloses `ADMIN_PASSWORD`, and the claims inside it cannot be edited.
 
 5. **`/api/auth/access` does not require auth.** It is the public entry point for clients. The token in the query param is the only validation. Requests with no valid token redirect to `/access`.
 

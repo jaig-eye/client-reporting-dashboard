@@ -12,6 +12,13 @@ import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
 
 const BC_API = (storeHash: string) => `https://api.bigcommerce.com/stores/${storeHash}`
 
+/**
+ * Ceiling on any single BigCommerce call. Without one, a stalled request holds a
+ * serverless invocation open until the platform kills it — on the approve path
+ * that stalls a whole cron auto-push run.
+ */
+const BC_TIMEOUT_MS = 15_000
+
 export interface BCOrderSummary {
   grossRevenue: number
   orderCount:   number
@@ -64,6 +71,7 @@ export async function fetchBCStoreTimezone(
   try {
     const res = await fetch(`${BC_API(storeHash)}/v2/store`, {
       headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+      signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const data = (await res.json()) as Record<string, unknown>
@@ -98,6 +106,7 @@ export async function publishBCPage(
   const res = await fetch(`${BC_API(storeHash)}/v2/pages`, {
     method:  'POST',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify({
       type:       'raw',
       name:       page.name,
@@ -122,11 +131,15 @@ export async function updateBCPage(
   storeHash:   string,
   accessToken: string,
   pageId:      number,
-  patch:       { body?: string }
+  // `name` and `url` matter on a republish: without them a regenerated page
+  // keeps its old title on the live storefront while the dashboard reports it
+  // as republished. Link injection still passes `body` alone.
+  patch:       { body?: string; name?: string; url?: string; is_visible?: boolean }
 ): Promise<void> {
   const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
     method:  'PUT',
     headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
     body: JSON.stringify(patch),
   })
   if (!res.ok) {
@@ -186,4 +199,168 @@ export const bigcommerceConnector: ConnectorAdapter = {
       return false
     }
   },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blog posts (v2/blog/posts) — the counterpart to the create call in
+// /api/admin/content/posts/[id]/approve.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BCBlogPostPatch {
+  title?:            string
+  body?:             string
+  url?:              string
+  meta_description?: string
+  meta_keywords?:    string
+  tags?:             string[]
+  thumbnail_path?:   string
+  is_published?:     boolean
+}
+
+/**
+ * Overwrite an existing BigCommerce blog post.
+ *
+ * This is what makes "regenerate a post that is already live" work: the post
+ * keeps its bc_post_id and the CMS copy is replaced in place, rather than a
+ * second post being created (or, as before, the new content never shipping).
+ */
+export async function updateBCBlogPost(
+  storeHash:   string,
+  accessToken: string,
+  postId:      number,
+  patch:       BCBlogPostPatch,
+): Promise<{ id: number; url: string }> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/blog/posts/${postId}`, {
+    method:  'PUT',
+    headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(res.status === 401
+      ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+      : `BigCommerce API error ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Record<string, unknown>
+  return { id: Number(data.id), url: String(data.url || '') }
+}
+
+/** Read one blog post — used by the published_url backfill. */
+export async function fetchBCBlogPost(
+  storeHash:   string,
+  accessToken: string,
+  postId:      number,
+): Promise<{ id: number; url: string; title: string } | null> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/blog/posts/${postId}`, {
+    headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  return { id: Number(d.id), url: String(d.url || ''), title: String(d.title || '') }
+}
+
+/** Read one page — used by the published_url backfill for service-area pages. */
+export async function fetchBCPage(
+  storeHash:   string,
+  accessToken: string,
+  pageId:      number,
+): Promise<{ id: number; url: string } | null> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/pages/${pageId}`, {
+    headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  return { id: Number(d.id), url: String(d.url || '') }
+}
+
+/**
+ * The storefront's public origin (honours a custom domain).
+ *
+ * Needed because BC returns only a path ("/blog/my-post/") and the
+ * store-{hash}.mybigcommerce.com host is an admin/preview host, not where a
+ * client's readers actually are.
+ */
+export async function fetchBCStorefrontOrigin(
+  storeHash:   string,
+  accessToken: string,
+): Promise<string | null> {
+  const res = await fetch(`${BC_API(storeHash)}/v2/store`, {
+    headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+  })
+  if (!res.ok) return null
+  const d = (await res.json()) as Record<string, unknown>
+  const raw = String(d.secure_url || d.domain || '')
+  if (!raw) return null
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+  return withScheme.replace(/\/+$/, '')
+}
+
+/** Join a storefront origin and a BC-relative path into a public permalink. */
+export function bcPermalink(origin: string | null, path: string): string | null {
+  if (!origin || !path) return null
+  return `${origin}/${path.replace(/^\/+/, '')}`
+}
+
+/**
+ * Delete a BigCommerce blog post or page.
+ *
+ * BigCommerce has no trash: v2 DELETE is permanent. Callers must treat this as
+ * irreversible and say so in the UI — unlike WordPress, there is nothing to
+ * restore from afterwards.
+ */
+export async function deleteBCContent(
+  storeHash:   string,
+  accessToken: string,
+  kind: 'blog' | 'page',
+  id: number,
+): Promise<{ deleted: boolean; alreadyGone: boolean }> {
+  const path = kind === 'page' ? `/v2/pages/${id}` : `/v2/blog/posts/${id}`
+  const res = await fetch(`${BC_API(storeHash)}${path}`, {
+    method:  'DELETE',
+    headers: { 'X-Auth-Token': accessToken, Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+  })
+  if (res.status === 404) return { deleted: false, alreadyGone: true }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(res.status === 401
+      ? 'BigCommerce rejected the access token (401). Reconnect the integration.'
+      : `BigCommerce API error ${res.status}: ${text}`)
+  }
+  return { deleted: true, alreadyGone: false }
+}
+
+/** Hide a BC blog post or page from the storefront without deleting it. */
+export async function setBCContentVisibility(
+  storeHash:   string,
+  accessToken: string,
+  kind: 'blog' | 'page',
+  id: number,
+  visible: boolean,
+): Promise<void> {
+  const path = kind === 'page' ? `/v2/pages/${id}` : `/v2/blog/posts/${id}`
+  // Pages use is_visible; blog posts use is_published.
+  const body = kind === 'page' ? { is_visible: visible } : { is_published: visible }
+  const res = await fetch(`${BC_API(storeHash)}${path}`, {
+    method:  'PUT',
+    headers: { 'X-Auth-Token': accessToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+    signal:  AbortSignal.timeout(BC_TIMEOUT_MS),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`BigCommerce API error ${res.status}: ${text}`)
+  }
 }

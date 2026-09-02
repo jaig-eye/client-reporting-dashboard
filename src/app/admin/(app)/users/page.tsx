@@ -7,6 +7,7 @@ import { getAdminSession } from '@/lib/auth'
 import Link from 'next/link'
 import type { User } from '@/lib/types'
 import DeleteUserButton from './DeleteUserButton'
+import ForceResetButton from './ForceResetButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,12 +15,20 @@ export default async function UsersPage() {
   const session = await getAdminSession()
   const db = createAdminClient()
 
-  const { data } = await db
-    .from('users')
-    .select('id, name, email, role, is_active, avatar_url, last_login_at, created_at')
-    .order('created_at')
+  const BASE = 'id, name, email, role, is_active, avatar_url, last_login_at, created_at'
+  // must_reset_password arrives with migration 195. Falling back keeps the page
+  // rendering on an environment where the code shipped first, rather than showing
+  // an empty user list because one column is missing.
+  let rows: unknown[] | null = null
+  const withFlag = await db.from('users').select(`${BASE}, must_reset_password`).order('created_at')
+  if (withFlag.error) {
+    const fallback = await db.from('users').select(BASE).order('created_at')
+    rows = fallback.data
+  } else {
+    rows = withFlag.data
+  }
 
-  const users = (data ?? []) as User[]
+  const users = (rows ?? []) as (User & { must_reset_password?: boolean })[]
   const isSuperAdmin = session?.isSuperAdmin ?? false
 
   return (
@@ -120,6 +129,14 @@ export default async function UsersPage() {
                       <span className={`badge ${user.is_active ? 'badge-green' : 'badge-gray'}`}>
                         {user.is_active ? 'Active' : 'Inactive'}
                       </span>
+                      {user.must_reset_password && (
+                        <span
+                          className="badge badge-gray ml-1.5"
+                          title="Cannot sign in until they set a new password"
+                        >
+                          Reset pending
+                        </span>
+                      )}
                     </td>
                     <td>
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -149,6 +166,14 @@ export default async function UsersPage() {
                             Edit Profile
                           </Link>
                         ) : null}
+
+                        {isSuperAdmin && !isMe && (
+                          <ForceResetButton
+                            userId={user.id}
+                            userName={user.name}
+                            alreadyPending={user.must_reset_password === true}
+                          />
+                        )}
 
                         {isSuperAdmin && (
                           <DeleteUserButton userId={user.id} userName={user.name} />

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { cookies }           from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, getAdminSession, verifyCronAuth } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { recheckPostQuality } from '@/lib/content/recheckQuality'
 
 export const maxDuration = 300
 
@@ -17,13 +18,17 @@ export const maxDuration = 300
  * Auth: admin session cookie OR Vercel cron secret header (CRON_SECRET env var).
  */
 export async function POST(request: NextRequest) {
-  // Accept either admin session cookie or Vercel cron secret
-  const cronSecret  = process.env.CRON_SECRET
-  const authHeader  = request.headers.get('authorization')
+  // Accept either admin session cookie or Vercel cron secret.
+  //
+  // verifyCronAuth, not a bare ===. This is a registered Vercel cron entry point
+  // and was the last one still comparing the header with `===`, which
+  // short-circuits on the first differing byte and so leaks CRON_SECRET to a
+  // timing probe from an unauthenticated caller. It also skips the loud
+  // "CRON_SECRET is not set" log every sibling route now emits.
   const cookieStore = await cookies()
   const session     = cookieStore.get('admin_session')?.value
 
-  const isCronAuth  = cronSecret && authHeader === `Bearer ${cronSecret}`
+  const isCronAuth  = verifyCronAuth(request.headers.get('authorization'))
   const isAdminAuth = isAdminAuthed(session)
 
   if (!isCronAuth && !isAdminAuth) {
@@ -247,7 +252,7 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        const { error: insertErr } = await db.from('content_posts').insert({
+        const { data: inserted, error: insertErr } = await db.from('content_posts').insert({
           client_id:           cs.client_id,
           connection_id:       cs.connection_id || null,
           status:              'pending',
@@ -269,10 +274,16 @@ export async function POST(request: NextRequest) {
           wp_author_id:        (cs as Record<string, unknown>).default_author_id    ?? null,
           wp_category_ids:     (cs as Record<string, unknown>).default_category_ids ?? null,
         })
+          .select('id')
+          .maybeSingle()
         if (insertErr) {
           errors.push(`client ${cs.client_id}: DB insert failed — ${insertErr.message}`)
           continue
         }
+        // Scheduled posts went in with no quality report, and the cron auto-push
+        // gate fails closed on a missing one — so they were all held with no way
+        // to clear it. Score them on the same terms as every other path.
+        if (inserted?.id) await recheckPostQuality(db, inserted.id as string)
         totalGenerated++
       } catch (err) {
         errors.push(`client ${cs.client_id}: ${String(err)}`)

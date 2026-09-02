@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse }  from 'next/server'
 import { createAdminClient }          from '@/lib/supabase/server'
-import { isAdminAuthed }              from '@/lib/auth'
+import { isAdminAuthed, getVerifiedUserId, requireWriteAdmin } from '@/lib/auth'
 import { createHash, randomBytes }    from 'crypto'
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
+  const session = req.cookies.get('admin_session')?.value
+  if (!isAdminAuthed(session)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const userId = req.cookies.get('admin_user_id')?.value
+  const userId = getVerifiedUserId(session)
   if (!userId) return NextResponse.json({ error: 'No user account' }, { status: 403 })
 
   const db = createAdminClient()
@@ -23,10 +24,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Minting a long-lived API credential — gate on a verified, non-revoked,
+  // non-viewer session so a deactivated/force-reset admin (or a viewer) cannot mint.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status })
   }
-  const userId = req.cookies.get('admin_user_id')?.value
+  const session = req.cookies.get('admin_session')?.value
+  const userId = getVerifiedUserId(session)
   if (!userId) return NextResponse.json({ error: 'No user account' }, { status: 403 })
 
   const db = createAdminClient()

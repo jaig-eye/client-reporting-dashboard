@@ -3,6 +3,7 @@
 // Updates topic status (approve/reject) and target_publish_date.
 // When approving past the generate_by_date deadline, fires post generation immediately.
 
+import { releaseKeywordForTopic, releaseKeywordsForTopics } from '@/lib/content/siloQueue'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -94,14 +95,25 @@ export async function PATCH(
       .in('status', ['approved', 'generating', 'generated'])
 
     if ((approvedCount ?? 0) >= postsNeeded) {
-      await db
+      // Capture the ids so their silo keywords can go back on the queue —
+      // an auto-rejected topic must not retire its keyword.
+      const { data: autoRejected } = await db
         .from('content_topics')
         .update({ status: 'rejected' })
         .eq('client_id', topic.client_id)
         .eq('target_publish_date', topic.target_publish_date)
         .in('status', ['pending', 'scheduled'])
         .neq('id', id)
+        .select('id')
+
+      const ids = (autoRejected ?? []).map((t: { id: string }) => t.id)
+      if (ids.length > 0) await releaseKeywordsForTopics(db, ids).catch(() => {})
     }
+  }
+
+  // A rejected topic puts its silo keyword back on the queue.
+  if (patch.status === 'rejected') {
+    await releaseKeywordForTopic(db, id).catch(() => {})
   }
 
   const adminSession = await getAdminSession()
@@ -145,6 +157,10 @@ export async function DELETE(
   // topic_id — it vanished from the topic list but kept rendering on the calendar as a
   // generated post, which reads exactly like the content coming back by itself.
   const pairedPostId = await findPairedPostId(db, row)
+
+  // Release before the delete: once the row is gone the FK is nulled and the
+  // keyword could never be matched back to it.
+  await releaseKeywordForTopic(db, id).catch(() => {})
 
   const { error } = await db.from('content_topics').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
