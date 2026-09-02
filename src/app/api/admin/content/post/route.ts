@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id'
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id, bc_author_name'
 
   let { data, error } = await db
     .from('content_posts')
@@ -98,6 +98,8 @@ export async function GET(request: NextRequest) {
     scheduleDefaultAuthorId,
     schedulePublishMode,
     scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
+    // Per-post override (migration 212). Null means "use scheduleBcAuthor".
+    bcAuthorName:     p.bc_author_name ? String(p.bc_author_name) : null,
   })
 }
 

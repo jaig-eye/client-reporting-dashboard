@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { ClientScheduleSettings, SiteOption, SeoScore } from '@/lib/content/types'
 import { buildSlugFromBasePage } from '@/lib/content/buildServiceAreaSlug'
@@ -2895,6 +2896,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+          onSaved={() => loadPipeline()}
         />
       )}
 
@@ -2906,6 +2908,7 @@ export default function ClientScheduleTab({ clientId, clientName, sites, aiConfi
           sites={clientSites}
           onClose={() => setReviewSaPost(null)}
           onUpdate={() => { setReviewSaPost(null); loadSaPosts(); loadSaTopics() }}
+          onSaved={() => { loadSaPosts(); loadSaTopics() }}
         />
       )}
 
@@ -3575,7 +3578,10 @@ function PipelineCalendar({
       const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ edit_notes: regenNotes.trim() || undefined }),
+        body: JSON.stringify({
+          edit_notes:    regenNotes.trim() || undefined,
+          steer_keyword: regenNotes.trim() || undefined,
+        }),
       })
       const data = await res.json() as { ok?: boolean; error?: string; queued?: boolean }
       if (res.ok && data.ok) {
@@ -3960,8 +3966,11 @@ function PipelineCalendar({
               <div>
                 <Label>Direction (optional)</Label>
                 <textarea className="input" rows={3} value={regenNotes} onChange={e => setRegenNotes(e.target.value)}
-                  placeholder="e.g. Avoid motorcycle content, focus on car detailing instead…"
+                  placeholder="e.g. focus on car detailing rather than motorcycles"
                   style={{ width: '100%', resize: 'vertical' }} />
+                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+                  Steers which topic gets picked, and how it is written. Keep it short.
+                </p>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => { setRegenConfirm(null); setRegenNotes('') }}>Cancel</button>
@@ -3995,6 +4004,7 @@ function PipelineCalendar({
           })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+          onSaved={() => loadPipeline()}
           onRegenerateDone={() => { loadPipeline() }}
         />
       )}
@@ -4004,14 +4014,16 @@ function PipelineCalendar({
 
 // ─── Manual Post Stub ─────────────────────────────────────────────────────────
 
+// Code-split at module scope so the chunk is genuinely deferred until showAdvanced flips,
+// and so the component identity is stable across renders.
+const LazyContentEditor = dynamic(
+  () => import('@/app/admin/(app)/content/ContentEditor'),
+  { ssr: false, loading: () => <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Loading editor…</p> },
+)
+
 function ManualPostStub({ clientId, clientName, sites, onCreated }: { clientId: string; clientName: string; sites: SiteOption[]; onCreated: () => void }) {
   const [showNewPost, setShowNewPost] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
-
-  // Lazy import to keep initial bundle light
-  const ContentEditorWrapper = showAdvanced
-    ? require('@/app/admin/(app)/content/ContentEditor').default
-    : null
 
   return (
     <div style={{ padding: '1rem 0' }}>
@@ -4025,9 +4037,9 @@ function ManualPostStub({ clientId, clientName, sites, onCreated }: { clientId: 
         </button>
       </div>
 
-      {showAdvanced && ContentEditorWrapper && (
+      {showAdvanced && (
         <div style={{ marginTop: 16 }}>
-          <ContentEditorWrapper sites={sites} aiConfigured={true} />
+          <LazyContentEditor sites={sites} aiConfigured={true} />
         </div>
       )}
 

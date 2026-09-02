@@ -43,6 +43,13 @@ interface Props {
   sites:               Site[]
   onClose:             () => void
   onUpdate:            (post: UpdatedPost) => void
+  /**
+   * Fired after a successful Save while the drawer STAYS OPEN, so the list behind it can
+   * resync. Distinct from onUpdate, which every consumer treats as "finished — close and
+   * reload"; without it a save flashed "Saved ✓" and told nobody, so the card behind kept
+   * showing the old title and thumbnail until a full page reload.
+   */
+  onSaved?:            (post: UpdatedPost) => void
   onRegenerateStart?:   () => void
   onRegenerateDone?:    (post: Partial<UpdatedPost>) => void
   onRegenerateError?:   () => void
@@ -83,6 +90,7 @@ interface PostDetail {
   scheduleDefaultAuthorId:   number | null
   schedulePublishMode:       string | null
   scheduleBcAuthor:          string | null
+  bcAuthorName:              string | null
 }
 
 interface Author {
@@ -280,7 +288,7 @@ interface TopicBreakdown {
   competitors_researched?: string[] | null
 }
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onSaved, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -334,6 +342,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   /** The candidate being previewed full-size before it is applied. */
   const [lightboxCandidate, setLightboxCandidate] = useState<StockImageCandidate | null>(null)
+  // Held separately from the drawer-wide error banner, which renders at the top of the edit
+  // column -- far above the Images section, so it was never in view when an apply failed.
+  const [stockApplyError, setStockApplyError] = useState<string | null>(null)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -413,7 +424,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
-        setBcAuthorName(data.scheduleBcAuthor ?? '')
+        // The post's own byline wins over the client default, so a name typed here survives
+        // a reload instead of being reset to the schedule setting on every open.
+        setBcAuthorName(data.bcAuthorName ?? data.scheduleBcAuthor ?? '')
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         setImageCandidates(data.imageCandidates ?? [])
@@ -659,6 +672,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setIsDirty(false)
       setSavedFlash(true)
       setTimeout(() => setSavedFlash(false), 2000)
+      // Tell the list behind us, without closing.
+      onSaved?.({
+        id: postId, status: post?.status ?? 'for_review',
+        title: title || null, targetKeyword: targetKeyword || null,
+        wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
+        publishedUrl: post?.publishedUrl ?? null,
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -1722,6 +1742,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               )}
 
               <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                title="Regenerate — rewrite the article, or pick a new topic"
+                aria-label="Regenerate this post"
+                onClick={() => setRegenDialogOpen(true)}
+                className="btn btn-secondary"
+                disabled={saving || regenerating || fullRegenerating}
+                style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                <ArrowClockwise size={14} weight="bold" />
+                Regenerate
+              </button>
               <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
                 Reject
               </button>
@@ -1735,14 +1767,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           candidate={lightboxCandidate}
           busy={applyingStockId === lightboxCandidate.id}
           currentImageUrl={featuredImageUrl || null}
-          onClose={() => setLightboxCandidate(null)}
+          error={stockApplyError}
+          onClose={() => { setLightboxCandidate(null); setStockApplyError(null) }}
           onApply={() => {
             const id = lightboxCandidate.id
-            // Close only on success — a failed apply leaves the preview up with the
-            // error visible, rather than dismissing as though it had worked.
+            setStockApplyError(null)
+            // Close only on success — a failed apply leaves the preview up with the reason
+            // shown in the dialog, rather than dismissing as though it had worked.
             void handleSelectStockImage(id)
-              .then(() => setLightboxCandidate(null))
-              .catch(() => {})
+              .then(() => { setLightboxCandidate(null); setStockApplyError(null) })
+              .catch(err => setStockApplyError(
+                err instanceof Error ? err.message : 'Could not apply this image. Please try again.',
+              ))
           }}
         />
       )}

@@ -29,18 +29,34 @@ interface Props {
   currentImageUrl?: string | null
   onClose: () => void
   onApply: () => void
+  /**
+   * Why the last apply failed. The call site's own error banner renders at the top of the
+   * edit column, far above the Images section, so a reviewer looking at this dialog saw
+   * "Applying…" flicker and nothing else.
+   */
+  error?: string | null
 }
 
-export default function StockImageLightbox({ candidate: c, busy, currentImageUrl, onClose, onApply }: Props) {
+export default function StockImageLightbox({ candidate: c, busy, currentImageUrl, onClose, onApply, error }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const applyRef  = useRef<HTMLButtonElement>(null)
+  // Captured BEFORE the auto-focus below moves focus into the dialog. Reading
+  // document.activeElement after that point returns the Apply button, so closing restored
+  // focus to a control inside the dialog being unmounted -- and while Apply is disabled
+  // during a request, .focus() fails outright and focus fell to <body>, which also defeats
+  // the Tab trap below since it keys off activeElement being inside the dialog.
+  const openerRef = useRef<HTMLElement | null>(null)
 
-  useEffect(() => { applyRef.current?.focus() }, [])
+  useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null
+    applyRef.current?.focus()
+    // Restore on unmount only, so a re-render cannot yank focus mid-apply.
+    return () => { openerRef.current?.focus?.() }
+  }, [])
 
   // Escape closes, Tab is trapped, focus is restored. aria-modal claims the background is
   // inert and Approve/Reject/Save sit behind this.
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onClose(); return }
       if (e.key !== 'Tab') return
@@ -53,7 +69,7 @@ export default function StockImageLightbox({ candidate: c, busy, currentImageUrl
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey); previouslyFocused?.focus?.() }
+    return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
   const meta: string[] = [
@@ -123,6 +139,19 @@ export default function StockImageLightbox({ candidate: c, busy, currentImageUrl
               {busy ? 'Applying…' : 'Use as featured image'}
             </button>
           </div>
+
+          {error && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 10, padding: '8px 10px', borderRadius: 6, fontSize: '0.8rem',
+                background: 'var(--red-subtle, #fef2f2)', color: 'var(--red, #b91c1c)',
+                border: '1px solid #fecaca',
+              }}
+            >
+              {error}
+            </div>
+          )}
 
           {currentImageUrl ? (
             /* Shown only when there is something to lose. The previous featured image is

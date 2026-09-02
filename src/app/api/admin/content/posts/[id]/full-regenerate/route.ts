@@ -12,6 +12,7 @@
 // then flips status back to 'for_review' when done.
 
 import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
+import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
 import { runQualityGate } from '@/lib/content/qualityGate'
 import { isRegulatedVertical } from '@/lib/content/editorialStandards'
@@ -85,35 +86,6 @@ function stripDangerousHtml(html: string): string {
     .replace(/\bsrc(\s*=\s*)(["'])\s*javascript:/gi,  'src$1$2javascript_removed:')
 }
 
-function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
-  const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-  const allowed = new Set(Array.from(allowedUrls).map(norm))
-  const internalHosts = new Set<string>()
-  Array.from(allowed).forEach(u => {
-    try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
-  })
-  return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-    const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-    if (!m) return match
-    const href = m[1].trim()
-    if (/^(mailto:|tel:|#)/.test(href)) return match
-    if (/^https?:/.test(href)) {
-      try {
-        const parsed = new URL(href)
-        const hostname = parsed.hostname.toLowerCase()
-        if (internalHosts.size === 0) return match
-        if (!internalHosts.has(hostname)) return match
-        if (allowed.has(norm(href))) return match
-        if (allowed.has(norm(parsed.pathname))) return match
-        return text
-      } catch { return match }
-    }
-    if (allowed.has(norm(href))) return match
-    return text
-  })
-}
-
 // ── Route ────────────────────────────────────────────────────────────────────
 
 export async function POST(
@@ -174,16 +146,32 @@ export async function POST(
   const pr        = post as Record<string, unknown>
   const isLive    = Boolean(pr.wp_post_id || pr.bc_post_id)
 
-  // Mark as generating atomically — the neq guard acts as the idempotency check so two
-  // concurrent requests can't both claim the slot (no TOCTOU window)
+  // Mark as generating atomically — the not-in guard acts as the idempotency check so two
+  // concurrent requests can't both claim the slot (no TOCTOU window).
+  //
+  // The lifecycle states are in the same filter deliberately. With only the 'generating'
+  // guard, a tab left open across a reject could push a rejected post back to 'for_review'
+  // and, on a live one, run applyCmsAction and re-claim silo keywords on the way — so
+  // rejection was undone by a stale click. Rejected and discarded are terminal here.
   const { data: claimed, error: genErr } = await db
     .from('content_posts')
     .update({ status: 'generating' })
     .eq('id', postId)
-    .neq('status', 'generating')
+    .not('status', 'in', '("generating","rejected","discarded")')
     .select('id')
   if (genErr) return NextResponse.json({ error: `Failed to mark post as generating: ${genErr.message}` }, { status: 500 })
-  if (!claimed?.length) return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
+  if (!claimed?.length) {
+    // Empty result now has two causes, and they need different messages: one is transient,
+    // the other means the reviewer is looking at a stale view.
+    const current = (pr.status as string | null) ?? null
+    if (current === 'rejected' || current === 'discarded') {
+      return NextResponse.json(
+        { error: `This post was ${current} and cannot be regenerated. Restore it first if you want it back.` },
+        { status: 409 },
+      )
+    }
+    return NextResponse.json({ ok: true, queued: false, reason: 'Already regenerating' })
+  }
 
   // ORDER MATTERS: this runs only AFTER the claim succeeds.
   //

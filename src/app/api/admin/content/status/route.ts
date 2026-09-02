@@ -67,13 +67,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // When a SA post is rejected, reset the parent topic so it can be regenerated.
+  // Rejecting a service-area post retires its parent topic; it does NOT re-queue it.
+  //
+  // This used to write { status: 'approved', post_id: null } "so it can be regenerated" --
+  // which is precisely the state the cron's approved-SA selector picks up, so rejecting an
+  // SA page scheduled it to be written again on the next run. Reject means stop, for every
+  // content type. 'rejected' is also what the SA occupancy guard now counts as holding the
+  // slot, so the date is not refilled either.
   if (status === 'rejected' && (postRow as { content_type?: string } | null)?.content_type === 'service_area') {
-    await db
+    const { error: topicErr } = await db
       .from('content_topics')
-      .update({ status: 'approved', post_id: null, generation_error: null })
+      .update({ status: 'rejected', generation_error: null })
       .eq('post_id', post_id)
       .eq('content_type', 'service_area')
+    // Non-fatal: the post is already rejected. Log it -- a topic left at 'approved' here is
+    // exactly the bug above, so a silent failure is worth seeing.
+    if (topicErr) {
+      console.error(`[content/status] SA post ${post_id} rejected but its topic was not:`, topicErr.message)
+    }
   }
 
   return NextResponse.json({ ok: true })

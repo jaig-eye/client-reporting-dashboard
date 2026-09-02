@@ -327,7 +327,7 @@ export default async function DashboardPage({
   const displayLayout = isFiltered ? paidAdsLayout : activeLayout
 
   // ─── CRM (GHL) data ───────────────────────────────────────────────────────
-  let ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0, newOpps: 0, wonOpps: 0, wonValue: 0 }
+  const ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0, newOpps: 0, wonOpps: 0, wonValue: 0 }
   if (hasGhl) {
     const { data: ghlRows } = await db.from('ghl_metrics')
       .select('contacts_created,total_calls,missed_calls,forms_submitted,spam_leads,emails_sent,sms_sent,new_opportunities,won_opportunities,won_value')
@@ -648,7 +648,7 @@ export default async function DashboardPage({
   // ─── Per-source totals for platform cards (overview mode) ────────────────
   // Use normalised currentMetrics so Meta revenue uses resolveMetaConversions
   // (raw DB conversion_value is an ingest-time approximation of ALL actions).
-  let googleTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0 }
+  const googleTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0 }
   for (const r of currentMetrics.filter(r => r._source === 'google_ads')) {
     googleTotal.spend       += r.spend
     googleTotal.conversions += r.conversions
@@ -656,7 +656,7 @@ export default async function DashboardPage({
     googleTotal.impressions += r.impressions
     googleTotal.convValue   += r.conversion_value
   }
-  let metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0, reach: 0, frequency: 0 }
+  const metaTotal = { spend: 0, conversions: 0, clicks: 0, impressions: 0, convValue: 0, reach: 0, frequency: 0 }
   let metaFreqImprTotal = 0
   for (const r of currentMetrics.filter(r => r._source === 'meta_ads')) {
     metaTotal.spend       += r.spend

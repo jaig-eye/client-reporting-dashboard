@@ -248,7 +248,7 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
                 {email.subject_line && (
                   <div>
                     <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>Subject line</span>
-                    <p style={{ margin: 0, fontSize: '0.8rem', fontStyle: 'italic' }}>"{email.subject_line}"</p>
+                    <p style={{ margin: 0, fontSize: '0.8rem', fontStyle: 'italic' }}>&ldquo;{email.subject_line}&rdquo;</p>
                   </div>
                 )}
                 {email.goal && (

@@ -121,17 +121,21 @@ export async function POST(request: NextRequest) {
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
     // Load existing posts and queued topics together to prevent cannibalization
+    // Rejected content STAYS in the avoid-list. Both queries used to exclude it, which had
+    // the rule backwards: rejection is the editorial signal that a human saw this exact angle
+    // and turned it down, so excluding it left the subject free to be commissioned again under
+    // a new title on every subsequent run. lib/content/generateTopics.ts makes the same point
+    // at its own avoid-list query -- deletion, not rejection, is what makes a subject eligible.
     const [{ data: existingPosts }, { data: queuedTopics }] = await Promise.all([
       db.from('content_posts')
         .select('focus_topic, title, target_keyword')
         .eq('client_id', cs.client_id)
-        .not('status', 'eq', 'rejected')
         .order('generated_at', { ascending: false })
         .limit(100),
       db.from('content_topics')
         .select('topic, target_keyword')
         .eq('client_id', cs.client_id)
-        .not('status', 'in', '("rejected","generating")'),
+        .not('status', 'eq', 'generating'),
     ])
 
     const avoidList = [
@@ -244,7 +248,6 @@ export async function POST(request: NextRequest) {
           .select('id, title')
           .eq('client_id', cs.client_id)
           .eq('target_publish_date', todayStr)
-          .not('status', 'eq', 'rejected')
           .maybeSingle()
 
         if (dateConflict) {

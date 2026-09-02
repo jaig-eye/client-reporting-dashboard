@@ -33,11 +33,24 @@ export default function LivePostActionModal({
   postTitle: string | null
   busy?:     boolean
   onCancel:  () => void
-  onConfirm: (choice: { cms: CmsAction; liveMode?: LiveMode; notes?: string }) => void
+  onConfirm: (choice: {
+    cms: CmsAction; liveMode?: LiveMode; notes?: string
+    /** 'rewrite' keeps the subject; 'new_topic' picks a different one. */
+    scope?: 'rewrite' | 'new_topic'
+    /** Steers topic SELECTION. Only meaningful for 'new_topic'. */
+    steerKeyword?: string
+  }) => void
 }) {
   const [cms, setCms]           = useState<CmsAction>('leave')
   const [liveMode, setLiveMode] = useState<LiveMode>('replace')
   const [notes, setNotes]       = useState('')
+  // Defaults to 'rewrite' -- the thing every label in this modal already promises. It used to
+  // send no scope at all, which meant full-regenerate: the live URL was overwritten by an
+  // article on a DIFFERENT subject, and the original topic and its silo keyword were retired
+  // before the reviewer saw anything. This is the highest-stakes regenerate path, so it now
+  // asks the same question RegenerateDialog does.
+  const [scope, setScope]       = useState<'rewrite' | 'new_topic'>('rewrite')
+  const [steerKeyword, setSteerKeyword] = useState('')
 
   const isWp   = platform === 'wordpress'
   const isBoth = platform === 'both'
@@ -92,6 +105,41 @@ export default function LivePostActionModal({
 
         <div style={{ padding: '14px 16px' }}>
           {mode === 'regenerate' && (
+            <div style={{ marginTop: 0 }}>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 6 }}>
+                What should change
+              </label>
+              <button
+                type="button"
+                style={optionStyle(scope === 'rewrite')}
+                aria-pressed={scope === 'rewrite'}
+                onClick={() => { setScope('rewrite'); setLiveMode('replace') }}
+              >
+                <div style={titleStyle}>Rewrite this article</div>
+                <div style={descStyle}>
+                  Keeps the same subject and target keyword, and writes it again. The URL and the
+                  topic it ranks for stay as they are.
+                </div>
+              </button>
+              <button
+                type="button"
+                style={optionStyle(scope === 'new_topic')}
+                aria-pressed={scope === 'new_topic'}
+                onClick={() => setScope('new_topic')}
+              >
+                <div style={titleStyle}>Pick a new topic</div>
+                <div style={descStyle}>
+                  Retires this subject and its keyword, then writes about something else. With
+                  &ldquo;Replace the live article&rdquo; above, the published URL ends up covering a
+                  different subject.
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* Only a NEW topic raises the replace-or-publish-separately question. A rewrite
+              keeps the same post, so it necessarily replaces the live article on publish. */}
+          {mode === 'regenerate' && scope === 'new_topic' && (
             <>
               <button style={optionStyle(liveMode === 'replace')} onClick={() => setLiveMode('replace')}>
                 <div style={titleStyle}>Replace the live article</div>
@@ -156,6 +204,26 @@ export default function LivePostActionModal({
             </div>
           )}
 
+
+          {mode === 'regenerate' && scope === 'new_topic' && (
+            <div style={{ marginTop: 12 }}>
+              <label htmlFor="live-steer-kw" style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Steer the new topic (optional)
+              </label>
+              <input
+                id="live-steer-kw"
+                value={steerKeyword}
+                onChange={e => setSteerKeyword(e.target.value)}
+                placeholder="e.g. commercial roofing, emergency repair"
+                className="input"
+                style={{ width: '100%', fontSize: 13 }}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '4px 0 0' }}>
+                A short phrase. This reaches topic selection, unlike the direction below.
+              </p>
+            </div>
+          )}
+
           {mode === 'regenerate' && (
             <div style={{ marginTop: 12 }}>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
@@ -202,7 +270,14 @@ export default function LivePostActionModal({
           <button
             onClick={() => onConfirm({
               cms: mode === 'remove' ? cms : (liveMode === 'new_remove' ? cms : 'leave'),
-              ...(mode === 'regenerate' ? { liveMode, notes: notes.trim() || undefined } : {}),
+              ...(mode === 'regenerate'
+                ? {
+                    liveMode,
+                    notes: notes.trim() || undefined,
+                    scope,
+                    steerKeyword: scope === 'new_topic' ? steerKeyword.trim() || undefined : undefined,
+                  }
+                : {}),
             })}
             disabled={busy}
             className="btn btn-sm"

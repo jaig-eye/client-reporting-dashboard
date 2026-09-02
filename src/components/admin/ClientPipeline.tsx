@@ -542,6 +542,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+          onSaved={() => loadPipeline()}
         />
       )}
     </div>

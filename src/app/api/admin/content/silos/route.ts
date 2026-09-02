@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
 
   // Attach cluster counts per silo
   const siloIds = (silos ?? []).map((s: SiloRow) => s.id)
-  let counts: Record<string, { published: number; total: number }> = {}
+  const counts: Record<string, { published: number; total: number }> = {}
 
   if (siloIds.length > 0) {
     const { data: posts } = await db

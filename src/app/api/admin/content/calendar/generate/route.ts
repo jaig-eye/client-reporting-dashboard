@@ -10,6 +10,7 @@ import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
 import { cookies }                        from 'next/headers'
 import { createAdminClient }              from '@/lib/supabase/server'
+import { unsuppressSlot } from '@/lib/content/slotSuppression'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
@@ -22,7 +23,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await request.json() as { client_id: string; start_date?: string; weeks_ahead?: number; silo_id?: string; content_type?: string }
+  const body = await request.json() as {
+    client_id: string; start_date?: string; weeks_ahead?: number; silo_id?: string
+    content_type?: string
+    /**
+     * Reopen dates a human previously emptied. Suppression is what makes deleting stick, so
+     * it is deliberately sticky — but nothing could clear it, which left a deleted date
+     * permanently unfillable by any automatic path. An explicit "generate these dates"
+     * request from an admin IS the intent to reopen them, so it is honoured here and only
+     * here; the cron never clears a suppression.
+     */
+    reopen_suppressed?: boolean
+  }
   const { client_id, start_date, weeks_ahead: weeksAheadParam, silo_id, content_type } = body
 
   if (!client_id) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
@@ -82,10 +94,25 @@ export async function POST(request: NextRequest) {
     ((sup ?? []) as { target_publish_date: string }[]).map(s => s.target_publish_date),
   )
 
+  // An explicit reopen clears the suppressions for the requested window first, so the slots
+  // below are genuinely open rather than being skipped again on the next run.
+  if (body.reopen_suppressed && suppressedDates.size > 0) {
+    await Promise.all(
+      Array.from(suppressedDates).map(d => unsuppressSlot(db, client_id, d)),
+    )
+    suppressedDates.clear()
+  }
+
   const openSlots = slots.filter(s => !existingDates.has(s) && !suppressedDates.has(s))
 
   if (openSlots.length === 0) {
-    return NextResponse.json({ ok: true, queued: false, slots, reason: 'All slots already have topics or are suppressed' })
+    return NextResponse.json({
+      ok: true, queued: false, slots,
+      reason: suppressedDates.size > 0
+        ? 'These dates were deliberately emptied. Re-send with reopen_suppressed to fill them again.'
+        : 'All slots already have topics',
+      suppressed: Array.from(suppressedDates),
+    })
   }
 
   // Read admin session before returning — cookies are request-scoped and unavailable inside waitUntil.

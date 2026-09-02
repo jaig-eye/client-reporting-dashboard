@@ -27,6 +27,8 @@ type PatchBody = {
   authorId?:        number | null
   categoryIds?:     number[] | null
   connectionId?:    string | null
+  /** Per-post BigCommerce byline (migration 212). Null falls back to content_settings. */
+  bcAuthorName?:    string | null
 }
 
 export async function PATCH(
@@ -60,6 +62,10 @@ export async function PATCH(
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
   if (body.categoryIds     !== undefined) update.wp_category_ids  = body.categoryIds
   if (body.connectionId    !== undefined) update.connection_id    = body.connectionId
+  // The editor has sent this on every save since the BigCommerce byline input shipped; there
+  // was no field here to receive it, so it was silently dropped and the article published
+  // under the client-level author instead.
+  if (body.bcAuthorName    !== undefined) update.bc_author_name   = body.bcAuthorName || null
 
   if (Object.keys(update).length === 0)
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })

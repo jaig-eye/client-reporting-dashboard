@@ -2,7 +2,7 @@
 
 import LivePostActionModal, { type LiveMode } from '@/components/admin/LivePostActionModal'
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
@@ -69,14 +69,22 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
   const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
 
-  // Group posts by client
-  const clientIds   = Array.from(new Set(initialPosts.map(p => p.client_id)))
-  const postsByClient = new Map<string, MonthlyReviewPost[]>()
-  for (const p of initialPosts) {
-    const arr = postsByClient.get(p.client_id) ?? []
-    arr.push(p)
-    postsByClient.set(p.client_id, arr)
-  }
+  // Group posts by client.
+  //
+  // Memoised because both are in the dependency array of the approve/reject callbacks below.
+  // Rebuilt inline they were a fresh Map and a fresh array on every render, so every one of
+  // those useCallbacks was invalidated on every render -- which makes the memoisation a cost
+  // with no benefit, and re-subscribes anything downstream that keys off their identity.
+  const { clientIds, postsByClient } = useMemo(() => {
+    const ids = Array.from(new Set(initialPosts.map(p => p.client_id)))
+    const map = new Map<string, MonthlyReviewPost[]>()
+    for (const p of initialPosts) {
+      const arr = map.get(p.client_id) ?? []
+      arr.push(p)
+      map.set(p.client_id, arr)
+    }
+    return { clientIds: ids, postsByClient: map }
+  }, [initialPosts])
 
   const totalPosts    = initialPosts.length
   const approvedCount = approvedIds.size
@@ -158,14 +166,20 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        // Carry the server's own sentence. A published post returns 409 explaining that it
+        // has to be discarded first; the generic "please try again" below hid that and
+        // invited a retry the server rejects identically every time.
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Delete failed (${res.status})`)
+      }
       // Hide immediately, then resync from the server so counts and the month's
       // grouping reflect the deletion without a manual reload.
       setDeletedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       router.refresh()
     } catch (e) {
       console.error('Delete failed:', e)
-      alert('Failed to delete post. Please try again.')
+      alert(e instanceof Error ? e.message : 'Failed to delete post. Please try again.')
     } finally {
       setLoadingId(null)
     }
@@ -441,6 +455,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         sites={allSites}
         onClose={() => setEditorPostId(null)}
         onUpdate={() => setEditorPostId(null)}
+        onSaved={() => router.refresh()}
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
         onRegenerateError={handleRegenerateError}
@@ -487,8 +502,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           postTitle={p.title}
           busy={regeneratingIds.has(liveRegenModal.postId)}
           onCancel={() => setLiveRegenModal(null)}
-          onConfirm={({ cms, liveMode, notes }) =>
-            void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms })}
+          onConfirm={({ cms, liveMode, notes, scope, steerKeyword }) =>
+            void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms, scope, steerKeyword })}
         />
       )
     })()}

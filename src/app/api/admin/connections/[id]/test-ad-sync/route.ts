@@ -55,7 +55,7 @@ export async function GET(
   if (!conn) return NextResponse.json({ error: 'No active connection found for this ID (tried client_connections.id and connector_id)' }, { status: 404 })
 
   const connectorType = conn.connector.type
-  let auth = conn.connector.auth
+  const auth = conn.connector.auth
 
   try {
     if (connectorType === 'google_ads') {

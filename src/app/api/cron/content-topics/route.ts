@@ -888,13 +888,19 @@ export async function GET(request: NextRequest) {
             return daysOut > 0 && daysOut <= saLeadWindow
           })
 
-          // Fetch all non-rejected SA topics for this client (slot occupancy + dedup)
+          // EVERY SA topic for this client, rejected included (slot occupancy + dedup).
+          //
+          // This used to exclude 'rejected'. That made rejection self-defeating twice over:
+          // the rejected row stopped counting toward topicsPerSlot, so its date read as empty
+          // and was refilled, and its city/service combination dropped out of saExistingCombos,
+          // so the same page became eligible to be written again. Rejection has to mean the
+          // slot is spoken for and the subject is spent -- the blog occupancy guard already
+          // treats 'rejected' as occupied for exactly this reason.
           const { data: allSaTopics } = await db
             .from('content_topics')
             .select('target_publish_date, city, state_abbr, service_name')
             .eq('client_id', saClientId)
             .eq('content_type', 'service_area')
-            .not('status', 'eq', 'rejected')
 
           // Count existing topics per slot
           type SaTopicRow = { target_publish_date: string | null; city: string | null; state_abbr: string | null; service_name: string | null }
@@ -995,7 +1001,31 @@ export async function GET(request: NextRequest) {
             const numAreas    = saServiceAreas.length
             const numServices = saServices.length
 
+            // Slots a human deliberately emptied. The blog loop honours these at the top of
+            // this file and the manual calendar route honours them too; the SA branch never
+            // queried the table, so deleting an SA topic freed its slot and the next run wrote
+            // a replacement -- the exact behaviour migration 209 exists to stop.
+            const saSuppressed = new Set<string>()
+            {
+              const { data: saSup, error: saSupErr } = await db
+                .from('content_slot_suppressions')
+                .select('target_publish_date')
+                .eq('client_id', saClientId)
+                .in('target_publish_date', saSlots)
+              if (saSupErr) {
+                console.warn(`[content-topics cron] SA slot suppressions unavailable (apply migration 209): ${saSupErr.message}`)
+              } else {
+                for (const row of (saSup ?? []) as { target_publish_date: string }[]) {
+                  saSuppressed.add(row.target_publish_date)
+                }
+              }
+            }
+
             for (const slot of saSlots) {
+              if (saSuppressed.has(slot)) {
+                console.log(`[content-topics cron] SA slot ${slot} suppressed for ${saClientId} — skipping`)
+                continue
+              }
               const filled = topicsPerSlot.get(slot) ?? 0
               const needed = Math.max(0, saLimit - filled)
               for (let p = 0; p < needed; p++) {

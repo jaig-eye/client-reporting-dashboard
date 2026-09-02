@@ -289,7 +289,7 @@ export default function ContentSettingsPanel({
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
             This text is appended to the master writing prompt on every generation — for all clients.
-            Per-client overrides are added on top. Priority pages, excluded pages, and always-included links from each client's Brand DNA are auto-injected as context; use this field to give the AI agency-wide instructions for how to use them.
+            Per-client overrides are added on top. Priority pages, excluded pages, and always-included links from each client&rsquo;s Brand DNA are auto-injected as context; use this field to give the AI agency-wide instructions for how to use them.
           </p>
         </div>
 
