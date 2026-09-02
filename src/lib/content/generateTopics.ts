@@ -132,7 +132,21 @@ export async function generateTopicsForClient(
   clientId: string,
   count:    number,
   targetPublishDate?: string,
-  opts?: { suppressEmail?: boolean; siloId?: string; contentType?: string },
+  opts?: {
+    suppressEmail?: boolean
+    siloId?: string
+    contentType?: string
+    /**
+     * A keyword or angle the reviewer typed when asking for a regeneration.
+     *
+     * It steers WHICH topic gets picked, which is the only place it can work: for a full
+     * regenerate the topic is chosen here, before any content is written, so a direction
+     * supplied to the content prompt alone would arrive too late to change the subject.
+     * Advisory, not a hard filter — the avoid-list and silo constraints still apply, so a
+     * keyword already covered will not be resurrected.
+     */
+    steerKeyword?: string
+  },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
 
@@ -691,6 +705,7 @@ ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
 
+${opts?.steerKeyword?.trim() ? `\nEDITOR DIRECTION — the reviewer asked for this regeneration and specified: "${opts.steerKeyword.trim().slice(0, 200)}". Steer the topic toward it where that is compatible with the constraints above. The ALREADY COVERED block still applies and overrides this: if the direction names something already covered, choose the closest angle that is not.\n` : ''}
 Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
 
   const provider = settings.ai_provider || 'anthropic'

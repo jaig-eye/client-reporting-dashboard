@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
+import RegenerateDialog from './RegenerateDialog'
 import MonthlyReviewComplete   from './MonthlyReviewComplete'
 import ContentPostEditor       from './ContentPostEditor'
 import { useMonthlyReviewSounds } from '@/lib/useMonthlyReviewSounds'
@@ -254,22 +255,39 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   const startRegenerate = useCallback(async (
     postId: string,
-    opts: { notes?: string; liveMode?: LiveMode; cms?: CmsAction } = {},
+    opts: {
+      notes?: string; liveMode?: LiveMode; cms?: CmsAction
+      /** 'rewrite' keeps the topic; 'new_topic' picks a fresh one. */
+      scope?: 'rewrite' | 'new_topic'
+      /** Steers topic selection. Only meaningful for 'new_topic'. */
+      steerKeyword?: string
+    } = {},
   ) => {
     setRegenModal(null)
     setLiveRegenModal(null)
     setRegenModalNotes('')
     setRegeneratingIds(prev => { const next = new Set(prev); next.add(postId); return next })
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          edit_notes: opts.notes?.trim() || undefined,
-          live_mode:  opts.liveMode,
-          cms:        opts.cms,
-        }),
-      })
+      // Two genuinely different operations behind one control. 'rewrite' keeps the
+      // topic and rewrites the article; 'new_topic' discards the topic and picks a new
+      // one. Routing on scope keeps the endpoints honest about what each does.
+      const rewriteOnly = opts.scope === 'rewrite'
+      const res = rewriteOnly
+        ? await fetch('/api/admin/content/regenerate', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ post_id: postId, edit_notes: opts.notes?.trim() || undefined }),
+          })
+        : await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+              edit_notes:    opts.notes?.trim() || undefined,
+              steer_keyword: opts.steerKeyword?.trim() || undefined,
+              live_mode:     opts.liveMode,
+              cms:           opts.cms,
+            }),
+          })
       if (!res.ok) {
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setToastError(true)
@@ -298,10 +316,14 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     }
   }, [])
 
-  const handleRegenModalConfirm = useCallback(async () => {
+  const handleRegenModalConfirm = useCallback(async (req: {
+    scope: 'rewrite' | 'new_topic'; notes: string; steerKeyword: string
+  }) => {
     if (!regenModal) return
-    await startRegenerate(regenModal.postId, { notes: regenModalNotes })
-  }, [regenModal, regenModalNotes, startRegenerate])
+    await startRegenerate(regenModal.postId, {
+      notes: req.notes, scope: req.scope, steerKeyword: req.steerKeyword,
+    })
+  }, [regenModal, startRegenerate])
 
   // Toast auto-clear
   useEffect(() => {
@@ -472,37 +494,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     })()}
 
     {regenModal && (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-        onClick={e => { if (e.target === e.currentTarget) { setRegenModal(null); setRegenModalNotes('') } }}>
-        <div className="card" style={{ maxWidth: 420, width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
-            <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Regenerate Post</h3>
-            <button onClick={() => { setRegenModal(null); setRegenModalNotes('') }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.125rem', padding: 4 }}>×</button>
-          </div>
-          <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              Picks a new topic and rewrites the post completely — the previous content will be replaced.
-            </p>
-            <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-                Direction (optional)
-              </label>
-              <textarea
-                rows={3}
-                value={regenModalNotes}
-                onChange={e => setRegenModalNotes(e.target.value)}
-                placeholder="e.g. Focus on residential services, avoid commercial content…"
-                style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', resize: 'vertical', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button className="btn btn-secondary" onClick={() => { setRegenModal(null); setRegenModalNotes('') }}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleRegenModalConfirm}>Regenerate →</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <RegenerateDialog
+        postTitle={initialPosts.find(p => p.id === regenModal.postId)?.title ?? null}
+        busy={regeneratingIds.has(regenModal.postId)}
+        onCancel={() => { setRegenModal(null); setRegenModalNotes('') }}
+        onConfirm={handleRegenModalConfirm}
+      />
     )}
     </>
   )

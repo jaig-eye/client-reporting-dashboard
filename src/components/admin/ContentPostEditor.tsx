@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
  *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
@@ -285,8 +286,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [savedFlash,      setSavedFlash]      = useState(false)
   const [regenerating,      setRegenerating]      = useState(false)
   const [fullRegenerating,  setFullRegenerating]  = useState(false)
-  const [showEditDirection, setShowEditDirection] = useState(false)
-  const [showRegenConfirm,  setShowRegenConfirm]  = useState(false)
+  // The old inline confirm + direction toggles are gone; the shared RegenerateDialog
+  // owns scope, direction and keyword now, so the editor only tracks whether it is open.
+  const [regenDialogOpen, setRegenDialogOpen] = useState(false)
   const [approving,       setApproving]       = useState(false)
   const [retrying,        setRetrying]        = useState(false)
   const [error,           setError]           = useState('')
@@ -331,7 +333,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
-  const [stockNote,       setStockNote]       = useState('')
+  const [stockNote,       setStockNote]       = useState('')
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -750,8 +752,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  async function handleRegenerate() {
-    if (!editNotes.trim()) { setError('Enter revision instructions first'); return }
+  async function handleRegenerate(notes?: string) {
+    const direction = (notes ?? editNotes).trim()
     setRegenerating(true)
     setError('')
     onRegenerateStart?.()
@@ -759,7 +761,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const res = await fetch('/api/admin/content/regenerate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ post_id: postId, edit_notes: editNotes }),
+        body:    JSON.stringify({ post_id: postId, edit_notes: direction || undefined }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to regenerate')
       const data = await res.json()
@@ -784,7 +786,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // Full-regenerate: picks a brand-new topic + keyword, generates fresh content.
   // Runs async in the background — the post status flips to 'generating' immediately.
-  async function handleFullRegenerate() {
+  /** Routes the dialog's choice to the endpoint that actually does that thing. */
+  async function handleRegenerateRequest(req: RegenerateRequest) {
+    if (req.scope === 'rewrite') {
+      await handleRegenerate(req.notes)
+      return
+    }
+    await handleFullRegenerate(req.notes, req.steerKeyword)
+  }
+
+  async function handleFullRegenerate(notes?: string, steerKeyword?: string) {
     setFullRegenerating(true)
     setError('')
     onRegenerateStart?.()
@@ -792,14 +803,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const res = await fetch(`/api/admin/content/posts/${postId}/full-regenerate`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ edit_notes: editNotes.trim() || undefined }),
+        body:    JSON.stringify({
+          edit_notes:    (notes ?? editNotes).trim() || undefined,
+          // Steers WHICH topic is chosen — the content prompt would be too late.
+          steer_keyword: steerKeyword?.trim() || undefined,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Failed to start regeneration')
       // Reload post to pick up status='generating' for the polling effect
       const postRes = await fetch(`/api/admin/content/post?id=${postId}`)
       if (postRes.ok) setPost(await postRes.json())
-      setShowEditDirection(false)
       setEditNotes('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start regeneration')
@@ -1564,88 +1578,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 </div>
               )}
 
-              {/* Regeneration */}
-              <div className="mb-4">
-                {post?.status === 'generating' ? (
-                  <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-                    <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }}>⟳</span>
-                    Generating new topic and content — this takes about a minute…
-                  </div>
-                ) : (
-                  <>
-                    {showRegenConfirm ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0.625rem 0.875rem', background: 'var(--bg-subtle)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', flex: 1 }}>
-                          Picks a new topic and rewrites everything — can&apos;t be undone.
-                        </span>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '0.8125rem' }}
-                          disabled={fullRegenerating || regenerating}
-                          onClick={() => { setShowRegenConfirm(false); handleFullRegenerate() }}
-                        >
-                          {fullRegenerating ? 'Queuing…' : 'Confirm regenerate'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          style={{ fontSize: '0.75rem' }}
-                          onClick={() => setShowRegenConfirm(false)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '0.8125rem' }}
-                          disabled={fullRegenerating || regenerating}
-                          onClick={() => setShowRegenConfirm(true)}
-                        >
-                          {fullRegenerating ? 'Queuing…' : 'Regenerate Post'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          style={{ fontSize: '0.75rem', opacity: 0.65 }}
-                          onClick={() => setShowEditDirection(v => !v)}
-                        >
-                          {showEditDirection ? 'Hide direction' : 'Add direction…'}
-                        </button>
-                      </div>
-                    )}
-                    {showEditDirection && (
-                      <div style={{ marginTop: '0.5rem' }}>
-                        <textarea
-                          value={editNotes}
-                          onChange={e => setEditNotes(e.target.value)}
-                          rows={3}
-                          style={{ ...inputStyle, resize: 'vertical', marginBottom: '0.5rem' }}
-                          placeholder="e.g. Avoid motorcycle content, focus on car detailing instead…"
-                          autoFocus
-                        />
-                        <div className="flex gap-2" style={{ marginBottom: '0.25rem' }}>
-                          <button
-                            type="button"
-                            disabled={regenerating || fullRegenerating}
-                            onClick={handleRegenerate}
-                            className="btn btn-secondary"
-                            style={{ fontSize: '0.8125rem' }}
-                          >
-                            {regenerating ? 'Rewriting…' : 'Rewrite with Notes'}
-                          </button>
-                        </div>
-                        <p style={{ fontSize: '0.72rem', color: 'var(--text-faint)', margin: 0 }}>
-                          "Regenerate Post" picks a fresh topic. "Rewrite with Notes" keeps the topic but rewrites using your direction above.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
             </CollapsibleSection>
             </div>
           </div>
@@ -1665,18 +1597,21 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
               </button>
               <div style={{ flex: 1 }} />
-              {onMonthlyRegenerate && (
-                <button
-                  type="button"
-                  title="Regenerate — picks a new topic and rewrites the post"
-                  onClick={onMonthlyRegenerate}
-                  className="btn btn-sm"
-                  disabled={saving}
-                  style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <ArrowClockwise size={13} weight="bold" />
-                </button>
-              )}
+              {/* In monthly review the session owns the regeneration lifecycle (polling,
+                  live-post handling), so delegate to it there. Standalone, the editor
+                  opens the same dialog itself — otherwise removing the block under
+                  publish would have left no way to regenerate from the queue at all. */}
+              <button
+                type="button"
+                title="Regenerate — rewrite the article, or pick a new topic"
+                aria-label="Regenerate this post"
+                onClick={() => (onMonthlyRegenerate ? onMonthlyRegenerate() : setRegenDialogOpen(true))}
+                className="btn btn-sm"
+                disabled={saving || regenerating || fullRegenerating}
+                style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center' }}
+              >
+                <ArrowClockwise size={13} weight="bold" />
+              </button>
               <button
                 type="button"
                 onClick={handleMonthlyDiscard}
@@ -1726,6 +1661,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         )}
       </div>
 
+      {regenDialogOpen && (
+        <RegenerateDialog
+          postTitle={title || post?.title || null}
+          busy={regenerating || fullRegenerating}
+          onCancel={() => setRegenDialogOpen(false)}
+          onConfirm={req => { setRegenDialogOpen(false); void handleRegenerateRequest(req) }}
+        />
+      )}
     </>
   )
 }

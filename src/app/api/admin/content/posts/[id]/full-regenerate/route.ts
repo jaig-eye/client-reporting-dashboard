@@ -128,6 +128,8 @@ export async function POST(
   const { id: postId } = await params
   const body = await request.json().catch(() => ({})) as {
     edit_notes?: string
+    /** Keyword/angle the reviewer typed. Steers WHICH topic is chosen. */
+    steer_keyword?: string
     /**
      * Only meaningful when the post is already live:
      *   'replace'    — keep the platform id; the next push overwrites the live
@@ -239,6 +241,10 @@ export async function POST(
           suppressEmail: true,
           contentType:   (post.content_type as string | undefined) ?? undefined,
           ...(post.silo_id ? { siloId: String(post.silo_id) } : {}),
+          // Must reach topic SELECTION, not just the content prompt — for a full
+          // regenerate the subject is decided here, so a direction applied later
+          // would arrive after the topic was already picked.
+          ...(body.steer_keyword?.trim() ? { steerKeyword: body.steer_keyword.trim() } : {}),
         }
       )
 
