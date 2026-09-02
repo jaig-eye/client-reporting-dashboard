@@ -5,11 +5,13 @@ import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
-import StockImageSearchModal from '@/components/admin/StockImageSearchModal'
-
-/** Tiles the inline strip previews. The banked pool holds up to 24; the rest are
- *  reachable through the picker, which pages them without spending any API quota. */
-const INLINE_STOCK_PREVIEW = 8
+/** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
+ *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
+const STOCK_SOURCE_LABEL: Record<string, string> = {
+  pexels:    'Pexels',
+  wikimedia: 'Wikimedia',
+  openverse: 'Openverse',
+}
 
 interface Site {
   connectionId:  string
@@ -326,8 +328,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Openverse suggestions stored on the post at generation time. Empty is the normal
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
-  const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
-  const [stockModalOpen,  setStockModalOpen]  = useState(false)
+  const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
+  const [findingStock,    setFindingStock]    = useState(false)
 
   // AI re-edit
   const [editNotes,     setEditNotes]     = useState('')
@@ -818,6 +820,27 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
+  // ── Stock image refetch ────────────────────────────────────────────────────
+  // Re-runs the post's own topic against all three libraries. The only action here that
+  // spends API quota, which is why it is a deliberate button and never automatic.
+  async function handleFindStockImages() {
+    setFindingStock(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/content/posts/${postId}/find-stock-images`, { method: 'POST' })
+      const data = await res.json() as { candidates?: StockImageCandidate[]; message?: string; error?: string }
+      if (!res.ok || data.error) throw new Error(data.error ?? 'Search failed')
+      // An empty result leaves the existing set alone — the server declines to persist
+      // one too, so clearing here would hide images the post still holds.
+      if (data.candidates && data.candidates.length > 0) setImageCandidates(data.candidates)
+      else setError(data.message ?? 'No new images matched this topic.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not search for free images')
+    } finally {
+      setFindingStock(false)
+    }
+  }
+
   // ── Stock image selection ───────────────────────────────────────────────────
   // The server copies the chosen file into our own storage and writes
   // featured_image_url itself, so this does NOT markDirty — the change is already
@@ -1156,19 +1179,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {imageUploadingMsg || 'Upload Image'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-                  {/* One entry point. There used to be a separate "Find free images"
-                      button beside this, but the picker's own "Get new images" hits the
-                      same endpoint — two controls for one action, and the standalone one
-                      spent quota without showing what it bought. */}
-                  <button
-                    type="button"
-                    onClick={() => setStockModalOpen(true)}
-                    className="btn btn-secondary"
-                    style={{ fontSize: '0.8125rem' }}
-                    title="Browse free stock photos from Pexels, Openverse and Wikimedia Commons"
-                  >
-                    ⌕ Free images{imageCandidates.length > 0 ? ` (${imageCandidates.length})` : ''}
-                  </button>
                   {featuredImageUrl && (
                     <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
                       ✕ Remove
@@ -1180,34 +1190,46 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
                 )}
 
-                {/* Free stock alternatives found on Openverse at generation time, using
-                    the same topic context as the AI prompt. Only shown when something
-                    actually cleared the relevance floor — for niche technical topics
-                    the honest answer is usually nothing, and an empty section says
-                    that more clearly than a row of irrelevant photos. */}
-                {/* Reported outcome of an explicit search, including "found nothing",
-                    which is a normal result for specialised topics and should not look
-                    like a failure. */}
+                {/* Free stock alternatives, banked at generation time and scrolled
+                    horizontally rather than laid out as a grid. A grid of 40 thumbnails
+                    dominates the drawer and pushes every other field off screen; one row
+                    keeps the whole set reachable at the height of a single thumbnail.
+                    This also replaced a modal — the modal existed only to house the
+                    grid, which was never a reason to have a modal. */}
                 {imageCandidates.length > 0 && (
                   <div style={{ marginTop: 14 }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                      Free stock alternatives · {Math.min(imageCandidates.length, INLINE_STOCK_PREVIEW)} of {imageCandidates.length}
-                      <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · secondary options, the AI image stays selected until you pick one. Open “Free images” to see the rest.</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Free stock alternatives · {imageCandidates.length}
+                      </span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        scroll sideways · the AI image stays selected until you click one
+                      </span>
+                      <div style={{ flex: 1 }} />
+                      <button
+                        type="button"
+                        onClick={handleFindStockImages}
+                        disabled={findingStock}
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+                        title="Search Pexels, Wikimedia Commons and Openverse again for this post's topic"
+                      >
+                        {findingStock ? 'Searching…' : '↻ Search again'}
+                      </button>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
-                      {imageCandidates.slice(0, INLINE_STOCK_PREVIEW).map(c => {
+
+                    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, scrollSnapType: 'x proximity' }}>
+                      {imageCandidates.map(c => {
                         const busy = applyingStockId === c.id
                         return (
                           <button
                             key={c.id}
                             type="button"
                             disabled={!!applyingStockId}
-                            // handleSelectStockImage rethrows so the modal can stay open
-                            // on failure; it has already set the error banner by then,
-                            // so the inline strip just needs to absorb the rejection.
                             onClick={() => { void handleSelectStockImage(c.id).catch(() => {}) }}
-                            title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} (CC ${c.license.toUpperCase()})`}
+                            title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} · ${c.license}`}
                             style={{
+                              flex: '0 0 132px', scrollSnapAlign: 'start',
                               padding: 0, border: '1px solid var(--border)', borderRadius: 6,
                               overflow: 'hidden', background: 'var(--bg-subtle)',
                               cursor: applyingStockId ? 'default' : 'pointer',
@@ -1215,26 +1237,46 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             }}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={c.thumbnail}
-                              alt={c.title}
-                              style={{ width: '100%', height: 78, objectFit: 'cover', display: 'block' }}
-                            />
-                            <div style={{ padding: '4px 6px', fontSize: '0.65rem', lineHeight: 1.3 }}>
+                            <img src={c.thumbnail} alt={c.title} loading="lazy"
+                              style={{ width: '100%', height: 74, objectFit: 'cover', display: 'block' }} />
+                            <div style={{ padding: '4px 6px', fontSize: '0.62rem', lineHeight: 1.3 }}>
                               <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-primary)' }}>
                                 {busy ? 'Applying…' : c.title}
                               </div>
                               <div style={{ color: 'var(--text-muted)' }}>
-                                CC {c.license.toUpperCase()}
+                                {STOCK_SOURCE_LABEL[c.source] ?? 'Stock'}
                               </div>
                             </div>
                           </button>
                         )
                       })}
                     </div>
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6 }}>
-                      Selecting copies the image into your own storage and records its licence and attribution.
+
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Clicking one copies it into your own storage and records its licence and attribution.
                     </div>
+                  </div>
+                )}
+
+                {/* With no candidates the strip does not render, and its refetch button
+                    goes with it — so the empty state needs its own way in. Every post
+                    written before this feature shipped starts here, as does any client
+                    with AI images switched off. */}
+                {imageCandidates.length === 0 && (
+                  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleFindStockImages}
+                      disabled={findingStock}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+                      title="Search Pexels, Wikimedia Commons and Openverse for photos matching this post's topic"
+                    >
+                      {findingStock ? 'Searching…' : '⌕ Find free stock images'}
+                    </button>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                      Free, commercially usable photos as an alternative to the AI image.
+                    </span>
                   </div>
                 )}
               </div>
@@ -1667,19 +1709,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         )}
       </div>
 
-      {/* Mounted at the drawer root rather than inside the image section so the overlay
-          is not clipped by the section's own scroll container. */}
-      {stockModalOpen && (
-        <StockImageSearchModal
-          postId={postId}
-          initialCandidates={imageCandidates}
-          onClose={() => setStockModalOpen(false)}
-          onSelect={handleSelectStockImage}
-          // Clear the inline caption alongside the list, or a stale "Found 5 free
-          // images." is unhidden above an empty strip when a modal search finds nothing.
-          onResults={c => { setImageCandidates(c) }}
-        />
-      )}
     </>
   )
 }
