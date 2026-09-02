@@ -5,6 +5,7 @@ import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
+import StockImageLightbox from '@/components/admin/StockImageLightbox'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
  *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
@@ -331,6 +332,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
+  /** The candidate being previewed full-size before it is applied. */
+  const [lightboxCandidate, setLightboxCandidate] = useState<StockImageCandidate | null>(null)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -348,6 +351,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [categoriesLoading, setCategoriesLoading] = useState(false)
   const [categoryIds,       setCategoryIds]       = useState<number[]>([])
   const [categorySuggestion, setCategorySuggestion] = useState<CategorySuggestion | null>(null)
+  const [newCategoryName,   setNewCategoryName]   = useState('')
+  const [creatingCategory,  setCreatingCategory]  = useState(false)
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
@@ -504,6 +509,43 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   useEffect(() => {
     if (connectionId) loadSiteData(connectionId)
   }, [connectionId, loadSiteData])
+
+  /**
+   * Create a category on the client's WordPress site and select it here.
+   *
+   * Selecting it immediately is the point — the reviewer typed the name because they want
+   * this post in it, so making them find it in the list afterwards would be a pointless
+   * second step. An existing category of the same name is returned by the API rather than
+   * erroring, so retyping a name that already exists just selects it.
+   */
+  const handleCreateCategory = useCallback(async () => {
+    const name = newCategoryName.trim()
+    if (!connectionId || name.length < 2) return
+    setCreatingCategory(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/wordpress/categories', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ connection_id: connectionId, name }),
+      })
+      const data = await res.json() as { category?: WpCategory & { existed?: boolean }; error?: string }
+      if (!res.ok || data.error || !data.category) throw new Error(data.error ?? 'Could not create the category')
+
+      const created = data.category
+      setCategories(prev => (prev.some(c => c.id === created.id) ? prev : [...prev, created]))
+      setCategoryIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]))
+      setNewCategoryName('')
+      markDirty()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create the category')
+    } finally {
+      setCreatingCategory(false)
+    }
+    // markDirty is a stable closure over a ref-guarded setter; including it would churn
+    // this callback on every render without changing behaviour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId, newCategoryName])
 
   const refreshCategories = useCallback(async () => {
     if (!connectionId) return
@@ -1257,7 +1299,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             key={c.id}
                             type="button"
                             disabled={!!applyingStockId}
-                            onClick={() => { void handleSelectStockImage(c.id).catch(() => {}) }}
+                            onClick={() => setLightboxCandidate(c)}
                             title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} · ${c.license}`}
                             style={{
                               flex: '0 0 132px', scrollSnapAlign: 'start',
@@ -1538,6 +1580,33 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       {categoriesLoading ? '⟳ Refreshing…' : '↻ Refresh'}
                     </button>
                   </div>
+
+                  {/* Create a category without leaving the post. Previously the list was
+                      read-only, so needing a category that did not exist meant going to
+                      wp-admin, creating it there, coming back and re-opening the post —
+                      and the auto-suggestion above can say "(will create)" for a category
+                      there was no way to create from here. */}
+                  <div style={{ display: 'flex', gap: 6, marginBottom: '0.375rem' }}>
+                    <input
+                      value={newCategoryName}
+                      onChange={e => setNewCategoryName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleCreateCategory() } }}
+                      placeholder="New category name…"
+                      maxLength={200}
+                      disabled={creatingCategory}
+                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateCategory()}
+                      disabled={creatingCategory || newCategoryName.trim().length < 2}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.6875rem', padding: '0.125rem 0.625rem', whiteSpace: 'nowrap' }}
+                      title="Create this category on the client's WordPress site and select it"
+                    >
+                      {creatingCategory ? 'Creating…' : '+ Add'}
+                    </button>
+                  </div>
                   {/* Auto-category suggestion — shown when no category is explicitly selected */}
                   {categorySuggestion && categoryIds.length === 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${categorySuggestion.isNew ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
@@ -1661,6 +1730,22 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         )}
       </div>
 
+      {lightboxCandidate && (
+        <StockImageLightbox
+          candidate={lightboxCandidate}
+          busy={applyingStockId === lightboxCandidate.id}
+          currentImageUrl={featuredImageUrl || null}
+          onClose={() => setLightboxCandidate(null)}
+          onApply={() => {
+            const id = lightboxCandidate.id
+            // Close only on success — a failed apply leaves the preview up with the
+            // error visible, rather than dismissing as though it had worked.
+            void handleSelectStockImage(id)
+              .then(() => setLightboxCandidate(null))
+              .catch(() => {})
+          }}
+        />
+      )}
       {regenDialogOpen && (
         <RegenerateDialog
           postTitle={title || post?.title || null}
