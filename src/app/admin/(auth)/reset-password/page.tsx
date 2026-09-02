@@ -28,7 +28,13 @@ function ResetPasswordForm() {
   const [loading,  setLoading]  = useState(false)
   const [success,  setSuccess]  = useState(false)
   const [error,    setError]    = useState('')
-  const [branding, setBranding] = useState<{ agency_name: string }>({ agency_name: 'Agency Dashboard' })
+  // agency_logo_url as well as the name. Fetching only the name meant this page always
+  // drew the initial-letter placeholder even when a real logo was configured — the
+  // sign-in page has rendered the logo all along, so the reset flow looked like a
+  // different, unbranded product at exactly the moment trust matters most.
+  const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
+    agency_name: 'Agency Dashboard', agency_logo_url: null,
+  })
 
   // Set when the user arrived here because sign-in required a rotation, so the
   // copy can explain why they are here rather than implying they asked for it.
@@ -78,8 +84,22 @@ function ResetPasswordForm() {
 
       <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)', position: 'relative', zIndex: 1 }}>
         <div className="mb-6">
-          <div className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-3" style={{ background: 'var(--blue)' }}>
-            {branding.agency_name.charAt(0).toUpperCase()}
+          <div className="mb-3">
+            {branding.agency_logo_url ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={branding.agency_logo_url}
+                alt={branding.agency_name}
+                style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
+              />
+            ) : (
+              <div
+                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg"
+                style={{ background: 'var(--blue)' }}
+              >
+                {branding.agency_name.charAt(0).toUpperCase()}
+              </div>
+            )}
           </div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
             {forced ? 'Update your password' : 'New password'}

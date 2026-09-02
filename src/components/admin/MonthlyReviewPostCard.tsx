@@ -1,5 +1,6 @@
 'use client'
 
+import { ArrowClockwise, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import QualityFindings from './QualityFindings'
@@ -243,19 +244,25 @@ export default function MonthlyReviewPostCard({
           </span>
         ) : (
           <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {/* Icon-only, with the meaning in the tooltip and aria-label. Three text
+                buttons plus "Review →" crowded the row and pushed the card wider than
+                its content needed. */}
             <button
               className="btn btn-sm"
               disabled={isLoading}
-              title="Generate a brand-new topic and article for this slot"
+              title="Regenerate — write a brand-new topic and article for this slot"
+              aria-label={`Regenerate ${post.title ?? 'this post'}`}
               onClick={() => onRegenerate(post.id)}
+              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
             >
-              ⟳ Regenerate
+              <ArrowClockwise size={15} weight="bold" />
             </button>
+
             {/* Delete is distinct from Reject. Reject keeps the post as an editorial
                 signal so the topic is never suggested again; Delete removes the post
-                and its topic so the subject becomes eligible again. Used for
-                duplicates and mis-generations, where nothing about the subject was
-                wrong. Destructive and unrecoverable, hence the confirm. */}
+                and its topic so the subject becomes eligible again — for duplicates and
+                mis-generations, where nothing about the subject was wrong. Unrecoverable,
+                hence the confirm. */}
             {onDelete && (
               <button
                 className="btn btn-sm"
@@ -263,13 +270,13 @@ export default function MonthlyReviewPostCard({
                 title="Delete permanently — frees the topic to be generated again"
                 aria-label={`Delete ${post.title ?? 'post'} permanently`}
                 onClick={() => {
-                  if (confirm('Delete this post and its topic permanently?\n\nThe subject becomes available to generate again. Use Reject instead if you do not want it suggested again.')) {
+                  if (confirm(`Delete "${post.title ?? 'this post'}" and its topic permanently?\n\nThe subject becomes available to generate again.\n\nUse Reject instead if you do not want it suggested again.`)) {
                     onDelete(post.id)
                   }
                 }}
-                style={{ color: '#dc2626' }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: '#dc2626' }}
               >
-                Delete
+                <Trash size={15} weight="bold" />
               </button>
             )}
             <button
