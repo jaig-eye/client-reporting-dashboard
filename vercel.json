@@ -67,10 +67,6 @@
     {
       "path": "/api/cron/dataforseo-rankings",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/cron/contact-staleness",
-      "schedule": "0 8 * * 1-5"
     }
   ]
 }
