@@ -15,6 +15,7 @@ const STOCK_SOURCE_LABEL: Record<string, string> = {
   pexels:    'Pexels',
   wikimedia: 'Wikimedia',
   openverse: 'Openverse',
+  wp_media:  'Their library',
 }
 
 interface Site {
@@ -350,6 +351,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Openverse suggestions stored on the post at generation time. Empty is the normal
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
+  // The client's OWN media library, searched on demand.
+  //
+  // Held separately from imageCandidates rather than merged into it: those are generated with
+  // the post and persisted to content_posts.image_candidates, whereas these are the result of
+  // a query someone just typed. Merging them would mean a stray search silently rewrote the
+  // post's stored suggestions.
+  const [mediaResults,  setMediaResults]  = useState<StockImageCandidate[]>([])
+  const [mediaQuery,    setMediaQuery]    = useState('')
+  const [mediaSearching, setMediaSearching] = useState(false)
+  const [mediaNote,     setMediaNote]     = useState('')
+  const [mediaTotal,    setMediaTotal]    = useState(0)
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   /** The candidate being previewed full-size before it is applied. */
   const [lightboxCandidate, setLightboxCandidate] = useState<StockImageCandidate | null>(null)
@@ -973,7 +985,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const res = await fetch(`/api/admin/content/posts/${postId}/select-stock-image`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ candidateId }),
+        // Client-library picks carry the connection and attachment id, because they are not
+        // in the post's stored candidate list — the server re-resolves them against that
+        // site's own API rather than trusting a URL from here. Stock picks send neither and
+        // resolve from the stored list exactly as before.
+        body: JSON.stringify(
+          candidateId.startsWith('wp-')
+            ? { candidateId, connectionId, mediaId: Number(candidateId.slice(3)) }
+            : { candidateId },
+        ),
       })
       const data = await res.json() as { url?: string; error?: string }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Could not apply that image')
@@ -988,6 +1008,52 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       throw err
     } finally {
       setApplyingStockId(null)
+    }
+  }
+
+  /**
+   * Search the client's own WordPress media library.
+   *
+   * Requires a chosen site connection because the library belongs to a SITE, not to us — the
+   * same connection the post will publish through, so what you pick is guaranteed to be on
+   * the server the article lands on.
+   *
+   * Empty query is allowed and is not a mistake: it lists the most recent uploads, which is
+   * the fastest way to find the photos someone added for this piece.
+   */
+  async function handleSearchMedia(page = 1) {
+    if (!connectionId) {
+      openSection('publish')
+      setMediaNote('Choose a site connection under Publish below to search their media.')
+      return
+    }
+    setMediaSearching(true)
+    setMediaNote('')
+    try {
+      const qs = new URLSearchParams({ connection_id: connectionId, page: String(page) })
+      if (mediaQuery.trim()) qs.set('q', mediaQuery.trim())
+      const res  = await fetch(`/api/admin/wordpress/media?${qs.toString()}`)
+      const data = await res.json() as {
+        items?: StockImageCandidate[]; total?: number; error?: string
+        unsupported?: boolean; reason?: string
+      }
+      if (data.unsupported) { setMediaResults([]); setMediaTotal(0); setMediaNote(data.reason ?? 'Not available for this site.'); return }
+      if (!res.ok) throw new Error(data.error ?? 'Media search failed')
+
+      const items = data.items ?? []
+      setMediaResults(items)
+      setMediaTotal(data.total ?? items.length)
+      if (items.length === 0) {
+        setMediaNote(mediaQuery.trim()
+          ? `Nothing in their library matches "${mediaQuery.trim()}".`
+          : 'Their media library looks empty.')
+      }
+    } catch (err) {
+      setMediaResults([])
+      setMediaTotal(0)
+      setMediaNote(err instanceof Error ? err.message : 'Media search failed')
+    } finally {
+      setMediaSearching(false)
     }
   }
 
@@ -1323,11 +1389,55 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     keeps the whole set reachable at the height of a single thumbnail.
                     This also replaced a modal — the modal existed only to house the
                     grid, which was never a reason to have a modal. */}
-                {imageCandidates.length > 0 && (
+                {/* Their own library first.
+                    An image the client already owns beats a borrowed one on every axis that
+                    matters — licensing, brand fit, and whether it shows their actual premises
+                    — so it gets the explicit control, and its results sort ahead of the stock
+                    suggestions in the strip below. */}
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      value={mediaQuery}
+                      onChange={e => setMediaQuery(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleSearchMedia(1) } }}
+                      placeholder="Search the client's media library…"
+                      className="input"
+                      style={{ flex: 1, minWidth: 180, fontSize: '0.78rem', padding: '0.3rem 0.5rem' }}
+                      aria-label="Search the client's WordPress media library"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSearchMedia(1)}
+                      disabled={mediaSearching}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '3px 10px' }}
+                      title="Search images already uploaded to this client's WordPress site"
+                    >
+                      {mediaSearching ? 'Searching…' : 'Their library'}
+                    </button>
+                    {mediaResults.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => { setMediaResults([]); setMediaNote(''); setMediaTotal(0) }}
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '3px 10px' }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  {(mediaNote || mediaResults.length > 0) && (
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      {mediaNote || `${mediaResults.length} shown${mediaTotal > mediaResults.length ? ` of ${mediaTotal}` : ''} from their library`}
+                    </div>
+                  )}
+                </div>
+
+                {(imageCandidates.length > 0 || mediaResults.length > 0) && (
                   <div style={{ marginTop: 14 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        Free stock alternatives · {imageCandidates.length}
+                        Alternatives · {mediaResults.length + imageCandidates.length}
                       </span>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                         scroll sideways · the AI image stays selected until you click one
@@ -1352,7 +1462,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     )}
 
                     <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, scrollSnapType: 'x proximity' }}>
-                      {imageCandidates.map(c => {
+                      {[...mediaResults, ...imageCandidates].map(c => {
                         const busy = applyingStockId === c.id
                         return (
                           <button

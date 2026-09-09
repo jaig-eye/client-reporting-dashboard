@@ -15,6 +15,7 @@ const SOURCE_LABEL: Record<string, string> = {
   pexels:    'Pexels',
   wikimedia: 'Wikimedia Commons',
   openverse: 'Openverse',
+  wp_media:  'Client media library',
 }
 
 interface Props {

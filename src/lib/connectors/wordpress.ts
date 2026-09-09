@@ -559,3 +559,166 @@ export async function setWpContentStatus(
     throw new Error(`WordPress API error ${res.status}: ${text}`)
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Media library
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WpMediaItem {
+  id:        number
+  title:     string
+  /** Full-size source URL. */
+  url:       string
+  /** Smallest sensible preview, falling back to the full image. */
+  thumbnail: string
+  width:     number | null
+  height:    number | null
+  alt:       string | null
+  mimeType:  string
+  uploadedAt: string | null
+}
+
+/**
+ * One page of the client's own WordPress media library.
+ *
+ * Deliberately NOT exhaustive. A mature site can hold thousands of attachments, and pulling
+ * them all to filter in memory would be slow for the reviewer, hostile to the client's server,
+ * and pointless — WordPress already indexes media for search, so `search` is pushed upstream
+ * and only a page comes back.
+ *
+ * `media_type=image` is a server-side filter: a media library also holds PDFs, audio and
+ * video, none of which can be a featured image, and letting those consume page slots is how
+ * a search for "roof" returns four results out of twenty.
+ *
+ * Returns the page plus WordPress's own total counts, taken from the X-WP-Total headers, so
+ * the caller can page without guessing whether more exists.
+ */
+export async function searchMedia(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  opts: { search?: string; page?: number; perPage?: number } = {},
+): Promise<{ items: WpMediaItem[]; total: number; totalPages: number }> {
+  const page    = Math.max(1, Math.trunc(opts.page ?? 1))
+  // Capped at 60: the picker shows a strip, and WordPress's own ceiling is 100. A large
+  // per_page on a slow client host is the difference between a responsive picker and a
+  // timeout, and nobody scans 100 thumbnails at once anyway.
+  const perPage = Math.min(60, Math.max(1, Math.trunc(opts.perPage ?? 24)))
+
+  const url = new URL(wpApiUrl(siteUrl, '/media'))
+  url.searchParams.set('media_type', 'image')
+  url.searchParams.set('per_page', String(perPage))
+  url.searchParams.set('page', String(page))
+  url.searchParams.set('orderby', opts.search?.trim() ? 'relevance' : 'date')
+  if (!opts.search?.trim()) url.searchParams.set('order', 'desc')
+  if (opts.search?.trim()) url.searchParams.set('search', opts.search.trim())
+  // Only the fields the picker renders. Media rows carry a large `description`/`caption`
+  // payload per item that would otherwise be transferred and discarded.
+  url.searchParams.set('_fields', 'id,title,source_url,media_details,alt_text,mime_type,date')
+
+  // A client site that accepts the connection and never answers must not hold this request
+  // open until the platform kills it — the reviewer is waiting on this one.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      headers: {
+        Authorization:  authHeader(auth.username, auth.app_password),
+        'Content-Type': 'application/json',
+        'User-Agent':   BROWSER_BOT_UA,
+      },
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress media error ${res.status}: ${text.slice(0, 300)}`)
+  }
+
+  const rows = (await res.json()) as Record<string, unknown>[]
+  const total      = Number(res.headers.get('x-wp-total')       ?? rows.length)
+  const totalPages = Number(res.headers.get('x-wp-totalpages')  ?? 1)
+
+  const items: WpMediaItem[] = rows.map(r => {
+    const details = (r.media_details ?? {}) as Record<string, unknown>
+    const sizes   = (details.sizes   ?? {}) as Record<string, { source_url?: string; width?: number; height?: number }>
+    // Prefer a real thumbnail size; a media library's full-size originals are routinely
+    // several megabytes each and a strip of twenty would be tens of megabytes.
+    const preview =
+      sizes.medium?.source_url
+      ?? sizes.thumbnail?.source_url
+      ?? sizes.medium_large?.source_url
+      ?? String(r.source_url ?? '')
+
+    return {
+      id:        Number(r.id),
+      title:     String((r.title as Record<string, unknown>)?.rendered ?? r.title ?? '').trim(),
+      url:       String(r.source_url ?? ''),
+      thumbnail: preview,
+      width:     details.width  != null ? Number(details.width)  : null,
+      height:    details.height != null ? Number(details.height) : null,
+      alt:       r.alt_text ? String(r.alt_text) : null,
+      mimeType:  String(r.mime_type ?? 'image/jpeg'),
+      uploadedAt: r.date ? String(r.date) : null,
+    }
+  }).filter(m => m.url)
+
+  return { items, total, totalPages }
+}
+
+/**
+ * One attachment by id.
+ *
+ * Exists so the apply path can resolve a chosen media item WITHOUT trusting a URL from the
+ * request body. select-stock-image refuses arbitrary URLs on purpose — accepting one would
+ * let any authenticated caller make the server fetch an address of their choosing and publish
+ * the result to a client's site. Resolving the id against the client's own authenticated API
+ * keeps that property: the URL comes from their WordPress, not from the caller.
+ */
+export async function getMediaItem(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  mediaId: number,
+): Promise<WpMediaItem | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(
+      `${wpApiUrl(siteUrl, `/media/${mediaId}`)}?_fields=id,title,source_url,media_details,alt_text,mime_type,date`,
+      {
+        headers: {
+          Authorization:  authHeader(auth.username, auth.app_password),
+          'Content-Type': 'application/json',
+          'User-Agent':   BROWSER_BOT_UA,
+        },
+        signal: controller.signal,
+      },
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`WordPress media error ${res.status}`)
+
+  const r = (await res.json()) as Record<string, unknown>
+  if (!r.source_url) return null
+  const details = (r.media_details ?? {}) as Record<string, unknown>
+  const sizes   = (details.sizes   ?? {}) as Record<string, { source_url?: string }>
+
+  return {
+    id:        Number(r.id),
+    title:     String((r.title as Record<string, unknown>)?.rendered ?? r.title ?? '').trim(),
+    url:       String(r.source_url),
+    thumbnail: sizes.medium?.source_url ?? sizes.thumbnail?.source_url ?? String(r.source_url),
+    width:     details.width  != null ? Number(details.width)  : null,
+    height:    details.height != null ? Number(details.height) : null,
+    alt:       r.alt_text ? String(r.alt_text) : null,
+    mimeType:  String(r.mime_type ?? 'image/jpeg'),
+    uploadedAt: r.date ? String(r.date) : null,
+  }
+}

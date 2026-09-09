@@ -167,7 +167,7 @@ const NON_VISUAL_WORDS = new Set([
  * generated before it was dropped carry it in content_posts.image_candidates. Nothing
  * searches it any more.
  */
-export type StockSource = 'pexels' | 'openverse' | 'wikimedia'
+export type StockSource = 'pexels' | 'openverse' | 'wikimedia' | 'wp_media'
 
 export interface StockImageCandidate {
   id:          string
@@ -655,7 +655,9 @@ function dedupe(list: StockImageCandidate[], limit: number): StockImageCandidate
   // Relevance first, then source quality. The tiebreak matters: at equal relevance a
   // Pexels photo is professionally shot while an Openverse hit is often a 1024px Flickr
   // snapshot, so ordering by relevance alone buried the better picture.
-  const SOURCE_RANK: Record<StockSource, number> = { pexels: 0, openverse: 1, wikimedia: 2 }
+  // The client's OWN media outranks every stock library: it is already licensed, already
+  // on their site, and usually already on-brand. Nothing bought or borrowed beats that.
+  const SOURCE_RANK: Record<StockSource, number> = { wp_media: 0, pexels: 1, openverse: 2, wikimedia: 3 }
 
   // Specificity of the query that FOUND each candidate, ranked before relevance.
   //
