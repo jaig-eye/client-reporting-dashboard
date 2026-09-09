@@ -2,6 +2,7 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirections'
 import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
@@ -58,6 +59,7 @@ export function buildImagePrompt(
   post: PostRow,
   settings: ClientSettings | null,
   promptOverride?: string,
+  directionId?: string | null,
 ): string {
   const title    = post.seo_title?.trim() || post.title?.trim() || ''
   const keyword  = post.target_keyword?.trim() || ''
@@ -73,11 +75,11 @@ export function buildImagePrompt(
   // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
   // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
   // (the visual equivalent of the banned-phrase list for copy) counters it.
-  const realism =
-    'Photojournalistic realism — an authentic candid photograph taken on location, shot on a full-frame camera with a 35mm lens, natural available light with soft directional shadows, true-to-life muted color and neutral white balance, subtle natural film grain, real textures and worn, lived-in materials, unstaged with slight natural asymmetry.'
-  const avoid =
-    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details. ' +
-    'Repeating the two hard rules because they are the most common failure: no rendered text or lettering anywhere, and no visible people or faces.'
+  // Style comes from the chosen direction. It used to be hardcoded photojournalism, which
+  // silently contradicted any non-photographic request — see lib/content/imageDirections.ts.
+  const direction = getDirection(directionId)
+  const realism   = direction.style
+  const avoid = direction.avoid
   // Text and people are the two things these models get visibly wrong, so both are
   // stated first (models weight early instruction most heavily), in absolute terms,
   // and repeated in the negative list rather than mentioned once in passing.
@@ -91,18 +93,19 @@ export function buildImagePrompt(
   // impossible posture). The subject of these articles is the work and the equipment,
   // so people are almost never necessary; where the scene genuinely requires a human
   // (a task being demonstrated), hands and forearms alone carry it.
-  const constraints =
-    'ABSOLUTELY NO TEXT of any kind anywhere in the image — no words, letters, numbers, captions, labels, signage, packaging text, screens, logos, or watermarks; every surface that would normally carry writing must be blank. ' +
-    'NO PEOPLE unless the subject cannot be shown without one — prefer the equipment, materials and workspace by themselves. If a person is unavoidable, show only hands and forearms performing the task, tightly cropped; never a face, never a full body, never a group. ' +
-    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. 16:9 wide landscape.'
+  const constraints = UNIVERSAL_CONSTRAINTS
 
   if (promptOverride?.trim()) {
     // Client creative direction leads; post context anchors it to the topic, and the
     // realism + anti-AI direction still applies so their brief doesn't come back looking AI.
-    return `Candid documentary photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${realism} ${avoid} ${constraints}`
+    // Order matters: the STYLE leads, then the reviewer's direction, then the subject. The
+    // old form opened with "Candid documentary photograph" regardless, so a request for a
+    // vector illustration contradicted itself in its first three words and the model resolved
+    // it by ignoring the direction.
+    return `${realism} Subject${context}: "${subject}" in a ${setting}. Creative direction: ${promptOverride.trim()}. ${avoid} ${constraints}`
   }
 
-  return `Candid documentary photograph${context}. Scene: ${scene}, showing "${subject}", on location in a ${setting}. ${realism} ${avoid} ${constraints}`
+  return `${realism} Scene${context}: ${scene}, showing "${subject}", in a ${setting}. ${avoid} ${constraints}`
 }
 
 export type ImageGenResult =
@@ -118,6 +121,8 @@ export async function generatePostImage(
   postId: string,
   openaiKey: string | null | undefined,
   promptOverride?: string,
+  /** Art direction id from lib/content/imageDirections. Omitted = documentary. */
+  directionId?: string | null,
 ): Promise<ImageGenResult> {
   const postRes = await db.from('content_posts')
     .select('id, client_id, image_concept, seo_title, title, target_keyword')
@@ -136,7 +141,7 @@ export async function generatePostImage(
     .maybeSingle()
 
   const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
-  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt)
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt, directionId)
 
   // ── Stock alternatives, searched with the SAME context as the AI prompt ─────
   // Runs alongside generation rather than instead of it, so the reviewer always has

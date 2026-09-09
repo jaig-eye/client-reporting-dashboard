@@ -6,6 +6,7 @@ import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
 import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
+import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
@@ -349,6 +350,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Which confirmation is open, if any. Approve and Reject both reach the client's live site,
   // so neither fires on a bare click any more.
   const [confirming, setConfirming] = useState<null | 'approve' | 'reject' | 'discard'>(null)
+  const [imageDialogOpen, setImageDialogOpen] = useState(false)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -974,12 +976,19 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   // ── Image generation ────────────────────────────────────────────────────────
-  async function handleGenerateImage() {
+  /** Opens the steering dialog; the request itself is performGenerateImage. */
+  function handleGenerateImage() { setImageDialogOpen(true) }
+
+  async function performGenerateImage(req: { direction: string; notes: string }) {
     setGeneratingImage(true)
     setImageUploadingMsg('')
     setError('')
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/generate-image`, { method: 'POST' })
+      const res = await fetch(`/api/admin/content/posts/${postId}/generate-image`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ direction: req.direction, notes: req.notes || undefined }),
+      })
       const data = await res.json() as { url?: string; error?: string; candidates?: StockImageCandidate[] }
       // Generating also REWRITES the stored candidates as a side effect, so adopt the
       // returned list even when generation failed. Without this the strip keeps showing
@@ -1347,13 +1356,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={c.thumbnail} alt={c.title} loading="lazy"
                               style={{ width: '100%', height: 74, objectFit: 'cover', display: 'block' }} />
-                            <div style={{ padding: '4px 6px', fontSize: '0.62rem', lineHeight: 1.3 }}>
-                              <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-primary)' }}>
-                                {busy ? 'Applying…' : c.title}
-                              </div>
-                              <div style={{ color: 'var(--text-muted)' }}>
-                                {STOCK_SOURCE_LABEL[c.source] ?? 'Stock'}
-                              </div>
+                            {/* Source only. Stock titles are provider metadata, not
+                                descriptions — "DSC_0491", "Free Stock Photo of ..." — so a
+                                truncated one in a 132px tile was noise competing with the
+                                thing actually being judged, which is the picture. The full
+                                title, creator and licence are on hover, and in the lightbox
+                                before anything is applied. */}
+                            <div style={{ padding: '4px 6px', fontSize: '0.62rem', lineHeight: 1.3, color: 'var(--text-muted)' }}>
+                              {busy ? 'Applying…' : (STOCK_SOURCE_LABEL[c.source] ?? 'Stock')}
                             </div>
                           </button>
                         )
@@ -1797,6 +1807,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           }}
         />
       )}
+      {imageDialogOpen && (
+        <ImageDirectionDialog
+          postTitle={title || post?.title || null}
+          busy={generatingImage}
+          onCancel={() => setImageDialogOpen(false)}
+          onConfirm={req => { setImageDialogOpen(false); void performGenerateImage(req) }}
+        />
+      )}
+
       {confirming === 'approve' && (
         <ConfirmActionDialog
           title="Approve and push to the site"

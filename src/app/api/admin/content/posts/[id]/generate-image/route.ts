@@ -19,12 +19,24 @@ export async function POST(
   const { id } = await params
   const db = createAdminClient()
 
+  // Optional steering from the regenerate dialog: a preset art direction, plus free text.
+  // Both are optional — a bare POST still regenerates with the client's default look.
+  const body = await request.json().catch(() => ({})) as {
+    direction?: string | null
+    notes?:     string | null
+  }
+
   const { data: agency } = await db
     .from('agency_settings')
     .select('openai_api_key')
     .single()
 
-  const result = await generatePostImage(db, id, (agency as { openai_api_key?: string | null } | null)?.openai_api_key)
+  const result = await generatePostImage(
+    db, id,
+    (agency as { openai_api_key?: string | null } | null)?.openai_api_key,
+    body.notes?.trim() || undefined,
+    body.direction ?? null,
+  )
 
   // generatePostImage ALSO rewrites image_candidates as a side effect (it awaits the
   // stock search before returning), at the strict automatic floor and cap. Read the new
