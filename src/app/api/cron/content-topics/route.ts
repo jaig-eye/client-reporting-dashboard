@@ -586,12 +586,19 @@ export async function GET(request: NextRequest) {
     // status='approved' is therefore the correct gate here, and 'for_review' must NOT be
     // included — a post sitting at 'for_review' is precisely one nobody has looked at yet.
     //
-    // Note this stage is currently inert: nothing writes content_posts.status='approved'.
-    // /approve's 'approve_only' action is its only writer and no shipped UI calls it, because
-    // the review drawer's Approve pushes immediately instead. That is not a bug to paper over
-    // by widening the filter — the immediate push already delivers the intended behaviour,
-    // and WordPress handles scheduling itself when a post carries 'future' status. The stage
-    // is redundant, not broken, and removing it is a separate decision.
+    // WHAT THIS STAGE IS FOR, now that something writes that status: it is the RETRY QUEUE.
+    //
+    // The review drawer's Approve pushes immediately, so a successful approval never passes
+    // through here. But client sites fail intermittently — a timeout, a 502 from their host,
+    // an expired application password — and /approve now records 'approved' when the push
+    // fails, capturing what is true: a human approved this, and it is not on the site yet.
+    // This stage picks those up within two hours, behind the quality gate, and stops as soon
+    // as one succeeds. Before that write existed the stage was unreachable, which is why it
+    // had never once fired.
+    //
+    // It also carries regeneration: the filter below re-pushes a live post whose DB copy is
+    // newer than its CMS copy, so regenerating an already-approved article reaches the site
+    // without anyone re-approving it.
     //
     // Dateless posts stay excluded: they cannot be reviewed in the list view and must be
     // pushed by hand.

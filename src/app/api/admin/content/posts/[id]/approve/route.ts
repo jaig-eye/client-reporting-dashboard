@@ -811,6 +811,40 @@ export async function POST(
       published_url: isPublicPermalink(result.link) ? result.link : null,
     })
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 })
+    // A FAILED PUSH IS NOT A FAILED APPROVAL.
+    //
+    // This used to return 500 and write nothing, so a post whose upload to WordPress failed —
+    // a timeout, a 502 from their host, an expired application password — kept status
+    // 'for_review'. Nothing recorded that a human had approved it, nothing could retry it, and
+    // if the reviewer closed the tab the decision was simply lost. Client sites fail
+    // intermittently; that is normal and should not cost a review.
+    //
+    // Recording 'approved' captures what is actually true: a person approved this, and it is
+    // not on the site yet. That is exactly the state the content-topics cron's push stage
+    // selects for, so it becomes the retry queue — it re-attempts within two hours, behind
+    // the same quality gate, and stops as soon as the push succeeds. The stage looked dead
+    // only because nothing ever wrote the status it was waiting for.
+    //
+    // It also makes regeneration self-healing: the cron re-pushes a live post whose DB copy is
+    // newer than its CMS copy, so regenerating an approved article now reaches the site
+    // without anyone re-approving it.
+    const { error: markErr } = await db
+      .from('content_posts')
+      .update({ status: 'approved', admin_approved_at: new Date().toISOString() })
+      .eq('id', id)
+      .not('status', 'in', '("published","draft_saved")')
+    if (markErr) {
+      console.error(`[approve] push failed AND could not mark ${id} for retry:`, markErr.message)
+    }
+
+    console.error(`[approve] push failed for ${id}, queued for automatic retry:`, String(err))
+    return NextResponse.json(
+      {
+        error: String(err),
+        // The card uses this to say the work is not lost.
+        queuedForRetry: !markErr,
+      },
+      { status: 500 },
+    )
   }
 }
