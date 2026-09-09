@@ -12,6 +12,7 @@
 // then flips status back to 'for_review' when done.
 
 import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
+import { completeText } from '@/lib/ai/client'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
 import { runQualityGate } from '@/lib/content/qualityGate'
@@ -333,25 +334,22 @@ Requirements:
       })
 
       // 6. Call AI
+      // Routed through lib/ai/client so the call is metered — the inline provider branch this
+      // replaces discarded the usage block the ledger needs.
       let rawText = ''
-      if (provider === 'anthropic') {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-          body:    JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+      try {
+        const completion = await completeText({
+          provider: provider === 'openai' ? 'openai' : 'anthropic',
+          model, apiKey,
+          system: systemPrompt,
+          user:   userPrompt,
+          maxTokens: 8192,
+          operation: 'full_regenerate',
+          clientId: String(pr.client_id ?? "") || null,
         })
-        if (!res.ok) throw new Error(`AI error: ${await res.text()}`)
-        const data = await res.json()
-        rawText = (data.content?.find((b: Record<string, unknown>) => b.type === 'text') as { text: string } | undefined)?.text ?? ''
-      } else {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-          body:    JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-        })
-        if (!res.ok) throw new Error(`AI error: ${await res.text()}`)
-        const data = await res.json()
-        rawText = (data.choices?.[0]?.message?.content as string | undefined) ?? ''
+        rawText = completion.text
+      } catch (e) {
+        throw e
       }
 
       // 7. Parse + sanitize

@@ -2,6 +2,8 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { recordAiUsage } from '@/lib/ai/usage'
+import { priceImages } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 
 type PostRow = {
@@ -176,6 +178,17 @@ export async function generatePostImage(
         }),
       })
       if (dalleRes.ok) {
+        // Billed per image, not per token, so the ledger records units and prices through
+        // priceImages. Only a successful generation is charged.
+        void recordAiUsage({
+          provider: 'openai',
+          model:    'gpt-image-1',
+          operation: 'image',
+          units:    1,
+          costUsd:  priceImages('gpt-image-1', 1),
+          clientId: String(post.client_id ?? '') || null,
+          postId,
+        })
         const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
         const item = data.data?.[0]
         if (item?.b64_json) {

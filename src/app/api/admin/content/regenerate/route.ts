@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { completeText } from '@/lib/ai/client'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
@@ -166,26 +167,22 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Routed through lib/ai/client so the call is metered — the inline provider branch this
+    // replaces discarded the usage block the ledger needs.
     let rawText = ''
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: finalPrompt }] }),
+    try {
+      const completion = await completeText({
+        provider: provider === 'openai' ? 'openai' : 'anthropic',
+        model, apiKey,
+        system: systemPrompt,
+        user:   finalPrompt,
+        maxTokens: 4096,
+        operation: 'rewrite',
+        clientId: post.client_id ?? null,
       })
-      if (!res.ok) { const t = await res.text(); throw new Error(`AI error: ${t}`) }
-      const data = await res.json()
-      const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-      rawText = tb?.text || ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: finalPrompt }] }),
-      })
-      if (!res.ok) { const t = await res.text(); throw new Error(`AI error: ${t}`) }
-      const data = await res.json()
-      rawText = data.choices?.[0]?.message?.content || ''
+      rawText = completion.text
+    } catch (e) {
+      throw e
     }
 
     const parsed = parseResponse(rawText)
