@@ -186,7 +186,12 @@ function toIso(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
-function computeSlots(params: {
+/**
+ * Cadence dates for a window, WITHOUT the past-date guard. Prefer computeSlots below.
+ * Split out only because the cadence branches have several return points and the guard
+ * belongs in exactly one place.
+ */
+function computeSlotsRaw(params: {
   anchor:     Date
   weeksAhead: number
   frequency:  string
@@ -254,6 +259,24 @@ function computeSlots(params: {
   let cur = new Date(anchor)
   while (cur <= end) { slots.push(toIso(cur)); cur = new Date(cur.getTime() + 7 * 86_400_000) }
   return slots
+}
+
+/**
+ * Cadence dates for the window, never in the past.
+ *
+ * The guard exists because the start date is a free text field. Setting it earlier than
+ * today — the natural thing to try when you want a plan to have begun sooner — produced
+ * slots for dates that had already gone. Those do not fail loudly: generation clamps a past
+ * target_publish_date to today, so every backdated slot collapsed onto the same day and the
+ * client got several posts at once, on a date nobody chose.
+ *
+ * Dropping them here means an earlier anchor still sets the CADENCE — a monthly plan
+ * anchored to the 1st keeps landing on the 1st — while only the dates that can still be
+ * honoured are offered. The cron generator applies the same rule (`candidate > now`).
+ */
+function computeSlots(params: Parameters<typeof computeSlotsRaw>[0]): string[] {
+  const today = new Date().toISOString().slice(0, 10)
+  return computeSlotsRaw(params).filter(d => d >= today)
 }
 
 function daysInMonth(year: number, month: number): number {

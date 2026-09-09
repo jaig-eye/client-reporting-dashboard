@@ -695,7 +695,11 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
       .select('id, external_id, external_name, connector:connectors!inner(type, config)')
       .eq('client_id', clientId).eq('status', 'active').in('connector.type', ['wordpress', 'bigcommerce']),
     db.from('content_settings')
-      .select('schedule_frequency, schedule_day_of_week, weeks_ahead, generate_lead_days, publish_time, auto_generate, wizard_completed, business_background, services')
+      // schedule_start_date and monthly_publish_day are load-bearing, not extras: without them
+      // ClientPipeline's start-date field falls back to today() on every render, so a client
+      // with a plan running from 1 August showed "today" and looked unconfigured. Anyone
+      // correcting that apparent mistake was really MOVING the anchor.
+      .select('schedule_frequency, schedule_day_of_week, weeks_ahead, generate_lead_days, publish_time, auto_generate, wizard_completed, business_background, services, schedule_start_date, monthly_publish_day')
       .eq('client_id', clientId).maybeSingle(),
     db.from('content_topics')
       .select('id, topic, target_keyword, target_publish_date, generate_by_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at')
