@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   // bc_author_name is appended only when migration 212 has landed. Naming a missing column
   // fails the WHOLE select with 42703, which turned the review drawer into "Failed to load
   // post" for an optional field.
-  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id'
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id, quality_report'
 
   // Deploy-order fallback. Migrations here are applied by hand, so code can be live before
   // its column exists — and naming a missing column does not degrade, it fails the WHOLE
@@ -117,6 +117,9 @@ export async function GET(request: NextRequest) {
     scheduleDefaultAuthorId,
     schedulePublishMode,
     scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
+    // Surfaced in the drawer's SEO section. It used to live only on the review card, where a
+    // reviewer could see that findings existed but not read them or act on them.
+    qualityReport:    p.quality_report ?? null,
     // Per-post override (migration 212). Null means "use scheduleBcAuthor".
     bcAuthorName:     p.bc_author_name ? String(p.bc_author_name) : null,   // undefined pre-212
   })

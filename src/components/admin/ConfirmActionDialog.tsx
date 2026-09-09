@@ -88,7 +88,7 @@ export default function ConfirmActionDialog({
         ref={dialogRef}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-card, #fff)', borderRadius: 10, width: 'min(460px, 100%)',
+          background: 'var(--bg-elevated, #fff)', borderRadius: 10, width: 'min(460px, 100%)',
           border: '1px solid var(--border)', boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
         }}
       >

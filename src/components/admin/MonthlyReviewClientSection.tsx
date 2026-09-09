@@ -102,15 +102,12 @@ export default function MonthlyReviewClientSection({
             <ArrowSquareOut size={13} weight="bold" aria-hidden />
           </span>
         </span>
-        {/* Link health chip */}
-        {scanState === 'idle' && (
-          <span
-            onClick={handleScanLinks}
-            style={{ fontSize: 11, color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            🔗 Scan links
-          </span>
-        )}
+        {/* No idle "Scan links" affordance.
+            Opening a post for review scans its links automatically, and review is the only
+            way to approve one — so this offered work the reviewer cannot avoid doing anyway,
+            from a chip sitting beside the approval counter as though it were part of the
+            progress readout. The scanning and result states below still render, because a
+            scan triggered by the drawer is worth reporting here. */}
         {scanState === 'scanning' && (
           <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>⟳ Scanning…</span>
         )}

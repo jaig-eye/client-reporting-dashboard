@@ -92,7 +92,7 @@ export default function StockImageLightbox({ candidate: c, busy, currentImageUrl
         ref={dialogRef}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-card, #fff)', borderRadius: 10,
+          background: 'var(--bg-elevated, #fff)', borderRadius: 10,
           maxWidth: 'min(1000px, 100%)', maxHeight: '90vh',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
           border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)',

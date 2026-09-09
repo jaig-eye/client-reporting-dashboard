@@ -19,6 +19,7 @@ import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { getMediaItem } from '@/lib/connectors/wordpress'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { BROWSER_BOT_UA } from '@/lib/platformBot'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 
 const DOWNLOAD_TIMEOUT_MS = 20_000
@@ -168,7 +169,18 @@ export async function POST(
     let res: Response
     try {
       res = await fetch(candidate.url, {
-        headers: { 'User-Agent': 'client-reporting-dashboard/1.0 (+https://dash.golaunchlocal.com)' },
+        headers: {
+          // BROWSER_BOT_UA, not our own token. Hosts hotlink-protect by rejecting unfamiliar
+          // agents, and a bare "client-reporting-dashboard/1.0" is exactly what those rules
+          // are written to catch — which fails hardest on the source we most want to succeed,
+          // the client's OWN WordPress, where security plugins are common. The repo already
+          // uses this UA for sitemap and WordPress fetches for the same reason.
+          'User-Agent': BROWSER_BOT_UA,
+          // Some hosts key hotlink protection on Referer rather than the agent, and treat a
+          // MISSING one as a hotlink. Naming ourselves is both honest and what they allow.
+          Referer: 'https://dash.golaunchlocal.com/',
+          Accept:  'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
         signal: ctrl.signal,
         redirect: 'follow',
       })

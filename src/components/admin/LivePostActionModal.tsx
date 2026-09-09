@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
 
 export type LiveMode = 'replace' | 'new_keep' | 'new_remove'
@@ -78,15 +78,53 @@ export default function LivePostActionModal({
     ? cms === 'delete'
     : liveMode === 'new_remove' && cms === 'delete'
 
+  // ── Dialog semantics ────────────────────────────────────────────────────────
+  //
+  // This modal had none, while its three siblings on the same surface all did — and it is
+  // the one that matters most: it is the only human gate on taking down or replacing an
+  // article that is LIVE on a client's site. A keyboard or screen-reader user got an
+  // unannounced div they could tab out of, with no way to escape and no way to tell which of
+  // three irreversible CMS actions was selected.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const firstRef  = useRef<HTMLButtonElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null
+    firstRef.current?.focus()
+    return () => { openerRef.current?.focus?.() }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { if (!busy) onCancel(); return }
+      if (e.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const f = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onCancel, busy])
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={mode === 'remove' ? 'Remove a live article' : 'Regenerate a live article'}
       style={{
         position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       }}
       onClick={e => { if (e.target === e.currentTarget && !busy) onCancel() }}
     >
-      <div style={{
+      <div ref={dialogRef} style={{
         background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
         width: '100%', maxWidth: 520, maxHeight: '86vh', overflowY: 'auto',
         boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
@@ -110,6 +148,7 @@ export default function LivePostActionModal({
                 What should change
               </label>
               <button
+                ref={firstRef}
                 type="button"
                 style={optionStyle(scope === 'rewrite')}
                 aria-pressed={scope === 'rewrite'}

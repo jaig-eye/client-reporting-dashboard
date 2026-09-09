@@ -5,6 +5,7 @@ import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
+import QualityFindings from '@/components/admin/QualityFindings'
 import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
 import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
@@ -94,6 +95,8 @@ interface PostDetail {
   schedulePublishMode:       string | null
   scheduleBcAuthor:          string | null
   bcAuthorName:              string | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  qualityReport:             any | null
 }
 
 interface Author {
@@ -368,6 +371,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Held separately from the drawer-wide error banner, which renders at the top of the edit
   // column -- far above the Images section, so it was never in view when an apply failed.
   const [stockApplyError, setStockApplyError] = useState<string | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [qualityReport, setQualityReport] = useState<any | null>(null)
   // Which confirmation is open, if any. Approve and Reject both reach the client's live site,
   // so neither fires on a bare click any more.
   const [confirming, setConfirming] = useState<null | 'approve' | 'reject' | 'discard'>(null)
@@ -454,6 +459,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         // The post's own byline wins over the client default, so a name typed here survives
         // a reload instead of being reset to the schedule setting on every open.
         setBcAuthorName(data.bcAuthorName ?? data.scheduleBcAuthor ?? '')
+        setQualityReport(data.qualityReport ?? null)
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         setImageCandidates(data.imageCandidates ?? [])
@@ -1632,6 +1638,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     </span>
                   ) : null}
                 </div>
+                {/* Moved here from the review card, which could only say that findings
+                    existed — not what they were, and offered nothing to do about them. This
+                    is where a reviewer is already reading the post, so it is where a note
+                    about the post's quality can actually be acted on. */}
+                <QualityFindings report={qualityReport} />
+
                 {/* Data-driven so the list can be SORTED and SUMMARISED.
                     Eighteen checks in source order, all styled alike, made a reviewer scan
                     every row to find the two that were red — and offered no answer to the

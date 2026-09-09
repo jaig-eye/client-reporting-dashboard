@@ -204,15 +204,16 @@ export default function MonthlyReviewPostCard({
                     "Preview draft" on a published post previews a draft that no longer
                     exists, and "View live" on a scheduled one points at a page that is not
                     up yet. Whichever applies is shown; the other was never useful. */}
-                {post.status === 'published' && isPublicPermalink(live) && live ? (
+                {isPublicPermalink(live) && live ? (
                   <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
                 ) : draft ? (
-                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, fontWeight: 600 }}>Preview draft ↗</a>
-                ) : isPublicPermalink(live) && live ? (
-                  <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
+                  /* Only when there is no public URL to look at. A live post is not a draft,
+                     so offering to preview "the draft" of one described something that does
+                     not exist — and sat beside Edit post doing nearly the same job. */
+                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, fontWeight: 600 }}>Preview ↗</a>
                 ) : null}
                 {wpe && (
-                  <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Open in WP ↗</a>
+                  <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit post ↗</a>
                 )}
                 {bce && (
                   <a href={bce} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit in BigCommerce ↗</a>
@@ -237,7 +238,7 @@ export default function MonthlyReviewPostCard({
               passed" bar under every clean post is the most prominent element on the card
               while carrying the least information — and it pushed the real controls down.
               Findings still surface here; the detail lives in the review drawer. */}
-          <QualityFindings report={post.quality_report} compact />
+
         </div>
 
         {/* Status / actions */}
@@ -246,9 +247,12 @@ export default function MonthlyReviewPostCard({
           // mind about a post you just approved is the common case, and the
           // button being absent here is why it looked like the feature was missing.
           <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-            {/* One badge, three truths. The reviewer is working down a list and wants to see
-                each post actually reach the site, so the badge reports where the push is
-                rather than only that a button was clicked. */}
+            {/* The badge reports the PUSH, not the approval.
+                Approval is a settled property of the post and reads in the meta line under
+                the title; repeating it here as a pill was what crowded the action row and
+                squeezed titles into an ellipsis in the first place. What belongs in the
+                action row is the transient part — whether the article has actually reached
+                the client's site yet — so nothing renders here once it has. */}
             {pushState === 'pushing' ? (
               <span
                 className="monthly-pushing"
@@ -292,11 +296,7 @@ export default function MonthlyReviewPostCard({
               >
                 ● Live
               </span>
-            ) : (
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
-                ✓ Approved
-              </span>
-            )}
+            ) : null}
 
             {/* Appears the moment the push returns a permalink, so the article can be checked
                 without leaving the list or reloading. */}
@@ -312,17 +312,6 @@ export default function MonthlyReviewPostCard({
                 shape when a post crosses into approved — only what they do changes. Approval
                 is not the end of the reviewer's relationship with a post: the common next
                 actions are re-reading it, replacing it, or taking it back down. */}
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              title="Review — read the content, SEO and strategy behind this post"
-              aria-label={`Review ${post.title ?? 'this post'}`}
-              onClick={() => onOpenEditor(post.id)}
-              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
-            >
-              <ArrowRight size={15} weight="bold" />
-            </button>
-
             <button
               className="btn btn-sm"
               disabled={isLoading}
@@ -351,6 +340,17 @@ export default function MonthlyReviewPostCard({
               style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: 'var(--red)' }}
             >
               <Trash size={15} weight="bold" />
+            </button>
+
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title="Review — read the content, SEO and strategy behind this post"
+              aria-label={`Review ${post.title ?? 'this post'}`}
+              onClick={() => onOpenEditor(post.id)}
+              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
+            >
+              <ArrowRight size={15} weight="bold" />
             </button>
           </div>
         ) : isRejected ? (
