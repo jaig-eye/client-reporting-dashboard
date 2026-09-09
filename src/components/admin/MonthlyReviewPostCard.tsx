@@ -57,6 +57,21 @@ interface Props {
    *  generated again. Distinct from onReject, which keeps it as an editorial signal
    *  so the topic is never suggested again. */
   onDelete?:        (id: string) => void
+  /**
+   * Where this post is in the push to the client's site.
+   *
+   * Approve is optimistic — the card flips instantly so the reviewer keeps moving — but the
+   * push itself takes a second or two against a live WordPress or BigCommerce site, and it
+   * can fail. Without this the card claimed "Approved" while the article was still in
+   * flight, and a failed push looked identical to a successful one.
+   * undefined = not started, which is every card until it is approved.
+   */
+  pushState?:       'pushing' | 'live' | 'failed'
+  /** Public permalink, once the push returns one. */
+  pushedUrl?:       string | null
+  /** Why the push failed, taken from the server rather than guessed. */
+  pushError?:       string | null
+  onRetryPush?:     (id: string) => void
 }
 
 function wordCount(html: string | null): number {
@@ -72,6 +87,7 @@ function fmtDate(iso: string): string {
 
 export default function MonthlyReviewPostCard({
   post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
+  pushState, pushedUrl, pushError, onRetryPush,
 }: Props) {
   const isDone = isApproved || isRejected || isDiscarded || isRegenerating
 
@@ -211,9 +227,68 @@ export default function MonthlyReviewPostCard({
           // mind about a post you just approved is the common case, and the
           // button being absent here is why it looked like the feature was missing.
           <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
-              ✓ Approved
-            </span>
+            {/* One badge, three truths. The reviewer is working down a list and wants to see
+                each post actually reach the site, so the badge reports where the push is
+                rather than only that a button was clicked. */}
+            {pushState === 'pushing' ? (
+              <span
+                className="monthly-pushing"
+                aria-live="polite"
+                style={{
+                  fontSize: 12, fontWeight: 700, color: '#1d4ed8', background: '#dbeafe',
+                  padding: '3px 10px', borderRadius: 999,
+                  animation: 'monthly-push-pulse 1.1s ease-in-out infinite',
+                }}
+              >
+                Pushing to site…
+              </span>
+            ) : pushState === 'failed' ? (
+              <>
+                <span
+                  title={pushError ?? undefined}
+                  aria-live="polite"
+                  style={{
+                    fontSize: 12, fontWeight: 700, color: '#b91c1c', background: '#fee2e2',
+                    padding: '3px 10px', borderRadius: 999, maxWidth: 260,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}
+                >
+                  {pushError ? 'Push failed — ' + pushError : 'Push failed'}
+                </span>
+                {onRetryPush && (
+                  <button className="btn btn-sm" disabled={isLoading} onClick={() => onRetryPush(post.id)}>
+                    Retry
+                  </button>
+                )}
+              </>
+            ) : pushState === 'live' ? (
+              <span
+                className="monthly-live"
+                aria-live="polite"
+                style={{
+                  fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7',
+                  padding: '3px 10px', borderRadius: 999,
+                  animation: 'monthly-live-pop 0.32s ease-out',
+                }}
+              >
+                ● Live
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 999 }}>
+                ✓ Approved
+              </span>
+            )}
+
+            {/* Appears the moment the push returns a permalink, so the article can be checked
+                without leaving the list or reloading. */}
+            {pushState === 'live' && pushedUrl && (
+              <a
+                href={pushedUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 12, fontWeight: 600, color: 'var(--blue)', textDecoration: 'none' }}
+              >
+                View live ↗
+              </a>
+            )}
             <button
               className="btn btn-sm"
               disabled={isLoading}

@@ -20,12 +20,16 @@ interface Props {
   onRegenerate:    (id: string) => void
   /** Permanently delete the post and its topic, freeing the subject for regeneration. */
   onDelete?:       (id: string) => void
+  /** Push progress per post id — see MonthlyReviewSession. Passed straight through. */
+  pushStates?:     Record<string, { state: 'pushing' | 'live' | 'failed'; url?: string | null; error?: string }>
+  onRetryPush?:    (id: string) => void
 }
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
 export default function MonthlyReviewClientSection({
   clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
+  pushStates, onRetryPush,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
@@ -146,6 +150,10 @@ export default function MonthlyReviewClientSection({
               onRestore={onRestore}
               onRegenerate={onRegenerate}
               onDelete={onDelete}
+              pushState={pushStates?.[post.id]?.state}
+              pushedUrl={pushStates?.[post.id]?.url ?? null}
+              pushError={pushStates?.[post.id]?.error ?? null}
+              onRetryPush={onRetryPush}
             />
           ))}
         </div>

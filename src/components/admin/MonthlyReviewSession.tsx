@@ -54,6 +54,18 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   })
   const [rejectedIds,    setRejectedIds]    = useState<Set<string>>(new Set())
   const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
+  /**
+   * Per-post progress of the push to the client's CMS, keyed by post id.
+   *
+   * Deliberately separate from approvedIds. Approval is the reviewer's decision and is
+   * optimistic; the push is a network call to someone else's site that can be slow or
+   * fail. Collapsing the two made a failed push indistinguishable from a successful one.
+   */
+  const [pushStates, setPushStates] = useState<Record<string, {
+    state: 'pushing' | 'live' | 'failed'
+    url?:   string | null
+    error?: string
+  }>>({})
   // Deleted posts are filtered out of the list entirely rather than badged, because
   // unlike reject/discard there is nothing left to act on or restore.
   const [deletedIds,     setDeletedIds]     = useState<Set<string>>(new Set())
@@ -99,6 +111,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }).length
 
   const handleApprove = useCallback(async (postId: string) => {
+    void pushStates
     // Optimistic — show approved immediately, push to site in background
     const post = initialPosts.find(p => p.id === postId)
     const nextApproved = new Set(approvedIds)
@@ -114,6 +127,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       playApprove()
     }
     setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+    // The card flips to Approved instantly so the reviewer keeps moving, but the article is
+    // not on the client's site yet — that takes a second or two against a live CMS and can
+    // fail. Tracking the push separately is what lets the badge say "Pushing…" then "Live",
+    // so a reviewer working down the list watches each one land instead of trusting a click.
+    setPushStates(prev => ({ ...prev, [postId]: { state: 'pushing' } }))
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/approve`, {
@@ -121,16 +139,31 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ action: 'approve_and_push', source: 'monthly_review' }),
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Push failed (${res.status})`)
+      }
+      // The route returns the stored permalink, so the card can offer "View live" the moment
+      // it lands rather than after a reload.
+      const done = await res.json().catch(() => ({})) as { published_url?: string | null }
+      setPushStates(prev => ({
+        ...prev,
+        [postId]: { state: 'live', url: done.published_url ?? null },
+      }))
     } catch (e) {
       console.error('Approve failed:', e)
-      // Revert optimistic update on failure
-      setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
-      alert('Failed to approve post. Please try again.')
+      // Approved stays SET so the row keeps its place in the list and the failure is shown on
+      // the card itself, with the server's reason and a Retry. Reverting it silently — which
+      // is what used to happen, behind a blocking alert() — lost both the reason and the
+      // reviewer's position in a list they were working down.
+      setPushStates(prev => ({
+        ...prev,
+        [postId]: { state: 'failed', error: e instanceof Error ? e.message : 'Push failed' },
+      }))
     } finally {
       setLoadingId(null)
     }
-  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
+  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone, pushStates])
 
   const doReject = useCallback(async (postId: string, discard?: boolean, cms: CmsAction = 'leave') => {
     setLoadingId(postId)
