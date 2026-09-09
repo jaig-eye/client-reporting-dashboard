@@ -307,7 +307,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [fetchedBreakdown, setFetchedBreakdown] = useState<TopicBreakdown | null>(null)
 
   // Two-pane tabless layout: collapsible right-column sections + header strategy panel
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content', 'seo', 'publish']))
+  // Content only. All three used to open together, so the drawer landed on roughly 1,600px
+  // of scroll and a first-time reviewer met the whole data model at once instead of the
+  // article they came to read.
+  //
+  // The order matches what a review actually is: read the piece, check how it will rank,
+  // decide where it goes. Only the first is needed to form an opinion, so only the first is
+  // open — and because Publish holds the one prerequisite Approve can fail on, that section
+  // opens itself when it does. Progressive disclosure that hid a blocker would be worse than
+  // no disclosure at all.
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content']))
   const toggleSection = (id: SectionId) =>
     setOpenSections(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
   const openSection = (id: SectionId) =>
@@ -722,7 +731,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
 
       if (!activeSite) {
-        setError('Select a site connection in the Settings tab before approving.')
+        // Open the section that holds the fix and say where it is. The old copy named a
+        // "Settings tab", which this drawer has never had — the control is in Publish, below.
+        openSection('publish')
+        setError('Choose a site connection under Publish below, then approve.')
         setApproving(false)
         return
       }
@@ -786,7 +798,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   async function handleRetry() {
-    if (!connectionId) { setError('Select a site connection in the Settings tab first'); return }
+    if (!connectionId) {
+      openSection('publish')
+      setError('Choose a site connection under Publish below first.')
+      return
+    }
     setRetrying(true); setError('')
     try {
       // Save all editor state (including connectionId) before pushing — same as handleApprove
@@ -1496,26 +1512,60 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     </span>
                   ) : null}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
-                  <div><Check ok={keywordInTitle} />Keyword in H1</div>
-                  <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
-                  <div><Check ok={keywordInMeta} />Keyword in meta desc</div>
-                  <div><Check ok={!!keywordInFirst} />Keyword in opening</div>
-                  <div><Check ok={keywordInSubhd} />Keyword in subheading</div>
-                  <div><Check ok={densityOk} warn={densityPct > 0 && !densityOk} />{densityPct.toFixed(1)}% density</div>
-                  <div><Check ok={liveWordCount >= 600} />{liveWordCount.toLocaleString()} words</div>
-                  <div><Check ok={liveHeadings >= 2} />{liveHeadings} headings</div>
-                  <div><Check ok={metaLenOk} warn={liveMetaLen > 0 && !metaLenOk} />Meta {liveMetaLen}/160</div>
-                  <div><Check ok={liveIntLinks >= 1} />{liveIntLinks} internal link{liveIntLinks !== 1 ? 's' : ''}</div>
-                  <div><Check ok={liveExtLinks >= 1} />{liveExtLinks} external link{liveExtLinks !== 1 ? 's' : ''}</div>
-                  <div><Check ok={imgAltKw} />Image alt w/ keyword</div>
-                  <div><Check ok={keywordSlug} />Keyword in slug</div>
-                  <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
-                  <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
-                  {isBlogPost && <div><Check ok={hasTakeaways} />Key Takeaways box</div>}
-                  <div><Check ok={headingHierOk} warn={liveHeadings > 0 && !headingHierOk} />Heading hierarchy</div>
-                  <div><Check ok={slugClean} warn={slug.length > 0 && !slugClean} />Clean URL slug</div>
-                </div>
+                {/* Data-driven so the list can be SORTED and SUMMARISED.
+                    Eighteen checks in source order, all styled alike, made a reviewer scan
+                    every row to find the two that were red — and offered no answer to the
+                    only question being asked, which is "is this ready". Failures rise to the
+                    top; the count says how much is left. */}
+                {(() => {
+                  const checks: { ok: boolean; warn?: boolean; label: string }[] = [
+                    { ok: keywordInTitle,    label: 'Keyword in H1' },
+                    { ok: keywordInSeoTitle, label: 'Keyword in SEO title' },
+                    { ok: keywordInMeta,     label: 'Keyword in meta desc' },
+                    { ok: !!keywordInFirst,  label: 'Keyword in opening' },
+                    { ok: keywordInSubhd,    label: 'Keyword in subheading' },
+                    { ok: densityOk,   warn: densityPct > 0 && !densityOk, label: `${densityPct.toFixed(1)}% density` },
+                    { ok: liveWordCount >= 600, label: `${liveWordCount.toLocaleString()} words` },
+                    { ok: liveHeadings >= 2,    label: `${liveHeadings} headings` },
+                    { ok: metaLenOk,   warn: liveMetaLen > 0 && !metaLenOk, label: `Meta ${liveMetaLen}/160` },
+                    { ok: liveIntLinks >= 1, label: `${liveIntLinks} internal link${liveIntLinks !== 1 ? 's' : ''}` },
+                    { ok: liveExtLinks >= 1, label: `${liveExtLinks} external link${liveExtLinks !== 1 ? 's' : ''}` },
+                    { ok: imgAltKw,    label: 'Image alt w/ keyword' },
+                    { ok: keywordSlug, label: 'Keyword in slug' },
+                    { ok: slugLenOk,   label: slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug' },
+                    { ok: seoTitleLenOk, label: 'SEO title ≤60 chars' },
+                    ...(isBlogPost ? [{ ok: hasTakeaways, label: 'Key Takeaways box' }] : []),
+                    { ok: headingHierOk, warn: liveHeadings > 0 && !headingHierOk, label: 'Heading hierarchy' },
+                    { ok: slugClean,     warn: slug.length > 0 && !slugClean,      label: 'Clean URL slug' },
+                  ]
+                  const failed = checks.filter(c => !c.ok)
+                  const passed = checks.filter(c => c.ok)
+                  const ordered = [...failed, ...passed]
+
+                  return (
+                    <>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem',
+                        fontSize: '0.775rem', fontWeight: 600,
+                        color: failed.length === 0 ? 'var(--green)' : 'var(--text-secondary)',
+                      }}>
+                        <span>{passed.length}/{checks.length} passed</span>
+                        {failed.length > 0 && (
+                          <span style={{ color: 'var(--amber, #b45309)', fontWeight: 700 }}>
+                            · {failed.length} to look at
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
+                        {ordered.map(c => (
+                          <div key={c.label} style={c.ok ? undefined : { color: 'var(--text-secondary)', fontWeight: 500 }}>
+                            <Check ok={c.ok} warn={c.warn} />{c.label}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )
+                })()}
 
                 {/* Link Health */}
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.625rem', borderTop: '1px solid var(--border)' }}>
