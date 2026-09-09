@@ -39,6 +39,12 @@ export interface Topic {
 
 export interface Post {
   id:                  string
+  /**
+   * The strong link back to content_topics. Populated on ~29% of rows, but when present it is
+   * exact — unlike the keyword+date guess the calendar falls back to, which regeneration
+   * invalidates by design.
+   */
+  topic_id?:           string | null
   title:               string | null
   seo_title:           string | null
   target_keyword:      string | null
