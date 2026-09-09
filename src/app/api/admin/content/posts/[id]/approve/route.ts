@@ -428,9 +428,34 @@ export async function POST(
     const tags   = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
     const tagIds = tags.length > 0 ? await ensureTagIds(siteUrl, auth, tags) : []
 
-    // Upload featured image to WP media library (non-fatal if it fails)
+    // Featured image: REFERENCE it when it already lives on this site, upload it otherwise.
+    //
+    // The reviewer can pick an image out of the client's own media library, in which case the
+    // file is already an attachment here and copying it back would create a duplicate — which
+    // is exactly what happened before this branch: their photo went into our bucket and came
+    // back as a second attachment on their own site.
+    //
+    // The connection check is what makes the id safe to trust. Attachment ids are per-site, so
+    // an id recorded against a different connection must be ignored rather than sent — it
+    // would attach whatever unrelated file happens to hold that number here.
     let featuredMediaId: number | undefined
-    if (p.featured_image_url) {
+
+    const { data: linkRow } = await db
+      .from('content_posts')
+      .select('wp_featured_media_id, wp_featured_media_connection_id')
+      .eq('id', id)
+      .maybeSingle()
+    const link = linkRow as {
+      wp_featured_media_id?: number | null
+      wp_featured_media_connection_id?: string | null
+    } | null
+
+    const linkedMediaId   = link?.wp_featured_media_id
+    const linkedMediaConn = link?.wp_featured_media_connection_id
+
+    if (linkedMediaId && linkedMediaConn && linkedMediaConn === String(p.connection_id ?? '')) {
+      featuredMediaId = Number(linkedMediaId)
+    } else if (p.featured_image_url) {
       try {
         featuredMediaId = await uploadMediaToWordPress(
           siteUrl, auth,

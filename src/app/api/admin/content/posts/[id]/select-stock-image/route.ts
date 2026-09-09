@@ -124,6 +124,40 @@ export async function POST(
     return NextResponse.json({ error: 'That image is not one of this post’s candidates' }, { status: 400 })
   }
 
+  // ── Already on their site? Reference it, do not copy it ────────────────────
+  //
+  // An image chosen from the client's OWN library needs none of the download-and-store
+  // machinery below, and running it caused real harm: the file was pulled into our bucket
+  // and then, at publish, uploaded back to their site as a NEW attachment. One picture
+  // became three, and their media library grew a near-duplicate every time somebody reused
+  // an existing photo.
+  //
+  // Storing the attachment id instead lets the publish path pass it straight to WordPress as
+  // featured_media. The connection id is stored with it because attachment ids are per-site:
+  // reusing one against a different connection would attach whatever unrelated file happens
+  // to hold that number there.
+  if (candidate.source === 'wp_media' && connectionId && mediaId) {
+    const { error: linkErr } = await db
+      .from('content_posts')
+      .update({
+        featured_image_url:    candidate.url,
+        featured_image_source: 'wp_media',
+        wp_featured_media_id:  Number(mediaId),
+        wp_featured_media_connection_id: connectionId,
+      })
+      .eq('id', id)
+
+    if (linkErr) {
+      // Deploy-order fallback: the two columns arrive in migration 214. Without them the
+      // reference cannot be recorded, so fall through and copy the file as before — a
+      // duplicate attachment is worse than nothing, but losing the reviewer's choice is
+      // worse still.
+      console.warn('[select-stock-image] could not link existing media (apply migration 214?):', linkErr.message)
+    } else {
+      return NextResponse.json({ url: candidate.url, reusedExisting: true })
+    }
+  }
+
   // ── Download ───────────────────────────────────────────────────────────────
   let buffer: Buffer
   let contentType: string
