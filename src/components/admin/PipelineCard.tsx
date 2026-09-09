@@ -5,8 +5,8 @@
 // Purely presentational: ClientPipeline owns all state and passes callbacks.
 
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
+import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import type { SeoScore } from '@/lib/content/types'
-import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 
 // ── Shared pipeline types (imported by ClientPipeline) ──────────────────────────
 export interface Topic {
@@ -70,10 +70,10 @@ export type DisplayStatus = 'pending' | 'approved' | 'generating' | 'generated' 
 
 export const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; color: string; dot: string }> = {
   pending:    { label: 'Pending',        bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
-  approved:   { label: 'Approved',       bg: 'var(--blue-subtle)',  color: 'var(--blue)',  dot: '#2563eb' },
+  approved:   { label: '✓ Approved',     bg: 'var(--blue-subtle)',  color: 'var(--blue)',  dot: '#2563eb' },
   generating: { label: 'Generating',     bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
   generated:  { label: 'Ready to Review', bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#10b981' },
-  published:  { label: 'On Site',        bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#059669' },
+  published:  { label: '✓ Live',         bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#059669' },
   rejected:   { label: 'Rejected',       bg: 'var(--red-subtle)',   color: 'var(--red)',   dot: '#ef4444' },
 }
 
@@ -120,7 +120,7 @@ function rankArrow(delta: number | null | undefined): string {
 export function StatusPill({ status, generating }: { status: DisplayStatus; generating?: boolean }) {
   const cfg = DISPLAY_STATUS_CONFIG[status]
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
       <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg.dot, animation: generating ? 'pulse 1.2s ease-in-out infinite' : undefined }} />
       {cfg.label}
     </span>
@@ -170,14 +170,9 @@ function Thumb({ url }: { url: string | null }) {
 
 // Compact live/edit link row for on-site posts.
 function LiveLinks({ post }: { post: Post }) {
-  const live = viewLiveUrl(post), draft = wpDraftPreviewUrl(post), wpe = wpEditUrl(post), bce = bcEditUrl(post)
-  const s: React.CSSProperties = { color: 'var(--text-muted)', textDecoration: 'none' }
   return (
     <div style={{ display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap', fontSize: 11 }} onClick={e => e.stopPropagation()}>
-      {isPublicPermalink(live) && live && <a href={live} target="_blank" rel="noreferrer" style={{ ...s, color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>}
-      {draft && <a href={draft} target="_blank" rel="noreferrer" title="Requires your WordPress login" style={s}>Preview draft ↗</a>}
-      {wpe && <a href={wpe} target="_blank" rel="noreferrer" style={s}>Open in WP ↗</a>}
-      {bce && <a href={bce} target="_blank" rel="noreferrer" style={s}>Edit in BigCommerce ↗</a>}
+      <PostSiteLinks post={post} fontSize={11} />
     </div>
   )
 }

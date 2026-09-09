@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
-import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import { viewLiveUrl, isPublicPermalink } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
 import QualityFindings from '@/components/admin/QualityFindings'
+import PostSiteLinks from '@/components/admin/PostSiteLinks'
+import type { PostLinkInput } from '@/lib/content/postLinks'
 import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
 import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
@@ -1148,9 +1150,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
   const liveUrl        = post ? viewLiveUrl(post) : null
   const showLiveLink   = isPublicPermalink(liveUrl)
-  const draftPreview   = post ? wpDraftPreviewUrl(post) : null
-  const wpEdit         = post ? wpEditUrl(post) : null
-  const bcEdit         = post ? bcEditUrl(post) : null
+
 
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
@@ -1294,21 +1294,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>✓ On Site</span>
-                  {showLiveLink && liveUrl && (
-                    <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>
-                  )}
-                  {draftPreview && (
-                    <a href={draftPreview} target="_blank" rel="noopener noreferrer" title="Opens the draft on your WordPress site — requires your WordPress login" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Preview draft ↗</a>
-                  )}
-                  {wpEdit && (
-                    <a href={wpEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Open in WordPress ↗</a>
-                  )}
-                  {bcEdit && (
-                    <a href={bcEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>Edit in BigCommerce ↗</a>
-                  )}
+                  {post && <PostSiteLinks post={post as unknown as PostLinkInput} fontSize={13} />}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been saved to your site as a draft. Preview it live, or edit and publish it directly in the CMS.
+                  {showLiveLink && liveUrl
+                    ? 'This post is published on the client’s site. Edits here do not change the live article until you push them.'
+                    : 'This post is saved to the client’s site as a draft. Nothing is visible to visitors until it is published.'}
                 </p>
               </div>
             )}

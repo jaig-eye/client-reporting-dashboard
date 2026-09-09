@@ -2,8 +2,7 @@
 
 import { ArrowClockwise, ArrowRight, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
-import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
-import QualityFindings from './QualityFindings'
+import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import type { QualityReport } from '@/lib/content/qualityGate'
 
 
@@ -192,11 +191,6 @@ export default function MonthlyReviewPostCard({
           )}
           {/* Live-post links — shown once the post is on-site */}
           {(post.status === 'draft_saved' || post.status === 'published') && (() => {
-            const live = viewLiveUrl(post)
-            const draft = wpDraftPreviewUrl(post)
-            const wpe = wpEditUrl(post)
-            const bce = bcEditUrl(post)
-            const linkStyle: React.CSSProperties = { color: 'var(--blue)', textDecoration: 'none' }
             return (
               <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 11 }}>
                 {/* ONE viewing link, chosen by state. All three used to render together the
@@ -204,20 +198,7 @@ export default function MonthlyReviewPostCard({
                     "Preview draft" on a published post previews a draft that no longer
                     exists, and "View live" on a scheduled one points at a page that is not
                     up yet. Whichever applies is shown; the other was never useful. */}
-                {isPublicPermalink(live) && live ? (
-                  <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
-                ) : draft ? (
-                  /* Only when there is no public URL to look at. A live post is not a draft,
-                     so offering to preview "the draft" of one described something that does
-                     not exist — and sat beside Edit post doing nearly the same job. */
-                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, fontWeight: 600 }}>Preview ↗</a>
-                ) : null}
-                {wpe && (
-                  <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit post ↗</a>
-                )}
-                {bce && (
-                  <a href={bce} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Edit in BigCommerce ↗</a>
-                )}
+                <PostSiteLinks post={post} fontSize={11} />
               </div>
             )
           })()}
