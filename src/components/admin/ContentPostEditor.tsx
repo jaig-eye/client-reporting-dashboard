@@ -5,6 +5,7 @@ import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
+import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
@@ -345,6 +346,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Held separately from the drawer-wide error banner, which renders at the top of the edit
   // column -- far above the Images section, so it was never in view when an apply failed.
   const [stockApplyError, setStockApplyError] = useState<string | null>(null)
+  // Which confirmation is open, if any. Approve and Reject both reach the client's live site,
+  // so neither fires on a bare click any more.
+  const [confirming, setConfirming] = useState<null | 'approve' | 'reject' | 'discard'>(null)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -687,11 +691,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   // ── Monthly Review actions ───────────────────────────────────────────────────
-  async function handleMonthlyApprove() {
-    if (isDirty) await handleSave()
+  /**
+   * Runs only after the reviewer has answered the confirmation.
+   *
+   * @param withEdits true  -> save the drawer first, so the push carries the current edits
+   *                  false -> push what is already stored, discarding unsaved edits
+   * A clean drawer never asks; the two are identical there.
+   */
+  async function performMonthlyApprove(withEdits: boolean) {
+    if (isDirty && withEdits) await handleSave()
     onMonthlyApprove?.()
     onClose()
   }
+
+  function handleMonthlyApprove() { setConfirming('approve') }
 
   function handleMonthlyDiscard() {
     onMonthlyDiscard?.()
@@ -752,7 +765,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  async function handleReject() {
+  function handleReject() { setConfirming('reject') }
+
+  async function performReject() {
     setError('')
     try {
       const res = await fetch('/api/admin/content/status', {
@@ -1782,6 +1797,42 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           }}
         />
       )}
+      {confirming === 'approve' && (
+        <ConfirmActionDialog
+          title="Approve and push to the site"
+          subtitle={title || post?.title || null}
+          body={
+            wpStatus === 'future'
+              ? 'This pushes the article to the client’s site as a scheduled post. The site publishes it on its scheduled date; if that date has already passed it goes live immediately.'
+              : wpStatus === 'publish'
+                ? 'This pushes the article to the client’s site and it goes live immediately.'
+                : 'This pushes the article to the client’s site as a draft. Nothing is visible to visitors until someone publishes it there.'
+          }
+          choices={
+            isDirty
+              ? [
+                  { id: 'save',    label: 'Push with my changes',      hint: 'Saves the edits in this drawer first' },
+                  { id: 'discard', label: 'Push without my changes',   hint: 'Unsaved edits in this drawer are lost' },
+                ]
+              : [{ id: 'save', label: 'Approve and push' }]
+          }
+          busy={saving || approving}
+          onCancel={() => setConfirming(null)}
+          onChoose={id => { setConfirming(null); void performMonthlyApprove(id === 'save') }}
+        />
+      )}
+
+      {confirming === 'reject' && (
+        <ConfirmActionDialog
+          title="Reject this post"
+          subtitle={title || post?.title || null}
+          body={'The post is taken out of the plan and its subject is added to the avoid-list, so it is not suggested again. The date stays filled, so nothing regenerates into it. This can be undone by restoring the post.'}
+          choices={[{ id: 'reject', label: 'Reject', tone: 'destructive' }]}
+          onCancel={() => setConfirming(null)}
+          onChoose={() => { setConfirming(null); void performReject() }}
+        />
+      )}
+
       {regenDialogOpen && (
         <RegenerateDialog
           postTitle={title || post?.title || null}
