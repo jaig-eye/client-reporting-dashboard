@@ -576,26 +576,22 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // ── Auto-push: generated posts with publish date approaching ──────────────
+    // ── Auto-push: HUMAN-APPROVED posts with publish date approaching ─────────
     //
-    // This block only runs for clients with auto_generate on — the toggle whose own label
-    // reads "generates topics, approves, and publishes automatically". Publishing without a
-    // human is the whole point of that switch, so waiting for one here contradicted it.
+    // A person approves every post that reaches a client's site. That line does not move.
+    // What auto_generate automates is everything either side of it: topics are generated and
+    // approved, articles are written, and once a human approves a post it travels to the CMS
+    // without anyone chasing it. The approval itself is the deliberate manual step.
     //
-    // It used to require status='approved', on the reasoning that unreviewed posts must not
-    // auto-publish. The effect was the opposite of the intent: NOTHING sets that value —
-    // /approve's 'approve_only' action is its only writer and no shipped UI calls it — so
-    // this stage had never once fired, for any client, while 14 of them had the toggle on
-    // and believed their content was publishing itself.
+    // status='approved' is therefore the correct gate here, and 'for_review' must NOT be
+    // included — a post sitting at 'for_review' is precisely one nobody has looked at yet.
     //
-    // 'for_review' is therefore included: for an auto client, a generated post that has
-    // reached its publish window IS the approved state. Manual clients never enter this
-    // block, so their posts still wait for a person.
-    //
-    // The safety this needs is the quality gate below, not a status nobody writes. That gate
-    // fails closed — a post ships only if it carries a report that explicitly passed — which
-    // is a real check on the content, where the status check was only ever a check that
-    // somebody had clicked something.
+    // Note this stage is currently inert: nothing writes content_posts.status='approved'.
+    // /approve's 'approve_only' action is its only writer and no shipped UI calls it, because
+    // the review drawer's Approve pushes immediately instead. That is not a bug to paper over
+    // by widening the filter — the immediate push already delivers the intended behaviour,
+    // and WordPress handles scheduling itself when a post carries 'future' status. The stage
+    // is redundant, not broken, and removing it is a separate decision.
     //
     // Dateless posts stay excluded: they cannot be reviewed in the list view and must be
     // pushed by hand.
@@ -613,7 +609,7 @@ export async function GET(request: NextRequest) {
         .from('content_posts')
         .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
-        .in('status', ['approved', 'for_review'])
+        .eq('status', 'approved')
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
