@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
+import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { getMediaItem } from '@/lib/connectors/wordpress'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
@@ -223,12 +224,14 @@ export async function POST(
       candidate.license ? `(CC ${candidate.license.toUpperCase()})` : null,
     ].filter(Boolean).join(' ')
 
-  const { error: updErr } = await db.from('content_posts').update({
+  // Releases the attachment link: this is a NEW image, so the id recorded for the previous
+  // one no longer describes it. See lib/content/featuredMediaLink.
+  const { error: updErr } = await updatePostReleasingMediaLink(db, id, {
     featured_image_url:     publicUrl,
     featured_image_source:  `openverse:${candidate.provider ?? 'unknown'}`,
     featured_image_prompt:  `Stock image — ${attribution}${candidate.sourceUrl ? ` — ${candidate.sourceUrl}` : ''}`,
     image_generation_error: null,
-  }).eq('id', id)
+  })
 
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 

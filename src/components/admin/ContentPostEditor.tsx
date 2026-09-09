@@ -706,8 +706,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
         publishedUrl: post?.publishedUrl ?? null,
       })
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save')
+      return false
     } finally {
       setSaving(false)
     }
@@ -722,7 +724,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
    * A clean drawer never asks; the two are identical there.
    */
   async function performMonthlyApprove(withEdits: boolean) {
-    if (isDirty && withEdits) await handleSave()
+    if (isDirty && withEdits) {
+      // STOP if the save failed. handleSave reports failure by setting `error` and returning
+      // normally, so simply awaiting it told the caller nothing: a failed save fell straight
+      // through to the push, "Push with my changes" quietly became "push without them", and
+      // the drawer closed over the error explaining why. That is the exact silent-save
+      // failure this confirmation was added to prevent, reintroduced one level down.
+      const saved = await handleSave()
+      if (!saved) return
+    }
     onMonthlyApprove?.()
     onClose()
   }

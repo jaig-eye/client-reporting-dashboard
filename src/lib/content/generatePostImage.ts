@@ -2,6 +2,7 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirections'
 import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages } from '@/lib/ai/pricing'
@@ -294,12 +295,12 @@ export async function generatePostImage(
     }
   }
 
-  await db.from('content_posts').update({
+  await updatePostReleasingMediaLink(db, postId, {
     featured_image_url:     finalUrl,
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
     image_generation_error: null,
-  }).eq('id', postId)
+  })
 
   return { ok: true, url: finalUrl, prompt, provider: usedProvider }
 }

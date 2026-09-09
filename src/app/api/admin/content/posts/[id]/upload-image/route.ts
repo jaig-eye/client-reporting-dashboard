@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed } from '@/lib/auth'
+import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { createAdminClient } from '@/lib/supabase/server'
 
 const MAX_SIZE = 8 * 1024 * 1024 // 8 MB
@@ -46,11 +47,11 @@ export async function POST(
 
   const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
 
-  await db.from('content_posts').update({
+  await updatePostReleasingMediaLink(db, id, {
     featured_image_url:    publicUrl,
     featured_image_source: 'uploaded',
     featured_image_prompt: null,
-  }).eq('id', id)
+  })
 
   return NextResponse.json({ url: publicUrl })
 }

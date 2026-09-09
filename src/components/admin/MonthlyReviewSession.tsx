@@ -111,8 +111,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }).length
 
   const handleApprove = useCallback(async (postId: string) => {
-    void pushStates
-    // Optimistic — show approved immediately, push to site in background
+    // Optimistic — the reviewer's decision is theirs immediately; the push to the client's
+    // site is tracked separately in pushStates and reported on the card.
     const post = initialPosts.find(p => p.id === postId)
     const nextApproved = new Set(approvedIds)
     nextApproved.add(postId)
@@ -474,6 +474,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   onRestore={handleRestore}
                   onRegenerate={handleCardRegenerate}
                   onDelete={handleDelete}
+                  pushStates={pushStates}
+                  onRetryPush={handleApprove}
                 />
               )
             })
