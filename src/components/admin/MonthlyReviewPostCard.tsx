@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowClockwise, Trash } from '@phosphor-icons/react'
+import { ArrowClockwise, ArrowRight, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 import QualityFindings from './QualityFindings'
@@ -144,6 +144,15 @@ export default function MonthlyReviewPostCard({
             {post.title ?? '(untitled)'}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            {isApproved && (
+              /* Sits with the meta rather than in the action row. As a pill on the right it
+                 competed with the controls and squeezed the title into an ellipsis; the
+                 approval is a property of the post, so it reads with the post's other
+                 properties. */
+              <span style={{ color: '#16a34a', fontWeight: 700, marginRight: 6 }}>
+                ✓ Approved ·
+              </span>
+            )}
             {post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}
             {post.content ? ` · ${wordCount(post.content).toLocaleString()}w` : ''}
             {post.isBc ? ' · BC' : ' · WP'}
@@ -190,12 +199,18 @@ export default function MonthlyReviewPostCard({
             const linkStyle: React.CSSProperties = { color: 'var(--blue)', textDecoration: 'none' }
             return (
               <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 11 }}>
-                {isPublicPermalink(live) && live && (
+                {/* ONE viewing link, chosen by state. All three used to render together the
+                    moment a post was on-site, but each is only meaningful in one state:
+                    "Preview draft" on a published post previews a draft that no longer
+                    exists, and "View live" on a scheduled one points at a page that is not
+                    up yet. Whichever applies is shown; the other was never useful. */}
+                {post.status === 'published' && isPublicPermalink(live) && live ? (
                   <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
-                )}
-                {draft && (
-                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Preview draft ↗</a>
-                )}
+                ) : draft ? (
+                  <a href={draft} target="_blank" rel="noopener noreferrer" title="Requires your WordPress login" style={{ ...linkStyle, fontWeight: 600 }}>Preview draft ↗</a>
+                ) : isPublicPermalink(live) && live ? (
+                  <a href={live} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, fontWeight: 600 }}>View live ↗</a>
+                ) : null}
                 {wpe && (
                   <a href={wpe} target="_blank" rel="noopener noreferrer" style={{ ...linkStyle, color: 'var(--text-muted)' }}>Open in WP ↗</a>
                 )}
@@ -218,7 +233,11 @@ export default function MonthlyReviewPostCard({
 
           {/* The human check that the spam-update reporting singled out as
               protective. Shown before approval, with the reason, not just a score. */}
-          <QualityFindings report={post.quality_report} />
+          {/* compact: a PASS renders nothing at all. A full-width green "Quality checks
+              passed" bar under every clean post is the most prominent element on the card
+              while carrying the least information — and it pushed the real controls down.
+              Findings still surface here; the detail lives in the review drawer. */}
+          <QualityFindings report={post.quality_report} compact />
         </div>
 
         {/* Status / actions */}
@@ -289,15 +308,49 @@ export default function MonthlyReviewPostCard({
                 View live ↗
               </a>
             )}
+            {/* Same icon row as an unreviewed card, so the controls do not move or change
+                shape when a post crosses into approved — only what they do changes. Approval
+                is not the end of the reviewer's relationship with a post: the common next
+                actions are re-reading it, replacing it, or taking it back down. */}
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title="Review — read the content, SEO and strategy behind this post"
+              aria-label={`Review ${post.title ?? 'this post'}`}
+              onClick={() => onOpenEditor(post.id)}
+              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
+            >
+              <ArrowRight size={15} weight="bold" />
+            </button>
+
             <button
               className="btn btn-sm"
               disabled={isLoading}
               title={isLive
-                ? 'Generate a brand-new topic and article. The live copy stays up until you push the replacement.'
-                : 'Generate a brand-new topic and article for this slot'}
+                ? 'Regenerate — write a brand-new topic and article. The live copy stays up until you push the replacement.'
+                : 'Regenerate — write a brand-new topic and article for this slot'}
+              aria-label={`Regenerate ${post.title ?? 'this post'}`}
               onClick={() => onRegenerate(post.id)}
+              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
             >
-              ⟳ Regenerate
+              <ArrowClockwise size={15} weight="bold" />
+            </button>
+
+            {/* Take it back down. Routed through onReject with discard, NOT onDelete: this
+                post is on the client's site, so the question is what happens to the live
+                article — which is what LivePostActionModal exists to ask. A plain delete
+                here would drop our record and leave the article published. */}
+            <button
+              className="btn btn-sm"
+              disabled={isLoading}
+              title={isLive
+                ? 'Take down — remove this post from the site, or leave the article up'
+                : 'Discard — take this post out of the plan'}
+              aria-label={`Take down ${post.title ?? 'this post'}`}
+              onClick={() => onReject(post.id, true)}
+              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: 'var(--red)' }}
+            >
+              <Trash size={15} weight="bold" />
             </button>
           </div>
         ) : isRejected ? (

@@ -576,10 +576,29 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // ── Auto-push: admin-approved posts with publish date approaching ─────────
-    // Requires explicit admin approval (status = 'approved') — prevents unreviewed posts
-    // from auto-publishing. Dateless posts are excluded: they can't be reviewed in the
-    // list view and must be manually pushed.
+    // ── Auto-push: generated posts with publish date approaching ──────────────
+    //
+    // This block only runs for clients with auto_generate on — the toggle whose own label
+    // reads "generates topics, approves, and publishes automatically". Publishing without a
+    // human is the whole point of that switch, so waiting for one here contradicted it.
+    //
+    // It used to require status='approved', on the reasoning that unreviewed posts must not
+    // auto-publish. The effect was the opposite of the intent: NOTHING sets that value —
+    // /approve's 'approve_only' action is its only writer and no shipped UI calls it — so
+    // this stage had never once fired, for any client, while 14 of them had the toggle on
+    // and believed their content was publishing itself.
+    //
+    // 'for_review' is therefore included: for an auto client, a generated post that has
+    // reached its publish window IS the approved state. Manual clients never enter this
+    // block, so their posts still wait for a person.
+    //
+    // The safety this needs is the quality gate below, not a status nobody writes. That gate
+    // fails closed — a post ships only if it carries a report that explicitly passed — which
+    // is a real check on the content, where the status check was only ever a check that
+    // somebody had clicked something.
+    //
+    // Dateless posts stay excluded: they cannot be reviewed in the list view and must be
+    // pushed by hand.
     if (auto_push_posts) {
       const pushThreshold = new Date()
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
@@ -594,7 +613,7 @@ export async function GET(request: NextRequest) {
         .from('content_posts')
         .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
-        .eq('status', 'approved')
+        .in('status', ['approved', 'for_review'])
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
