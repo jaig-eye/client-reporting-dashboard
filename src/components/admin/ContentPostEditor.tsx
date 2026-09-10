@@ -1372,7 +1372,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
                       <Books size={14} weight="bold" />
-                      Replace{imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
+                      Image library
                     </button>
                     <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
                       {generatingImage ? 'Generating…' : '✦ Generate with AI'}
@@ -1516,12 +1516,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     </span>
                   ) : null}
                 </div>
-                {/* Moved here from the review card, which could only say that findings
-                    existed — not what they were, and offered nothing to do about them. This
-                    is where a reviewer is already reading the post, so it is where a note
-                    about the post's quality can actually be acted on. */}
-                <QualityFindings report={qualityReport} />
-
                 {/* Data-driven so the list can be SORTED and SUMMARISED.
                     Eighteen checks in source order, all styled alike, made a reviewer scan
                     every row to find the two that were red — and offered no answer to the
@@ -1554,8 +1548,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
                   return (
                     <>
+                      {/* One status line. The quality note sits with the pass count because
+                          they answer the same question — is this ready — and stacking them
+                          made the amber pill read as an interruption above the answer rather
+                          than part of it. */}
                       <div style={{
-                        display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem',
+                        display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem',
+                        flexWrap: 'wrap',
                         fontSize: '0.775rem', fontWeight: 600,
                         color: failed.length === 0 ? 'var(--green)' : 'var(--text-secondary)',
                       }}>
@@ -1565,11 +1564,30 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             · {failed.length} to look at
                           </span>
                         )}
+                        <div style={{ flex: 1 }} />
+                        <QualityFindings report={qualityReport} />
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
+                      {/* auto-fit, not three fixed columns.
+                          At the drawer's width three columns are ~150px each, which is
+                          narrower than "Image alt w/ keyword" — so half the labels wrapped
+                          mid-phrase and the tick drifted away from the words it marks. This
+                          reflows to two columns when narrow and three when there is room, and
+                          each row is a flex line so the mark stays with its label. */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
+                        gap: '0.35rem 0.9rem', fontSize: '0.775rem', color: 'var(--text-muted)',
+                      }}>
                         {ordered.map(c => (
-                          <div key={c.label} style={c.ok ? undefined : { color: 'var(--text-secondary)', fontWeight: 500 }}>
-                            <Check ok={c.ok} warn={c.warn} />{c.label}
+                          <div
+                            key={c.label}
+                            style={{
+                              display: 'flex', alignItems: 'baseline', gap: 5, lineHeight: 1.45,
+                              ...(c.ok ? {} : { color: 'var(--text-secondary)', fontWeight: 500 }),
+                            }}
+                          >
+                            <Check ok={c.ok} warn={c.warn} />
+                            <span>{c.label}</span>
                           </div>
                         ))}
                       </div>
@@ -1577,53 +1595,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   )
                 })()}
 
-                {/* Link Health */}
-                <div style={{ marginTop: '0.75rem', paddingTop: '0.625rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-faint)' }}>LINK HEALTH</span>
-                    {linkScan === null && (
-                      <>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Links: not scanned</span>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Phones: not scanned</span>
-                        <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Scan Now</button>
-                      </>
-                    )}
-                    {linkScan === 'scanning' && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Scanning…</span>
-                    )}
-                    {linkScan !== null && linkScan !== 'scanning' && (() => {
-                      const okLinks    = linkScan.links.filter(l => l.ok).length
-                      const totalLinks = linkScan.links.length
-                      const brokenLinks = linkScan.links.filter(l => !l.ok && !l.redirected)
-                      const okPhones   = linkScan.phones.filter(p => p.valid).length
-                      const totalPhones = linkScan.phones.length
-                      const allLinksOk = brokenLinks.length === 0
-                      return (
-                        <>
-                          <span
-                            style={{ fontSize: '0.75rem', color: allLinksOk ? 'var(--green)' : 'var(--red)', background: 'var(--bg)', border: `1px solid ${allLinksOk ? 'var(--green)' : 'var(--red)'}`, borderRadius: 4, padding: '1px 6px', cursor: brokenLinks.length > 0 ? 'pointer' : 'default' }}
-                            onClick={() => brokenLinks.length > 0 && setShowBrokenLinks(v => !v)}
-                          >
-                            Links: {okLinks}/{totalLinks} OK{brokenLinks.length > 0 ? ` (${brokenLinks.length} broken)` : ' ✓'}
-                          </span>
-                          <span style={{ fontSize: '0.75rem', color: okPhones === totalPhones ? 'var(--green)' : 'var(--amber)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>
-                            Phones: {totalPhones === 0 ? 'none' : `${okPhones}/${totalPhones} valid`}
-                          </span>
-                          <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--bg-subtle)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}>Rescan</button>
-                        </>
-                      )
-                    })()}
-                  </div>
-                  {linkScan !== null && linkScan !== 'scanning' && showBrokenLinks && linkScan.links.filter(l => !l.ok).length > 0 && (
-                    <div style={{ marginTop: '0.375rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {linkScan.links.filter(l => !l.ok).map((l, i) => (
-                        <div key={i} style={{ fontSize: '0.7rem', color: l.redirected ? 'var(--amber)' : 'var(--red)', wordBreak: 'break-all' }}>
-                          {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` → ${l.status}` : l.error ? ` (${l.error})` : ''}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* Link health lives under the Content field, not here.
+                    Two readouts of the same scan, in two sections, is one too many — and
+                    the useful place is beside the HTML whose links are being reported, not
+                    at the bottom of a checklist about keywords. */}
               </div>
             </CollapsibleSection>
 
