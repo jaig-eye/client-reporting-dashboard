@@ -1840,13 +1840,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
               </button>
 
-              {/* Approve — push to site */}
-              {!isOnSite && (
-                <button type="button" onClick={handleMonthlyApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <ArrowCircleRight size={15} weight="bold" />
-                  {approving ? 'Saving…' : 'Approve'}
-                </button>
-              )}
+              {/* Approve, or push an update to the article already on the site. */}
+              <button
+                type="button"
+                onClick={handleMonthlyApprove}
+                disabled={approving || (isOnSite && !isDirty)}
+                title={isOnSite
+                  ? (isDirty
+                      ? 'Send your changes to the live article'
+                      : 'The live article already matches this — edit something to push an update')
+                  : undefined}
+                className="btn btn-primary"
+                style={{
+                  fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5,
+                  opacity: isOnSite && !isDirty ? 0.55 : 1,
+                }}
+              >
+                <ArrowCircleRight size={15} weight="bold" />
+                {approving ? 'Saving…' : isOnSite ? 'Push update' : 'Approve'}
+              </button>
 
               <div style={{ flex: 1 }} />
               <button
@@ -1927,14 +1939,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
       {confirming === 'approve' && (
         <ConfirmActionDialog
-          title="Approve and push to the site"
+          title={isOnSite ? 'Push your changes to the live article' : 'Approve and push to the site'}
           subtitle={title || post?.title || null}
           body={
-            wpStatus === 'future'
-              ? 'This pushes the article to the client’s site as a scheduled post. The site publishes it on its scheduled date; if that date has already passed it goes live immediately.'
-              : wpStatus === 'publish'
-                ? 'This pushes the article to the client’s site and it goes live immediately.'
-                : 'This pushes the article to the client’s site as a draft. Nothing is visible to visitors until someone publishes it there.'
+            isOnSite
+              ? 'This overwrites the article already on the client’s site with what is in this drawer. The URL does not change, so existing links and rankings stay with it.'
+              : wpStatus === 'future'
+                ? 'This pushes the article to the client’s site as a scheduled post. The site publishes it on its scheduled date; if that date has already passed it goes live immediately.'
+                : wpStatus === 'publish'
+                  ? 'This pushes the article to the client’s site and it goes live immediately.'
+                  : 'This pushes the article to the client’s site as a draft. Nothing is visible to visitors until someone publishes it there.'
           }
           choices={
             isDirty
@@ -1942,7 +1956,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   { id: 'save',    label: 'Push with my changes',      hint: 'Saves the edits in this drawer first' },
                   { id: 'discard', label: 'Push without my changes',   hint: 'Unsaved edits in this drawer are lost' },
                 ]
-              : [{ id: 'save', label: 'Approve and push' }]
+              : [{ id: 'save', label: isOnSite ? 'Push update' : 'Approve and push' }]
           }
           busy={saving || approving}
           onCancel={() => setConfirming(null)}
