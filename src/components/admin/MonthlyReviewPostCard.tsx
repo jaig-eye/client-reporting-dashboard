@@ -106,7 +106,15 @@ export default function MonthlyReviewPostCard({
   return (
     <div
       style={{
-        border:     `1px solid ${isRegenerating ? '#fca5a5' : 'var(--border)'}`,
+        // The border carries the state with the background, rather than leaving a
+        // green-tinted card inside a neutral grey outline — which read as though the tint
+        // were a hover effect rather than a decision the reviewer had made. Regenerating
+        // already did this; approved did not.
+        border:     `1px solid ${
+          isRegenerating ? '#fca5a5'
+          : isApproved   ? '#86efac'
+          : 'var(--border)'
+        }`,
         borderRadius: 8,
         overflow:   'hidden',
         background: isRegenerating ? '#fff1f2' : 'var(--bg-surface)',

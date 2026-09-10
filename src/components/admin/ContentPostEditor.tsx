@@ -716,7 +716,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
    *                  false -> push what is already stored, discarding unsaved edits
    * A clean drawer never asks; the two are identical there.
    */
-  async function performMonthlyApprove(withEdits: boolean) {
+  async function performApprove(withEdits: boolean) {
     if (isDirty && withEdits) {
       // STOP if the save failed. handleSave reports failure by setting `error` and returning
       // normally, so simply awaiting it told the caller nothing: a failed save fell straight
@@ -726,10 +726,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const saved = await handleSave()
       if (!saved) return
     }
-    onMonthlyApprove?.()
-    onClose()
+    // Monthly review owns the push lifecycle (polling, live-post handling, the card badge),
+    // so delegate there. Standalone, the drawer pushes for itself — which is the path the
+    // calendar uses, and the one that had no confirmation at all.
+    if (onMonthlyApprove) {
+      onMonthlyApprove()
+      onClose()
+      return
+    }
+    await handleApprove()
   }
 
+  /** Both footers' Approve. Opens the confirmation; performApprove does the work. */
   function handleMonthlyApprove() { setConfirming('approve') }
 
   function handleMonthlyDiscard() {
@@ -1751,7 +1759,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
               {/* Approve — push to site */}
               {!isOnSite && (
-                <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <button type="button" onClick={handleMonthlyApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
                   <ArrowCircleRight size={15} weight="bold" />
                   {approving ? 'Saving…' : 'Approve'}
                 </button>
@@ -1854,7 +1862,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           }
           busy={saving || approving}
           onCancel={() => setConfirming(null)}
-          onChoose={id => { setConfirming(null); void performMonthlyApprove(id === 'save') }}
+          onChoose={id => { setConfirming(null); void performApprove(id === 'save') }}
         />
       )}
 
