@@ -768,7 +768,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setApproving(false)
         return
       }
-      if (!window.confirm(`Push "${title || 'this post'}" to ${activeSite.siteName}?`)) { setApproving(false); return }
+      // No confirm here any more. handleApprove is now reached ONLY through
+      // ConfirmActionDialog, which already states what pushing will do and, on a dirty
+      // drawer, offers the with-edits/without-edits choice this native prompt cannot. Keeping
+      // both meant two confirmations for one action, the second one cruder than the first.
 
       // A guard, not a ternary: the drawer's unsaved edits are simply not sent when the
       // reviewer chose to discard them.
