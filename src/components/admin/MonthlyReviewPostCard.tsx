@@ -3,6 +3,7 @@
 import { ArrowClockwise, ArrowRight, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
+import ClientImage from '@/components/admin/ClientImage'
 import type { QualityReport } from '@/lib/content/qualityGate'
 
 
@@ -134,9 +135,12 @@ export default function MonthlyReviewPostCard({
       >
         {/* Thumbnail */}
         {post.featured_image_url ? (
-          <img
+          // Through the proxy: when the picture came from the client's own media library the
+          // URL points at their server, and their host is entitled to refuse us.
+          <ClientImage
             src={post.featured_image_url}
             alt=""
+            connectionId={post.connection_id}
             style={{ width: 48, height: 36, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
           />
         ) : (

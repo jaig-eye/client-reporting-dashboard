@@ -6,6 +6,7 @@
 
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
+import ClientImage from '@/components/admin/ClientImage'
 import type { SeoScore } from '@/lib/content/types'
 
 // ── Shared pipeline types (imported by ClientPipeline) ──────────────────────────
@@ -141,6 +142,8 @@ function IconBtn({ label, color, disabled, onClick, children }: { label: string;
 interface Props {
   item:        RowItem
   linkedPost:  Post | null
+  /** The client's content connection — authorises the image proxy for their own media. */
+  connectionId?: string | null
   expanded:    boolean
   editing:     boolean
   editTitle:   string
@@ -162,9 +165,12 @@ interface Props {
   onPurge:     (kind: 'topic' | 'post', id: string) => void
 }
 
-function Thumb({ url }: { url: string | null }) {
+// connectionId routes a client-hosted picture through our image proxy — their server is
+// entitled to refuse a direct browser fetch, and on a calendar that shows as a grid of
+// broken thumbnails.
+function Thumb({ url, connectionId }: { url: string | null; connectionId?: string | null }) {
   return url
-    ? <img src={url} alt="" style={{ width: 44, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+    ? <ClientImage src={url} alt="" connectionId={connectionId} loading="lazy" style={{ width: 44, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
     : <div style={{ width: 44, height: 34, borderRadius: 4, flexShrink: 0, background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: 'var(--text-faint)' }}>◧</div>
 }
 
@@ -197,7 +203,7 @@ export default function PipelineCard(props: Props) {
     const onSite = post.status === 'draft_saved' || post.status === 'published'
     return (
       <div style={cardShell}>
-        <Thumb url={post.featured_image_url} />
+        <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <button
             type="button"

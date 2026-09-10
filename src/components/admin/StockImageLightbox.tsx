@@ -10,6 +10,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
+import ClientImage from './ClientImage'
 
 const SOURCE_LABEL: Record<string, string> = {
   pexels:    'Pexels',
@@ -28,6 +29,12 @@ interface Props {
    * click rather than after.
    */
   currentImageUrl?: string | null
+  /**
+   * Authorises the image proxy. Both pictures in this dialog can be the client's own — the
+   * candidate when it came from their library, and the current featured image once one of
+   * theirs was applied — and their host commonly refuses a direct browser fetch.
+   */
+  connectionId?: string | null
   onClose: () => void
   onApply: () => void
   /**
@@ -38,7 +45,7 @@ interface Props {
   error?: string | null
 }
 
-export default function StockImageLightbox({ candidate: c, busy, currentImageUrl, onClose, onApply, error }: Props) {
+export default function StockImageLightbox({ candidate: c, busy, currentImageUrl, connectionId, onClose, onApply, error }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const applyRef  = useRef<HTMLButtonElement>(null)
   // Captured BEFORE the auto-focus below moves focus into the dialog. Reading
@@ -102,10 +109,10 @@ export default function StockImageLightbox({ candidate: c, busy, currentImageUrl
             unusually wide photo is shown whole rather than cropped to a lie about what
             you are choosing. */}
         <div style={{ background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200, flex: 1, overflow: 'hidden' }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <ClientImage
             src={c.url}
             alt={c.title}
+            connectionId={c.source === 'wp_media' ? connectionId : null}
             style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain', display: 'block' }}
           />
         </div>
@@ -163,9 +170,9 @@ export default function StockImageLightbox({ candidate: c, busy, currentImageUrl
               padding: '8px 10px', borderRadius: 6,
               border: '1px solid var(--border)', background: 'var(--bg-subtle)',
             }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <ClientImage
                 src={currentImageUrl} alt="Current featured image"
+                connectionId={connectionId}
                 style={{ width: 54, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
               />
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>

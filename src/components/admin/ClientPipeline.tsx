@@ -329,6 +329,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     return {
       item,
       linkedPost: item.kind === 'topic' ? (model.topicIdToPost.get(id) ?? null) : null,
+      connectionId,
       expanded: expandedId === id,
       editing: editingId === id,
       editTitle, editNotes,

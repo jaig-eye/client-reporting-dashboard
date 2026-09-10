@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Books, MagnifyingGlass, ArrowClockwise } from '@phosphor-icons/react'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
+import ClientImage from './ClientImage'
 
 type TabId = 'library' | 'stock'
 
@@ -304,10 +305,12 @@ export default function ImageLibraryModal({
                       opacity: applyingId && applyingId !== c.id ? 0.5 : 1,
                     }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    {/* Their library is served from their own host, so these go through the
+                        proxy. Stock thumbnails are on public CDNs that want to be embedded
+                        and need no help — and proxying them would fail the host check. */}
+                    <ClientImage
                       src={c.thumbnail} alt={c.title} loading="lazy"
-                      referrerPolicy="no-referrer"
+                      connectionId={c.source === 'wp_media' ? connectionId : null}
                       style={{ width: '100%', height: 108, objectFit: 'cover', display: 'block', background: 'var(--bg-subtle)' }}
                     />
                     {(applyingId === c.id || tab === 'stock') && (

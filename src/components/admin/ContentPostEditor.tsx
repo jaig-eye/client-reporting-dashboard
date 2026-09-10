@@ -12,6 +12,8 @@ import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
 import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
 import ImageLibraryModal from '@/components/admin/ImageLibraryModal'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
+import ClientImage from '@/components/admin/ClientImage'
+import { proxiedImageSrc } from '@/lib/content/imageProxy'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
  *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
@@ -481,7 +483,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     scannedAt: string
   }
   const [linkScan,        setLinkScan]        = useState<LinkScanResult | 'scanning' | null>(null)
-  const [showBrokenLinks, setShowBrokenLinks] = useState(false)
 
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -743,6 +744,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       textarea.focus()
       textarea.setSelectionRange(selStart, selEnd)
       const ratio = selStart / Math.max(content.length, 1)
+      textarea.scrollTop = Math.max(0, ratio * textarea.scrollHeight - textarea.clientHeight / 3)
+    }, 50)
+  }
+
+  // ── Jump to a phone number in the content textarea ──────────────────────────
+  // Matched as literal text rather than through an href, because the scan finds numbers
+  // both ways — inside a tel: link and as bare text in a paragraph — and a plain indexOf
+  // is what covers both. The needle is the raw string the scan itself reported, so when a
+  // number was found it is present in the body verbatim.
+  function jumpToPhone(raw: string) {
+    const textarea = contentTextareaRef.current
+    if (!textarea || !content || !raw) return
+    const idx = content.indexOf(raw)
+    if (idx < 0) return
+    openSection('content')
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(idx, idx + raw.length)
+      const ratio = idx / Math.max(content.length, 1)
       textarea.scrollTop = Math.max(0, ratio * textarea.scrollHeight - textarea.clientHeight / 3)
     }, 50)
   }
@@ -1040,7 +1060,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   async function handleScanLinks() {
     setLinkScan('scanning')
-    setShowBrokenLinks(false)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/scan-links`, { method: 'POST' })
       if (!res.ok) throw new Error('Scan failed')
@@ -1217,7 +1236,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     li{margin-bottom:.4rem}strong{font-weight:700}a{color:#2563eb;text-decoration:underline}
     img{max-width:100%;height:auto;border-radius:4px}
     blockquote{border-left:4px solid #e5e7eb;margin:1.5rem 0;padding:.75rem 1rem;color:#555;font-style:italic}
-  </style></head><body>${featuredImageUrl ? `<img src="${featuredImageUrl.replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
+  </style></head><body>${featuredImageUrl ? `<img src="${proxiedImageSrc(featuredImageUrl, connectionId).replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
 
   return (
     <>
@@ -1373,25 +1392,52 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 <textarea ref={contentTextareaRef} value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
               </div>
 
-              {/* Link scan trigger — always visible in content tab so users don't need to go to SEO Checklist */}
-              <div style={{ marginBottom: 8, marginTop: -4, display: 'flex', alignItems: 'center', gap: 8 }}>
-                {(linkScan === null || linkScan === 'scanning') ? (
-                  <button
-                    type="button"
-                    onClick={handleScanLinks}
-                    disabled={linkScan === 'scanning'}
-                    style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
-                  >
-                    {linkScan === 'scanning' ? '⟳ Scanning links…' : '🔗 Scan for broken links'}
-                  </button>
-                ) : (
-                  <span style={{ fontSize: '0.72rem', color: linkScan.links.some(l => !l.ok) ? '#dc2626' : '#16a34a' }}>
-                    {linkScan.links.filter(l => !l.ok).length === 0
-                      ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
-                      : `⚠ ${linkScan.links.filter(l => !l.ok).length} broken link${linkScan.links.filter(l => !l.ok).length !== 1 ? 's' : ''} — see below`}
-                    <button type="button" onClick={handleScanLinks} style={{ marginLeft: 8, fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
-                  </span>
-                )}
+              {/* Content checks — links, phone numbers, and the quality note.
+                  All three ask the same question about the body copy sitting directly above,
+                  so they answer it in one place instead of being scattered down the drawer.
+                  The phone readout comes off the same scan as the links and is the reason the
+                  scan is worth running on a local-business post at all: a mistyped number
+                  costs a call, which is the thing the article was written to earn. */}
+              <div style={{ marginBottom: '1rem', marginTop: -4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minHeight: 24 }}>
+                  {(linkScan === null || linkScan === 'scanning') ? (
+                    <button
+                      type="button"
+                      onClick={handleScanLinks}
+                      disabled={linkScan === 'scanning'}
+                      style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
+                    >
+                      {linkScan === 'scanning' ? '⟳ Scanning…' : '🔗 Scan links & phone numbers'}
+                    </button>
+                  ) : (() => {
+                    const brokenCount = linkScan.links.filter(l => !l.ok).length
+                    const phones      = linkScan.phones ?? []
+                    const badPhones   = phones.filter(p => !p.valid).length
+                    return (
+                      <>
+                        <span style={{ fontSize: '0.72rem', color: brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
+                          {brokenCount === 0
+                            ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
+                            : `⚠ ${brokenCount} broken link${brokenCount !== 1 ? 's' : ''} — see below`}
+                        </span>
+                        {/* Finding none is neutral, not a pass. Plenty of posts legitimately
+                            carry no number, and colouring that green would claim a check
+                            that never had anything to check. */}
+                        <span style={{ fontSize: '0.72rem', color: phones.length === 0 ? 'var(--text-faint)' : badPhones > 0 ? '#b45309' : '#16a34a' }}>
+                          {phones.length === 0
+                            ? 'No phone numbers'
+                            : badPhones === 0
+                              ? `✓ ${phones.length} phone number${phones.length !== 1 ? 's' : ''} valid`
+                              : `⚠ ${badPhones} of ${phones.length} phone number${phones.length !== 1 ? 's' : ''} to check — see below`}
+                        </span>
+                        <button type="button" onClick={handleScanLinks} style={{ fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
+                      </>
+                    )
+                  })()}
+                </div>
+                {/* Full width on its own line: the pill opens into a list of findings, and at
+                    the end of a flex row that list would unfold into a narrow column. */}
+                <QualityFindings report={qualityReport} />
               </div>
 
               {/* Broken links — inline panel below content HTML */}
@@ -1423,6 +1469,37 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 )
               })()}
 
+              {/* Phone numbers that do not parse as dialable — the same treatment as a
+                  broken link, in amber rather than red because a number can be unusual
+                  without being wrong, and the reviewer is the one who knows which. */}
+              {linkScan !== null && linkScan !== 'scanning' && (() => {
+                const bad = (linkScan.phones ?? []).filter(p => !p.valid)
+                if (bad.length === 0) return null
+                return (
+                  <div className="mb-4" style={{ border: '1px solid #fcd34d', borderRadius: 6, background: '#fffbeb', padding: '0.625rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b45309', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      {bad.length} phone number{bad.length !== 1 ? 's' : ''} to check — click to jump
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {bad.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, fontSize: '0.75rem', color: '#b45309', wordBreak: 'break-all' }}>
+                            ✗ {p.raw} ({p.digits.length} digit{p.digits.length !== 1 ? 's' : ''})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => jumpToPhone(p.raw)}
+                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fcd34d', borderRadius: 4, cursor: 'pointer', color: '#b45309', flexShrink: 0, whiteSpace: 'nowrap' }}
+                          >
+                            Jump ↓
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+
             </CollapsibleSection>
 
             {/* ── SECTION: Images ──────────────────────────────────────────────
@@ -1439,14 +1516,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <CollapsibleSection title="Images" open={openSections.has('images')} onToggle={() => toggleSection('images')}>
               {featuredImageUrl ? (
                 <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  {/* Once one of the client's own pictures is applied, featured_image_url
+                      points at THEIR server — the file is referenced by attachment id rather
+                      than copied, deliberately, so pushing it back does not duplicate it. That
+                      makes this the one image on the page their host can refuse, so it goes
+                      through the proxy. Anything we generated or uploaded is already ours and
+                      is left alone. */}
+                  <ClientImage
                     src={featuredImageUrl}
                     alt="Featured image"
-                    // Client media is served from the client's own host, where hotlink rules
-                    // commonly reject a foreign Referer. Sending none is what those rules
-                    // allow, and it costs nothing here.
-                    referrerPolicy="no-referrer"
+                    connectionId={connectionId || null}
                     style={{
                       width: '100%', aspectRatio: '16 / 9', objectFit: 'cover',
                       borderRadius: 8, border: '1px solid var(--border)', display: 'block',
@@ -1635,10 +1714,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
                   return (
                     <>
-                      {/* One status line. The quality note sits with the pass count because
-                          they answer the same question — is this ready — and stacking them
-                          made the amber pill read as an interruption above the answer rather
-                          than part of it. */}
+                      {/* One status line: the count, and how much of it is left.
+                          The quality note used to sit on the right of this row. It is a
+                          judgement about the ARTICLE rather than about the SEO fields, so it
+                          now sits under the content it is judging, beside the link and phone
+                          scan — the other two readouts that answer "is this sound to send". */}
                       <div style={{
                         display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem',
                         flexWrap: 'wrap',
@@ -1651,8 +1731,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                             · {failed.length} to look at
                           </span>
                         )}
-                        <div style={{ flex: 1 }} />
-                        <QualityFindings report={qualityReport} />
                       </div>
                       {/* auto-fit, not three fixed columns.
                           At the drawer's width three columns are ~150px each, which is
@@ -1937,6 +2015,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           candidate={lightboxCandidate}
           busy={applyingStockId === lightboxCandidate.id}
           currentImageUrl={featuredImageUrl || null}
+          connectionId={connectionId || null}
           error={stockApplyError}
           onClose={() => { setLightboxCandidate(null); setStockApplyError(null) }}
           onApply={() => {
