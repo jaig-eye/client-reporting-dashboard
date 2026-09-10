@@ -146,10 +146,21 @@ export async function POST(
       : { url: urls[i], status: null, ok: false, redirected: false, finalUrl: null, error: 'error' }
   )
 
-  const phones: PhoneResult[] = rawPhones.map(raw => {
+  // Deduplicated on the DIGITS, not the raw string.
+  //
+  // A number written properly appears twice in the source: once inside the tel: href as
+  // "5551234567" and once as the visible "(555) 123-4567". Those are different strings, so the
+  // Set in extractPhones kept both and one number was reported as two — which made "2 phone
+  // numbers valid" the readout for a post carrying one, and would have counted a single bad
+  // number twice in the panel below.
+  const seenDigits = new Set<string>()
+  const phones: PhoneResult[] = []
+  for (const raw of rawPhones) {
     const digits = normalizePhone(raw)
-    return { raw, digits, valid: isValidNANP(digits) }
-  })
+    if (seenDigits.has(digits)) continue
+    seenDigits.add(digits)
+    phones.push({ raw, digits, valid: isValidNANP(digits) })
+  }
 
   return NextResponse.json({
     links,

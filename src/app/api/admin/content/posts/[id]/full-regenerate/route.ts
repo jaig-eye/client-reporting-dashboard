@@ -216,6 +216,11 @@ export async function POST(
         // the regeneration than to strand a live article, so the reviewer can retry rather
         // than discover it months later.
         console.error(`[full-regenerate] post ${postId}: could not preserve the live article — refusing to clear its refs`)
+        // Release the claim, exactly as the new_remove branch above does. Without this the post
+        // stays marked 'generating' for a job that is not running — the drawer shows a spinner,
+        // and the retry this message asks for is refused until a cron reaps the row hours later,
+        // which made "nothing was changed" untrue in the one way that mattered.
+        await db.from('content_posts').update({ status: post.status ?? 'for_review' }).eq('id', postId)
         return NextResponse.json(
           { error: 'Could not preserve the article already on the site. Nothing was changed — please try again.' },
           { status: 500 },

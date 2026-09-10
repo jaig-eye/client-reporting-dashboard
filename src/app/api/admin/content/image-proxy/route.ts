@@ -128,6 +128,15 @@ export async function GET(request: NextRequest) {
     let current = target
     let res: Response | null = null
 
+    // Every path out of here stops the upstream transfer. Returning without doing so leaves the
+    // client's server streaming a body nobody will read until the socket times out — on their
+    // bandwidth, and ours.
+    const giveUp = (body: Record<string, string>, status: number) => {
+      controller.abort()
+      return NextResponse.json(body, { status })
+    }
+
+
     for (let hop = 0; hop <= MAX_HOPS; hop++) {
       res = await fetch(current, {
         headers: {
@@ -149,47 +158,67 @@ export async function GET(request: NextRequest) {
       // Every hop re-checked. A redirect that leaves the client's site, or points inward at
       // our own network, is where an origin check normally gets defeated.
       if (!isPublicUrl(next) || canonicalHost(next) !== siteHost) {
-        return NextResponse.json({ error: 'Redirect left the connection host' }, { status: 403 })
+        return giveUp({ error: 'Redirect left the connection host' }, 403)
       }
       current = next
       res = null
     }
 
-    if (!res) return NextResponse.json({ error: 'Too many redirects' }, { status: 502 })
+    if (!res) return giveUp({ error: 'Too many redirects' }, 502)
     if (!res.ok) {
       // Pass the upstream status through so the caller can tell "blocked" (403) from "gone"
       // (404), rather than every failure looking the same.
-      return NextResponse.json(
-        { error: 'Upstream responded ' + res.status },
-        { status: res.status === 404 ? 404 : 502 },
-      )
+      return giveUp({ error: 'Upstream responded ' + res.status }, res.status === 404 ? 404 : 502)
     }
 
     const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
     if (!ALLOWED_TYPES.has(contentType)) {
       // A bot filter that "allows" the request usually answers with an HTML challenge page.
       // Serving that as an image would render as a broken picture with no explanation.
-      return NextResponse.json(
-        { error: 'Not an image (' + (contentType || 'unknown type') + ')' },
-        { status: 502 },
-      )
+      return giveUp({ error: 'Not an image (' + (contentType || 'unknown type') + ')' }, 502)
     }
 
-    const declared = Number(res.headers.get('content-length'))
+    // A MISSING Content-Length is unknown, not zero.
+    //
+    // Number(null) is 0, which sailed through the pre-check — and the only other guard ran after
+    // arrayBuffer() had already allocated the whole body. So on a chunked origin the ceiling was
+    // really the 12-second timeout, and a grid of full-size originals could allocate hundreds of
+    // megabytes per invocation before anything returned 413.
+    const rawLength = res.headers.get('content-length')
+    const declared  = rawLength === null ? NaN : Number(rawLength)
     if (Number.isFinite(declared) && declared > MAX_BYTES) {
-      return NextResponse.json({ error: 'Image too large' }, { status: 413 })
+      return giveUp({ error: 'Image too large' }, 413)
     }
 
-    const buf = await res.arrayBuffer()
-    if (buf.byteLength > MAX_BYTES) {
-      return NextResponse.json({ error: 'Image too large' }, { status: 413 })
+    // Read in chunks so the cap is enforced as the bytes arrive rather than after they are all
+    // in memory, and abort the moment it is exceeded.
+    const body = res.body
+    if (!body) return giveUp({ error: 'Empty response' }, 502)
+
+    const reader = body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_BYTES) {
+        await reader.cancel().catch(() => {})
+        return giveUp({ error: 'Image too large' }, 413)
+      }
+      chunks.push(value)
     }
+
+    const buf = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) { buf.set(chunk, offset); offset += chunk.byteLength }
 
     return new NextResponse(buf, {
       status: 200,
       headers: {
         'Content-Type':           contentType,
-        'Content-Length':         String(buf.byteLength),
+        'Content-Length':         String(total),
         // private: this is one client's media travelling through our origin, and it must not
         // land in a shared cache where another tenant could be served it.
         'Cache-Control':          'private, max-age=3600',

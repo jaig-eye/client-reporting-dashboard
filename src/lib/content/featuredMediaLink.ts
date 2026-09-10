@@ -27,6 +27,21 @@ export const RELEASE_MEDIA_LINK = {
 } as const
 
 /**
+ * Metadata that described the OLD picture and must not outlive it.
+ *
+ * image_alt_text has exactly one writer — AI generation — so a post whose generated image was
+ * later swapped for a library photo or an upload kept an alt describing the discarded picture.
+ * That alt was then sent to the client's live site as the NEW file's alt text, and made the
+ * "Image alt w/ keyword" row green for an image nobody had described.
+ *
+ * Cleared on both paths below, not just the one with the 214 columns, and always overridable:
+ * a caller that has real alt text for the new picture passes it and wins.
+ */
+export const RELEASE_IMAGE_METADATA = {
+  image_alt_text: null,
+} as const
+
+/**
  * Update a post, releasing the attachment link, and fall back to the same update WITHOUT the
  * link columns if they do not exist yet.
  *
@@ -38,9 +53,13 @@ export async function updatePostReleasingMediaLink(
   postId: string,
   update: Record<string, unknown>,
 ): Promise<{ error: { message: string } | null }> {
+  // RELEASE_IMAGE_METADATA first, so a caller supplying alt text for the NEW picture overrides
+  // the clear rather than being overridden by it.
+  const base = { ...RELEASE_IMAGE_METADATA, ...update }
+
   const { error } = await db
     .from('content_posts')
-    .update({ ...update, ...RELEASE_MEDIA_LINK })
+    .update({ ...base, ...RELEASE_MEDIA_LINK })
     .eq('id', postId)
 
   if (error && /wp_featured_media/i.test(error.message)) {
@@ -48,7 +67,7 @@ export async function updatePostReleasingMediaLink(
       '[featuredMediaLink] wp_featured_media_* missing (apply migration 214) — '
       + 'image updated without releasing the attachment link',
     )
-    const retry = await db.from('content_posts').update(update).eq('id', postId)
+    const retry = await db.from('content_posts').update(base).eq('id', postId)
     return { error: retry.error }
   }
 

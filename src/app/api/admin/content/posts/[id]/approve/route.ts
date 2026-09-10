@@ -487,8 +487,26 @@ export async function POST(
         // So the naming is conditional on the file being ours to name. Their picture goes back
         // under whatever name it already had.
         const fromClientLibrary = String(p.featured_image_source ?? '') === 'wp_media'
+
+        // Their own filename, not ours and not a generic one.
+        //
+        // Passing `undefined` here is not the same as leaving the name alone: the uploader falls
+        // back to the literal 'featured', so the client's photograph came back as featured.jpg
+        // titled "featured" — renamed just as thoroughly, only worse. The basename off the
+        // source URL is the name they gave it.
+        const originalName = (() => {
+          if (!fromClientLibrary) return undefined
+          try {
+            const last = new URL(String(p.featured_image_url)).pathname.split('/').pop() ?? ''
+            const base = decodeURIComponent(last).replace(/\.[a-z0-9]+$/i, '').trim()
+            return base || undefined
+          } catch {
+            return undefined
+          }
+        })()
+
         if (fromClientLibrary) {
-          console.warn(`[approve] post ${id}: client-library image could not be referenced by id — re-uploading without renaming`)
+          console.warn(`[approve] post ${id}: client-library image could not be referenced by id — re-uploading as "${originalName ?? 'featured'}" without renaming`)
         }
 
         // alt_text is the SEO-bearing field, so the stored alt wins over the post title: the
@@ -507,8 +525,8 @@ export async function POST(
               : (p.seo_title ? String(p.seo_title) : (p.title ? String(p.title) : undefined)),
             // The slug is already the keyword-bearing, human-readable form of this post, and
             // the filename is permanent in the attachment URL — so it is worth spending, on a
-            // file we are the origin of.
-            filenameBase: fromClientLibrary ? undefined : (p.slug ? String(p.slug) : undefined),
+            // file we are the origin of. Their file keeps the name it arrived with.
+            filenameBase: fromClientLibrary ? originalName : (p.slug ? String(p.slug) : undefined),
           },
         )
       } catch (e) {

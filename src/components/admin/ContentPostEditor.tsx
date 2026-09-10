@@ -1307,9 +1307,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
    * that overwrites an article with identical content, while a push that cannot be made leaves
    * the wrong article on a client's site with nothing in the UI admitting it.
    *
-   * The two-second tolerance absorbs the approve route stamping last_pushed_at and status in
-   * the same write, which bumps updated_at a hair later and would otherwise read as stale
-   * immediately after every successful push.
+   * The two-second tolerance is slack, not a fix for a known skew: the updated_at trigger and
+   * last_pushed_at are written in the same statement and land equal, so nothing depends on it.
+   * It is there so a clock or replication wobble cannot make a just-pushed post read as stale.
    */
   const liveIsStale = (() => {
     if (changedSincePush) return true
@@ -1328,7 +1328,27 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const liveUrl        = post ? viewLiveUrl(post) : null
   const showLiveLink   = isPublicPermalink(liveUrl)
 
+  /**
+   * Is the article actually VISIBLE to the public, as opposed to merely on the site?
+   *
+   * "On site" covers a saved draft too, and a draft has no visitors and no rankings — so the
+   * push confirmation has to tell the two apart before it promises anything about either.
+   *
+   * A public permalink alone does not settle it. BigCommerce is pushed unpublished but is still
+   * given its public storefront URL, so every BC post looked live by that test. The status is
+   * what the push actually recorded, so it decides, and the permalink is only consulted for
+   * WordPress where it genuinely distinguishes a draft from a published post.
+   */
+  const isPubliclyLive = post?.status === 'published' || (!isBc && showLiveLink)
 
+  // The featured image goes through the proxy here too, but this is a raw HTML string rather
+  // than a ClientImage — so the fall-back-to-the-direct-URL behaviour the five React surfaces
+  // get for free has to be written onto the tag. Without it a proxy refusal would leave both
+  // preview panes showing a broken picture that renders fine in the panel beside them.
+  // Prepared here rather than inline: this is a raw HTML string, and an attribute holding a URL
+  // inside a template literal inside JSX is three levels of quoting to get wrong at once.
+  const previewImgSrc      = proxiedImageSrc(featuredImageUrl, connectionId).replace(/"/g, '&quot;')
+  const previewImgFallback = featuredImageUrl.replace(/"/g, '&quot;')
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
     h1{font-size:2rem;line-height:1.3;margin-bottom:.5rem;color:#111}
@@ -1339,7 +1359,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     li{margin-bottom:.4rem}strong{font-weight:700}a{color:#2563eb;text-decoration:underline}
     img{max-width:100%;height:auto;border-radius:4px}
     blockquote{border-left:4px solid #e5e7eb;margin:1.5rem 0;padding:.75rem 1rem;color:#555;font-style:italic}
-  </style></head><body>${featuredImageUrl ? `<img src="${proxiedImageSrc(featuredImageUrl, connectionId).replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
+  </style></head><body>${featuredImageUrl ? `<img src="${previewImgSrc}" onerror="this.onerror=null;this.src=&quot;${previewImgFallback}&quot;" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
 
   return (
     <>
@@ -1518,10 +1538,15 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     const badPhones   = phones.filter(p => !p.valid).length
                     return (
                       <>
-                        <span style={{ fontSize: '0.72rem', color: brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
-                          {brokenCount === 0
-                            ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
-                            : `⚠ ${brokenCount} broken link${brokenCount !== 1 ? 's' : ''} — see below`}
+                        {/* An article with no links is neutral, not a pass — "✓ All 0 links OK"
+                            reads as a check that ran and succeeded, when nothing was checked.
+                            Same treatment the phone readout gets below. */}
+                        <span style={{ fontSize: '0.72rem', color: linkScan.links.length === 0 ? 'var(--text-faint)' : brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
+                          {linkScan.links.length === 0
+                            ? 'No links'
+                            : brokenCount === 0
+                              ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
+                              : `⚠ ${brokenCount} broken link${brokenCount !== 1 ? 's' : ''} — see below`}
                         </span>
                         {/* Finding none is neutral, not a pass. Plenty of posts legitimately
                             carry no number, and colouring that green would claim a check
@@ -2183,12 +2208,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           // with it" described something that does not exist yet. showLiveLink is the same
           // signal the On Site banner uses to tell those two apart.
           title={isOnSite
-            ? (showLiveLink ? 'Push your changes to the live article' : 'Push your changes to the saved draft')
+            ? (isPubliclyLive ? 'Push your changes to the live article' : 'Push your changes to the saved draft')
             : 'Approve and push to the site'}
           subtitle={title || post?.title || null}
           body={
             isOnSite
-              ? (showLiveLink
+              ? (isPubliclyLive
                   ? 'This overwrites the article already on the client’s site with what is in this drawer. The URL does not change, so existing links and rankings stay with it.'
                   : 'This overwrites the draft already saved on the client’s site with what is in this drawer. Nothing is visible to visitors until someone publishes it there.')
               : wpStatus === 'future'

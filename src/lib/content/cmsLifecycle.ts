@@ -291,7 +291,7 @@ export async function clearPlatformRefs(db: Db, postId: string): Promise<void> {
 export async function preserveLiveArticleRecord(db: Db, postId: string): Promise<string | null> {
   const { data, error } = await db
     .from('content_posts')
-    .select('client_id, connection_id, content_type, title, seo_title, content, slug, meta_description, target_keyword, focus_topic, word_count, featured_image_url, published_url, platform_edit_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, last_pushed_at, target_publish_date, silo_id')
+    .select('client_id, connection_id, content_type, title, seo_title, content, slug, meta_description, target_keyword, focus_topic, word_count, featured_image_url, featured_image_source, image_alt_text, published_url, platform_edit_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, last_pushed_at, target_publish_date, silo_id')
     .eq('id', postId)
     .maybeSingle()
 
