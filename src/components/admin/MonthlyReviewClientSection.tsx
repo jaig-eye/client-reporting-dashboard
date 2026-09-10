@@ -27,6 +27,33 @@ interface Props {
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
+/**
+ * One queue for the whole page, not one per section.
+ *
+ * The link scan runs automatically now, and every client section renders expanded, so a page
+ * with two dozen clients fired a request per post across every section at once — around
+ * ninety simultaneous requests spread over two dozen different client web servers, none of
+ * which agreed to that. Capping per section would not have helped: twenty sections each
+ * politely limiting themselves is still twenty times the traffic.
+ *
+ * Four at a time is enough to finish a page quickly and low enough that no single client site
+ * sees a burst.
+ */
+const SCAN_CONCURRENCY = 4
+let scanActive = 0
+const scanQueue: (() => void)[] = []
+
+function acquireScanSlot(): Promise<void> {
+  if (scanActive < SCAN_CONCURRENCY) { scanActive++; return Promise.resolve() }
+  return new Promise<void>(resolve => scanQueue.push(() => { scanActive++; resolve() }))
+}
+
+function releaseScanSlot(): void {
+  scanActive--
+  const next = scanQueue.shift()
+  if (next) next()
+}
+
 export default function MonthlyReviewClientSection({
   clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
   pushStates, onRetryPush,
@@ -60,9 +87,16 @@ export default function MonthlyReviewClientSection({
     setScanState('scanning')
     try {
       const results = await Promise.allSettled(
-        posts.map(p => fetch(`/api/admin/content/posts/${p.id}/scan-links`, { method: 'POST' })
-          .then(r => r.ok ? r.json() as Promise<{ links: { ok: boolean }[] }> : Promise.reject())
-        )
+        posts.map(async p => {
+          await acquireScanSlot()
+          try {
+            const r = await fetch(`/api/admin/content/posts/${p.id}/scan-links`, { method: 'POST' })
+            if (!r.ok) throw new Error(`scan failed (${r.status})`)
+            return await r.json() as { links: { ok: boolean }[] }
+          } finally {
+            releaseScanSlot()
+          }
+        })
       )
       let ok = 0, total = 0, broken = 0
       let scanned = 0
