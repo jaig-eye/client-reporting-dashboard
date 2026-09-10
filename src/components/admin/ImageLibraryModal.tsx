@@ -48,6 +48,8 @@ interface Props {
   refreshingStock?: boolean
   stockNote?: string
   onApply: (candidate: StockImageCandidate) => void
+  /** Opens the full-size look before committing. */
+  onPreview?: (candidate: StockImageCandidate) => void
   onClose: () => void
 }
 
@@ -57,7 +59,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export default function ImageLibraryModal({
   postTitle, connectionId, stockCandidates, currentImageUrl,
-  applyingId, applyError, onRefreshStock, refreshingStock, stockNote, onApply, onClose,
+  applyingId, applyError, onRefreshStock, refreshingStock, stockNote, onApply, onPreview, onClose,
 }: Props) {
   const [tab, setTab] = useState<TabId>(connectionId ? 'library' : 'stock')
   const [selected, setSelected] = useState<StockImageCandidate | null>(null)
@@ -69,6 +71,16 @@ export default function ImageLibraryModal({
   const [loading, setLoading]   = useState(false)
   const [mediaError, setMediaError] = useState('')
   const [searched, setSearched] = useState(false)
+  /**
+   * The query that produced what is currently on screen — NOT the live text box.
+   *
+   * "Load more" used to read the box, so typing a new search and pressing Load more without
+   * pressing Search appended page 2 of the NEW search onto page 1 of the old one, silently
+   * mixing two result sets in one grid.
+   */
+  const [activeQuery, setActiveQuery] = useState('')
+  /** Guards the auto-list against firing again while its first request is still in flight. */
+  const listingRef = useRef(false)
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
@@ -92,13 +104,13 @@ export default function ImageLibraryModal({
    * `append` is what makes "Load more" additive rather than a page swap. A grid that REPLACED
    * its contents on page 2 would lose the image someone was comparing against.
    */
-  const search = useCallback(async (nextPage: number, append: boolean) => {
+  const search = useCallback(async (nextPage: number, append: boolean, q: string) => {
     if (!connectionId) return
     setLoading(true)
     setMediaError('')
     try {
       const qs = new URLSearchParams({ connection_id: connectionId, page: String(nextPage) })
-      if (query.trim()) qs.set('q', query.trim())
+      if (q.trim()) qs.set('q', q.trim())
       const res  = await fetch(`/api/admin/wordpress/media?${qs.toString()}`)
       const data = await res.json() as {
         items?: StockImageCandidate[]; total?: number; error?: string
@@ -110,6 +122,7 @@ export default function ImageLibraryModal({
       setMedia(prev => (append ? [...prev, ...items] : items))
       setTotal(data.total ?? items.length)
       setPage(nextPage)
+      setActiveQuery(q)
     } catch (e) {
       if (!append) setMedia([])
       setMediaError(e instanceof Error ? e.message : 'Could not search their library')
@@ -117,12 +130,16 @@ export default function ImageLibraryModal({
       setLoading(false)
       setSearched(true)
     }
-  }, [connectionId, query])
+  }, [connectionId])
 
   // First open of the library tab lists recent uploads — the fastest way to find images
   // somebody added for this piece, and it means the tab is never an empty box.
   useEffect(() => {
-    if (tab === 'library' && connectionId && !searched) void search(1, false)
+    // A ref, not the searched flag: that only flips when the request RESOLVES, so every
+    // keystroke during the first round trip fired another request at the client's WordPress.
+    if (tab !== 'library' || !connectionId || searched || listingRef.current) return
+    listingRef.current = true
+    void search(1, false, '')
   }, [tab, connectionId, searched, search])
 
   const items = tab === 'library' ? media : stockCandidates
@@ -175,10 +192,12 @@ export default function ImageLibraryModal({
           </div>
 
           <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-            <button type="button" style={tabStyle(tab === 'library')} onClick={() => setTab('library')} aria-pressed={tab === 'library'}>
+            {/* Clearing the selection on a tab switch: it used to survive, so Apply could
+                commit an image that was no longer anywhere on screen. */}
+            <button type="button" style={tabStyle(tab === 'library')} onClick={() => { setTab('library'); setSelected(null) }} aria-pressed={tab === 'library'}>
               Their library
             </button>
-            <button type="button" style={tabStyle(tab === 'stock')} onClick={() => setTab('stock')} aria-pressed={tab === 'stock'}>
+            <button type="button" style={tabStyle(tab === 'stock')} onClick={() => { setTab('stock'); setSelected(null) }} aria-pressed={tab === 'stock'}>
               Stock photos {stockCandidates.length > 0 ? `· ${stockCandidates.length}` : ''}
             </button>
           </div>
@@ -198,7 +217,7 @@ export default function ImageLibraryModal({
                     ref={searchRef}
                     value={query}
                     onChange={e => setQuery(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void search(1, false) } }}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void search(1, false, query) } }}
                     placeholder="Search their media library…"
                     className="input"
                     style={{ width: '100%', fontSize: '0.8125rem', padding: '0.35rem 0.5rem 0.35rem 1.75rem' }}
@@ -206,7 +225,7 @@ export default function ImageLibraryModal({
                   />
                 </div>
                 <button type="button" className="btn btn-secondary" disabled={loading}
-                  onClick={() => void search(1, false)} style={{ fontSize: '0.78rem' }}>
+                  onClick={() => void search(1, false, query)} style={{ fontSize: '0.78rem' }}>
                   {loading ? 'Searching…' : 'Search'}
                 </button>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
@@ -255,7 +274,7 @@ export default function ImageLibraryModal({
                     key={c.id}
                     type="button"
                     onClick={() => setSelected(c)}
-                    onDoubleClick={() => { setSelected(c); onApply(c) }}
+                    onDoubleClick={() => { setSelected(c); onPreview?.(c) }}
                     disabled={busy}
                     title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} · ${c.license}`}
                     aria-pressed={isSel}
@@ -284,7 +303,7 @@ export default function ImageLibraryModal({
           {tab === 'library' && media.length > 0 && media.length < total && (
             <div style={{ textAlign: 'center', marginTop: 14 }}>
               <button type="button" className="btn btn-secondary" disabled={loading}
-                onClick={() => void search(page + 1, true)} style={{ fontSize: '0.78rem' }}>
+                onClick={() => void search(page + 1, true, activeQuery)} style={{ fontSize: '0.78rem' }}>
                 {loading ? 'Loading…' : `Load more (${(total - media.length).toLocaleString()} left)`}
               </button>
             </div>
@@ -313,6 +332,17 @@ export default function ImageLibraryModal({
               'Select an image, then apply it. Double-click applies straight away.'
             )}
           </div>
+          {onPreview && (
+            <button
+              type="button" className="btn btn-secondary"
+              disabled={!selected || busy}
+              onClick={() => selected && onPreview(selected)}
+              style={{ fontSize: '0.8125rem' }}
+              title="See it full size before applying"
+            >
+              Preview
+            </button>
+          )}
           <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose} style={{ fontSize: '0.8125rem' }}>
             Cancel
           </button>

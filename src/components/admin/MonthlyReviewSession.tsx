@@ -101,7 +101,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const totalPosts    = initialPosts.length
   const approvedCount = approvedIds.size
   // A session is complete when every post has been approved, rejected, or discarded.
-  const actionedCount = approvedIds.size + rejectedIds.size + discardedIds.size
+  // Counted as a SET, not a sum. The three collections are not mutually exclusive — approving
+  // a post and then taking it back down leaves its id in approvedIds AND discardedIds — so
+  // adding the sizes counted it twice, actionedCount overshot, and the celebration screen
+  // replaced the list while posts were still unreviewed.
+  const actionedIds   = new Set<string>([...Array.from(approvedIds), ...Array.from(rejectedIds), ...Array.from(discardedIds)])
+  const actionedCount = actionedIds.size
   const isComplete    = totalPosts > 0 && actionedCount >= totalPosts
 
   // Count clients done
@@ -173,8 +178,10 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       if (!res.ok) throw new Error(await res.text())
       const body = await res.json().catch(() => ({})) as { cms?: { message?: string } }
       if (discard) {
+        setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setDiscardedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       } else {
+        setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       }
       // Say what happened to the live article, since that is the surprising part.
@@ -225,12 +232,25 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
    */
   const handleReject = useCallback((postId: string, discard?: boolean) => {
     const post = initialPosts.find(p => p.id === postId)
-    if (post && (post.wp_post_id || post.bc_post_id)) {
+
+    // A post pushed EARLIER IN THIS SESSION is live too.
+    //
+    // initialPosts is a server prop and is never refreshed after an approve, so a post the
+    // reviewer approved a moment ago still carries wp_post_id: null here. Taking it down then
+    // skipped LivePostActionModal entirely and sent cms:'leave' — archiving our record while
+    // the article stayed up on the client's site. That is precisely the orphan state
+    // cmsLifecycle exists to prevent, produced by the two most ordinary clicks in the flow:
+    // approve, then change your mind.
+    //
+    // pushStates knows, because it tracked the push that initialPosts missed.
+    const pushedThisSession = pushStates[postId]?.state === 'live'
+
+    if (pushedThisSession || (post && (post.wp_post_id || post.bc_post_id))) {
       setRemoveModal({ postId, discard: !!discard })
       return
     }
     void doReject(postId, discard, 'leave')
-  }, [initialPosts, doReject])
+  }, [initialPosts, doReject, pushStates])
 
   const handleRestore = useCallback(async (postId: string) => {
     setLoadingId(postId)

@@ -1818,6 +1818,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           stockNote={stockNote}
           onRefreshStock={handleFindStockImages}
           onClose={() => { setLibraryOpen(false); setStockApplyError(null) }}
+          onPreview={c => setLightboxCandidate(c)}
           onApply={(c: StockImageCandidate) => {
             setStockApplyError(null)
             // Closes only on success, so a failure keeps the grid and the selection on
