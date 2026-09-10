@@ -773,22 +773,29 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       // drawer, offers the with-edits/without-edits choice this native prompt cannot. Keeping
       // both meant two confirmations for one action, the second one cruder than the first.
 
-      // A guard, not a ternary: the drawer's unsaved edits are simply not sent when the
-      // reviewer chose to discard them.
-      if (persistEdits) {
+      // Discarding edits does not mean discarding WHERE the post goes.
+      //
+      // The route below is chosen from the drawer's local connectionId, while the push route
+      // reads connection_id from the ROW — so skipping the save entirely let the two disagree:
+      // the browser would call the BigCommerce endpoint while the server resolved a WordPress
+      // connection, or push to whichever site the row still remembered. connectionId is a
+      // routing decision, not content, so it is persisted either way.
+      const body = persistEdits
+        ? {
+            title, seoTitle, content, metaDescription, slug,
+            targetKeyword, suggestedTags: tags,
+            featuredImageUrl: featuredImageUrl || null,
+            wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
+            connectionId,
+          }
+        : { connectionId }
+
       const saveRes = await fetch(`/api/admin/content/posts/${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          title, seoTitle, content, metaDescription, slug,
-          targetKeyword, suggestedTags: tags,
-          featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
-          connectionId,
-        }),
+        body:    JSON.stringify(body),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
-      }
 
       const route = isBigCommerce
         ? `/api/admin/content/posts/${postId}/publish-bigcommerce`

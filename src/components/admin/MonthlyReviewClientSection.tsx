@@ -65,9 +65,11 @@ export default function MonthlyReviewClientSection({
         )
       )
       let ok = 0, total = 0, broken = 0
+      let scanned = 0
       const perPost: Record<string, number> = {}
       results.forEach((r, i) => {
         if (r.status === 'fulfilled') {
+          scanned++
           const links = r.value.links ?? []
           const postBroken = links.filter((l: { ok: boolean }) => !l.ok).length
           total  += links.length
@@ -76,6 +78,8 @@ export default function MonthlyReviewClientSection({
           if (postBroken > 0) perPost[posts[i].id] = postBroken
         }
       })
+      // Nothing came back. Report nothing rather than "OK".
+      if (scanned === 0) { setScanState('idle'); return }
       setScanState({ ok, total, broken, perPost })
     } catch {
       setScanState('idle')
@@ -119,8 +123,8 @@ export default function MonthlyReviewClientSection({
             Opening a post for review scans its links automatically, and review is the only
             way to approve one — so this offered work the reviewer cannot avoid doing anyway,
             from a chip sitting beside the approval counter as though it were part of the
-            progress readout. The scanning and result states below still render, because a
-            scan triggered by the drawer is worth reporting here. */}
+            progress readout. The section scans itself once when it opens instead, so the
+            result is still reported without a control nobody needed to press. */}
         {scanState === 'scanning' && (
           <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>⟳ Scanning…</span>
         )}
