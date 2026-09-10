@@ -139,9 +139,19 @@ export default function MonthlyReviewPostCard({
 
         {/* Title + meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <button
+            type="button"
+            onClick={() => onOpenEditor(post.id)}
+            title="Open the review panel"
+            style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: 0,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontWeight: 500, fontSize: 14, color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
             {post.title ?? '(untitled)'}
-          </div>
+          </button>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
             {isApproved && (
               /* Sits with the meta rather than in the action row. As a pill on the right it

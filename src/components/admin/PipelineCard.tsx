@@ -199,9 +199,19 @@ export default function PipelineCard(props: Props) {
       <div style={cardShell}>
         <Thumb url={post.featured_image_url} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); props.onReview(post) }}
+            title="Open the review panel"
+            style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: 0,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
             {post.title ?? topic?.topic ?? '(generating…)'}
-          </div>
+          </button>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
             {fmtDate(post.target_publish_date)}
             {post.word_count ? ` · ${post.word_count.toLocaleString()}w` : ''}

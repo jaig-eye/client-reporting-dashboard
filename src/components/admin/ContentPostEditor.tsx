@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
+import { Books, ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
@@ -10,16 +10,11 @@ import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import type { PostLinkInput } from '@/lib/content/postLinks'
 import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
 import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
+import ImageLibraryModal from '@/components/admin/ImageLibraryModal'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
  *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
-const STOCK_SOURCE_LABEL: Record<string, string> = {
-  pexels:    'Pexels',
-  wikimedia: 'Wikimedia',
-  openverse: 'Openverse',
-  wp_media:  'Their library',
-}
 
 interface Site {
   connectionId:  string
@@ -356,17 +351,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Openverse suggestions stored on the post at generation time. Empty is the normal
   // result for specialised topics — see lib/content/stockImages.ts.
   const [imageCandidates, setImageCandidates] = useState<StockImageCandidate[]>([])
-  // The client's OWN media library, searched on demand.
-  //
-  // Held separately from imageCandidates rather than merged into it: those are generated with
-  // the post and persisted to content_posts.image_candidates, whereas these are the result of
-  // a query someone just typed. Merging them would mean a stray search silently rewrote the
-  // post's stored suggestions.
-  const [mediaResults,  setMediaResults]  = useState<StockImageCandidate[]>([])
-  const [mediaQuery,    setMediaQuery]    = useState('')
-  const [mediaSearching, setMediaSearching] = useState(false)
-  const [mediaNote,     setMediaNote]     = useState('')
-  const [mediaTotal,    setMediaTotal]    = useState(0)
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   /** The candidate being previewed full-size before it is applied. */
   const [lightboxCandidate, setLightboxCandidate] = useState<StockImageCandidate | null>(null)
@@ -379,6 +363,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // so neither fires on a bare click any more.
   const [confirming, setConfirming] = useState<null | 'approve' | 'reject' | 'discard'>(null)
   const [imageDialogOpen, setImageDialogOpen] = useState(false)
+  const [libraryOpen,     setLibraryOpen]     = useState(false)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -1030,50 +1015,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   /**
-   * Search the client's own WordPress media library.
-   *
-   * Requires a chosen site connection because the library belongs to a SITE, not to us — the
-   * same connection the post will publish through, so what you pick is guaranteed to be on
-   * the server the article lands on.
-   *
-   * Empty query is allowed and is not a mistake: it lists the most recent uploads, which is
-   * the fastest way to find the photos someone added for this piece.
-   */
-  async function handleSearchMedia(page = 1) {
-    if (!connectionId) {
-      openSection('publish')
-      setMediaNote('Choose a site connection under Publish below to search their media.')
-      return
-    }
-    setMediaSearching(true)
-    setMediaNote('')
-    try {
-      const qs = new URLSearchParams({ connection_id: connectionId, page: String(page) })
-      if (mediaQuery.trim()) qs.set('q', mediaQuery.trim())
-      const res  = await fetch(`/api/admin/wordpress/media?${qs.toString()}`)
-      const data = await res.json() as {
-        items?: StockImageCandidate[]; total?: number; error?: string
-        unsupported?: boolean; reason?: string
-      }
-      if (data.unsupported) { setMediaResults([]); setMediaTotal(0); setMediaNote(data.reason ?? 'Not available for this site.'); return }
-      if (!res.ok) throw new Error(data.error ?? 'Media search failed')
-
-      const items = data.items ?? []
-      setMediaResults(items)
-      setMediaTotal(data.total ?? items.length)
-      if (items.length === 0) {
-        setMediaNote(mediaQuery.trim()
-          ? `Nothing in their library matches "${mediaQuery.trim()}".`
-          : 'Their media library looks empty.')
-      }
-    } catch (err) {
-      setMediaResults([])
-      setMediaTotal(0)
-      setMediaNote(err instanceof Error ? err.message : 'Media search failed')
-    } finally {
-      setMediaSearching(false)
-    }
-  }
 
   // ── Image generation ────────────────────────────────────────────────────────
   /** Opens the steering dialog; the request itself is performGenerateImage. */
@@ -1390,146 +1331,23 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
                 )}
 
-                {/* Free stock alternatives, banked at generation time and scrolled
-                    horizontally rather than laid out as a grid. A grid of 40 thumbnails
-                    dominates the drawer and pushes every other field off screen; one row
-                    keeps the whole set reachable at the height of a single thumbnail.
-                    This also replaced a modal — the modal existed only to house the
-                    grid, which was never a reason to have a modal. */}
-                {/* Their own library first.
-                    An image the client already owns beats a borrowed one on every axis that
-                    matters — licensing, brand fit, and whether it shows their actual premises
-                    — so it gets the explicit control, and its results sort ahead of the stock
-                    suggestions in the strip below. */}
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input
-                      value={mediaQuery}
-                      onChange={e => setMediaQuery(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleSearchMedia(1) } }}
-                      placeholder="Search the client's media library…"
-                      className="input"
-                      style={{ flex: 1, minWidth: 180, fontSize: '0.78rem', padding: '0.3rem 0.5rem' }}
-                      aria-label="Search the client's WordPress media library"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleSearchMedia(1)}
-                      disabled={mediaSearching}
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '3px 10px' }}
-                      title="Search images already uploaded to this client's WordPress site"
-                    >
-                      {mediaSearching ? 'Searching…' : 'Their library'}
-                    </button>
-                    {mediaResults.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => { setMediaResults([]); setMediaNote(''); setMediaTotal(0) }}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.75rem', padding: '3px 10px' }}
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  {(mediaNote || mediaResults.length > 0) && (
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                      {mediaNote || `${mediaResults.length} shown${mediaTotal > mediaResults.length ? ` of ${mediaTotal}` : ''} from their library`}
-                    </div>
-                  )}
-                </div>
-
-                {(imageCandidates.length > 0 || mediaResults.length > 0) && (
-                  <div style={{ marginTop: 14 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        Alternatives · {mediaResults.length + imageCandidates.length}
-                      </span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        scroll sideways · the AI image stays selected until you click one
-                      </span>
-                      <div style={{ flex: 1 }} />
-                      <button
-                        type="button"
-                        onClick={handleFindStockImages}
-                        disabled={findingStock}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-                        title="Search Pexels, Wikimedia Commons and Openverse again for this post's topic"
-                      >
-                        {findingStock ? 'Searching…' : '↻ Search again'}
-                      </button>
-                    </div>
-
-                    {stockNote && (
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                        {stockNote}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, scrollSnapType: 'x proximity' }}>
-                      {[...mediaResults, ...imageCandidates].map(c => {
-                        const busy = applyingStockId === c.id
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            disabled={!!applyingStockId}
-                            onClick={() => setLightboxCandidate(c)}
-                            title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} · ${c.license}`}
-                            style={{
-                              flex: '0 0 132px', scrollSnapAlign: 'start',
-                              padding: 0, border: '1px solid var(--border)', borderRadius: 6,
-                              overflow: 'hidden', background: 'var(--bg-subtle)',
-                              cursor: applyingStockId ? 'default' : 'pointer',
-                              opacity: busy ? 0.5 : 1, textAlign: 'left',
-                            }}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={c.thumbnail} alt={c.title} loading="lazy"
-                              style={{ width: '100%', height: 74, objectFit: 'cover', display: 'block' }} />
-                            {/* Source only. Stock titles are provider metadata, not
-                                descriptions — "DSC_0491", "Free Stock Photo of ..." — so a
-                                truncated one in a 132px tile was noise competing with the
-                                thing actually being judged, which is the picture. The full
-                                title, creator and licence are on hover, and in the lightbox
-                                before anything is applied. */}
-                            <div style={{ padding: '4px 6px', fontSize: '0.62rem', lineHeight: 1.3, color: 'var(--text-muted)' }}>
-                              {busy ? 'Applying…' : (STOCK_SOURCE_LABEL[c.source] ?? 'Stock')}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                      Clicking one copies it into your own storage and records its licence and attribution.
-                    </div>
-                  </div>
-                )}
-
-                {/* With no candidates the strip does not render, and its refetch button
-                    goes with it — so the empty state needs its own way in. Every post
-                    written before this feature shipped starts here, as does any client
-                    with AI images switched off. */}
-                {imageCandidates.length === 0 && (
-                  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={handleFindStockImages}
-                      disabled={findingStock}
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-                      title="Search Pexels, Wikimedia Commons and Openverse for photos matching this post's topic"
-                    >
-                      {findingStock ? 'Searching…' : '⌕ Find free stock images'}
-                    </button>
-                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                      {stockNote || 'Free, commercially usable photos as an alternative to the AI image.'}
-                    </span>
-                  </div>
-                )}
+                {/* One way in, instead of the column of controls this replaces.
+                    A search box, a "Their library" button, a Clear button, a result count,
+                    a horizontal strip, a "Search again" button and a separate empty-state
+                    button had all accreted here, under the very field they were meant to
+                    fill. Picking an image is a browsing job and browsing wants area, which
+                    a drawer column does not have — so it moved to a modal that does. */}
+                <button
+                  type="button"
+                  onClick={() => setLibraryOpen(true)}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8125rem', marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  title="Browse the client’s media library and free stock photos"
+                >
+                  <Books size={14} weight="bold" />
+                  Open image library
+                  {imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
+                </button>
               </div>
             </CollapsibleSection>
 
@@ -1980,6 +1798,32 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           }}
         />
       )}
+      {libraryOpen && (
+        <ImageLibraryModal
+          postTitle={title || post?.title || null}
+          connectionId={connectionId || null}
+          stockCandidates={imageCandidates}
+          currentImageUrl={featuredImageUrl || null}
+          applyingId={applyingStockId}
+          applyError={stockApplyError}
+          refreshingStock={findingStock}
+          stockNote={stockNote}
+          onRefreshStock={handleFindStockImages}
+          onClose={() => { setLibraryOpen(false); setStockApplyError(null) }}
+          onApply={(c: StockImageCandidate) => {
+            setStockApplyError(null)
+            // Closes only on success, so a failure keeps the grid and the selection on
+            // screen with the reason in the footer, rather than dismissing as though it
+            // had worked.
+            void handleSelectStockImage(c.id)
+              .then(() => { setLibraryOpen(false); setStockApplyError(null) })
+              .catch(err => setStockApplyError(
+                err instanceof Error ? err.message : 'Could not apply that image. Please try again.',
+              ))
+          }}
+        />
+      )}
+
       {imageDialogOpen && (
         <ImageDirectionDialog
           postTitle={title || post?.title || null}
