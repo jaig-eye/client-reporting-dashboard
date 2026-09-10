@@ -181,7 +181,18 @@ function cadenceDates(
   const start = new Date(startDate + 'T00:00:00Z')
 
   if (frequency.startsWith('monthly')) {
-    const day = monthlyPublishDay ?? start.getUTCDate()
+    // The named monthly frequencies pin a DAY, and ignoring that was the bug: a
+    // monthly_mid plan rescheduled from the 3rd would have landed every post on the 3rd,
+    // permanently off the cadence the cron generates on — so the cron would keep filling the
+    // 15th as an empty slot and the client would receive two posts a month, forever.
+    //
+    // Same mapping and the same 28-for-month-end as calendar/generate, which took it from the
+    // cron. Three copies of this arithmetic is two too many, but making them agree is the
+    // fix that matters here; unifying them is a refactor of the cron's own slot maths.
+    const day = frequency === 'monthly_first' ? 1
+              : frequency === 'monthly_mid'   ? 15
+              : frequency === 'monthly_end'   ? 28
+              : (monthlyPublishDay ?? start.getUTCDate())
     const cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
     // Guarded rather than while(true): a bad cadence must not spin forever on a request.
     for (let guard = 0; guard < count + 24 && out.length < count; guard++) {

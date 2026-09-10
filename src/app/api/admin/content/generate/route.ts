@@ -1020,7 +1020,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
     try {
-      rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt)
+      rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 'article', effectiveClientId)
     } catch (err) {
       console.error('[generate] AI call failed for topic', topicId, err)
       await db.from('content_topics')
@@ -1521,7 +1521,7 @@ export async function POST(request: NextRequest) {
 
   let rawText: string
   try {
-    rawText = await callAI(provider, model, apiKey, systemPrompt, prompt!)
+    rawText = await callAI(provider, model, apiKey, systemPrompt, prompt!, 'article', effectiveClientId ?? null)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

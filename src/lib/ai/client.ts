@@ -99,11 +99,25 @@ export async function completeText(p: CompleteTextParams): Promise<CompleteTextR
     outputTokens = Number(data.usage?.completion_tokens ?? 0)
   }
 
-  const costUsd = priceTokens(p.model, inputTokens, outputTokens)
+  // A completion that reports NO tokens is unpriceable, not free.
+  //
+  // priceTokens(model, 0, 0) returns 0 — a number — so a provider that omits or renames its
+  // usage block produced a row recorded as a PRICED $0.00 call. Those then vanish into the
+  // total instead of appearing in unpricedCalls, which is the one number the panel has for
+  // saying "this figure is incomplete". Absent usage is exactly the case that count exists
+  // for, so it is reported as null.
+  const costUsd = (inputTokens === 0 && outputTokens === 0)
+    ? null
+    : priceTokens(p.model, inputTokens, outputTokens)
 
-  // Fire-and-forget: the article is already written and the caller must not wait on, or fail
-  // because of, the ledger. recordAiUsage swallows its own errors.
-  void recordAiUsage({
+  // AWAITED, not fire-and-forget.
+  //
+  // A serverless instance can freeze the moment its handler resolves, dropping any promise
+  // still in flight — and the manual generate path has no await at all between this call and
+  // its response, so a full 16k-token article was billed by the provider and recorded
+  // nowhere. Awaiting cannot fail the caller: recordAiUsage swallows its own errors, and one
+  // insert is immaterial next to the multi-second model call that just finished.
+  await recordAiUsage({
     provider: p.provider,
     model:    p.model,
     operation: p.operation,
