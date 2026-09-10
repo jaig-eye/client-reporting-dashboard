@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowSquareOut } from '@phosphor-icons/react'
 import MonthlyReviewPostCard, { type MonthlyReviewPost } from './MonthlyReviewPostCard'
 
@@ -41,9 +41,22 @@ export default function MonthlyReviewClientSection({
   const effectivelyCollapsed = userCollapsed !== null ? userCollapsed : (isComplete && approvedCount > 0)
 
   const [scanState, setScanState] = useState<ScanState>('idle')
+  const autoScannedRef = useRef(false)
+
+  // Scans once per section, when it is open and has posts. A ref rather than scanState so a
+  // scan that returns 'idle' on failure cannot retry in a loop against the client's site.
+  useEffect(() => {
+    if (autoScannedRef.current || effectivelyCollapsed || posts.length === 0) return
+    autoScannedRef.current = true
+    void runScan()
+  }, [effectivelyCollapsed, posts.length])
 
   async function handleScanLinks(e: React.MouseEvent) {
     e.stopPropagation()
+    await runScan()
+  }
+
+  async function runScan() {
     setScanState('scanning')
     try {
       const results = await Promise.allSettled(

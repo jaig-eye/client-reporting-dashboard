@@ -734,7 +734,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       onClose()
       return
     }
-    await handleApprove()
+    await handleApprove(withEdits)
   }
 
   /** Both footers' Approve. Opens the confirmation; performApprove does the work. */
@@ -746,7 +746,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   // ── Approve ─────────────────────────────────────────────────────────────────
-  async function handleApprove() {
+  /**
+   * @param persistEdits false when the reviewer chose "Push without my changes".
+   *
+   * This PATCHed the whole drawer unconditionally, so the discard choice was honoured one
+   * level up and then undone here — the silent save-then-push the confirmation exists to
+   * prevent, surviving inside the very function the confirmation calls.
+   */
+  async function handleApprove(persistEdits = true) {
     setApproving(true)
     setError('')
     try {
@@ -763,6 +770,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       }
       if (!window.confirm(`Push "${title || 'this post'}" to ${activeSite.siteName}?`)) { setApproving(false); return }
 
+      // A guard, not a ternary: the drawer's unsaved edits are simply not sent when the
+      // reviewer chose to discard them.
+      if (persistEdits) {
       const saveRes = await fetch(`/api/admin/content/posts/${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -775,6 +785,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
+      }
 
       const route = isBigCommerce
         ? `/api/admin/content/posts/${postId}/publish-bigcommerce`

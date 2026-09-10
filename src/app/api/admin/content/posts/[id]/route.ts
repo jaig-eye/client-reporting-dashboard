@@ -57,13 +57,7 @@ export async function PATCH(
   if (body.slug            !== undefined) update.slug             = body.slug
   if (body.targetKeyword   !== undefined) update.target_keyword   = body.targetKeyword
   if (body.suggestedTags   !== undefined) update.suggested_tags   = body.suggestedTags
-  if (body.featuredImageUrl !== undefined) {
-    update.featured_image_url = body.featuredImageUrl
-    // A new image means the recorded attachment id no longer describes it — see
-    // lib/content/featuredMediaLink. Stripped below with bc_author_name if 214 is unapplied.
-    update.wp_featured_media_id            = null
-    update.wp_featured_media_connection_id = null
-  }
+  if (body.featuredImageUrl !== undefined) update.featured_image_url = body.featuredImageUrl
   if (body.wpStatus        !== undefined) update.wp_status        = body.wpStatus
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
   if (body.categoryIds     !== undefined) update.wp_category_ids  = body.categoryIds
@@ -126,12 +120,32 @@ export async function PATCH(
   // 500 and the reviewer would lose their edits over an optional byline. Drop it and retry.
   // One retry covering BOTH optional column sets: 212's byline and 214's media link. A
   // single unknown column fails the whole UPDATE, so a save must not be lost over either.
+  // Strip only the column set the error actually NAMES. Dropping both on any failure meant a
+  // database with 212 applied but not 214 silently discarded the byline over a problem that
+  // had nothing to do with it.
   if (error && /(bc_author_name|wp_featured_media)/i.test(error.message)) {
-    console.warn('[posts/[id]] optional columns missing (apply migrations 212/214) — saved without them:', error.message)
-    delete update.bc_author_name
-    delete update.wp_featured_media_id
-    delete update.wp_featured_media_connection_id
+    const missing = []
+    if (/bc_author_name/i.test(error.message)) {
+      delete update.bc_author_name
+      missing.push('212 (bc_author_name)')
+    }
+    if (/wp_featured_media/i.test(error.message)) {
+      delete update.wp_featured_media_id
+      delete update.wp_featured_media_connection_id
+      missing.push('214 (wp_featured_media_*)')
+    }
+    console.warn('[posts/[id]] saved without ' + missing.join(' and ') + ' — apply the migration(s)')
     ;({ error } = await db.from('content_posts').update(update).eq('id', id))
+
+    // One retry per column set: with BOTH unapplied the first error names only one of them,
+    // so the retry can fail on the other. Without this the save is lost for exactly the
+    // database state a fresh deploy has.
+    if (error && /(bc_author_name|wp_featured_media)/i.test(error.message)) {
+      delete update.bc_author_name
+      delete update.wp_featured_media_id
+      delete update.wp_featured_media_connection_id
+      ;({ error } = await db.from('content_posts').update(update).eq('id', id))
+    }
   }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

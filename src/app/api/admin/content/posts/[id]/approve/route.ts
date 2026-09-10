@@ -135,6 +135,11 @@ export async function POST(
         .from('client_connections')
         .select('id, connector:connectors!inner(auth, config)')
         .eq('id', String(p.connection_id))
+        // Same ownership check the WordPress branch above has. It was added there only, so
+        // the cross-client publish it closes stayed wide open on this path — connection_id is
+        // a plain column settable through PATCH, so a BigCommerce post could be pushed to
+        // another client's storefront.
+        .eq('client_id', String(p.client_id))
         .maybeSingle()
       bcConnData = data as BcConnRow | null
     }
