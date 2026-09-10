@@ -154,6 +154,12 @@ export async function POST(
       // reference cannot be recorded, so fall through and copy the file as before — a
       // duplicate attachment is worse than nothing, but losing the reviewer's choice is
       // worse still.
+      //
+      // The ORIGIN still has to survive that fallthrough. featured_image_source is what
+      // approve reads to decide whether this file is ours to name, and writing the stock
+      // provider over it — which is what the copy path below used to do unconditionally —
+      // erased the one fact that stops us re-titling a picture the client organised
+      // themselves. So the duplicate is unavoidable here; the rename is not.
       console.warn('[select-stock-image] could not link existing media (apply migration 214?):', linkErr.message)
     } else {
       return NextResponse.json({ url: candidate.url, reusedExisting: true })
@@ -240,7 +246,12 @@ export async function POST(
   // one no longer describes it. See lib/content/featuredMediaLink.
   const { error: updErr } = await updatePostReleasingMediaLink(db, id, {
     featured_image_url:     publicUrl,
-    featured_image_source:  `openverse:${candidate.provider ?? 'unknown'}`,
+    // 'wp_media' survives the copy. It is the client's photograph whether or not we managed
+    // to record its attachment id, and approve reads this to decide whether the file may be
+    // renamed on the way back.
+    featured_image_source:  candidate.source === 'wp_media'
+      ? 'wp_media'
+      : `openverse:${candidate.provider ?? 'unknown'}`,
     featured_image_prompt:  `Stock image — ${attribution}${candidate.sourceUrl ? ` — ${candidate.sourceUrl}` : ''}`,
     image_generation_error: null,
   })

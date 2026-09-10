@@ -267,13 +267,23 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       // agreeing and BOTH halves render — the duplicate rows in the calendar. Neither FK
       // cascades and both are populated unevenly (content_topics.post_id ~85%,
       // content_posts.topic_id ~29%), so all three attempts are needed.
+      //
+      // The guess runs twice, preferring a post with no platform ids. A regenerate that keeps
+      // the old article preserves it as its own row carrying the SAME keyword and date, so two
+      // rows answer the guess identically — and .find returning the preserved one would hand
+      // the topic's slot to a retired article and push the working post out to render as a
+      // second card on the same date. A row that is already on the site is a distinct article,
+      // not this topic's working copy, so it is only accepted when nothing else fits.
+      const sameSlot = (p: Post) =>
+        !p.topic_id
+        && p.target_keyword === t.target_keyword
+        && p.target_publish_date === t.target_publish_date
+        && !seenPostIds.has(p.id)
+
       const linkedPost = (t.post?.id ? posts.find(p => p.id === t.post!.id) : undefined)
         ?? posts.find(p => p.topic_id === t.id)
-        ?? posts.find(p =>
-             !p.topic_id
-             && p.target_keyword === t.target_keyword
-             && p.target_publish_date === t.target_publish_date
-             && !seenPostIds.has(p.id))
+        ?? posts.find(p => sameSlot(p) && !p.wp_post_id && !p.bc_post_id)
+        ?? posts.find(p => sameSlot(p))
       if (linkedPost) { seenPostIds.add(linkedPost.id); topicIdToPost.set(t.id, linkedPost) }
       allItems.push({ kind: 'topic', data: t })
     })

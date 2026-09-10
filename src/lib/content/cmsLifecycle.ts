@@ -310,6 +310,15 @@ export async function preserveLiveArticleRecord(db: Db, postId: string): Promise
       // It is on the site, and it stays that way — this row exists so we can still see it,
       // take it down, and avoid writing against it.
       status:     'published',
+      // Not the topic's working copy any more: the topic is being regenerated and its next
+      // article is a different row. Leaving the link would make the calendar pair the topic
+      // with the article it just retired.
+      //
+      // This does NOT on its own stop the two rows rendering as two cards — the snapshot
+      // carries the same keyword and date, which is precisely what the calendar's last-resort
+      // pairing matches on. ClientPipeline handles that by preferring a post with no platform
+      // ids for the topic's slot; see the comment there. Two cards is also the honest answer
+      // when there genuinely are two articles.
       topic_id:   null,
       archived_at: null,
     })

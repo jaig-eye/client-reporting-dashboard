@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Books, ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
-import { viewLiveUrl, isPublicPermalink } from '@/lib/content/postLinks'
+import { viewLiveUrl, isPublicPermalink, isOnSite as postIsOnSite } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
 import QualityFindings from '@/components/admin/QualityFindings'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
@@ -86,6 +86,9 @@ interface PostDetail {
   bcPostId:         number | null
   bcStoreHash:      string | null
   featuredImageUrl:          string | null
+  imageAltText:              string | null
+  lastPushedAt:              string | null
+  updatedAt:                 string | null
   imageCandidates?:          StockImageCandidate[]
   targetPublishDate:         string | null
   topicId:                   string | null
@@ -134,7 +137,7 @@ function seoCheck(field: string | null, keyword: string): boolean {
   // or bridges an abbreviation — one being a short prefix of the other (fl ↔ florida).
   const fieldTokens = f.split(/[^a-z0-9]+/).filter(Boolean)
   // Substantive words only. Counting "what", "does" and "for" as terms the field had to
-  // contain is what made a correct H1 fail its own keyword: three of the five words in
+  // contain is what made a correct H1 fail its own keyword: six of the nine words in
   // "what does a downpipe do on an EcoBoost engine" carry no meaning, and no honest headline
   // repeats them.
   let kwWords = k.split(/\s+/).filter(w => w.length >= 3 && !KEYWORD_STOP_WORDS.has(w))
@@ -146,8 +149,22 @@ function seoCheck(field: string | null, keyword: string): boolean {
     (w.length >= 4 && t.startsWith(w)) ||                            // repair → repairs
     (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5)   // fl → florida
   )
-  // Two thirds, matching keywordInSlug. A field carrying "downpipe" and "ecoboost" carries
-  // that keyword; demanding "engine" as well fails work that is correct.
+  // Two thirds is not enough on its own. With filler stripped, a long-tail keyword collapses
+  // to about three terms, and "any two of three" will pass a headline that dropped the only
+  // term the article is about: "EcoBoost Engine Oil Capacity Guide" scores 2/3 against
+  // "what does a downpipe do on an EcoBoost engine" while being about something else entirely.
+  //
+  // So some terms are not optional. The longest one, as the best available stand-in for the
+  // most specific one; and any term carrying a hyphen or a digit, because that shape is
+  // almost always a brand or model number — "can-am defender review" is not satisfied by a
+  // slug about a Yamaha Wolverine, however many of the other words line up.
+  const mandatory = kwWords.filter(w => /[-\d]/.test(w))
+  const longest   = kwWords.slice().sort((a, b) => b.length - a.length)[0]
+  if (longest) mandatory.push(longest)
+  if (!mandatory.every(hit)) return false
+
+  // The remaining relaxation is what long-tail phrasing needs: a field carrying "downpipe"
+  // and "ecoboost" carries that keyword, and demanding "engine" as well fails correct work.
   return kwWords.filter(hit).length / kwWords.length >= 0.66
 }
 
@@ -199,32 +216,24 @@ const KEYWORD_STOP_WORDS = new Set([
  * good work red and could not be satisfied without writing a worse slug.
  *
  * It now asks the question that matters: are the keyword's SUBSTANTIVE words in there.
- * Stopwords are ignored on both sides, and the slug may drop some of the remainder —
- * "downpipe" and "ecoboost" carry that keyword even without "engine". Two thirds, with at
- * least two real terms; a single-term keyword must simply appear.
+ *
+ * The rule is seoCheck's, deliberately — this had its own parallel implementation and drifted
+ * from it in a way that mattered: it tested `slugText.includes(term)` against the whole slug
+ * string, so "car insurance" passed "carpet-cleaning-insurance-claims" on two substring hits
+ * inside unrelated words. Delegating means the slug is tokenised on its hyphens like any other
+ * field, and the two checks can no longer disagree about what carrying a keyword means.
  */
 function keywordInSlug(slug: string, keyword: string): boolean {
   if (!slug || !keyword) return false
-  const slugText = slug.toLowerCase()
-
-  const terms = keyword.toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(t => t.length > 1 && !KEYWORD_STOP_WORDS.has(t))
-
-  if (terms.length === 0) {
-    // Nothing but filler — fall back to the literal test rather than passing for free.
-    return slugText.includes(keyword.toLowerCase().replace(/\s+/g, "-"))
-  }
-
-  const hits = terms.filter(t => slugText.includes(t)).length
-  if (terms.length === 1) return hits === 1
-  return hits >= 2 && hits / terms.length >= 0.66
+  // Hyphens are the slug's word separators; seoCheck splits on non-alphanumerics anyway, but
+  // this keeps the intent visible at the call site.
+  return seoCheck(slug.toLowerCase().replace(/-/g, ' '), keyword)
 }
 
 /**
  * Keyword density.
  *
- * Measured on the keyword's most distinctive term rather than the verbatim phrase.
+ * Measured on the keyword's longest substantive term rather than the verbatim phrase.
  *
  * The exact-phrase count reported 0.0% for essentially every long-tail keyword, because
  * nobody writes "what does a downpipe do on an EcoBoost engine" repeatedly in prose — and
@@ -232,8 +241,15 @@ function keywordInSlug(slug: string, keyword: string): boolean {
  * exist to prevent. So the check was red on good articles and would only go green on bad
  * ones, which is worse than not having it.
  *
- * The longest substantive term is the one the piece is actually about, and its frequency is
- * what density is trying to measure. The exact phrase still counts when it genuinely appears.
+ * The longest substantive term is a stand-in for the one the piece is about — not a perfect
+ * one ("what is the difference between a downpipe and a catback" picks "difference"), which is
+ * why this is a density reading and not a verdict.
+ *
+ * Both counts are taken and the HIGHER wins. Returning early on the exact phrase inverted the
+ * whole check: an article that mentioned the phrase once — normal, correct practice — reported
+ * 0.11% and went red, while deleting that one sentence made the same article report 1.09% and
+ * go green. The check was paying for keyword stuffing and penalising good writing, which is the
+ * failure it was rewritten to fix.
  */
 function computeKeywordDensity(html: string, keyword: string): number {
   if (!keyword || !html) return 0
@@ -245,17 +261,18 @@ function computeKeywordDensity(html: string, keyword: string): number {
   const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, m => "\\" + m)
   const kw  = keyword.toLowerCase().replace(/\s+/g, ' ').trim()
 
-  const exact = (text.match(new RegExp(esc(kw), 'g')) || []).length
-  if (exact > 0) return (exact / words) * 100
+  const exact    = (text.match(new RegExp(esc(kw), 'g')) || []).length
+  const exactPct = (exact / words) * 100
 
-  // Fall back to the term the article is actually about.
   const head = kw.split(' ')
     .filter(w => w.length >= 3 && !KEYWORD_STOP_WORDS.has(w))
     .sort((a, b) => b.length - a.length)[0]
-  if (!head) return 0
+  if (!head) return exactPct
 
-  const hits = (text.match(new RegExp("\\b" + esc(head), "g")) || []).length
-  return (hits / words) * 100
+  const hits    = (text.match(new RegExp("\\b" + esc(head), "g")) || []).length
+  const headPct = (hits / words) * 100
+
+  return Math.max(exactPct, headPct)
 }
 
 function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
@@ -697,7 +714,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const keywordInSubhd     = content ? keywordInSubheadings(content, targetKeyword) : false
   const densityPct         = computeKeywordDensity(content, targetKeyword)
   const densityOk          = densityPct >= 0.5 && densityPct <= 2.0
-  const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
+  // The FEATURED image counts, not just images inside the article body.
+  //
+  // This judged the body alone, and the featured image is not in the body — so on a post whose
+  // only picture is the generated featured one, the row was permanently red and no edit a
+  // reviewer could make would clear it. That is the check the alt-text work exists to satisfy,
+  // and it was the half that was never wired up.
+  const imgAltKw           = (targetKeyword && post?.imageAltText ? seoCheck(post.imageAltText, targetKeyword) : false)
+    || (content ? hasImageWithKeywordAlt(content, targetKeyword) : false)
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
   const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
   const isBlogPost         = (post?.contentType ?? 'blog') === 'blog'
@@ -1207,19 +1231,50 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     color: 'var(--text-muted)', marginBottom: '0.25rem',
   }
 
-  // "Is there an article on the client's site" is a question about PLATFORM IDS, not status.
+  // "Is there an article on the client's site" — a platform id OR a status that only exists
+  // once something was pushed. Both, because either one alone is wrong.
   //
-  // Reading status alone got it wrong in the one place it matters most. Regenerating a live
-  // post with "replace" deliberately KEEPS wp_post_id — that is what makes the next push
-  // overwrite in place — while setting status back to 'for_review'. So the drawer decided the
-  // post was not on site: the On Site banner vanished, the button reverted to "Approve", and
-  // the confirmation said "this pushes the article to the client's site" for an action that
-  // was about to overwrite a live article. The reviewer was told they were publishing
-  // something new at the exact moment they were replacing something already public.
-  const isOnSite = Boolean(post?.wpPostId || post?.bcPostId)
-    || post?.status === 'draft_saved'
-    || post?.status === 'published'
+  // Status alone got it wrong in the place it matters most: regenerating a live post with
+  // "replace" deliberately KEEPS wp_post_id — that is what makes the next push overwrite in
+  // place — while setting status back to 'for_review'. The drawer then decided the post was
+  // not on site, the On Site banner vanished, the button reverted to "Approve", and the
+  // confirmation promised to publish something new at the exact moment it was about to
+  // overwrite something already public.
+  //
+  // Shared with the pipeline and monthly-review cards rather than reimplemented here, which is
+  // how the two definitions drifted apart in the first place.
+  const isOnSite = post ? postIsOnSite(post) : false
   const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
+
+  /**
+   * Is the live article behind what this row holds?
+   *
+   * "Not dirty" was being used to mean "the site already has this", and it does not. A
+   * replace-regenerate rewrites the post server-side and keeps the platform ids; applying an
+   * image from the client's library is persisted server-side too. Both leave the editor clean
+   * while the live article is now out of date — and those are precisely the cases where the
+   * push button was greyed out with a tooltip insisting the live article already matched.
+   *
+   * So this reads the timestamps instead. It FAILS OPEN in every uncertain case — no push
+   * recorded, no updated_at, unparseable dates — because a redundant push is one round trip
+   * that overwrites an article with identical content, while a push that cannot be made leaves
+   * the wrong article on a client's site with nothing in the UI admitting it.
+   *
+   * The two-second tolerance absorbs the approve route stamping last_pushed_at and status in
+   * the same write, which bumps updated_at a hair later and would otherwise read as stale
+   * immediately after every successful push.
+   */
+  const liveIsStale = (() => {
+    if (!post?.lastPushedAt) return true
+    if (!post?.updatedAt)    return true
+    const pushed  = new Date(post.lastPushedAt).getTime()
+    const written = new Date(post.updatedAt).getTime()
+    if (!Number.isFinite(pushed) || !Number.isFinite(written)) return true
+    return written > pushed + 2000
+  })()
+
+  /** Nothing to send: it is on the site, unedited here, and the site has this version. */
+  const nothingToPush = isOnSite && !isDirty && !liveIsStale
 
   // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
   const liveUrl        = post ? viewLiveUrl(post) : null
@@ -1509,10 +1564,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 judged, came fourth in reading order.
 
                 So the image leads and the controls sit beneath it, which is also the order a
-                reviewer works in: look, then decide whether to change it. The URL field is an
-                escape hatch rather than a field — nobody types a Supabase storage URL, but
-                pasting one is occasionally the fastest fix — so it is behind a disclosure
-                instead of occupying the width of the panel. */}
+                reviewer works in: look, then decide whether to change it. The URL field went
+                entirely — pasting a storage URL into a review panel is not a standard worth
+                setting, and every real source (library, generate, upload) has a button.
+
+                The section is collapsed on open along with the others; only Content starts
+                expanded, because a reviewer's first question is about the words. */}
             <CollapsibleSection title="Images" open={openSections.has('images')} onToggle={() => toggleSection('images')}>
               {featuredImageUrl ? (
                 <>
@@ -1941,16 +1998,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 // Nothing to push when the article is already live and unchanged. Leaving it
                 // enabled invited a pointless round trip to the client's site, and leaving it
                 // labelled "Approve" asked for an approval that had already happened.
-                disabled={saving || (isOnSite && !isDirty)}
+                disabled={saving || nothingToPush}
                 title={isOnSite
                   ? (isDirty
                       ? 'Send your changes to the live article'
-                      : 'The live article already matches this — edit something to push an update')
+                      : liveIsStale
+                        ? 'This version has not been sent to the site yet — push it'
+                        : 'The live article already matches this — edit something to push an update')
                   : undefined}
                 className="btn btn-sm btn-primary"
                 style={{
                   background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
-                  opacity: isOnSite && !isDirty ? 0.55 : 1,
+                  opacity: nothingToPush ? 0.55 : 1,
                 }}
               >
                 {saving ? '…' : isOnSite ? 'Push update' : 'Approve →'}
@@ -1973,16 +2032,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <button
                 type="button"
                 onClick={handleMonthlyApprove}
-                disabled={approving || (isOnSite && !isDirty)}
+                disabled={approving || nothingToPush}
                 title={isOnSite
                   ? (isDirty
                       ? 'Send your changes to the live article'
-                      : 'The live article already matches this — edit something to push an update')
+                      : liveIsStale
+                        ? 'This version has not been sent to the site yet — push it'
+                        : 'The live article already matches this — edit something to push an update')
                   : undefined}
                 className="btn btn-primary"
                 style={{
                   fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5,
-                  opacity: isOnSite && !isDirty ? 0.55 : 1,
+                  opacity: nothingToPush ? 0.55 : 1,
                 }}
               >
                 <ArrowCircleRight size={15} weight="bold" />
@@ -2069,11 +2130,19 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
       {confirming === 'approve' && (
         <ConfirmActionDialog
-          title={isOnSite ? 'Push your changes to the live article' : 'Approve and push to the site'}
+          // "On site" covers a saved DRAFT as well as a published article, and a draft has
+          // neither visitors nor rankings — promising that "existing links and rankings stay
+          // with it" described something that does not exist yet. showLiveLink is the same
+          // signal the On Site banner uses to tell those two apart.
+          title={isOnSite
+            ? (showLiveLink ? 'Push your changes to the live article' : 'Push your changes to the saved draft')
+            : 'Approve and push to the site'}
           subtitle={title || post?.title || null}
           body={
             isOnSite
-              ? 'This overwrites the article already on the client’s site with what is in this drawer. The URL does not change, so existing links and rankings stay with it.'
+              ? (showLiveLink
+                  ? 'This overwrites the article already on the client’s site with what is in this drawer. The URL does not change, so existing links and rankings stay with it.'
+                  : 'This overwrites the draft already saved on the client’s site with what is in this drawer. Nothing is visible to visitors until someone publishes it there.')
               : wpStatus === 'future'
                 ? 'This pushes the article to the client’s site as a scheduled post. The site publishes it on its scheduled date; if that date has already passed it goes live immediately.'
                 : wpStatus === 'publish'

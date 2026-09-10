@@ -46,12 +46,38 @@ export async function POST(request: NextRequest) {
 
   const db = createAdminClient()
 
+  // ── The connection must belong to the post's client ─────────────────────────
+  //
+  // Both connection_id and post_id arrive in the request body, and nothing here related them
+  // to each other: any admin session could publish one client's article onto another client's
+  // WordPress, and stamp the resulting wp_post_id and published_url back onto our row so the
+  // dashboard reported it as that client's own. The same check exists on the approve and
+  // publish-bigcommerce routes; this one was missed because it is the older path.
+  let postClientId: string | null = null
+  if (post_id) {
+    const { data: postRow } = await db
+      .from('content_posts')
+      .select('client_id')
+      .eq('id', post_id)
+      .maybeSingle()
+
+    if (!postRow) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+    }
+    postClientId = String((postRow as { client_id: string }).client_id)
+  }
+
   // Get the connection with its connector auth/config
-  const { data: conn } = await db
+  let connQuery = db
     .from('client_connections')
     .select('*, connector:connectors!inner(auth, config)')
     .eq('id', connection_id)
-    .single()
+
+  if (postClientId) connQuery = connQuery.eq('client_id', postClientId)
+
+  // maybeSingle, not single: a connection the caller may not use should read as "not found",
+  // not throw a 406 out of PostgREST.
+  const { data: conn } = await connQuery.maybeSingle()
 
   if (!conn) {
     return NextResponse.json({ error: 'Connection not found' }, { status: 404 })

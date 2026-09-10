@@ -444,11 +444,14 @@ export async function uploadMediaToWordPress(
   const ext     = mime.split('/')[1]?.replace(/;.*$/, '') ?? 'jpg'
 
   // Slug-safe, length-capped, and never empty — a bad filename is permanent in the URL.
+  // The trailing-dash strip runs AFTER the length cap, because cutting at 60 characters can
+  // land mid-separator and reintroduce the dash the earlier strip removed.
   const base = (meta?.filenameBase || 'featured')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'featured'
+    .replace(/^-+/, '')
+    .slice(0, 60)
+    .replace(/-+$/, '') || 'featured'
 
   const formData = new FormData()
   formData.append('file', new Blob([buffer], { type: mime }), `${base}.${ext}`)

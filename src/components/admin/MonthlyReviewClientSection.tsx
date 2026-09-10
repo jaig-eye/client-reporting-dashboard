@@ -78,11 +78,6 @@ export default function MonthlyReviewClientSection({
     void runScan()
   }, [effectivelyCollapsed, posts.length])
 
-  async function handleScanLinks(e: React.MouseEvent) {
-    e.stopPropagation()
-    await runScan()
-  }
-
   async function runScan() {
     setScanState('scanning')
     try {

@@ -45,6 +45,37 @@ const INTENT_SCENE: Record<string, string> = {
 }
 
 // PostRow carries no search_intent, so infer the angle from the title/keyword.
+/**
+ * The same seven intents, said the way a person describes a photograph.
+ *
+ * INTENT_SCENE above is written for an image MODEL: it carries negatives ("no paperwork,
+ * screens or written matter of any kind"), parentheticals and staging notes. None of that
+ * belongs in something a screen reader announces aloud, so the alt text gets its own short
+ * phrase per intent rather than reusing the prompt.
+ */
+const INTENT_ALT: Record<string, string> = {
+  how_to:           'the task being carried out, tools in hand',
+  cost_pricing:     'the materials and equipment the job needs, laid out on a work surface',
+  comparison:       'two options placed side by side for comparison',
+  faq:              'the work environment',
+  problem_solution: 'the problem shown in context',
+  buyer_education:  'a close detail shot of the product being explained',
+  informational:    'the subject in its real-world setting',
+}
+
+/** "an auto repair setting", not "a auto repair setting" — this one gets read aloud. */
+function article(word: string): string {
+  return /^[aeiou]/i.test(word.trim()) ? 'an' : 'a'
+}
+
+/** The industry and place both the prompt and the alt text situate the picture in. */
+function describeSetting(settings: ClientSettings | null): { industry: string; location: string } {
+  return {
+    industry: settings?.services?.split(',')[0]?.trim() || 'local service',
+    location: settings?.geographic_focus?.trim() || '',
+  }
+}
+
 function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
   const s = t.toLowerCase()
   if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
@@ -64,8 +95,7 @@ export function buildImagePrompt(
 ): string {
   const title    = post.seo_title?.trim() || post.title?.trim() || ''
   const keyword  = post.target_keyword?.trim() || ''
-  const industry = settings?.services?.split(',')[0]?.trim() || 'local service'
-  const location = settings?.geographic_focus?.trim() || ''
+  const { industry, location } = describeSetting(settings)
 
   // Derive a concrete subject from what we actually know about the post.
   const subject = post.image_concept?.trim() || keyword || title || `${industry} work`
@@ -112,30 +142,42 @@ export function buildImagePrompt(
 /**
  * Alt text for a generated featured image.
  *
- * Describes the PICTURE, not the article — the two are different jobs and the post title is
- * already doing the second one. The target keyword leads where there is one, because alt text
- * is the only place the featured image can carry it and the SEO check looks for exactly that;
- * the image concept supplies what is actually in frame.
+ * Describes the PICTURE, not the article — those are different jobs and the post title is
+ * already doing the second one.
  *
- * Kept under ~125 characters: screen readers read it aloud in full, and a paragraph of alt
- * text is worse than none.
+ * The first version of this leaned on `image_concept` for the description and fell back to the
+ * bare target keyword. Nothing in this codebase ever writes image_concept, so the fallback was
+ * the only branch that ran and every generated image shipped with exact-match keyword-only alt
+ * text: the canonical form of image keyword stuffing, and no use whatsoever to somebody
+ * listening to it. It was a downgrade on the post title it replaced.
+ *
+ * So the description now comes from what the prompt actually ASKED FOR, which is the one thing
+ * we reliably know about the picture. The keyword follows the description instead of being it,
+ * and is dropped when the description already carries it. With nothing to describe, this
+ * returns empty and the approve route falls back to the post title — a sentence a person
+ * wrote, which beats a keyword every time.
+ *
+ * Kept under ~125 characters: screen readers read it aloud in full, and a paragraph of alt text
+ * is worse than none.
  */
 function buildAltText(
   post: { image_concept?: string | null; title?: string | null; seo_title?: string | null },
   keyword: string,
+  /** What the prompt put in frame — see INTENT_ALT. */
+  depiction?: string,
 ): string {
   const concept = post.image_concept?.trim() || ''
   const title   = (post.title || post.seo_title || '').trim()
 
-  const parts = keyword && concept ? [keyword, concept]
-    : keyword ? [keyword]
-    : concept ? [concept]
-    : title ? [title]
-    : []
+  const shown = concept || (depiction ?? '').trim()
+  if (!shown) return ''
 
-  if (parts.length === 0) return ''
-  // Sentence-shaped rather than a keyword list; "keyword — concept" reads as stuffing.
-  const text = parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0]
+  const lead    = shown.charAt(0).toUpperCase() + shown.slice(1)
+  const subject = keyword || title
+  const text = subject && !shown.toLowerCase().includes(subject.toLowerCase())
+    ? `${lead} — ${subject}`
+    : lead
+
   return text.length > 125 ? `${text.slice(0, 122).trimEnd()}…` : text
 }
 
@@ -173,6 +215,13 @@ export async function generatePostImage(
 
   const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
   const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt, directionId)
+
+  // The same derivation the prompt uses, in words fit to be read aloud. Built here rather than
+  // inside buildAltText so both descriptions of this picture come from one place and cannot
+  // drift apart — the alt text has to describe the image we actually asked for.
+  const { industry: altIndustry, location: altLocation } = describeSetting(clientSettings as ClientSettings | null)
+  const altIntent    = inferIntentFromTitle(post.seo_title?.trim() || post.title?.trim() || post.target_keyword?.trim() || '')
+  const altDepiction = `${INTENT_ALT[altIntent]}, in ${article(altIndustry)} ${altIndustry} setting${altLocation ? ` in ${altLocation}` : ''}`
 
   // ── Stock alternatives, searched with the SAME context as the AI prompt ─────
   // Runs alongside generation rather than instead of it, so the reviewer always has
@@ -334,7 +383,7 @@ export async function generatePostImage(
     // known — the prompt describes it, and nobody is going to come back and describe it
     // again by hand. It is what WordPress receives as alt_text on upload, which is what
     // screen readers announce and what image search indexes.
-    image_alt_text:         buildAltText(post, post.target_keyword?.trim() || ''),
+    image_alt_text:         buildAltText(post, post.target_keyword?.trim() || '', altDepiction),
   })
 
   return { ok: true, url: finalUrl, prompt, provider: usedProvider }

@@ -47,7 +47,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
     .eq('id', id)
     .maybeSingle()
 
@@ -449,11 +449,18 @@ export async function POST(
     // would attach whatever unrelated file happens to hold that number here.
     let featuredMediaId: number | undefined
 
-    const { data: linkRow } = await db
+    const { data: linkRow, error: linkErr } = await db
       .from('content_posts')
       .select('wp_featured_media_id, wp_featured_media_connection_id')
       .eq('id', id)
       .maybeSingle()
+
+    // Migration 214 carries those two columns. Until it is applied the select above fails and
+    // the id can never resolve, so the absence of a link proves nothing about where the
+    // picture came from — which is why the rename decision below reads the SOURCE instead.
+    if (linkErr) {
+      console.warn('[approve] featured media link unavailable (apply migration 214?):', linkErr.message)
+    }
     const link = linkRow as {
       wp_featured_media_id?: number | null
       wp_featured_media_connection_id?: string | null
@@ -466,10 +473,24 @@ export async function POST(
       featuredMediaId = Number(linkedMediaId)
     } else if (p.featured_image_url) {
       try {
-        // Reached ONLY when we are introducing the image. A pick from the client's own
-        // library resolves by attachment id in the branch above and never arrives here, so
-        // nothing we do renames or re-describes a file they already organised.
+        // We are introducing the file to the site. USUALLY that means we generated it, and
+        // naming it well is free SEO we should take.
         //
+        // But not always. When the attachment id resolves, the branch above references the
+        // client's existing file and this never runs. When it does NOT resolve — the id was
+        // recorded against another connection, or migration 214 is not applied yet — a pick
+        // from the client's own library falls through to here and gets copied back as a
+        // second attachment. That duplication is bad enough; stamping OUR slug and OUR
+        // seo_title onto a photograph they named themselves makes it permanent, because the
+        // filename lives in the attachment URL and cannot be changed afterwards.
+        //
+        // So the naming is conditional on the file being ours to name. Their picture goes back
+        // under whatever name it already had.
+        const fromClientLibrary = String(p.featured_image_source ?? '') === 'wp_media'
+        if (fromClientLibrary) {
+          console.warn(`[approve] post ${id}: client-library image could not be referenced by id — re-uploading without renaming`)
+        }
+
         // alt_text is the SEO-bearing field, so the stored alt wins over the post title: the
         // title describes the ARTICLE, while alt should describe the PICTURE, and image search
         // reads the latter. Falls back to the title when nothing better was written.
@@ -481,10 +502,13 @@ export async function POST(
           String(p.featured_image_url),
           {
             altText: altText || undefined,
-            title:   p.seo_title ? String(p.seo_title) : (p.title ? String(p.title) : undefined),
+            title:   fromClientLibrary
+              ? undefined
+              : (p.seo_title ? String(p.seo_title) : (p.title ? String(p.title) : undefined)),
             // The slug is already the keyword-bearing, human-readable form of this post, and
-            // the filename is permanent in the attachment URL — so it is worth spending.
-            filenameBase: p.slug ? String(p.slug) : undefined,
+            // the filename is permanent in the attachment URL — so it is worth spending, on a
+            // file we are the origin of.
+            filenameBase: fromClientLibrary ? undefined : (p.slug ? String(p.slug) : undefined),
           },
         )
       } catch (e) {

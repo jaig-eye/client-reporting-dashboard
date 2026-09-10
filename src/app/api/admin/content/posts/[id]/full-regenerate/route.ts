@@ -210,7 +210,16 @@ export async function POST(
       // what makes "keep the old one" mean the same thing on the site and in the dashboard.
       const preservedId = await preserveLiveArticleRecord(db, postId)
       if (!preservedId) {
-        console.error(`[full-regenerate] post ${postId}: the previous live article is now untracked`)
+        // Clearing the refs now would be the exact outcome this block exists to prevent: the
+        // old article stays on the client's site with nothing in our database pointing at it,
+        // and /dismiss — the only way to take it down — can no longer see it. Better to refuse
+        // the regeneration than to strand a live article, so the reviewer can retry rather
+        // than discover it months later.
+        console.error(`[full-regenerate] post ${postId}: could not preserve the live article — refusing to clear its refs`)
+        return NextResponse.json(
+          { error: 'Could not preserve the article already on the site. Nothing was changed — please try again.' },
+          { status: 500 },
+        )
       }
       await clearPlatformRefs(db, postId)
     }

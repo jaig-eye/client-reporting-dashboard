@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   // bc_author_name is appended only when migration 212 has landed. Naming a missing column
   // fails the WHOLE select with 42703, which turned the review drawer into "Failed to load
   // post" for an optional field.
-  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id, quality_report'
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, image_alt_text, target_publish_date, topic_id, quality_report, last_pushed_at, updated_at'
 
   // Deploy-order fallback. Migrations here are applied by hand, so code can be live before
   // its column exists — and naming a missing column does not degrade, it fails the WHOLE
@@ -108,6 +108,16 @@ export async function GET(request: NextRequest) {
     bcPostId:          p.bc_post_id         ? Number(p.bc_post_id)         : null,
     bcStoreHash:       p.bc_store_hash      ? String(p.bc_store_hash)      : null,
     featuredImageUrl:    p.featured_image_url  ? String(p.featured_image_url)  : null,
+    // The alt text pushed to WordPress with the featured image. Surfaced so the drawer's
+    // 'Image alt w/ keyword' row can see the featured image at all — it judged the article
+    // body only, and the featured image is not in the body, so the row could never go green
+    // on a post whose only picture is the generated one.
+    imageAltText:        p.image_alt_text      ? String(p.image_alt_text)      : null,
+    // The pair the drawer uses to tell whether the live article is behind this row. A
+    // server-side regenerate and a library image pick both change the post WITHOUT the
+    // editor becoming dirty, so 'not dirty' is not the same as 'the site already has this'.
+    lastPushedAt:        p.last_pushed_at      ? String(p.last_pushed_at)      : null,
+    updatedAt:           p.updated_at          ? String(p.updated_at)          : null,
     targetPublishDate:   p.target_publish_date ? String(p.target_publish_date) : null,
     postConnectionId:    p.connection_id ? String(p.connection_id) : null,
     topicId:             p.topic_id ? String(p.topic_id) : null,
