@@ -230,27 +230,25 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
    * articles ended up still published. Posts that were never pushed skip the
    * dialog entirely — there is nothing to decide.
    */
-  const handleReject = useCallback((postId: string, discard?: boolean) => {
+  /**
+   * Is this post on the client's site RIGHT NOW?
+   *
+   * initialPosts is a server prop and is never refreshed mid-session, so it alone reports a
+   * post approved and pushed minutes ago as unpublished. pushStates carries what it missed.
+   */
+  const isLivePost = useCallback((postId: string): boolean => {
+    if (pushStates[postId]?.state === 'live') return true
     const post = initialPosts.find(p => p.id === postId)
+    return Boolean(post && (post.wp_post_id || post.bc_post_id))
+  }, [initialPosts, pushStates])
 
-    // A post pushed EARLIER IN THIS SESSION is live too.
-    //
-    // initialPosts is a server prop and is never refreshed after an approve, so a post the
-    // reviewer approved a moment ago still carries wp_post_id: null here. Taking it down then
-    // skipped LivePostActionModal entirely and sent cms:'leave' — archiving our record while
-    // the article stayed up on the client's site. That is precisely the orphan state
-    // cmsLifecycle exists to prevent, produced by the two most ordinary clicks in the flow:
-    // approve, then change your mind.
-    //
-    // pushStates knows, because it tracked the push that initialPosts missed.
-    const pushedThisSession = pushStates[postId]?.state === 'live'
-
-    if (pushedThisSession || (post && (post.wp_post_id || post.bc_post_id))) {
+  const handleReject = useCallback((postId: string, discard?: boolean) => {
+    if (isLivePost(postId)) {
       setRemoveModal({ postId, discard: !!discard })
       return
     }
     void doReject(postId, discard, 'leave')
-  }, [initialPosts, doReject, pushStates])
+  }, [doReject, isLivePost])
 
   const handleRestore = useCallback(async (postId: string) => {
     setLoadingId(postId)
@@ -294,12 +292,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   // Direct-from-card full-regenerate — opens confirm modal first
   const handleCardRegenerate = useCallback((postId: string) => {
-    const post = initialPosts.find(p => p.id === postId)
-    // A live post needs the replace-or-publish-new decision; an unpublished one
-    // has nothing to decide, so it keeps the lighter notes-only prompt.
-    if (post && (post.wp_post_id || post.bc_post_id)) setLiveRegenModal({ postId })
+    // A live post needs the replace-or-publish-separately decision; an unpublished one has
+    // nothing to decide, so it keeps the lighter dialog.
+    if (isLivePost(postId)) setLiveRegenModal({ postId })
     else setRegenModal({ postId })
-  }, [initialPosts])
+  }, [isLivePost])
 
   // Editor-initiated actions (monthly review mode)
   const handleEditorApprove = useCallback(() => {
@@ -313,12 +310,15 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }, [editorPostId, handleReject])
 
   const handleEditorRegenerate = useCallback(() => {
-    if (editorPostId) {
-      const postId = editorPostId
-      setEditorPostId(null)
-      setRegenModal({ postId })
-    }
-  }, [editorPostId])
+    if (!editorPostId) return
+    const postId = editorPostId
+    setEditorPostId(null)
+    // Same branch the card takes. This went straight to RegenerateDialog regardless, so
+    // regenerating a LIVE article from the drawer never asked what should happen to the copy
+    // on the client's site — the one question that matters once something is published.
+    if (isLivePost(postId)) setLiveRegenModal({ postId })
+    else setRegenModal({ postId })
+  }, [editorPostId, isLivePost])
 
   const startRegenerate = useCallback(async (
     postId: string,

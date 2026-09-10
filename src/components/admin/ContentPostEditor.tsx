@@ -1418,17 +1418,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
 
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: '0.75rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                  Paste an image URL instead
-                </summary>
-                <input
-                  type="url" value={featuredImageUrl}
-                  onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }}
-                  style={{ ...inputStyle, marginTop: 6, fontSize: '0.75rem' }}
-                  placeholder="https://…"
-                />
-              </details>
             </CollapsibleSection>
 
             {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
