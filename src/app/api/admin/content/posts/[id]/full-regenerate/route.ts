@@ -14,7 +14,7 @@
 import { releaseKeywordForTopic } from '@/lib/content/siloQueue'
 import { completeText } from '@/lib/ai/client'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
-import { applyCmsAction, clearPlatformRefs, isCmsAction } from '@/lib/content/cmsLifecycle'
+import { applyCmsAction, clearPlatformRefs, preserveLiveArticleRecord, isCmsAction } from '@/lib/content/cmsLifecycle'
 import { runQualityGate } from '@/lib/content/qualityGate'
 import { isRegulatedVertical } from '@/lib/content/editorialStandards'
 import { NextRequest, NextResponse }      from 'next/server'
@@ -200,7 +200,18 @@ export async function POST(
       // A successful delete already cleared the refs; unpublish did not.
       if (removal === 'unpublish') await clearPlatformRefs(db, postId)
     } else {
-      // new_keep: the old article stays live and simply stops being ours.
+      // new_keep: the old article stays live — so it keeps a record, rather than simply
+      // ceasing to be ours.
+      //
+      // clearPlatformRefs alone left it on the client's site with nothing in our database
+      // pointing at it: invisible to /dismiss, which is the only way to take it down;
+      // invisible to the cannibalisation avoid-list, so we could commission a competing
+      // article on the same subject; and invisible to the calendar. Preserving it first is
+      // what makes "keep the old one" mean the same thing on the site and in the dashboard.
+      const preservedId = await preserveLiveArticleRecord(db, postId)
+      if (!preservedId) {
+        console.error(`[full-regenerate] post ${postId}: the previous live article is now untracked`)
+      }
       await clearPlatformRefs(db, postId)
     }
   }

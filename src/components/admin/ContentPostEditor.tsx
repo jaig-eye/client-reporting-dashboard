@@ -1112,7 +1112,18 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     color: 'var(--text-muted)', marginBottom: '0.25rem',
   }
 
-  const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
+  // "Is there an article on the client's site" is a question about PLATFORM IDS, not status.
+  //
+  // Reading status alone got it wrong in the one place it matters most. Regenerating a live
+  // post with "replace" deliberately KEEPS wp_post_id — that is what makes the next push
+  // overwrite in place — while setting status back to 'for_review'. So the drawer decided the
+  // post was not on site: the On Site banner vanished, the button reverted to "Approve", and
+  // the confirmation said "this pushes the article to the client's site" for an action that
+  // was about to overwrite a live article. The reviewer was told they were publishing
+  // something new at the exact moment they were replacing something already public.
+  const isOnSite = Boolean(post?.wpPostId || post?.bcPostId)
+    || post?.status === 'draft_saved'
+    || post?.status === 'published'
   const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
 
   // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
