@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { completeText }              from '@/lib/ai/client'
 
 export const maxDuration = 60
 
@@ -260,27 +261,17 @@ Return ONLY valid JSON array, no markdown:
     try {
       const provider = (agencyRes.data?.ai_provider as string | null) || 'anthropic'
       const model    = (agencyRes.data?.ai_model    as string | null) || (provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini')
-      let rawText = ''
-
-      if (provider === 'anthropic') {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }),
-        })
-        if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${await res.text()}`)
-        const d = await res.json() as { content?: { text: string }[] }
-        rawText = d.content?.[0]?.text ?? ''
-      } else {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 1500 }),
-        })
-        if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${await res.text()}`)
-        const d = await res.json() as { choices?: { message: { content: string } }[] }
-        rawText = d.choices?.[0]?.message?.content ?? ''
-      }
+      // Routed through completeText: token usage is recorded there, and this call site
+      // previously discarded the provider's usage block.
+      const { text: rawText } = await completeText({
+        provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+        model,
+        apiKey,
+        user:      prompt,
+        maxTokens: 1500,
+        operation: 'service_area',
+        clientId:  client_id,
+      })
 
       const match = rawText.match(/\[[\s\S]*\]/)
       if (match) serviceAreas = JSON.parse(match[0]) as ServiceArea[]

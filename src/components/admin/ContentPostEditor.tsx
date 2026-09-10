@@ -144,27 +144,58 @@ function seoCheck(field: string | null, keyword: string): boolean {
   // A keyword made entirely of filler still has to match on something.
   if (kwWords.length === 0) kwWords = k.split(/\s+/).filter(w => w.length >= 3)
   if (kwWords.length === 0) return false
-  const hit = (w: string) => fieldTokens.some(t =>
-    t === w ||
-    (w.length >= 4 && t.startsWith(w)) ||                            // repair → repairs
-    (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5)   // fl → florida
-  )
-  // Two thirds is not enough on its own. With filler stripped, a long-tail keyword collapses
-  // to about three terms, and "any two of three" will pass a headline that dropped the only
-  // term the article is about: "EcoBoost Engine Oil Capacity Guide" scores 2/3 against
-  // "what does a downpipe do on an EcoBoost engine" while being about something else entirely.
+
+  // Enough morphology to bridge the variation an editor writes without thinking.
   //
-  // So some terms are not optional. The longest one, as the best available stand-in for the
-  // most specific one; and any term carrying a hyphen or a digit, because that shape is
-  // almost always a brand or model number — "can-am defender review" is not satisfied by a
+  // "repair → repairs" was already handled by the prefix test, but "battery → batteries" was
+  // not, and the -ies plural is LONGER than its singular — so it was disproportionately likely
+  // to be picked as the mandatory term below and then be the one term that could not match.
+  // A keyword like "best atv batteries 2026" turned four checklist rows red on an article
+  // carrying every word of it.
+  const norm = (v: string): string => {
+    let x = v
+    if (x.length > 4 && x.endsWith('ies'))                        x = `${x.slice(0, -3)}y`
+    else if (x.length > 3 && x.endsWith('s') && !x.endsWith('ss')) x = x.slice(0, -1)
+    if (x.length > 5 && x.endsWith('ing'))                        x = x.slice(0, -3)
+    return x
+  }
+
+  const bridges = (w: string, t: string): boolean => {
+    const nw = norm(w), nt = norm(t)
+    return nt === nw
+      || (nw.length >= 4 && nt.startsWith(nw))                       // repair → repairs
+      || (nt.length >= 2 && nw.startsWith(nt) && nw.length - nt.length <= 5)  // fl → florida
+  }
+
+  // A hyphenated term is carried when all of its PARTS are.
+  //
+  // Field tokens are split on every non-alphanumeric, so none of them can contain a hyphen —
+  // while keyword terms are split on whitespace and keep theirs. Comparing the two directly
+  // made "pre-owned" unmatchable against a field literally reading "Pre-Owned", and via
+  // keywordInSlug (which hands the slug over with its hyphens turned to spaces) it made the
+  // slug check unsatisfiable for any hyphenated keyword: no spelling of the slug could clear
+  // it. Matching part-by-part keeps the compound a single unit without that dead end.
+  const hit = (w: string): boolean => {
+    const parts = w.split(/[^a-z0-9]+/).filter(Boolean)
+    if (parts.length > 1) return parts.every(part => fieldTokens.some(t => bridges(part, t)))
+    return fieldTokens.some(t => bridges(w, t))
+  }
+
+  // One class of term is not optional: anything carrying a hyphen or a digit. That shape is
+  // almost always a brand, a model or a year — "can-am defender review" is not satisfied by a
   // slug about a Yamaha Wolverine, however many of the other words line up.
+  //
+  // An earlier version also made the LONGEST term mandatory, on the theory that it stands in
+  // for the most specific one. It does not, reliably: for "e-bike battery range" the longest
+  // term is "battery", so a correct "E-Bike Range: What to Expect" went red for dropping a
+  // word it had no need of. Length is not distinctiveness, and this checklist sits next to the
+  // H1 it is judging — a reviewer can see what it cannot. Erring loose is the right side to
+  // err on here, and it is the specific complaint these checks were rewritten to answer.
   const mandatory = kwWords.filter(w => /[-\d]/.test(w))
-  const longest   = kwWords.slice().sort((a, b) => b.length - a.length)[0]
-  if (longest) mandatory.push(longest)
   if (!mandatory.every(hit)) return false
 
-  // The remaining relaxation is what long-tail phrasing needs: a field carrying "downpipe"
-  // and "ecoboost" carries that keyword, and demanding "engine" as well fails correct work.
+  // Two thirds. A field carrying "downpipe" and "ecoboost" carries that keyword, and demanding
+  // "engine" as well fails correct work.
   return kwWords.filter(hit).length / kwWords.length >= 0.66
 }
 
@@ -501,6 +532,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
   const [linkScan,        setLinkScan]        = useState<LinkScanResult | 'scanning' | null>(null)
 
+  /**
+   * Did something change the ROW since the last push, without going through the editor?
+   *
+   * post.updatedAt is a snapshot taken when the drawer opened and nothing refreshes it, so
+   * comparing it against last_pushed_at could only ever see changes that predated the drawer.
+   * Saving, applying an image and regenerating all write server-side and leave isDirty false —
+   * which is exactly the state the push button was being disabled in. This is set by those
+   * handlers and cleared by a successful push.
+   */
+  const [changedSincePush, setChangedSincePush] = useState(false)
+
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Responsive: below 880px the panes stack and the left preview collapses to the overlay
@@ -810,6 +852,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
       setIsDirty(false)
+      // Saved to the row, not to the site. The live article is now behind this.
+      setChangedSincePush(true)
       setSavedFlash(true)
       setTimeout(() => setSavedFlash(false), 2000)
       // Tell the list behind us, without closing.
@@ -1149,6 +1193,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const data = await res.json() as { url?: string; error?: string }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Could not apply that image')
       setFeaturedImageUrl(data.url ?? '')
+      // Persisted server-side and deliberately not dirty — but the live article still has the
+      // old picture, so the push button must stay reachable.
+      setChangedSincePush(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not apply that image')
       // RETHROW. The modal awaits this and closes on resolve, so swallowing the error
@@ -1265,6 +1312,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
    * immediately after every successful push.
    */
   const liveIsStale = (() => {
+    if (changedSincePush) return true
     if (!post?.lastPushedAt) return true
     if (!post?.updatedAt)    return true
     const pushed  = new Date(post.lastPushedAt).getTime()

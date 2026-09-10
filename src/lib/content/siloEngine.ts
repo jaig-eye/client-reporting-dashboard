@@ -23,8 +23,13 @@ import type {
   SchemaFinding,
   InternalLinkType,
 } from '@/lib/types'
+import { completeText } from '@/lib/ai/client'
 
-// ─── AI call (matches pattern in content/generate/route.ts) ──────────────────
+// ─── AI call ─────────────────────────────────────────────────────────────────
+//
+// Through completeText, which is where the tokens get counted. This used to be a hand-rolled
+// copy of the same two fetches, and it discarded the provider's usage block — so silo planning
+// was some of the most expensive work the app does and none of it reached the spend panel.
 
 async function callAI(
   provider: string,
@@ -33,27 +38,19 @@ async function callAI(
   systemPrompt: string,
   userPrompt: string,
   maxTokens = 8000,
+  clientId?: string | null,
 ): Promise<string> {
-  if (provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-    })
-    if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-    const data = await res.json()
-    const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-    return tb?.text || ''
-  } else {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-    })
-    if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content || ''
-  }
+  const { text } = await completeText({
+    provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+    model,
+    apiKey,
+    system: systemPrompt,
+    user:   userPrompt,
+    maxTokens,
+    operation: 'silo',
+    clientId,
+  })
+  return text
 }
 
 function parseJson<T>(raw: string): T | null {
@@ -177,7 +174,7 @@ Guidelines:
 - 1 hub page + 8–15 supporting/guide pages in planned_pages
 - Internal link plan: every supporting page links back to hub; hub links to all supporting pages; 2–4 supporting-to-supporting links where relevant`
 
-  const raw = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 6000)
+  const raw = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 6000, clientId)
   const plan = parseJson<RawSiloPlan>(raw)
   if (!plan) throw new Error('AI returned invalid JSON for silo plan')
 
@@ -364,7 +361,7 @@ Requirements:
 - EEAT recommendations: trust signals appropriate for this topic
 - Page structure: typical counts for bold/italic/image/list/table elements`
 
-  const raw = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 5000)
+  const raw = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 5000, clientId)
   const parsed = parseJson<RawBrief>(raw)
 
   const db = createAdminClient()

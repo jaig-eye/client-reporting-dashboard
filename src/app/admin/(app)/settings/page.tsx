@@ -9,6 +9,7 @@ import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayo
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
 import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
+import AiUsagePanel from '@/components/admin/AiUsagePanel'
 import { useTheme } from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
@@ -620,6 +621,9 @@ export default function AgencySettingsPage() {
         {/* ─── AI ────────────────────────────────────────────────── */}
         {visitedTabs.has('ai') && <div style={{ display: activeTab === 'ai' ? 'block' : 'none' }}>
           <div className="space-y-5">
+          {/* Spend first: the question people open this tab with is "what is this costing",
+              and the key that answers it is one card down. */}
+          <AiUsagePanel />
           <IntegrationCard
             icon="🤖"
             name="AI Configuration"

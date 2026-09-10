@@ -8,6 +8,7 @@ import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
+import { completeText } from '@/lib/ai/client'
 
 export const maxDuration = 60
 
@@ -215,31 +216,20 @@ Call-to-action key — always include this based on the business type and servic
 Website content:
 ${content}`
 
+  // Routed through completeText: token usage is recorded there, and this call site
+  // previously discarded the provider's usage block.
   let rawText = ''
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model,
-          max_tokens: 1024,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      const data = await res.json()
-      rawText    = (data.content as Array<{ type: string; text: string }>)?.find(b => b.type === 'text')?.text ?? ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      const data = await res.json()
-      rawText    = (data.choices as Array<{ message: { content: string } }>)?.[0]?.message?.content ?? ''
-    }
+    const { text } = await completeText({
+      provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+      model,
+      apiKey,
+      user:      prompt,
+      maxTokens: 1024,
+      operation: 'brand_dna',
+      clientId:  client_id,
+    })
+    rawText = text
   } catch (err) {
     console.error('[generate-brand-dna] AI API error:', err)
     return NextResponse.json({ error: 'AI request failed. Check agency AI settings and try again.' }, { status: 500 })

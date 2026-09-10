@@ -24,7 +24,8 @@ export interface CompleteTextParams {
   provider:   AiProvider
   model:      string
   apiKey:     string
-  system:     string
+  /** Optional: several call sites put everything in the user turn and have no system prompt. */
+  system?:    string
   user:       string
   maxTokens?: number
   /** What this call is FOR — drives the spend breakdown. */
@@ -67,7 +68,7 @@ export async function completeText(p: CompleteTextParams): Promise<CompleteTextR
       body: JSON.stringify({
         model:      p.model,
         max_tokens: maxTokens,
-        system:     p.system,
+        ...(p.system ? { system: p.system } : {}),
         messages:   [{ role: 'user', content: p.user }],
       }),
       signal: p.signal,
@@ -86,7 +87,19 @@ export async function completeText(p: CompleteTextParams): Promise<CompleteTextR
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.apiKey}` },
       body: JSON.stringify({
         model:    p.model,
-        messages: [{ role: 'system', content: p.system }, { role: 'user', content: p.user }],
+        messages: p.system
+          ? [{ role: 'system', content: p.system }, { role: 'user', content: p.user }]
+          : [{ role: 'user', content: p.user }],
+        // The cap belongs on BOTH providers.
+        //
+        // It was only ever sent to Anthropic, so every call site that moved onto this helper
+        // silently lost its ceiling whenever the agency runs on OpenAI — a 300-token Discord
+        // alert or a 1,500-token calendar plan would run to the model's own default instead.
+        // The reasoning-family models reject max_tokens and want max_completion_tokens, so the
+        // field is chosen by model rather than sent blind.
+        ...(/^(o\d|gpt-5)/i.test(p.model)
+          ? { max_completion_tokens: maxTokens }
+          : { max_tokens: maxTokens }),
       }),
       signal: p.signal,
     })
