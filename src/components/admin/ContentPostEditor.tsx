@@ -279,7 +279,7 @@ function suggestCategory(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-type SectionId = 'content' | 'seo' | 'publish'
+type SectionId = 'content' | 'images' | 'seo' | 'publish'
 
 interface TopicBreakdown {
   keyword_opportunity?:    string | null
@@ -1336,46 +1336,99 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 )
               })()}
 
-              {/* Featured image */}
-              <div className="mb-4">
-                <label style={labelStyle}>Featured Image</label>
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    {generatingImage ? 'Generating…' : '✦ Generate with AI'}
-                  </button>
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                    {imageUploadingMsg || 'Upload Image'}
-                  </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-                  {featuredImageUrl && (
-                    <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
-                      ✕ Remove
-                    </button>
-                  )}
-                </div>
-                <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
-                {featuredImageUrl && (
-                  <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
-                )}
+            </CollapsibleSection>
 
-                {/* One way in, instead of the column of controls this replaces.
-                    A search box, a "Their library" button, a Clear button, a result count,
-                    a horizontal strip, a "Search again" button and a separate empty-state
-                    button had all accreted here, under the very field they were meant to
-                    fill. Picking an image is a browsing job and browsing wants area, which
-                    a drawer column does not have — so it moved to a modal that does. */}
-                <button
-                  type="button"
-                  onClick={() => setLibraryOpen(true)}
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.8125rem', marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  title="Browse the client’s media library and free stock photos"
-                >
-                  <Books size={14} weight="bold" />
-                  Open image library
-                  {imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
-                </button>
-              </div>
+            {/* ── SECTION: Images ──────────────────────────────────────────────
+                Its own section, because it was the only part of the review that had no home:
+                it sat at the bottom of Content, under the article body, as a label and three
+                buttons and a raw storage URL — and the picture, the thing actually being
+                judged, came fourth in reading order.
+
+                So the image leads and the controls sit beneath it, which is also the order a
+                reviewer works in: look, then decide whether to change it. The URL field is an
+                escape hatch rather than a field — nobody types a Supabase storage URL, but
+                pasting one is occasionally the fastest fix — so it is behind a disclosure
+                instead of occupying the width of the panel. */}
+            <CollapsibleSection title="Images" open={openSections.has('images')} onToggle={() => toggleSection('images')}>
+              {featuredImageUrl ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={featuredImageUrl}
+                    alt="Featured image"
+                    // Client media is served from the client's own host, where hotlink rules
+                    // commonly reject a foreign Referer. Sending none is what those rules
+                    // allow, and it costs nothing here.
+                    referrerPolicy="no-referrer"
+                    style={{
+                      width: '100%', aspectRatio: '16 / 9', objectFit: 'cover',
+                      borderRadius: 8, border: '1px solid var(--border)', display: 'block',
+                      background: 'var(--bg-subtle)',
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+                    <button
+                      type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
+                      style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Books size={14} weight="bold" />
+                      Replace{imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
+                    </button>
+                    <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                    </button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {imageUploadingMsg || 'Upload'}
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }}
+                      className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* Empty state carries the primary action rather than a row of equals. */
+                <div style={{
+                  border: '1px dashed var(--border)', borderRadius: 8, padding: '28px 16px',
+                  textAlign: 'center', background: 'var(--bg-subtle)',
+                }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                    No featured image yet.
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
+                      style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Books size={14} weight="bold" />
+                      Open image library{imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
+                    </button>
+                    <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                    </button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {imageUploadingMsg || 'Upload'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
+
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ fontSize: '0.75rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  Paste an image URL instead
+                </summary>
+                <input
+                  type="url" value={featuredImageUrl}
+                  onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }}
+                  style={{ ...inputStyle, marginTop: 6, fontSize: '0.75rem' }}
+                  placeholder="https://…"
+                />
+              </details>
             </CollapsibleSection>
 
             {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
@@ -1756,11 +1809,22 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <button
                 type="button"
                 onClick={handleMonthlyApprove}
-                disabled={saving}
+                // Nothing to push when the article is already live and unchanged. Leaving it
+                // enabled invited a pointless round trip to the client's site, and leaving it
+                // labelled "Approve" asked for an approval that had already happened.
+                disabled={saving || (isOnSite && !isDirty)}
+                title={isOnSite
+                  ? (isDirty
+                      ? 'Send your changes to the live article'
+                      : 'The live article already matches this — edit something to push an update')
+                  : undefined}
                 className="btn btn-sm btn-primary"
-                style={{ background: saving ? undefined : '#16a34a', borderColor: '#16a34a' }}
+                style={{
+                  background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
+                  opacity: isOnSite && !isDirty ? 0.55 : 1,
+                }}
               >
-                {saving ? '…' : 'Approve →'}
+                {saving ? '…' : isOnSite ? 'Push update' : 'Approve →'}
               </button>
             </div>
           ) : (

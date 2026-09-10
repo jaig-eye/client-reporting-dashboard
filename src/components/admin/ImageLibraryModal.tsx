@@ -307,11 +307,14 @@ export default function ImageLibraryModal({
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={c.thumbnail} alt={c.title} loading="lazy"
-                      style={{ width: '100%', height: 108, objectFit: 'cover', display: 'block' }}
+                      referrerPolicy="no-referrer"
+                      style={{ width: '100%', height: 108, objectFit: 'cover', display: 'block', background: 'var(--bg-subtle)' }}
                     />
-                    <div style={{ padding: '5px 7px', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                      {applyingId === c.id ? 'Applying…' : (SOURCE_LABEL[c.source] ?? 'Stock')}
-                    </div>
+                    {(applyingId === c.id || tab === 'stock') && (
+                      <div style={{ padding: '5px 7px', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                        {applyingId === c.id ? 'Applying…' : (SOURCE_LABEL[c.source] ?? 'Stock')}
+                      </div>
+                    )}
                   </button>
                 )
               })}

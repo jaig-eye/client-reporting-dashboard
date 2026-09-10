@@ -153,23 +153,14 @@ export default function MonthlyReviewClientSection({
             <ArrowSquareOut size={13} weight="bold" aria-hidden />
           </span>
         </span>
-        {/* No idle "Scan links" affordance.
-            Opening a post for review scans its links automatically, and review is the only
-            way to approve one — so this offered work the reviewer cannot avoid doing anyway,
-            from a chip sitting beside the approval counter as though it were part of the
-            progress readout. The section scans itself once when it opens instead, so the
-            result is still reported without a control nobody needed to press. */}
-        {scanState === 'scanning' && (
-          <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>⟳ Scanning…</span>
-        )}
-        {scanState !== 'idle' && scanState !== 'scanning' && (
-          <span
-            onClick={handleScanLinks}
-            style={{ fontSize: 11, color: scanState.broken > 0 ? 'var(--red)' : 'var(--green)', background: 'var(--bg)', border: `1px solid ${scanState.broken > 0 ? 'var(--red)' : 'var(--green)'}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            🔗 {scanState.broken > 0 ? `${scanState.broken} broken` : 'Links OK'}
-          </span>
-        )}
+        {/* No link-health chip on the client header.
+            A per-CLIENT roll-up answers a question nobody asks — "are these four posts'
+            links collectively fine" — while sitting beside the approval counter as though it
+            were part of the progress readout, and a green "Links OK" there is the least
+            useful place to say it. The scan still runs, because its per-post counts feed the
+            broken-link badge on the individual cards, and the review drawer does its own
+            scan with the detail. That is where a link problem is actionable. */}
+
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {approvedCount}/{posts.length} approved
         </span>
