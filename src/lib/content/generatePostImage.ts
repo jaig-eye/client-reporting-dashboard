@@ -186,7 +186,7 @@ export async function generatePostImage(
       if (dalleRes.ok) {
         // Billed per image, not per token, so the ledger records units and prices through
         // priceImages. Only a successful generation is charged.
-        void recordAiUsage({
+        await recordAiUsage({
           provider: 'openai',
           model:    'gpt-image-1',
           operation: 'image',

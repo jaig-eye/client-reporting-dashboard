@@ -617,6 +617,11 @@ export async function GET(request: NextRequest) {
         .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
         .eq('status', 'approved')
+        // archived_at is how /dismiss records that a human took a post DOWN. Without this
+        // filter the retry queue treats an archived post as merely unpushed and puts the
+        // article back on the client's site — undoing the takedown, unattended, within two
+        // hours of someone performing it.
+        .is('archived_at', null)
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 

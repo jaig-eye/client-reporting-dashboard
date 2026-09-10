@@ -78,6 +78,29 @@ export async function PATCH(
 
   const db = createAdminClient()
 
+  // Release the client-media attachment link only when the featured image genuinely CHANGED.
+  //
+  // The drawer sends featuredImageUrl on every save, so releasing whenever the field was
+  // merely PRESENT cleared the link on any save — including the one Approve performs first.
+  // Migration 214 exists to let approve reference an attachment the client already owns;
+  // clearing it a moment before approve reads it meant that reuse never survived once, and
+  // the duplicate upload it prevents happened anyway.
+  //
+  // Compared against the STORED value, because the drawer cannot know whether the URL it
+  // holds is the one the row currently has.
+  if (body.featuredImageUrl !== undefined) {
+    const { data: current } = await db
+      .from('content_posts')
+      .select('featured_image_url')
+      .eq('id', id)
+      .maybeSingle()
+    const stored = (current as { featured_image_url?: string | null } | null)?.featured_image_url ?? null
+    if ((body.featuredImageUrl || null) !== stored) {
+      update.wp_featured_media_id            = null
+      update.wp_featured_media_connection_id = null
+    }
+  }
+
   // Same guard as /content/status: rejecting a post that is live on a CMS here
   // would hide it from the dashboard while leaving the article published, and
   // only /dismiss knows how to ask what should happen to the live copy.

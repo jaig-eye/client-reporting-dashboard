@@ -94,7 +94,19 @@ export default function ImageLibraryModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !applyingId) onClose()
+      if (e.key === 'Escape') { if (!applyingId) onClose(); return }
+      if (e.key !== 'Tab') return
+      // Tab was untrapped here while all three sibling dialogs trap it, so keyboard focus
+      // walked out of a modal covering the page and into the drawer behind it.
+      const root = dialogRef.current
+      if (!root) return
+      const f = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -148,8 +160,11 @@ export default function ImageLibraryModal({
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: '8px 14px', fontSize: '0.8125rem', fontWeight: active ? 700 : 500,
     color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+    // border AFTER borderBottom resets it, so the active underline never rendered. Only the
+    // three sides that need clearing are cleared.
+    background: 'none', cursor: 'pointer',
+    borderTop: 'none', borderLeft: 'none', borderRight: 'none',
     borderBottom: `2px solid ${active ? 'var(--blue)' : 'transparent'}`,
-    background: 'none', border: 'none', cursor: 'pointer',
   })
 
   return (
@@ -217,7 +232,7 @@ export default function ImageLibraryModal({
                     ref={searchRef}
                     value={query}
                     onChange={e => setQuery(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void search(1, false, query) } }}
+                    onKeyDown={e => { if (e.key === 'Enter' && !loading) { e.preventDefault(); void search(1, false, query) } }}
                     placeholder="Search their media library…"
                     className="input"
                     style={{ width: '100%', fontSize: '0.8125rem', padding: '0.35rem 0.5rem 0.35rem 1.75rem' }}
@@ -260,7 +275,10 @@ export default function ImageLibraryModal({
           {items.length === 0 ? (
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 40 }}>
               {tab === 'library'
-                ? (loading ? 'Loading…' : connectionId ? 'No images here yet. Try a different search.' : 'No site connection chosen.')
+                ? (loading ? 'Loading…'
+                  : mediaError ? mediaError
+                  : connectionId ? 'No images here yet. Try a different search.'
+                  : 'No site connection chosen.')
                 : 'No stock photos cleared the relevance bar for this topic. That is a normal result for specialised subjects — a confident wrong photo is worse than none.'}
             </p>
           ) : (

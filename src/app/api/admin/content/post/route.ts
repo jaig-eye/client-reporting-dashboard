@@ -167,7 +167,14 @@ export async function PATCH(request: NextRequest) {
   if (body.suggestedTags   !== undefined) updates.suggested_tags     = body.suggestedTags
   if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId
   if (body.wpAuthorId        !== undefined) updates.wp_author_id       = body.wpAuthorId
-  if (body.featuredImageUrl  !== undefined) updates.featured_image_url = body.featuredImageUrl
+  if (body.featuredImageUrl  !== undefined) {
+    updates.featured_image_url = body.featuredImageUrl
+    // Releases the client-media attachment link — see lib/content/featuredMediaLink. This is
+    // the fifth writer of this column and was the one that did not, so an image changed
+    // through THIS route kept publishing the previously-linked attachment.
+    updates.wp_featured_media_id            = null
+    updates.wp_featured_media_connection_id = null
+  }
   if (body.status !== undefined) {
     const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'draft_saved', 'published', 'rejected', 'generating', 'error']
     if (!ALLOWED_STATUSES.includes(body.status))
@@ -180,7 +187,19 @@ export async function PATCH(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { error } = await db.from('content_posts').update(updates).eq('id', id)
+  let { error } = await db.from('content_posts').update(updates).eq('id', id)
+
+  // Deploy-order fallback. The release columns arrive in migration 214, and naming a column
+  // PostgREST does not know fails the WHOLE update — so without this, adding the release
+  // would have turned every image save on this route into a 500 until someone ran the
+  // migration. The same trap migration 212 already sprang once on this branch.
+  if (error && /wp_featured_media/i.test(error.message)) {
+    console.warn('[content/post] wp_featured_media_* missing (apply migration 214) — saved without releasing the attachment link')
+    delete updates.wp_featured_media_id
+    delete updates.wp_featured_media_connection_id
+    ;({ error } = await db.from('content_posts').update(updates).eq('id', id))
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

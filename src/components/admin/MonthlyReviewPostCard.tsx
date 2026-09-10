@@ -233,11 +233,6 @@ export default function MonthlyReviewPostCard({
 
           {/* The human check that the spam-update reporting singled out as
               protective. Shown before approval, with the reason, not just a score. */}
-          {/* compact: a PASS renders nothing at all. A full-width green "Quality checks
-              passed" bar under every clean post is the most prominent element on the card
-              while carrying the least information — and it pushed the real controls down.
-              Findings still surface here; the detail lives in the review drawer. */}
-
         </div>
 
         {/* Status / actions */}

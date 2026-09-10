@@ -104,6 +104,10 @@ export async function POST(
       .from('client_connections')
       .select('id, external_id, connector:connectors!inner(type, auth, config)')
       .eq('id', String(p.connection_id))
+      // The connection must belong to THIS post's client. connection_id is just a column on
+      // the row, settable through PATCH, so without this a post could be pushed to another
+      // client's WordPress — publishing one client's article on another's site.
+      .eq('client_id', String(p.client_id))
       .eq('connector.type', 'wordpress')
       .maybeSingle()
     connData = data as ConnRow | null

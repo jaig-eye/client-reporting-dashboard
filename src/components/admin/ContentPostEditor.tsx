@@ -1022,8 +1022,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  /**
-
   // ── Image generation ────────────────────────────────────────────────────────
   /** Opens the steering dialog; the request itself is performGenerateImage. */
   function handleGenerateImage() { setImageDialogOpen(true) }
