@@ -47,7 +47,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text')
     .eq('id', id)
     .maybeSingle()
 
@@ -466,10 +466,26 @@ export async function POST(
       featuredMediaId = Number(linkedMediaId)
     } else if (p.featured_image_url) {
       try {
+        // Reached ONLY when we are introducing the image. A pick from the client's own
+        // library resolves by attachment id in the branch above and never arrives here, so
+        // nothing we do renames or re-describes a file they already organised.
+        //
+        // alt_text is the SEO-bearing field, so the stored alt wins over the post title: the
+        // title describes the ARTICLE, while alt should describe the PICTURE, and image search
+        // reads the latter. Falls back to the title when nothing better was written.
+        const altText = (p.image_alt_text ? String(p.image_alt_text) : '').trim()
+          || (p.title ? String(p.title) : '')
+
         featuredMediaId = await uploadMediaToWordPress(
           siteUrl, auth,
           String(p.featured_image_url),
-          p.title ? String(p.title) : undefined
+          {
+            altText: altText || undefined,
+            title:   p.seo_title ? String(p.seo_title) : (p.title ? String(p.title) : undefined),
+            // The slug is already the keyword-bearing, human-readable form of this post, and
+            // the filename is permanent in the attachment URL — so it is worth spending.
+            filenameBase: p.slug ? String(p.slug) : undefined,
+          },
         )
       } catch (e) {
         console.error('[approve] featured image upload failed:', e)

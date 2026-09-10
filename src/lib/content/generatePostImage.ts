@@ -109,6 +109,36 @@ export function buildImagePrompt(
   return `${realism} Scene${context}: ${scene}, showing "${subject}", in a ${setting}. ${avoid} ${constraints}`
 }
 
+/**
+ * Alt text for a generated featured image.
+ *
+ * Describes the PICTURE, not the article — the two are different jobs and the post title is
+ * already doing the second one. The target keyword leads where there is one, because alt text
+ * is the only place the featured image can carry it and the SEO check looks for exactly that;
+ * the image concept supplies what is actually in frame.
+ *
+ * Kept under ~125 characters: screen readers read it aloud in full, and a paragraph of alt
+ * text is worse than none.
+ */
+function buildAltText(
+  post: { image_concept?: string | null; title?: string | null; seo_title?: string | null },
+  keyword: string,
+): string {
+  const concept = post.image_concept?.trim() || ''
+  const title   = (post.title || post.seo_title || '').trim()
+
+  const parts = keyword && concept ? [keyword, concept]
+    : keyword ? [keyword]
+    : concept ? [concept]
+    : title ? [title]
+    : []
+
+  if (parts.length === 0) return ''
+  // Sentence-shaped rather than a keyword list; "keyword — concept" reads as stuffing.
+  const text = parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0]
+  return text.length > 125 ? `${text.slice(0, 122).trimEnd()}…` : text
+}
+
 export type ImageGenResult =
   | { ok: true;  url: string; prompt: string; provider: string }
   | { ok: false; error: string }
@@ -300,6 +330,11 @@ export async function generatePostImage(
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
     image_generation_error: null,
+    // Written at generation because this is the only point where what the picture SHOWS is
+    // known — the prompt describes it, and nobody is going to come back and describe it
+    // again by hand. It is what WordPress receives as alt_text on upload, which is what
+    // screen readers announce and what image search indexes.
+    image_alt_text:         buildAltText(post, post.target_keyword?.trim() || ''),
   })
 
   return { ok: true, url: finalUrl, prompt, provider: usedProvider }

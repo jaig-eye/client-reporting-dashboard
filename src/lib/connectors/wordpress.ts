@@ -411,11 +411,31 @@ export async function ensureTagIds(
  * Download an image from a URL and upload it to the WordPress Media Library.
  * Returns the WP media item ID, which can be used as `featured_media` in publishPost.
  */
+/**
+ * Upload an image into the client's media library and return its attachment id.
+ *
+ * ONLY for images we are introducing. An image the reviewer picked out of the client's own
+ * library is referenced by id and never comes through here — renaming or re-describing a file
+ * they already organised is not ours to do.
+ *
+ * Everything WordPress will use for SEO is set at upload, because it is the only moment we
+ * have: alt text is what screen readers and image search read, the title is what the media
+ * library shows, and the FILENAME becomes part of the attachment URL and cannot be changed
+ * afterwards without breaking it. "featured.jpg" for every image on a site was a wasted
+ * signal repeated on every post.
+ */
 export async function uploadMediaToWordPress(
   siteUrl: string,
   auth: { username: string; app_password: string },
   imageUrl: string,
-  altText?: string
+  meta?: {
+    /** What the image shows, in words, ideally carrying the target keyword. */
+    altText?: string
+    /** Shown in the media library and used by some themes as a caption. */
+    title?: string
+    /** Becomes part of the attachment URL. Slug-shaped; extension is added here. */
+    filenameBase?: string
+  },
 ): Promise<number> {
   const imgRes = await fetch(imageUrl, { headers: { 'User-Agent': BROWSER_BOT_UA } })
   if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`)
@@ -423,9 +443,17 @@ export async function uploadMediaToWordPress(
   const mime    = imgRes.headers.get('content-type') ?? 'image/jpeg'
   const ext     = mime.split('/')[1]?.replace(/;.*$/, '') ?? 'jpg'
 
+  // Slug-safe, length-capped, and never empty — a bad filename is permanent in the URL.
+  const base = (meta?.filenameBase || 'featured')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'featured'
+
   const formData = new FormData()
-  formData.append('file', new Blob([buffer], { type: mime }), `featured.${ext}`)
-  if (altText) formData.append('alt_text', altText)
+  formData.append('file', new Blob([buffer], { type: mime }), `${base}.${ext}`)
+  if (meta?.altText) formData.append('alt_text', meta.altText)
+  if (meta?.title)   formData.append('title', meta.title)
 
   const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
     method:  'POST',
