@@ -44,14 +44,52 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
+  // ── The connection must belong to the post's client ─────────────────────────
+  //
+  // Both connection_id and post_id arrive in the request body, and nothing here related them
+  // to each other: any admin session could publish one client's article onto another client's
+  // WordPress, and stamp the resulting wp_post_id and published_url back onto our row so the
+  // dashboard reported it as that client's own. The same check exists on the approve and
+  // publish-bigcommerce routes; this one was missed because it is the older path.
+  //
+  // post_id is REQUIRED for that check to mean anything. It was optional, and the ownership
+  // lookup was skipped entirely when it was absent — so the guard could be walked around by
+  // simply not sending the field. There is no legitimate caller that publishes an article
+  // belonging to no post, so the safe reading is also the correct one.
+  if (!post_id) {
+    return NextResponse.json(
+      { error: 'post_id is required so the target site can be checked against the post’s client' },
+      { status: 400 },
+    )
+  }
+
   const db = createAdminClient()
 
+  let postClientId: string | null = null
+  {
+    const { data: postRow } = await db
+      .from('content_posts')
+      .select('client_id')
+      .eq('id', post_id)
+      .maybeSingle()
+
+    if (!postRow) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+    }
+    postClientId = String((postRow as { client_id: string }).client_id)
+  }
+
   // Get the connection with its connector auth/config
-  const { data: conn } = await db
+  let connQuery = db
     .from('client_connections')
     .select('*, connector:connectors!inner(auth, config)')
     .eq('id', connection_id)
-    .single()
+
+  if (postClientId) connQuery = connQuery.eq('client_id', postClientId)
+
+  // maybeSingle, not single: a connection the caller may not use should read as "not found",
+  // not throw a 406 out of PostgREST.
+  const { data: conn } = await connQuery.maybeSingle()
 
   if (!conn) {
     return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
@@ -95,17 +133,18 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Update content_posts record if we have a post_id
-    if (post_id) {
-      await db.from('content_posts').update({
-        wp_post_id:    result.id,
-        wp_author_id:  author_id ?? null,
-        published_url: result.link,
-        wp_status:     wpStatus,
-        status:        wpStatus === 'publish' ? 'published' : 'draft_saved',
-        ...(wpStatus === 'publish' ? { published_at: new Date().toISOString() } : {}),
-      }).eq('id', post_id)
-    }
+    await db.from('content_posts').update({
+      wp_post_id:    result.id,
+      wp_author_id:  author_id ?? null,
+      published_url: result.link,
+      wp_status:     wpStatus,
+      status:        wpStatus === 'publish' ? 'published' : 'draft_saved',
+      // Stamped here as well as on the approve route. The drawer reads it against updated_at to
+      // decide whether the live article is behind the row — so a post pushed through THIS route
+      // and never through approve had no push recorded, and read as permanently stale.
+      last_pushed_at: new Date().toISOString(),
+      ...(wpStatus === 'publish' ? { published_at: new Date().toISOString() } : {}),
+    }).eq('id', post_id)
 
     logActivity(adminSession, 'published', 'post', {
       resourceId: post_id,

@@ -1,4 +1,6 @@
 import { buildEditorialStandards, isRegulatedVertical } from '@/lib/content/editorialStandards'
+import { completeText } from '@/lib/ai/client'
+import type { AiOperation } from '@/lib/ai/usage'
 import { runQualityGate } from '@/lib/content/qualityGate'
 import { attachPostToKeyword } from '@/lib/content/siloQueue'
 import { describeTenure } from '@/lib/content/eeat'
@@ -558,33 +560,32 @@ ${avoidTopics ? `\nCANNIBALIZATION PREVENTION — CRITICAL: the following titles
 
 // ─── AI call ──────────────────────────────────────────────────────────────────
 
+/**
+ * Thin shim over lib/ai/client so this route's two call sites are metered.
+ *
+ * Kept as a local function rather than replaced at both call sites because the signature is
+ * already positional here; the body is what mattered — it used to issue the request inline
+ * and throw the provider's usage block away.
+ */
 async function callAI(
   provider: string,
   model: string,
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  operation: AiOperation = 'article',
+  clientId?: string | null,
 ): Promise<string> {
-  if (provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 16000, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-    })
-    if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-    const data = await res.json()
-    const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-    return tb?.text || ''
-  } else {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-    })
-    if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content || ''
-  }
+  const { text } = await completeText({
+    provider: provider === 'openai' ? 'openai' : 'anthropic',
+    model, apiKey,
+    system: systemPrompt,
+    user:   userPrompt,
+    maxTokens: 16000,
+    operation,
+    clientId,
+  })
+  return text
 }
 
 // ─── Background topic generation (runs after response via waitUntil) ──────────
@@ -1019,7 +1020,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
     try {
-      rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt)
+      rawText = await callAI(provider, model, apiKey, systemPrompt, userPrompt, 'article', effectiveClientId)
     } catch (err) {
       console.error('[generate] AI call failed for topic', topicId, err)
       await db.from('content_topics')
@@ -1520,7 +1521,7 @@ export async function POST(request: NextRequest) {
 
   let rawText: string
   try {
-    rawText = await callAI(provider, model, apiKey, systemPrompt, prompt!)
+    rawText = await callAI(provider, model, apiKey, systemPrompt, prompt!, 'article', effectiveClientId ?? null)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

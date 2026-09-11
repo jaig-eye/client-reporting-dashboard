@@ -27,6 +27,8 @@ type PatchBody = {
   authorId?:        number | null
   categoryIds?:     number[] | null
   connectionId?:    string | null
+  /** Per-post BigCommerce byline (migration 212). Null falls back to content_settings. */
+  bcAuthorName?:    string | null
 }
 
 export async function PATCH(
@@ -60,11 +62,38 @@ export async function PATCH(
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
   if (body.categoryIds     !== undefined) update.wp_category_ids  = body.categoryIds
   if (body.connectionId    !== undefined) update.connection_id    = body.connectionId
+  // The editor has sent this on every save since the BigCommerce byline input shipped; there
+  // was no field here to receive it, so it was silently dropped and the article published
+  // under the client-level author instead.
+  if (body.bcAuthorName    !== undefined) update.bc_author_name   = body.bcAuthorName || null
 
   if (Object.keys(update).length === 0)
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
   const db = createAdminClient()
+
+  // Release the client-media attachment link only when the featured image genuinely CHANGED.
+  //
+  // The drawer sends featuredImageUrl on every save, so releasing whenever the field was
+  // merely PRESENT cleared the link on any save — including the one Approve performs first.
+  // Migration 214 exists to let approve reference an attachment the client already owns;
+  // clearing it a moment before approve reads it meant that reuse never survived once, and
+  // the duplicate upload it prevents happened anyway.
+  //
+  // Compared against the STORED value, because the drawer cannot know whether the URL it
+  // holds is the one the row currently has.
+  if (body.featuredImageUrl !== undefined) {
+    const { data: current } = await db
+      .from('content_posts')
+      .select('featured_image_url')
+      .eq('id', id)
+      .maybeSingle()
+    const stored = (current as { featured_image_url?: string | null } | null)?.featured_image_url ?? null
+    if ((body.featuredImageUrl || null) !== stored) {
+      update.wp_featured_media_id            = null
+      update.wp_featured_media_connection_id = null
+    }
+  }
 
   // Same guard as /content/status: rejecting a post that is live on a CMS here
   // would hide it from the dashboard while leaving the article published, and
@@ -84,7 +113,41 @@ export async function PATCH(
     }
   }
 
-  const { error } = await db.from('content_posts').update(update).eq('id', id)
+  let { error } = await db.from('content_posts').update(update).eq('id', id)
+
+  // Deploy-order fallback, same reasoning as the select in /api/admin/content/post: naming a
+  // column that migration 212 has not created yet fails the entire update, so a save would
+  // 500 and the reviewer would lose their edits over an optional byline. Drop it and retry.
+  // One retry covering BOTH optional column sets: 212's byline and 214's media link. A
+  // single unknown column fails the whole UPDATE, so a save must not be lost over either.
+  // Strip only the column set the error actually NAMES. Dropping both on any failure meant a
+  // database with 212 applied but not 214 silently discarded the byline over a problem that
+  // had nothing to do with it.
+  if (error && /(bc_author_name|wp_featured_media)/i.test(error.message)) {
+    const missing = []
+    if (/bc_author_name/i.test(error.message)) {
+      delete update.bc_author_name
+      missing.push('212 (bc_author_name)')
+    }
+    if (/wp_featured_media/i.test(error.message)) {
+      delete update.wp_featured_media_id
+      delete update.wp_featured_media_connection_id
+      missing.push('214 (wp_featured_media_*)')
+    }
+    console.warn('[posts/[id]] saved without ' + missing.join(' and ') + ' — apply the migration(s)')
+    ;({ error } = await db.from('content_posts').update(update).eq('id', id))
+
+    // One retry per column set: with BOTH unapplied the first error names only one of them,
+    // so the retry can fail on the other. Without this the save is lost for exactly the
+    // database state a fresh deploy has.
+    if (error && /(bc_author_name|wp_featured_media)/i.test(error.message)) {
+      delete update.bc_author_name
+      delete update.wp_featured_media_id
+      delete update.wp_featured_media_connection_id
+      ;({ error } = await db.from('content_posts').update(update).eq('id', id))
+    }
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // A content-bearing edit invalidates the quality report, and migration 206's

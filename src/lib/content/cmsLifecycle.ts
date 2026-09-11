@@ -264,3 +264,74 @@ export async function clearPlatformRefs(db: Db, postId: string): Promise<void> {
     .eq('id', postId)
   if (error) console.error('[cmsLifecycle] clearPlatformRefs failed:', error.message)
 }
+
+/**
+ * Keep a record of an article we are about to stop tracking.
+ *
+ * "Publish separately, keep the old one" used to call clearPlatformRefs alone. That nulls the
+ * platform ids on the post row so the regenerated content can be pushed as a NEW article —
+ * correct for the row, wrong for the article it just abandoned. The old post is still live on
+ * the client's site with nothing in our database pointing at it: invisible to /dismiss, which
+ * is the only way to take it down; invisible to the cannibalisation avoid-list, so we can
+ * commission a competing article on the same subject; and invisible to the calendar, so
+ * nobody can see it exists.
+ *
+ * That is the orphan state the rest of this module exists to prevent, and we were creating it
+ * deliberately. So the live article gets its own row first — a faithful copy carrying the
+ * platform ids, the published URL and its original date — and only then does the working row
+ * let go.
+ *
+ * The snapshot is deliberately NOT linked to a topic. The topic belongs to the regenerated
+ * content that keeps the slot; pointing both rows at it is what makes a calendar render one
+ * slot twice.
+ *
+ * Best-effort: a regeneration must not fail because the bookkeeping copy could not be
+ * written. It logs loudly, because the result is an untracked live article.
+ */
+export async function preserveLiveArticleRecord(db: Db, postId: string): Promise<string | null> {
+  const { data, error } = await db
+    .from('content_posts')
+    .select('client_id, connection_id, content_type, title, seo_title, content, slug, meta_description, target_keyword, focus_topic, word_count, featured_image_url, featured_image_source, image_alt_text, published_url, platform_edit_url, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, last_pushed_at, target_publish_date, silo_id')
+    .eq('id', postId)
+    .maybeSingle()
+
+  if (error || !data) {
+    console.error('[cmsLifecycle] could not read the live article to preserve it:', error?.message)
+    return null
+  }
+
+  const row = data as Record<string, unknown>
+  if (!row.wp_post_id && !row.bc_post_id) return null   // nothing live to preserve
+
+  const { data: inserted, error: insErr } = await db
+    .from('content_posts')
+    .insert({
+      ...row,
+      // It is on the site, and it stays that way — this row exists so we can still see it,
+      // take it down, and avoid writing against it.
+      status:     'published',
+      // Not the topic's working copy any more: the topic is being regenerated and its next
+      // article is a different row. Leaving the link would make the calendar pair the topic
+      // with the article it just retired.
+      //
+      // This does NOT on its own stop the two rows rendering as two cards — the snapshot
+      // carries the same keyword and date, which is precisely what the calendar's last-resort
+      // pairing matches on. ClientPipeline handles that by preferring a post with no platform
+      // ids for the topic's slot; see the comment there. Two cards is also the honest answer
+      // when there genuinely are two articles.
+      topic_id:   null,
+      archived_at: null,
+    })
+    .select('id')
+    .maybeSingle()
+
+  if (insErr) {
+    console.error(
+      '[cmsLifecycle] the previous article is now UNTRACKED on the client\'s site — its record could not be written:',
+      insErr.message,
+    )
+    return null
+  }
+
+  return (inserted as { id: string } | null)?.id ?? null
+}

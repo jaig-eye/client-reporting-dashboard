@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { completeText } from '@/lib/ai/client'
+import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { buildRewriteSystemPrompt } from '@/lib/content/rewritePrompt'
@@ -37,7 +39,30 @@ export async function POST(request: NextRequest) {
 
   const post = postRes.data as Record<string, string | null> | null
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+  // Remembered before the claim below overwrites it, so a failed rewrite restores the status
+  // the reviewer actually had rather than guessing at 'for_review'.
+  const previousStatus = post.status ?? 'for_review'
   if (!settingsRes.data?.ai_api_key) return NextResponse.json({ error: 'AI not configured' }, { status: 400 })
+
+  // Claim the row for the duration of the rewrite.
+  //
+  // Callers watch for status leaving 'generating' to know a regeneration finished. This route
+  // never set it, so the monthly-review poll saw a non-'generating' status on its very first
+  // tick -- about ten seconds in, mid-generation -- cleared the badge, announced success with
+  // the OLD title, refreshed to the OLD content and tore itself down, so the finished rewrite
+  // never reached the screen. The .neq() makes the claim atomic, so a double-submit is a 409
+  // rather than two models writing over each other.
+  const { data: claimed } = await db
+    .from('content_posts')
+    .update({ status: 'generating' })
+    .eq('id', post_id)
+    .neq('status', 'generating')
+    .select('id')
+    .maybeSingle()
+
+  if (!claimed) {
+    return NextResponse.json({ error: 'This post is already being regenerated.' }, { status: 409 })
+  }
 
   const settings = settingsRes.data
   const provider = settings.ai_provider || 'anthropic'
@@ -141,58 +166,23 @@ export async function POST(request: NextRequest) {
       .replace(/\bsrc(\s*=\s*)(["'])\s*javascript:/gi,  'src$1$2javascript_removed:')
   }
 
-  function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-    if (allowedUrls.size === 0) return html
-    const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase()
-    const allowed = new Set(Array.from(allowedUrls).map(norm))
-    const internalHosts = new Set<string>()
-    Array.from(allowed).forEach(u => {
-      try { internalHosts.add(new URL(u).hostname.toLowerCase()) } catch { /* relative */ }
-    })
-    return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
-      const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
-      if (!m) return match
-      const href = m[1].trim()
-      if (/^(mailto:|tel:|#)/.test(href)) return match
-      if (/^https?:/.test(href)) {
-        try {
-          const parsed = new URL(href)
-          const hostname = parsed.hostname.toLowerCase()
-          if (internalHosts.size === 0) return match
-          if (!internalHosts.has(hostname)) return match
-          if (allowed.has(norm(href))) return match
-          if (allowed.has(norm(parsed.pathname))) return match
-          console.warn('[regenerate] stripped hallucinated internal link:', href)
-          return text
-        } catch { return match }
-      }
-      if (allowed.has(norm(href))) return match
-      console.warn('[regenerate] stripped hallucinated internal link:', href)
-      return text
-    })
-  }
-
   try {
+    // Routed through lib/ai/client so the call is metered — the inline provider branch this
+    // replaces discarded the usage block the ledger needs.
     let rawText = ''
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: finalPrompt }] }),
+    try {
+      const completion = await completeText({
+        provider: provider === 'openai' ? 'openai' : 'anthropic',
+        model, apiKey,
+        system: systemPrompt,
+        user:   finalPrompt,
+        maxTokens: 4096,
+        operation: 'rewrite',
+        clientId: post.client_id ?? null,
       })
-      if (!res.ok) { const t = await res.text(); throw new Error(`AI error: ${t}`) }
-      const data = await res.json()
-      const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-      rawText = tb?.text || ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: finalPrompt }] }),
-      })
-      if (!res.ok) { const t = await res.text(); throw new Error(`AI error: ${t}`) }
-      const data = await res.json()
-      rawText = data.choices?.[0]?.message?.content || ''
+      rawText = completion.text
+    } catch (e) {
+      throw e
     }
 
     const parsed = parseResponse(rawText)
@@ -231,6 +221,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(parsed)
 
   } catch (err) {
+    // Release the claim, or the post sits at 'generating' forever: the UI keeps showing a
+    // spinner and the atomic claim above refuses every retry.
+    await db.from('content_posts')
+      .update({ status: previousStatus })
+      .eq('id', post_id)
+      .eq('status', 'generating')
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }

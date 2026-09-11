@@ -2,7 +2,7 @@
 
 import LivePostActionModal, { type LiveMode } from '@/components/admin/LivePostActionModal'
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
@@ -54,6 +54,18 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   })
   const [rejectedIds,    setRejectedIds]    = useState<Set<string>>(new Set())
   const [discardedIds,   setDiscardedIds]   = useState<Set<string>>(new Set())
+  /**
+   * Per-post progress of the push to the client's CMS, keyed by post id.
+   *
+   * Deliberately separate from approvedIds. Approval is the reviewer's decision and is
+   * optimistic; the push is a network call to someone else's site that can be slow or
+   * fail. Collapsing the two made a failed push indistinguishable from a successful one.
+   */
+  const [pushStates, setPushStates] = useState<Record<string, {
+    state: 'pushing' | 'live' | 'failed'
+    url?:   string | null
+    error?: string
+  }>>({})
   // Deleted posts are filtered out of the list entirely rather than badged, because
   // unlike reject/discard there is nothing left to act on or restore.
   const [deletedIds,     setDeletedIds]     = useState<Set<string>>(new Set())
@@ -69,19 +81,32 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   const [soundEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem('payment-sound-armed') === 'true')
   const { playApprove, playClientDone, playMonthDone } = useMonthlyReviewSounds(soundEnabled)
 
-  // Group posts by client
-  const clientIds   = Array.from(new Set(initialPosts.map(p => p.client_id)))
-  const postsByClient = new Map<string, MonthlyReviewPost[]>()
-  for (const p of initialPosts) {
-    const arr = postsByClient.get(p.client_id) ?? []
-    arr.push(p)
-    postsByClient.set(p.client_id, arr)
-  }
+  // Group posts by client.
+  //
+  // Memoised because both are in the dependency array of the approve/reject callbacks below.
+  // Rebuilt inline they were a fresh Map and a fresh array on every render, so every one of
+  // those useCallbacks was invalidated on every render -- which makes the memoisation a cost
+  // with no benefit, and re-subscribes anything downstream that keys off their identity.
+  const { clientIds, postsByClient } = useMemo(() => {
+    const ids = Array.from(new Set(initialPosts.map(p => p.client_id)))
+    const map = new Map<string, MonthlyReviewPost[]>()
+    for (const p of initialPosts) {
+      const arr = map.get(p.client_id) ?? []
+      arr.push(p)
+      map.set(p.client_id, arr)
+    }
+    return { clientIds: ids, postsByClient: map }
+  }, [initialPosts])
 
   const totalPosts    = initialPosts.length
   const approvedCount = approvedIds.size
   // A session is complete when every post has been approved, rejected, or discarded.
-  const actionedCount = approvedIds.size + rejectedIds.size + discardedIds.size
+  // Counted as a SET, not a sum. The three collections are not mutually exclusive — approving
+  // a post and then taking it back down leaves its id in approvedIds AND discardedIds — so
+  // adding the sizes counted it twice, actionedCount overshot, and the celebration screen
+  // replaced the list while posts were still unreviewed.
+  const actionedIds   = new Set<string>([...Array.from(approvedIds), ...Array.from(rejectedIds), ...Array.from(discardedIds)])
+  const actionedCount = actionedIds.size
   const isComplete    = totalPosts > 0 && actionedCount >= totalPosts
 
   // Count clients done
@@ -91,7 +116,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }).length
 
   const handleApprove = useCallback(async (postId: string) => {
-    // Optimistic — show approved immediately, push to site in background
+    // Optimistic — the reviewer's decision is theirs immediately; the push to the client's
+    // site is tracked separately in pushStates and reported on the card.
     const post = initialPosts.find(p => p.id === postId)
     const nextApproved = new Set(approvedIds)
     nextApproved.add(postId)
@@ -106,6 +132,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       playApprove()
     }
     setApprovedIds(prev => { const next = new Set(prev); next.add(postId); return next })
+    // The card flips to Approved instantly so the reviewer keeps moving, but the article is
+    // not on the client's site yet — that takes a second or two against a live CMS and can
+    // fail. Tracking the push separately is what lets the badge say "Pushing…" then "Live",
+    // so a reviewer working down the list watches each one land instead of trusting a click.
+    setPushStates(prev => ({ ...prev, [postId]: { state: 'pushing' } }))
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/approve`, {
@@ -113,16 +144,31 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ action: 'approve_and_push', source: 'monthly_review' }),
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Push failed (${res.status})`)
+      }
+      // The route returns the stored permalink, so the card can offer "View live" the moment
+      // it lands rather than after a reload.
+      const done = await res.json().catch(() => ({})) as { published_url?: string | null }
+      setPushStates(prev => ({
+        ...prev,
+        [postId]: { state: 'live', url: done.published_url ?? null },
+      }))
     } catch (e) {
       console.error('Approve failed:', e)
-      // Revert optimistic update on failure
-      setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
-      alert('Failed to approve post. Please try again.')
+      // Approved stays SET so the row keeps its place in the list and the failure is shown on
+      // the card itself, with the server's reason and a Retry. Reverting it silently — which
+      // is what used to happen, behind a blocking alert() — lost both the reason and the
+      // reviewer's position in a list they were working down.
+      setPushStates(prev => ({
+        ...prev,
+        [postId]: { state: 'failed', error: e instanceof Error ? e.message : 'Push failed' },
+      }))
     } finally {
       setLoadingId(null)
     }
-  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
+  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone, pushStates])
 
   const doReject = useCallback(async (postId: string, discard?: boolean, cms: CmsAction = 'leave') => {
     setLoadingId(postId)
@@ -132,8 +178,10 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       if (!res.ok) throw new Error(await res.text())
       const body = await res.json().catch(() => ({})) as { cms?: { message?: string } }
       if (discard) {
+        setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setDiscardedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       } else {
+        setApprovedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setRejectedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       }
       // Say what happened to the live article, since that is the surprising part.
@@ -158,14 +206,20 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     setLoadingId(postId)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        // Carry the server's own sentence. A published post returns 409 explaining that it
+        // has to be discarded first; the generic "please try again" below hid that and
+        // invited a retry the server rejects identically every time.
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Delete failed (${res.status})`)
+      }
       // Hide immediately, then resync from the server so counts and the month's
       // grouping reflect the deletion without a manual reload.
       setDeletedIds(prev => { const next = new Set(prev); next.add(postId); return next })
       router.refresh()
     } catch (e) {
       console.error('Delete failed:', e)
-      alert('Failed to delete post. Please try again.')
+      alert(e instanceof Error ? e.message : 'Failed to delete post. Please try again.')
     } finally {
       setLoadingId(null)
     }
@@ -176,14 +230,25 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
    * articles ended up still published. Posts that were never pushed skip the
    * dialog entirely — there is nothing to decide.
    */
-  const handleReject = useCallback((postId: string, discard?: boolean) => {
+  /**
+   * Is this post on the client's site RIGHT NOW?
+   *
+   * initialPosts is a server prop and is never refreshed mid-session, so it alone reports a
+   * post approved and pushed minutes ago as unpublished. pushStates carries what it missed.
+   */
+  const isLivePost = useCallback((postId: string): boolean => {
+    if (pushStates[postId]?.state === 'live') return true
     const post = initialPosts.find(p => p.id === postId)
-    if (post && (post.wp_post_id || post.bc_post_id)) {
+    return Boolean(post && (post.wp_post_id || post.bc_post_id))
+  }, [initialPosts, pushStates])
+
+  const handleReject = useCallback((postId: string, discard?: boolean) => {
+    if (isLivePost(postId)) {
       setRemoveModal({ postId, discard: !!discard })
       return
     }
     void doReject(postId, discard, 'leave')
-  }, [initialPosts, doReject])
+  }, [doReject, isLivePost])
 
   const handleRestore = useCallback(async (postId: string) => {
     setLoadingId(postId)
@@ -227,12 +292,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   // Direct-from-card full-regenerate — opens confirm modal first
   const handleCardRegenerate = useCallback((postId: string) => {
-    const post = initialPosts.find(p => p.id === postId)
-    // A live post needs the replace-or-publish-new decision; an unpublished one
-    // has nothing to decide, so it keeps the lighter notes-only prompt.
-    if (post && (post.wp_post_id || post.bc_post_id)) setLiveRegenModal({ postId })
+    // A live post needs the replace-or-publish-separately decision; an unpublished one has
+    // nothing to decide, so it keeps the lighter dialog.
+    if (isLivePost(postId)) setLiveRegenModal({ postId })
     else setRegenModal({ postId })
-  }, [initialPosts])
+  }, [isLivePost])
 
   // Editor-initiated actions (monthly review mode)
   const handleEditorApprove = useCallback(() => {
@@ -246,12 +310,15 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
   }, [editorPostId, handleReject])
 
   const handleEditorRegenerate = useCallback(() => {
-    if (editorPostId) {
-      const postId = editorPostId
-      setEditorPostId(null)
-      setRegenModal({ postId })
-    }
-  }, [editorPostId])
+    if (!editorPostId) return
+    const postId = editorPostId
+    setEditorPostId(null)
+    // Same branch the card takes. This went straight to RegenerateDialog regardless, so
+    // regenerating a LIVE article from the drawer never asked what should happen to the copy
+    // on the client's site — the one question that matters once something is published.
+    if (isLivePost(postId)) setLiveRegenModal({ postId })
+    else setRegenModal({ postId })
+  }, [editorPostId, isLivePost])
 
   const startRegenerate = useCallback(async (
     postId: string,
@@ -427,6 +494,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
                   onRestore={handleRestore}
                   onRegenerate={handleCardRegenerate}
                   onDelete={handleDelete}
+                  pushStates={pushStates}
+                  onRetryPush={handleApprove}
                 />
               )
             })
@@ -441,6 +510,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         sites={allSites}
         onClose={() => setEditorPostId(null)}
         onUpdate={() => setEditorPostId(null)}
+        onSaved={() => router.refresh()}
         onRegenerateStart={handleRegenerateStart}
         onRegenerateDone={handleRegenerateDone}
         onRegenerateError={handleRegenerateError}
@@ -487,8 +557,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           postTitle={p.title}
           busy={regeneratingIds.has(liveRegenModal.postId)}
           onCancel={() => setLiveRegenModal(null)}
-          onConfirm={({ cms, liveMode, notes }) =>
-            void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms })}
+          onConfirm={({ cms, liveMode, notes, scope, steerKeyword }) =>
+            void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms, scope, steerKeyword })}
         />
       )
     })()}

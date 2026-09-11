@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
 
 export type LiveMode = 'replace' | 'new_keep' | 'new_remove'
@@ -33,11 +33,24 @@ export default function LivePostActionModal({
   postTitle: string | null
   busy?:     boolean
   onCancel:  () => void
-  onConfirm: (choice: { cms: CmsAction; liveMode?: LiveMode; notes?: string }) => void
+  onConfirm: (choice: {
+    cms: CmsAction; liveMode?: LiveMode; notes?: string
+    /** 'rewrite' keeps the subject; 'new_topic' picks a different one. */
+    scope?: 'rewrite' | 'new_topic'
+    /** Steers topic SELECTION. Only meaningful for 'new_topic'. */
+    steerKeyword?: string
+  }) => void
 }) {
   const [cms, setCms]           = useState<CmsAction>('leave')
   const [liveMode, setLiveMode] = useState<LiveMode>('replace')
   const [notes, setNotes]       = useState('')
+  // Defaults to 'rewrite' -- the thing every label in this modal already promises. It used to
+  // send no scope at all, which meant full-regenerate: the live URL was overwritten by an
+  // article on a DIFFERENT subject, and the original topic and its silo keyword were retired
+  // before the reviewer saw anything. This is the highest-stakes regenerate path, so it now
+  // asks the same question RegenerateDialog does.
+  const [scope, setScope]       = useState<'rewrite' | 'new_topic'>('rewrite')
+  const [steerKeyword, setSteerKeyword] = useState('')
 
   const isWp   = platform === 'wordpress'
   const isBoth = platform === 'both'
@@ -65,15 +78,53 @@ export default function LivePostActionModal({
     ? cms === 'delete'
     : liveMode === 'new_remove' && cms === 'delete'
 
+  // ── Dialog semantics ────────────────────────────────────────────────────────
+  //
+  // This modal had none, while its three siblings on the same surface all did — and it is
+  // the one that matters most: it is the only human gate on taking down or replacing an
+  // article that is LIVE on a client's site. A keyboard or screen-reader user got an
+  // unannounced div they could tab out of, with no way to escape and no way to tell which of
+  // three irreversible CMS actions was selected.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const firstRef  = useRef<HTMLButtonElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null
+    firstRef.current?.focus()
+    return () => { openerRef.current?.focus?.() }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { if (!busy) onCancel(); return }
+      if (e.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const f = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onCancel, busy])
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={mode === 'remove' ? 'Remove a live article' : 'Regenerate a live article'}
       style={{
         position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       }}
       onClick={e => { if (e.target === e.currentTarget && !busy) onCancel() }}
     >
-      <div style={{
+      <div ref={dialogRef} style={{
         background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
         width: '100%', maxWidth: 520, maxHeight: '86vh', overflowY: 'auto',
         boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
@@ -92,6 +143,42 @@ export default function LivePostActionModal({
 
         <div style={{ padding: '14px 16px' }}>
           {mode === 'regenerate' && (
+            <div style={{ marginTop: 0 }}>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 6 }}>
+                What should change
+              </label>
+              <button
+                ref={firstRef}
+                type="button"
+                style={optionStyle(scope === 'rewrite')}
+                aria-pressed={scope === 'rewrite'}
+                onClick={() => { setScope('rewrite'); setLiveMode('replace') }}
+              >
+                <div style={titleStyle}>Rewrite this article</div>
+                <div style={descStyle}>
+                  Keeps the same subject and target keyword, and writes it again. The URL and the
+                  topic it ranks for stay as they are.
+                </div>
+              </button>
+              <button
+                type="button"
+                style={optionStyle(scope === 'new_topic')}
+                aria-pressed={scope === 'new_topic'}
+                onClick={() => setScope('new_topic')}
+              >
+                <div style={titleStyle}>Pick a new topic</div>
+                <div style={descStyle}>
+                  Retires this subject and its keyword, then writes about something else. With
+                  &ldquo;Replace the live article&rdquo; above, the published URL ends up covering a
+                  different subject.
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* Only a NEW topic raises the replace-or-publish-separately question. A rewrite
+              keeps the same post, so it necessarily replaces the live article on publish. */}
+          {mode === 'regenerate' && scope === 'new_topic' && (
             <>
               <button style={optionStyle(liveMode === 'replace')} onClick={() => setLiveMode('replace')}>
                 <div style={titleStyle}>Replace the live article</div>
@@ -156,6 +243,26 @@ export default function LivePostActionModal({
             </div>
           )}
 
+
+          {mode === 'regenerate' && scope === 'new_topic' && (
+            <div style={{ marginTop: 12 }}>
+              <label htmlFor="live-steer-kw" style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Steer the new topic (optional)
+              </label>
+              <input
+                id="live-steer-kw"
+                value={steerKeyword}
+                onChange={e => setSteerKeyword(e.target.value)}
+                placeholder="e.g. commercial roofing, emergency repair"
+                className="input"
+                style={{ width: '100%', fontSize: 13 }}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '4px 0 0' }}>
+                A short phrase. This reaches topic selection, unlike the direction below.
+              </p>
+            </div>
+          )}
+
           {mode === 'regenerate' && (
             <div style={{ marginTop: 12 }}>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
@@ -202,7 +309,14 @@ export default function LivePostActionModal({
           <button
             onClick={() => onConfirm({
               cms: mode === 'remove' ? cms : (liveMode === 'new_remove' ? cms : 'leave'),
-              ...(mode === 'regenerate' ? { liveMode, notes: notes.trim() || undefined } : {}),
+              ...(mode === 'regenerate'
+                ? {
+                    liveMode,
+                    notes: notes.trim() || undefined,
+                    scope,
+                    steerKeyword: scope === 'new_topic' ? steerKeyword.trim() || undefined : undefined,
+                  }
+                : {}),
             })}
             disabled={busy}
             className="btn btn-sm"

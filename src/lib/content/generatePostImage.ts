@@ -2,6 +2,10 @@
 // by the content generate route (auto-gen after post creation).
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
+import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirections'
+import { recordAiUsage } from '@/lib/ai/usage'
+import { priceImages } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 
 type PostRow = {
@@ -41,6 +45,37 @@ const INTENT_SCENE: Record<string, string> = {
 }
 
 // PostRow carries no search_intent, so infer the angle from the title/keyword.
+/**
+ * The same seven intents, said the way a person describes a photograph.
+ *
+ * INTENT_SCENE above is written for an image MODEL: it carries negatives ("no paperwork,
+ * screens or written matter of any kind"), parentheticals and staging notes. None of that
+ * belongs in something a screen reader announces aloud, so the alt text gets its own short
+ * phrase per intent rather than reusing the prompt.
+ */
+const INTENT_ALT: Record<string, string> = {
+  how_to:           'the task being carried out, tools in hand',
+  cost_pricing:     'the materials and equipment the job needs, laid out on a work surface',
+  comparison:       'two options placed side by side for comparison',
+  faq:              'the work environment',
+  problem_solution: 'the problem shown in context',
+  buyer_education:  'a close detail shot of the product being explained',
+  informational:    'the subject in its real-world setting',
+}
+
+/** "an auto repair setting", not "a auto repair setting" — this one gets read aloud. */
+function article(word: string): string {
+  return /^[aeiou]/i.test(word.trim()) ? 'an' : 'a'
+}
+
+/** The industry and place both the prompt and the alt text situate the picture in. */
+function describeSetting(settings: ClientSettings | null): { industry: string; location: string } {
+  return {
+    industry: settings?.services?.split(',')[0]?.trim() || 'local service',
+    location: settings?.geographic_focus?.trim() || '',
+  }
+}
+
 function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
   const s = t.toLowerCase()
   if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
@@ -56,11 +91,11 @@ export function buildImagePrompt(
   post: PostRow,
   settings: ClientSettings | null,
   promptOverride?: string,
+  directionId?: string | null,
 ): string {
   const title    = post.seo_title?.trim() || post.title?.trim() || ''
   const keyword  = post.target_keyword?.trim() || ''
-  const industry = settings?.services?.split(',')[0]?.trim() || 'local service'
-  const location = settings?.geographic_focus?.trim() || ''
+  const { industry, location } = describeSetting(settings)
 
   // Derive a concrete subject from what we actually know about the post.
   const subject = post.image_concept?.trim() || keyword || title || `${industry} work`
@@ -71,11 +106,11 @@ export function buildImagePrompt(
   // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
   // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
   // (the visual equivalent of the banned-phrase list for copy) counters it.
-  const realism =
-    'Photojournalistic realism — an authentic candid photograph taken on location, shot on a full-frame camera with a 35mm lens, natural available light with soft directional shadows, true-to-life muted color and neutral white balance, subtle natural film grain, real textures and worn, lived-in materials, unstaged with slight natural asymmetry.'
-  const avoid =
-    'Avoid any AI-generated or 3D-rendered look: no glossy plastic or waxy surfaces, no HDR glow or evenly-lit studio lighting, no oversaturated or teal-and-orange grading, no artificial symmetry or perfectly tidy staging, no floating holographic interfaces, glowing icons, lightbulbs, gears or other conceptual metaphors, no fake or exaggerated smiles, no stock-photo posing, no surreal or physically impossible details. ' +
-    'Repeating the two hard rules because they are the most common failure: no rendered text or lettering anywhere, and no visible people or faces.'
+  // Style comes from the chosen direction. It used to be hardcoded photojournalism, which
+  // silently contradicted any non-photographic request — see lib/content/imageDirections.ts.
+  const direction = getDirection(directionId)
+  const realism   = direction.style
+  const avoid = direction.avoid
   // Text and people are the two things these models get visibly wrong, so both are
   // stated first (models weight early instruction most heavily), in absolute terms,
   // and repeated in the negative list rather than mentioned once in passing.
@@ -89,18 +124,61 @@ export function buildImagePrompt(
   // impossible posture). The subject of these articles is the work and the equipment,
   // so people are almost never necessary; where the scene genuinely requires a human
   // (a task being demonstrated), hands and forearms alone carry it.
-  const constraints =
-    'ABSOLUTELY NO TEXT of any kind anywhere in the image — no words, letters, numbers, captions, labels, signage, packaging text, screens, logos, or watermarks; every surface that would normally carry writing must be blank. ' +
-    'NO PEOPLE unless the subject cannot be shown without one — prefer the equipment, materials and workspace by themselves. If a person is unavoidable, show only hands and forearms performing the task, tightly cropped; never a face, never a full body, never a group. ' +
-    'Rule-of-thirds composition with generous negative space in the upper third for a headline overlay. Shallow depth of field. 16:9 wide landscape.'
+  const constraints = UNIVERSAL_CONSTRAINTS
 
   if (promptOverride?.trim()) {
     // Client creative direction leads; post context anchors it to the topic, and the
     // realism + anti-AI direction still applies so their brief doesn't come back looking AI.
-    return `Candid documentary photograph${context}. ${promptOverride.trim()}. Depicts "${subject}" in a ${setting}. ${realism} ${avoid} ${constraints}`
+    // Order matters: the STYLE leads, then the reviewer's direction, then the subject. The
+    // old form opened with "Candid documentary photograph" regardless, so a request for a
+    // vector illustration contradicted itself in its first three words and the model resolved
+    // it by ignoring the direction.
+    return `${realism} Subject${context}: "${subject}" in a ${setting}. Creative direction: ${promptOverride.trim()}. ${avoid} ${constraints}`
   }
 
-  return `Candid documentary photograph${context}. Scene: ${scene}, showing "${subject}", on location in a ${setting}. ${realism} ${avoid} ${constraints}`
+  return `${realism} Scene${context}: ${scene}, showing "${subject}", in a ${setting}. ${avoid} ${constraints}`
+}
+
+/**
+ * Alt text for a generated featured image.
+ *
+ * Describes the PICTURE, not the article — those are different jobs and the post title is
+ * already doing the second one.
+ *
+ * The first version of this leaned on `image_concept` for the description and fell back to the
+ * bare target keyword. Nothing in this codebase ever writes image_concept, so the fallback was
+ * the only branch that ran and every generated image shipped with exact-match keyword-only alt
+ * text: the canonical form of image keyword stuffing, and no use whatsoever to somebody
+ * listening to it. It was a downgrade on the post title it replaced.
+ *
+ * So the description now comes from what the prompt actually ASKED FOR, which is the one thing
+ * we reliably know about the picture. The keyword follows the description instead of being it,
+ * and is dropped when the description already carries it. With nothing to describe, this
+ * returns empty and the approve route falls back to the post title — a sentence a person
+ * wrote, which beats a keyword every time.
+ *
+ * Kept under ~125 characters: screen readers read it aloud in full, and a paragraph of alt text
+ * is worse than none.
+ */
+function buildAltText(
+  post: { image_concept?: string | null; title?: string | null; seo_title?: string | null },
+  keyword: string,
+  /** What the prompt put in frame — see INTENT_ALT. */
+  depiction?: string,
+): string {
+  const concept = post.image_concept?.trim() || ''
+  const title   = (post.title || post.seo_title || '').trim()
+
+  const shown = concept || (depiction ?? '').trim()
+  if (!shown) return ''
+
+  const lead    = shown.charAt(0).toUpperCase() + shown.slice(1)
+  const subject = keyword || title
+  const text = subject && !shown.toLowerCase().includes(subject.toLowerCase())
+    ? `${lead} — ${subject}`
+    : lead
+
+  return text.length > 125 ? `${text.slice(0, 122).trimEnd()}…` : text
 }
 
 export type ImageGenResult =
@@ -116,6 +194,8 @@ export async function generatePostImage(
   postId: string,
   openaiKey: string | null | undefined,
   promptOverride?: string,
+  /** Art direction id from lib/content/imageDirections. Omitted = documentary. */
+  directionId?: string | null,
 ): Promise<ImageGenResult> {
   const postRes = await db.from('content_posts')
     .select('id, client_id, image_concept, seo_title, title, target_keyword')
@@ -134,7 +214,14 @@ export async function generatePostImage(
     .maybeSingle()
 
   const imagePrompt = promptOverride ?? (clientSettings as ClientSettings | null)?.content_image_prompt ?? undefined
-  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt)
+  const prompt = buildImagePrompt(post, clientSettings as ClientSettings | null, imagePrompt, directionId)
+
+  // The same derivation the prompt uses, in words fit to be read aloud. Built here rather than
+  // inside buildAltText so both descriptions of this picture come from one place and cannot
+  // drift apart — the alt text has to describe the image we actually asked for.
+  const { industry: altIndustry, location: altLocation } = describeSetting(clientSettings as ClientSettings | null)
+  const altIntent    = inferIntentFromTitle(post.seo_title?.trim() || post.title?.trim() || post.target_keyword?.trim() || '')
+  const altDepiction = `${INTENT_ALT[altIntent]}, in ${article(altIndustry)} ${altIndustry} setting${altLocation ? ` in ${altLocation}` : ''}`
 
   // ── Stock alternatives, searched with the SAME context as the AI prompt ─────
   // Runs alongside generation rather than instead of it, so the reviewer always has
@@ -176,6 +263,17 @@ export async function generatePostImage(
         }),
       })
       if (dalleRes.ok) {
+        // Billed per image, not per token, so the ledger records units and prices through
+        // priceImages. Only a successful generation is charged.
+        await recordAiUsage({
+          provider: 'openai',
+          model:    'gpt-image-1',
+          operation: 'image',
+          units:    1,
+          costUsd:  priceImages('gpt-image-1', 1),
+          clientId: String(post.client_id ?? '') || null,
+          postId,
+        })
         const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
         const item = data.data?.[0]
         if (item?.b64_json) {
@@ -276,12 +374,17 @@ export async function generatePostImage(
     }
   }
 
-  await db.from('content_posts').update({
+  await updatePostReleasingMediaLink(db, postId, {
     featured_image_url:     finalUrl,
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
     image_generation_error: null,
-  }).eq('id', postId)
+    // Written at generation because this is the only point where what the picture SHOWS is
+    // known — the prompt describes it, and nobody is going to come back and describe it
+    // again by hand. It is what WordPress receives as alt_text on upload, which is what
+    // screen readers announce and what image search indexes.
+    image_alt_text:         buildAltText(post, post.target_keyword?.trim() || '', altDepiction),
+  })
 
   return { ok: true, url: finalUrl, prompt, provider: usedProvider }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowSquareOut } from '@phosphor-icons/react'
 import MonthlyReviewPostCard, { type MonthlyReviewPost } from './MonthlyReviewPostCard'
 
@@ -20,12 +20,43 @@ interface Props {
   onRegenerate:    (id: string) => void
   /** Permanently delete the post and its topic, freeing the subject for regeneration. */
   onDelete?:       (id: string) => void
+  /** Push progress per post id — see MonthlyReviewSession. Passed straight through. */
+  pushStates?:     Record<string, { state: 'pushing' | 'live' | 'failed'; url?: string | null; error?: string }>
+  onRetryPush?:    (id: string) => void
 }
 
 type ScanState = 'idle' | 'scanning' | { ok: number; total: number; broken: number; perPost: Record<string, number> }
 
+/**
+ * One queue for the whole page, not one per section.
+ *
+ * The link scan runs automatically now, and every client section renders expanded, so a page
+ * with two dozen clients fired a request per post across every section at once — around
+ * ninety simultaneous requests spread over two dozen different client web servers, none of
+ * which agreed to that. Capping per section would not have helped: twenty sections each
+ * politely limiting themselves is still twenty times the traffic.
+ *
+ * Four at a time is enough to finish a page quickly and low enough that no single client site
+ * sees a burst.
+ */
+const SCAN_CONCURRENCY = 4
+let scanActive = 0
+const scanQueue: (() => void)[] = []
+
+function acquireScanSlot(): Promise<void> {
+  if (scanActive < SCAN_CONCURRENCY) { scanActive++; return Promise.resolve() }
+  return new Promise<void>(resolve => scanQueue.push(() => { scanActive++; resolve() }))
+}
+
+function releaseScanSlot(): void {
+  scanActive--
+  const next = scanQueue.shift()
+  if (next) next()
+}
+
 export default function MonthlyReviewClientSection({
   clientId, clientName, posts, approvedIds, rejectedIds, discardedIds, regeneratingIds, loadingId, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
+  pushStates, onRetryPush,
 }: Props) {
   const approvedCount = posts.filter(p => approvedIds.has(p.id)).length
   const isComplete    = posts.length > 0 && posts.every(p => approvedIds.has(p.id) || rejectedIds.has(p.id) || discardedIds.has(p.id))
@@ -37,20 +68,37 @@ export default function MonthlyReviewClientSection({
   const effectivelyCollapsed = userCollapsed !== null ? userCollapsed : (isComplete && approvedCount > 0)
 
   const [scanState, setScanState] = useState<ScanState>('idle')
+  const autoScannedRef = useRef(false)
 
-  async function handleScanLinks(e: React.MouseEvent) {
-    e.stopPropagation()
+  // Scans once per section, when it is open and has posts. A ref rather than scanState so a
+  // scan that returns 'idle' on failure cannot retry in a loop against the client's site.
+  useEffect(() => {
+    if (autoScannedRef.current || effectivelyCollapsed || posts.length === 0) return
+    autoScannedRef.current = true
+    void runScan()
+  }, [effectivelyCollapsed, posts.length])
+
+  async function runScan() {
     setScanState('scanning')
     try {
       const results = await Promise.allSettled(
-        posts.map(p => fetch(`/api/admin/content/posts/${p.id}/scan-links`, { method: 'POST' })
-          .then(r => r.ok ? r.json() as Promise<{ links: { ok: boolean }[] }> : Promise.reject())
-        )
+        posts.map(async p => {
+          await acquireScanSlot()
+          try {
+            const r = await fetch(`/api/admin/content/posts/${p.id}/scan-links`, { method: 'POST' })
+            if (!r.ok) throw new Error(`scan failed (${r.status})`)
+            return await r.json() as { links: { ok: boolean }[] }
+          } finally {
+            releaseScanSlot()
+          }
+        })
       )
       let ok = 0, total = 0, broken = 0
+      let scanned = 0
       const perPost: Record<string, number> = {}
       results.forEach((r, i) => {
         if (r.status === 'fulfilled') {
+          scanned++
           const links = r.value.links ?? []
           const postBroken = links.filter((l: { ok: boolean }) => !l.ok).length
           total  += links.length
@@ -59,6 +107,8 @@ export default function MonthlyReviewClientSection({
           if (postBroken > 0) perPost[posts[i].id] = postBroken
         }
       })
+      // Nothing came back. Report nothing rather than "OK".
+      if (scanned === 0) { setScanState('idle'); return }
       setScanState({ ok, total, broken, perPost })
     } catch {
       setScanState('idle')
@@ -98,26 +148,14 @@ export default function MonthlyReviewClientSection({
             <ArrowSquareOut size={13} weight="bold" aria-hidden />
           </span>
         </span>
-        {/* Link health chip */}
-        {scanState === 'idle' && (
-          <span
-            onClick={handleScanLinks}
-            style={{ fontSize: 11, color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            🔗 Scan links
-          </span>
-        )}
-        {scanState === 'scanning' && (
-          <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>⟳ Scanning…</span>
-        )}
-        {scanState !== 'idle' && scanState !== 'scanning' && (
-          <span
-            onClick={handleScanLinks}
-            style={{ fontSize: 11, color: scanState.broken > 0 ? 'var(--red)' : 'var(--green)', background: 'var(--bg)', border: `1px solid ${scanState.broken > 0 ? 'var(--red)' : 'var(--green)'}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            🔗 {scanState.broken > 0 ? `${scanState.broken} broken` : 'Links OK'}
-          </span>
-        )}
+        {/* No link-health chip on the client header.
+            A per-CLIENT roll-up answers a question nobody asks — "are these four posts'
+            links collectively fine" — while sitting beside the approval counter as though it
+            were part of the progress readout, and a green "Links OK" there is the least
+            useful place to say it. The scan still runs, because its per-post counts feed the
+            broken-link badge on the individual cards, and the review drawer does its own
+            scan with the detail. That is where a link problem is actionable. */}
+
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {approvedCount}/{posts.length} approved
         </span>
@@ -146,6 +184,10 @@ export default function MonthlyReviewClientSection({
               onRestore={onRestore}
               onRegenerate={onRegenerate}
               onDelete={onDelete}
+              pushState={pushStates?.[post.id]?.state}
+              pushedUrl={pushStates?.[post.id]?.url ?? null}
+              pushError={pushStates?.[post.id]?.error ?? null}
+              onRetryPush={onRetryPush}
             />
           ))}
         </div>

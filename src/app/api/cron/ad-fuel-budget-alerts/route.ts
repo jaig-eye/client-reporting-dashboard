@@ -18,6 +18,7 @@
 // if no AI key is set or the API call fails.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { completeText } from '@/lib/ai/client'
 import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 
@@ -110,25 +111,20 @@ Recommended daily rate to last until rebill: ${fmt$(d.recommendedDaily)}/day`
   const model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gpt-4o-mini'
 
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body:    JSON.stringify({ model, max_tokens: 300, system: sys, messages: [{ role: 'user', content: usr }] }),
-      })
-      if (!res.ok) throw new Error(`AI ${res.status}`)
-      const data = await res.json() as { content?: { type: string; text: string }[] }
-      return data.content?.find(b => b.type === 'text')?.text ?? ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body:    JSON.stringify({ model, max_tokens: 300, messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }] }),
-      })
-      if (!res.ok) throw new Error(`AI ${res.status}`)
-      const data = await res.json() as { choices?: { message: { content: string } }[] }
-      return data.choices?.[0]?.message?.content ?? ''
-    }
+    // Through completeText so the tokens land in the ai_usage ledger — this ran on a cron
+    // against every alerting client and none of it reached the spend panel. The 300-token cap
+    // carries on both providers now; it did not, which is what kept this call site on its own
+    // hand-rolled fetches.
+    const { text } = await completeText({
+      provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+      model,
+      apiKey,
+      system: sys,
+      user:   usr,
+      maxTokens: 300,
+      operation: 'alert',
+    })
+    return text
   } catch {
     return ''
   }

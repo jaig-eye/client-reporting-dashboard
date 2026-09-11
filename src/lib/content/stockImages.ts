@@ -4,16 +4,19 @@
 // An alternative to AI generation, not a replacement: the reviewer picks a real
 // photograph when one genuinely fits, and keeps the generated image when none does.
 //
-// THREE SOURCES, BECAUSE THEY FAIL IN DIFFERENT PLACES
+// TWO SOURCES, BECAUSE THEY FAIL IN DIFFERENT PLACES
 //   • Pexels   — modern commercial stock, by far the highest quality, and the only one
 //                that covers industrial/B2B subjects well. Needs a free API key; absent,
-//                it self-skips and the other two still run.
+//                it self-skips and Openverse still runs.
 //   • Openverse — ~700M CC images, mostly Flickr. Strong on consumer/outdoor subjects.
-//   • Wikimedia Commons — reference and documentary photography. Strong on technical
-//                subjects. No key.
-// Measured on the live APIs, "powder coating oven" returns: Palak Paneer and baked
-// aubergine from Openverse, a public-domain oven interior from Commons, and three
-// 6000x4000 frames of a technician applying powder coating from Pexels.
+//
+// Wikimedia Commons was a third source and was removed. Its catalogue is an encyclopaedic
+// archive rather than a stock library — strong on historical and scientific subjects, thin
+// on the commercial ones these posts are about — so it was the least accurate of the three
+// and reliably supplied the odd-looking suggestion, while demanding the most careful licence
+// handling. Openverse indexes Commons anyway, so genuinely relevant Commons photography can
+// still surface; it just no longer arrives on its own account.
+// StockSource keeps 'wikimedia' so candidates stored before the removal still typecheck.
 //
 // RELEVANCE IS THE WHOLE PROBLEM AND IT IS HANDLED HERE
 // These APIs OR the query terms across large general corpora, so a niche query returns
@@ -35,7 +38,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const OPENVERSE_ENDPOINT = 'https://api.openverse.org/v1/images/'
-const COMMONS_ENDPOINT   = 'https://commons.wikimedia.org/w/api.php'
 const REQUEST_TIMEOUT_MS = 6000
 /** Fraction of the query's meaningful terms that must appear in title/tags. */
 const RELEVANCE_FLOOR = 0.5
@@ -160,7 +162,12 @@ const NON_VISUAL_WORDS = new Set([
 /** Which library a candidate came from. Distinct from `provider`, which is the UPSTREAM
  *  host Openverse aggregated it from ('flickr', 'museumsvictoria', …) and is therefore
  *  useless for ranking or labelling. */
-export type StockSource = 'pexels' | 'openverse' | 'wikimedia'
+/**
+ * 'wikimedia' is retained ONLY so previously stored candidates still typecheck — posts
+ * generated before it was dropped carry it in content_posts.image_candidates. Nothing
+ * searches it any more.
+ */
+export type StockSource = 'pexels' | 'openverse' | 'wikimedia' | 'wp_media'
 
 export interface StockImageCandidate {
   id:          string
@@ -453,94 +460,6 @@ async function searchPexels(
   return { results: out, rateLimited: false }
 }
 
-// ── Wikimedia Commons ────────────────────────────────────────────────────────
-
-/**
- * Licences unambiguously safe to publish on a client's commercial site.
- *
- * Commons mixes far more than CC. The probe surfaced GFDL and "Copyrighted free use"
- * alongside the clean ones — GFDL obliges you to reproduce the entire licence text,
- * which nobody does on a blog post. Anything not matched here is dropped: an unusable
- * photo is worse than no photo, because it looks usable.
- */
-function commonsLicenceOk(raw: string): boolean {
-  const l = raw.toLowerCase()
-  if (/\bnc\b|noncommercial|non-commercial|\bnd\b|noderiv/.test(l)) return false
-  if (/fair use|fairuse|copyrighted|gfdl|non-free/.test(l))         return false
-  return /public domain|^pd|\bcc0\b|cc by/.test(l)
-}
-
-interface CommonsPage {
-  title?: string
-  imageinfo?: {
-    url?: string; thumburl?: string; descriptionurl?: string
-    width?: number; height?: number
-    extmetadata?: Record<string, { value?: string }>
-  }[]
-}
-
-async function searchCommons(q: string, terms: string[], floor: number): Promise<StockImageCandidate[]> {
-  const params = new URLSearchParams({
-    action: 'query',
-    generator: 'search',
-    gsrsearch: q,
-    gsrnamespace: '6',            // File: namespace
-    gsrlimit: '30',
-    prop: 'imageinfo',
-    iiprop: 'url|size|extmetadata',
-    iiurlwidth: '400',
-    format: 'json',
-  })
-  const { json } = await getJson(`${COMMONS_ENDPOINT}?${params}`)
-  const pages = (json as { query?: { pages?: Record<string, CommonsPage> } } | null)?.query?.pages
-  if (!pages) return []
-
-  const out: StockImageCandidate[] = []
-  for (const page of Object.values(pages)) {
-    const ii = page.imageinfo?.[0]
-    if (!ii?.url) continue
-
-    // Commons holds SVG diagrams, PDFs, audio and video in the same namespace. Match the
-    // extension allowing for the tracking query-string Commons appends — anchoring on
-    // end-of-string alone silently rejected every single result.
-    if (!/\.(jpe?g|png|webp)(\?|$)/i.test(ii.url)) continue
-    if (!bigEnough(ii.width ?? null, ii.height ?? null)) continue
-
-    const md      = ii.extmetadata ?? {}
-    const licence = md.LicenseShortName?.value ?? md.License?.value ?? ''
-    if (!commonsLicenceOk(licence)) continue
-
-    const title = (page.title ?? '').replace(/^File:/, '').replace(/\.(jpe?g|png|webp)$/i, '')
-    // Commons search matches the whole description page, so score against the title and
-    // categories rather than trusting the search rank.
-    // Same rule as Openverse: Commons categories are a long incidental list.
-    const relevance = terms.length === 1
-      ? scoreAgainst(title, terms)
-      : scoreAgainst(`${title} ${md.Categories?.value ?? ''}`, terms)
-    if (relevance < (terms.length === 1 ? SINGLE_TERM_FLOOR : floor)) continue
-
-    const creator = (md.Artist?.value ?? '').replace(/<[^>]*>/g, '').trim() || null
-
-    out.push({
-      id: `wc:${title}`,
-      source: 'wikimedia',
-      title,
-      url: ii.url,
-      thumbnail: ii.thumburl ?? ii.url,
-      creator,
-      license: licence || 'unknown',
-      licenseUrl: md.LicenseUrl?.value ?? null,
-      sourceUrl: ii.descriptionurl ?? null,
-      provider: 'wikimedia',
-      width: ii.width ?? null,
-      height: ii.height ?? null,
-      attribution: creator ? `${title} by ${creator} (${licence})` : `${title} (${licence})`,
-      relevance,
-      matchedQuery: q,
-    })
-  }
-  return out
-}
 
 // ── Orchestration ────────────────────────────────────────────────────────────
 
@@ -736,7 +655,9 @@ function dedupe(list: StockImageCandidate[], limit: number): StockImageCandidate
   // Relevance first, then source quality. The tiebreak matters: at equal relevance a
   // Pexels photo is professionally shot while an Openverse hit is often a 1024px Flickr
   // snapshot, so ordering by relevance alone buried the better picture.
-  const SOURCE_RANK: Record<StockSource, number> = { pexels: 0, wikimedia: 1, openverse: 2 }
+  // The client's OWN media outranks every stock library: it is already licensed, already
+  // on their site, and usually already on-brand. Nothing bought or borrowed beats that.
+  const SOURCE_RANK: Record<StockSource, number> = { wp_media: 0, pexels: 1, openverse: 2, wikimedia: 3 }
 
   // Specificity of the query that FOUND each candidate, ranked before relevance.
   //
@@ -817,16 +738,21 @@ export async function findStockImageCandidates(
     if (terms.length === 0) continue
 
     // Sources run in parallel — they are independent, so a rung costs one round trip
-    // rather than three.
-    const [px, ov, wc] = await Promise.all([
+    // rather than two.
+    //
+    // Wikimedia Commons was dropped. Its catalogue is an encyclopaedic archive rather than a
+    // stock library: strong on historical and scientific subjects, thin on the commercial
+    // ones these posts are about, so it was the least accurate of the three and reliably
+    // supplied the odd-looking suggestion. Its licence handling was also the most demanding
+    // — attribution varies per file — for the least usable result.
+    const [px, ov] = await Promise.all([
       pexelsBlocked    ? Promise.resolve({ results: [], rateLimited: false }) : searchPexels(q, terms, floor),
       openverseBlocked ? Promise.resolve({ results: [], rateLimited: false }) : searchOpenverse(q, terms, floor),
-      searchCommons(q, terms, floor),
     ])
     if (px.rateLimited) pexelsBlocked    = true
     if (ov.rateLimited) openverseBlocked = true
 
-    for (const c of [...px.results, ...ov.results, ...wc]) {
+    for (const c of [...px.results, ...ov.results]) {
       const existing = byId.get(c.id)
       if (!existing || existing.relevance < c.relevance) byId.set(c.id, c)
     }

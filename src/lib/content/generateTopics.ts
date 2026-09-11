@@ -3,6 +3,7 @@
 // per-client API route and the bulk calendar/generate route use identical logic.
 
 import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
+import { completeText } from '@/lib/ai/client'
 import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
 import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
@@ -712,28 +713,20 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   const model    = settings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
   const apiKey   = settings.ai_api_key
 
+  // Routed through lib/ai/client so the call is metered. The inline provider branch this
+  // replaces discarded the usage block, which is why AI spend was unmeasurable.
   let rawText = ''
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-      })
-      if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-      const data = await res.json()
-      const tb   = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-      rawText    = tb?.text || ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-      })
-      if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-      const data = await res.json()
-      rawText    = data.choices?.[0]?.message?.content || ''
-    }
+    const completion = await completeText({
+      provider: provider as 'anthropic' | 'openai',
+      model, apiKey,
+      system: systemPrompt,
+      user:   userPrompt,
+      maxTokens: 8192,
+      operation: 'topics',
+      clientId,
+    })
+    rawText = completion.text
   } catch (err) {
     return { topics: [], clientName, count: 0, error: String(err) }
   }

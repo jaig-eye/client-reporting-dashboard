@@ -5,8 +5,9 @@
 // Purely presentational: ClientPipeline owns all state and passes callbacks.
 
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
+import PostSiteLinks from '@/components/admin/PostSiteLinks'
+import ClientImage from '@/components/admin/ClientImage'
 import type { SeoScore } from '@/lib/content/types'
-import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
 
 // ── Shared pipeline types (imported by ClientPipeline) ──────────────────────────
 export interface Topic {
@@ -39,6 +40,12 @@ export interface Topic {
 
 export interface Post {
   id:                  string
+  /**
+   * The strong link back to content_topics. Populated on ~29% of rows, but when present it is
+   * exact — unlike the keyword+date guess the calendar falls back to, which regeneration
+   * invalidates by design.
+   */
+  topic_id?:           string | null
   title:               string | null
   seo_title:           string | null
   target_keyword:      string | null
@@ -64,10 +71,10 @@ export type DisplayStatus = 'pending' | 'approved' | 'generating' | 'generated' 
 
 export const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; color: string; dot: string }> = {
   pending:    { label: 'Pending',        bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
-  approved:   { label: 'Approved',       bg: 'var(--blue-subtle)',  color: 'var(--blue)',  dot: '#2563eb' },
+  approved:   { label: '✓ Approved',     bg: 'var(--blue-subtle)',  color: 'var(--blue)',  dot: '#2563eb' },
   generating: { label: 'Generating',     bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
   generated:  { label: 'Ready to Review', bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#10b981' },
-  published:  { label: 'On Site',        bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#059669' },
+  published:  { label: '✓ Live',         bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#059669' },
   rejected:   { label: 'Rejected',       bg: 'var(--red-subtle)',   color: 'var(--red)',   dot: '#ef4444' },
 }
 
@@ -114,7 +121,7 @@ function rankArrow(delta: number | null | undefined): string {
 export function StatusPill({ status, generating }: { status: DisplayStatus; generating?: boolean }) {
   const cfg = DISPLAY_STATUS_CONFIG[status]
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.65rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
       <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg.dot, animation: generating ? 'pulse 1.2s ease-in-out infinite' : undefined }} />
       {cfg.label}
     </span>
@@ -135,6 +142,8 @@ function IconBtn({ label, color, disabled, onClick, children }: { label: string;
 interface Props {
   item:        RowItem
   linkedPost:  Post | null
+  /** The client's content connection — authorises the image proxy for their own media. */
+  connectionId?: string | null
   expanded:    boolean
   editing:     boolean
   editTitle:   string
@@ -156,22 +165,20 @@ interface Props {
   onPurge:     (kind: 'topic' | 'post', id: string) => void
 }
 
-function Thumb({ url }: { url: string | null }) {
+// connectionId routes a client-hosted picture through our image proxy — their server is
+// entitled to refuse a direct browser fetch, and on a calendar that shows as a grid of
+// broken thumbnails.
+function Thumb({ url, connectionId }: { url: string | null; connectionId?: string | null }) {
   return url
-    ? <img src={url} alt="" style={{ width: 44, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+    ? <ClientImage src={url} alt="" connectionId={connectionId} loading="lazy" style={{ width: 44, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
     : <div style={{ width: 44, height: 34, borderRadius: 4, flexShrink: 0, background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: 'var(--text-faint)' }}>◧</div>
 }
 
 // Compact live/edit link row for on-site posts.
 function LiveLinks({ post }: { post: Post }) {
-  const live = viewLiveUrl(post), draft = wpDraftPreviewUrl(post), wpe = wpEditUrl(post), bce = bcEditUrl(post)
-  const s: React.CSSProperties = { color: 'var(--text-muted)', textDecoration: 'none' }
   return (
     <div style={{ display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap', fontSize: 11 }} onClick={e => e.stopPropagation()}>
-      {isPublicPermalink(live) && live && <a href={live} target="_blank" rel="noreferrer" style={{ ...s, color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>}
-      {draft && <a href={draft} target="_blank" rel="noreferrer" title="Requires your WordPress login" style={s}>Preview draft ↗</a>}
-      {wpe && <a href={wpe} target="_blank" rel="noreferrer" style={s}>Open in WP ↗</a>}
-      {bce && <a href={bce} target="_blank" rel="noreferrer" style={s}>Edit in BigCommerce ↗</a>}
+      <PostSiteLinks post={post} fontSize={11} />
     </div>
   )
 }
@@ -196,11 +203,21 @@ export default function PipelineCard(props: Props) {
     const onSite = post.status === 'draft_saved' || post.status === 'published'
     return (
       <div style={cardShell}>
-        <Thumb url={post.featured_image_url} />
+        <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); props.onReview(post) }}
+            title="Open the review panel"
+            style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: 0,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
             {post.title ?? topic?.topic ?? '(generating…)'}
-          </div>
+          </button>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
             {fmtDate(post.target_publish_date)}
             {post.word_count ? ` · ${post.word_count.toLocaleString()}w` : ''}

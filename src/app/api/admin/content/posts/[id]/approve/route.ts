@@ -47,7 +47,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids')
+    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
     .eq('id', id)
     .maybeSingle()
 
@@ -104,6 +104,10 @@ export async function POST(
       .from('client_connections')
       .select('id, external_id, connector:connectors!inner(type, auth, config)')
       .eq('id', String(p.connection_id))
+      // The connection must belong to THIS post's client. connection_id is just a column on
+      // the row, settable through PATCH, so without this a post could be pushed to another
+      // client's WordPress — publishing one client's article on another's site.
+      .eq('client_id', String(p.client_id))
       .eq('connector.type', 'wordpress')
       .maybeSingle()
     connData = data as ConnRow | null
@@ -131,6 +135,11 @@ export async function POST(
         .from('client_connections')
         .select('id, connector:connectors!inner(auth, config)')
         .eq('id', String(p.connection_id))
+        // Same ownership check the WordPress branch above has. It was added there only, so
+        // the cross-client publish it closes stayed wide open on this path — connection_id is
+        // a plain column settable through PATCH, so a BigCommerce post could be pushed to
+        // another client's storefront.
+        .eq('client_id', String(p.client_id))
         .maybeSingle()
       bcConnData = data as BcConnRow | null
     }
@@ -182,7 +191,18 @@ export async function POST(
     type CsRowBc = { publish_time?: string | null; bc_author?: string | null; blog_url_prefix?: string | null }
     const csRowBcTyped  = csRowBc as CsRowBc | null
     const bcPublishTime = csRowBcTyped?.publish_time ?? '09:00'
-    const bcAuthor      = csRowBcTyped?.bc_author ?? 'Admin'
+    // Per-post byline wins, then the client default, then 'Admin'. The reviewer typing a
+    // name in the drawer is the most specific intent available.
+    //
+    // Fetched separately and tolerantly: bc_author_name arrives in migration 212, and naming
+    // it in the main select above would fail that query outright and break publishing.
+    const { data: bcRow } = await db
+      .from('content_posts')
+      .select('bc_author_name')
+      .eq('id', id)
+      .maybeSingle()
+    const perPostAuthor = (bcRow as { bc_author_name?: string | null } | null)?.bc_author_name
+    const bcAuthor      = perPostAuthor?.trim() || csRowBcTyped?.bc_author || 'Admin'
     const bcBlogPrefix  = (() => {
       const raw = csRowBcTyped?.blog_url_prefix?.trim()
       if (!raw) return '/blog/'
@@ -417,14 +437,97 @@ export async function POST(
     const tags   = Array.isArray(p.suggested_tags) ? (p.suggested_tags as string[]) : []
     const tagIds = tags.length > 0 ? await ensureTagIds(siteUrl, auth, tags) : []
 
-    // Upload featured image to WP media library (non-fatal if it fails)
+    // Featured image: REFERENCE it when it already lives on this site, upload it otherwise.
+    //
+    // The reviewer can pick an image out of the client's own media library, in which case the
+    // file is already an attachment here and copying it back would create a duplicate — which
+    // is exactly what happened before this branch: their photo went into our bucket and came
+    // back as a second attachment on their own site.
+    //
+    // The connection check is what makes the id safe to trust. Attachment ids are per-site, so
+    // an id recorded against a different connection must be ignored rather than sent — it
+    // would attach whatever unrelated file happens to hold that number here.
     let featuredMediaId: number | undefined
-    if (p.featured_image_url) {
+
+    const { data: linkRow, error: linkErr } = await db
+      .from('content_posts')
+      .select('wp_featured_media_id, wp_featured_media_connection_id')
+      .eq('id', id)
+      .maybeSingle()
+
+    // Migration 214 carries those two columns. Until it is applied the select above fails and
+    // the id can never resolve, so the absence of a link proves nothing about where the
+    // picture came from — which is why the rename decision below reads the SOURCE instead.
+    if (linkErr) {
+      console.warn('[approve] featured media link unavailable (apply migration 214?):', linkErr.message)
+    }
+    const link = linkRow as {
+      wp_featured_media_id?: number | null
+      wp_featured_media_connection_id?: string | null
+    } | null
+
+    const linkedMediaId   = link?.wp_featured_media_id
+    const linkedMediaConn = link?.wp_featured_media_connection_id
+
+    if (linkedMediaId && linkedMediaConn && linkedMediaConn === String(p.connection_id ?? '')) {
+      featuredMediaId = Number(linkedMediaId)
+    } else if (p.featured_image_url) {
       try {
+        // We are introducing the file to the site. USUALLY that means we generated it, and
+        // naming it well is free SEO we should take.
+        //
+        // But not always. When the attachment id resolves, the branch above references the
+        // client's existing file and this never runs. When it does NOT resolve — the id was
+        // recorded against another connection, or migration 214 is not applied yet — a pick
+        // from the client's own library falls through to here and gets copied back as a
+        // second attachment. That duplication is bad enough; stamping OUR slug and OUR
+        // seo_title onto a photograph they named themselves makes it permanent, because the
+        // filename lives in the attachment URL and cannot be changed afterwards.
+        //
+        // So the naming is conditional on the file being ours to name. Their picture goes back
+        // under whatever name it already had.
+        const fromClientLibrary = String(p.featured_image_source ?? '') === 'wp_media'
+
+        // Their own filename, not ours and not a generic one.
+        //
+        // Passing `undefined` here is not the same as leaving the name alone: the uploader falls
+        // back to the literal 'featured', so the client's photograph came back as featured.jpg
+        // titled "featured" — renamed just as thoroughly, only worse. The basename off the
+        // source URL is the name they gave it.
+        const originalName = (() => {
+          if (!fromClientLibrary) return undefined
+          try {
+            const last = new URL(String(p.featured_image_url)).pathname.split('/').pop() ?? ''
+            const base = decodeURIComponent(last).replace(/\.[a-z0-9]+$/i, '').trim()
+            return base || undefined
+          } catch {
+            return undefined
+          }
+        })()
+
+        if (fromClientLibrary) {
+          console.warn(`[approve] post ${id}: client-library image could not be referenced by id — re-uploading as "${originalName ?? 'featured'}" without renaming`)
+        }
+
+        // alt_text is the SEO-bearing field, so the stored alt wins over the post title: the
+        // title describes the ARTICLE, while alt should describe the PICTURE, and image search
+        // reads the latter. Falls back to the title when nothing better was written.
+        const altText = (p.image_alt_text ? String(p.image_alt_text) : '').trim()
+          || (p.title ? String(p.title) : '')
+
         featuredMediaId = await uploadMediaToWordPress(
           siteUrl, auth,
           String(p.featured_image_url),
-          p.title ? String(p.title) : undefined
+          {
+            altText: altText || undefined,
+            title:   fromClientLibrary
+              ? undefined
+              : (p.seo_title ? String(p.seo_title) : (p.title ? String(p.title) : undefined)),
+            // The slug is already the keyword-bearing, human-readable form of this post, and
+            // the filename is permanent in the attachment URL — so it is worth spending, on a
+            // file we are the origin of. Their file keeps the name it arrived with.
+            filenameBase: fromClientLibrary ? originalName : (p.slug ? String(p.slug) : undefined),
+          },
         )
       } catch (e) {
         console.error('[approve] featured image upload failed:', e)
@@ -775,6 +878,40 @@ export async function POST(
       published_url: isPublicPermalink(result.link) ? result.link : null,
     })
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 })
+    // A FAILED PUSH IS NOT A FAILED APPROVAL.
+    //
+    // This used to return 500 and write nothing, so a post whose upload to WordPress failed —
+    // a timeout, a 502 from their host, an expired application password — kept status
+    // 'for_review'. Nothing recorded that a human had approved it, nothing could retry it, and
+    // if the reviewer closed the tab the decision was simply lost. Client sites fail
+    // intermittently; that is normal and should not cost a review.
+    //
+    // Recording 'approved' captures what is actually true: a person approved this, and it is
+    // not on the site yet. That is exactly the state the content-topics cron's push stage
+    // selects for, so it becomes the retry queue — it re-attempts within two hours, behind
+    // the same quality gate, and stops as soon as the push succeeds. The stage looked dead
+    // only because nothing ever wrote the status it was waiting for.
+    //
+    // It also makes regeneration self-healing: the cron re-pushes a live post whose DB copy is
+    // newer than its CMS copy, so regenerating an approved article now reaches the site
+    // without anyone re-approving it.
+    const { error: markErr } = await db
+      .from('content_posts')
+      .update({ status: 'approved', admin_approved_at: new Date().toISOString() })
+      .eq('id', id)
+      .not('status', 'in', '("published","draft_saved")')
+    if (markErr) {
+      console.error(`[approve] push failed AND could not mark ${id} for retry:`, markErr.message)
+    }
+
+    console.error(`[approve] push failed for ${id}, queued for automatic retry:`, String(err))
+    return NextResponse.json(
+      {
+        error: String(err),
+        // The card uses this to say the work is not lost.
+        queuedForRetry: !markErr,
+      },
+      { status: 500 },
+    )
   }
 }

@@ -21,25 +21,44 @@ export async function GET(request: NextRequest) {
 
   const db = createAdminClient()
 
-  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, target_publish_date, topic_id'
+  // bc_author_name is appended only when migration 212 has landed. Naming a missing column
+  // fails the WHOLE select with 42703, which turned the review drawer into "Failed to load
+  // post" for an optional field.
+  const BASE_COLS = 'id, client_id, connection_id, content_type, status, target_keyword, title, seo_title, content, meta_description, slug, suggested_tags, word_count, heading_count, internal_links, published_url, wp_author_id, wp_category_ids, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, image_alt_text, target_publish_date, topic_id, quality_report, last_pushed_at, updated_at'
 
-  let { data, error } = await db
-    .from('content_posts')
-    .select(`${BASE_COLS}, image_candidates`)
-    .eq('id', id)
-    .single()
+  // Deploy-order fallback. Migrations here are applied by hand, so code can be live before
+  // its column exists — and naming a missing column does not degrade, it fails the WHOLE
+  // select with 42703. Losing the drawer entirely because one optional field is unavailable
+  // is far worse than losing that field, so each optional column is dropped and retried
+  // individually until the query succeeds.
+  const OPTIONAL_COLS: { col: string; migration: string; lost: string }[] = [
+    { col: 'image_candidates', migration: '210', lost: 'stock image picker' },
+    { col: 'bc_author_name',   migration: '212', lost: 'per-post BigCommerce byline' },
+  ]
 
-  // Deploy-order fallback: image_candidates only exists from migration 210, and
-  // migrations here are applied by hand. Without this the whole review drawer would
-  // 404 on every post until the migration lands — a far worse outcome than losing the
-  // stock-image picker, which simply renders empty.
-  if (error && /image_candidates/i.test(error.message)) {
-    console.warn('[content/post] image_candidates missing (migration 210 not applied) — stock picker disabled')
+  const available = OPTIONAL_COLS.map(o => o.col)
+  let data: unknown = null
+  let error: { message: string } | null = null
+
+  for (;;) {
+    const cols = [BASE_COLS, ...available].join(', ')
     ;({ data, error } = await db
       .from('content_posts')
-      .select(BASE_COLS)
+      .select(cols)
       .eq('id', id)
       .single())
+
+    if (!error) break
+
+    const culprit = OPTIONAL_COLS.find(
+      o => available.includes(o.col) && new RegExp(o.col, 'i').test(error!.message),
+    )
+    if (!culprit) break
+
+    console.warn(
+      `[content/post] ${culprit.col} missing (apply migration ${culprit.migration}) — ${culprit.lost} disabled`,
+    )
+    available.splice(available.indexOf(culprit.col), 1)
   }
 
   if (error || !data) {
@@ -89,6 +108,16 @@ export async function GET(request: NextRequest) {
     bcPostId:          p.bc_post_id         ? Number(p.bc_post_id)         : null,
     bcStoreHash:       p.bc_store_hash      ? String(p.bc_store_hash)      : null,
     featuredImageUrl:    p.featured_image_url  ? String(p.featured_image_url)  : null,
+    // The alt text pushed to WordPress with the featured image. Surfaced so the drawer's
+    // 'Image alt w/ keyword' row can see the featured image at all — it judged the article
+    // body only, and the featured image is not in the body, so the row could never go green
+    // on a post whose only picture is the generated one.
+    imageAltText:        p.image_alt_text      ? String(p.image_alt_text)      : null,
+    // The pair the drawer uses to tell whether the live article is behind this row. A
+    // server-side regenerate and a library image pick both change the post WITHOUT the
+    // editor becoming dirty, so 'not dirty' is not the same as 'the site already has this'.
+    lastPushedAt:        p.last_pushed_at      ? String(p.last_pushed_at)      : null,
+    updatedAt:           p.updated_at          ? String(p.updated_at)          : null,
     targetPublishDate:   p.target_publish_date ? String(p.target_publish_date) : null,
     postConnectionId:    p.connection_id ? String(p.connection_id) : null,
     topicId:             p.topic_id ? String(p.topic_id) : null,
@@ -98,6 +127,11 @@ export async function GET(request: NextRequest) {
     scheduleDefaultAuthorId,
     schedulePublishMode,
     scheduleBcAuthor: cs.bc_author ? String(cs.bc_author) : null,
+    // Surfaced in the drawer's SEO section. It used to live only on the review card, where a
+    // reviewer could see that findings existed but not read them or act on them.
+    qualityReport:    p.quality_report ?? null,
+    // Per-post override (migration 212). Null means "use scheduleBcAuthor".
+    bcAuthorName:     p.bc_author_name ? String(p.bc_author_name) : null,   // undefined pre-212
   })
 }
 
@@ -143,7 +177,14 @@ export async function PATCH(request: NextRequest) {
   if (body.suggestedTags   !== undefined) updates.suggested_tags     = body.suggestedTags
   if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId
   if (body.wpAuthorId        !== undefined) updates.wp_author_id       = body.wpAuthorId
-  if (body.featuredImageUrl  !== undefined) updates.featured_image_url = body.featuredImageUrl
+  if (body.featuredImageUrl  !== undefined) {
+    updates.featured_image_url = body.featuredImageUrl
+    // Releases the client-media attachment link — see lib/content/featuredMediaLink. This is
+    // the fifth writer of this column and was the one that did not, so an image changed
+    // through THIS route kept publishing the previously-linked attachment.
+    updates.wp_featured_media_id            = null
+    updates.wp_featured_media_connection_id = null
+  }
   if (body.status !== undefined) {
     const ALLOWED_STATUSES = ['pending', 'for_review', 'approved', 'draft_saved', 'published', 'rejected', 'generating', 'error']
     if (!ALLOWED_STATUSES.includes(body.status))
@@ -156,7 +197,19 @@ export async function PATCH(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { error } = await db.from('content_posts').update(updates).eq('id', id)
+  let { error } = await db.from('content_posts').update(updates).eq('id', id)
+
+  // Deploy-order fallback. The release columns arrive in migration 214, and naming a column
+  // PostgREST does not know fails the WHOLE update — so without this, adding the release
+  // would have turned every image save on this route into a 500 until someone ran the
+  // migration. The same trap migration 212 already sprang once on this branch.
+  if (error && /wp_featured_media/i.test(error.message)) {
+    console.warn('[content/post] wp_featured_media_* missing (apply migration 214) — saved without releasing the attachment link')
+    delete updates.wp_featured_media_id
+    delete updates.wp_featured_media_connection_id
+    ;({ error } = await db.from('content_posts').update(updates).eq('id', id))
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

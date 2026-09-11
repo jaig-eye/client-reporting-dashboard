@@ -191,7 +191,7 @@ function WpModal({ open, onClose, siteUrl, setSiteUrl, username, setUsername, pa
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
           <li>Log into your WordPress admin panel.</li>
           <li>Go to <strong>Users → Your Profile</strong> and scroll to the <strong>Application Passwords</strong> section.</li>
-          <li>Enter a name (e.g. "LaunchLocal") and click <strong>Add New Application Password</strong>.</li>
+          <li>Enter a name (e.g. &ldquo;LaunchLocal&rdquo;) and click <strong>Add New Application Password</strong>.</li>
           <li>Copy the generated password (it appears once) — it looks like <code>xxxx xxxx xxxx xxxx</code>.</li>
           <li>Paste your site URL, WordPress username, and application password below.</li>
         </ol>

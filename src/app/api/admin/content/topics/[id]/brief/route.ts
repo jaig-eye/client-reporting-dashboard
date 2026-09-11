@@ -2,6 +2,7 @@
 // Generates an SEO brief for an approved topic and stores it in content_topics.seo_brief.
 // Called by the content-topics cron and can be triggered manually from the UI.
 
+import { completeText } from '@/lib/ai/client'
 import { describeTenure } from '@/lib/content/eeat'
 import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
@@ -163,26 +164,19 @@ Produce a SeoBrief JSON object with these exact keys:
 
   let rawText = ''
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 2048, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-      })
-      if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-      const data = await res.json()
-      const tb   = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-      rawText    = tb?.text || ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-      })
-      if (!res.ok) throw new Error(`AI API error: ${await res.text()}`)
-      const data = await res.json()
-      rawText    = data.choices?.[0]?.message?.content || ''
-    }
+    // Via completeText: it is the only place token usage is written to the ai_usage
+    // ledger, and this call site used to discard the provider's usage block.
+    const { text } = await completeText({
+      provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+      model,
+      apiKey,
+      system: systemPrompt,
+      user:   userPrompt,
+      maxTokens: 2048,
+      operation: 'brief',
+      clientId: topic.client_id,
+    })
+    rawText = text
   } catch (err) {
     console.error('[brief] AI call failed:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })

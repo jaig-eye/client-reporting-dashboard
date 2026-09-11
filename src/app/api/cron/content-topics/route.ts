@@ -576,10 +576,32 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // ── Auto-push: admin-approved posts with publish date approaching ─────────
-    // Requires explicit admin approval (status = 'approved') — prevents unreviewed posts
-    // from auto-publishing. Dateless posts are excluded: they can't be reviewed in the
-    // list view and must be manually pushed.
+    // ── Auto-push: HUMAN-APPROVED posts with publish date approaching ─────────
+    //
+    // A person approves every post that reaches a client's site. That line does not move.
+    // What auto_generate automates is everything either side of it: topics are generated and
+    // approved, articles are written, and once a human approves a post it travels to the CMS
+    // without anyone chasing it. The approval itself is the deliberate manual step.
+    //
+    // status='approved' is therefore the correct gate here, and 'for_review' must NOT be
+    // included — a post sitting at 'for_review' is precisely one nobody has looked at yet.
+    //
+    // WHAT THIS STAGE IS FOR, now that something writes that status: it is the RETRY QUEUE.
+    //
+    // The review drawer's Approve pushes immediately, so a successful approval never passes
+    // through here. But client sites fail intermittently — a timeout, a 502 from their host,
+    // an expired application password — and /approve now records 'approved' when the push
+    // fails, capturing what is true: a human approved this, and it is not on the site yet.
+    // This stage picks those up within two hours, behind the quality gate, and stops as soon
+    // as one succeeds. Before that write existed the stage was unreachable, which is why it
+    // had never once fired.
+    //
+    // It also carries regeneration: the filter below re-pushes a live post whose DB copy is
+    // newer than its CMS copy, so regenerating an already-approved article reaches the site
+    // without anyone re-approving it.
+    //
+    // Dateless posts stay excluded: they cannot be reviewed in the list view and must be
+    // pushed by hand.
     if (auto_push_posts) {
       const pushThreshold = new Date()
       pushThreshold.setUTCDate(pushThreshold.getUTCDate() + 2)
@@ -595,6 +617,11 @@ export async function GET(request: NextRequest) {
         .select('id, title, quality_report, quality_hold_alerted_at, wp_post_id, bc_post_id, updated_at, last_pushed_at')
         .eq('client_id', client_id)
         .eq('status', 'approved')
+        // archived_at is how /dismiss records that a human took a post DOWN. Without this
+        // filter the retry queue treats an archived post as merely unpushed and puts the
+        // article back on the client's site — undoing the takedown, unattended, within two
+        // hours of someone performing it.
+        .is('archived_at', null)
         .lte('target_publish_date', pushThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
@@ -888,13 +915,19 @@ export async function GET(request: NextRequest) {
             return daysOut > 0 && daysOut <= saLeadWindow
           })
 
-          // Fetch all non-rejected SA topics for this client (slot occupancy + dedup)
+          // EVERY SA topic for this client, rejected included (slot occupancy + dedup).
+          //
+          // This used to exclude 'rejected'. That made rejection self-defeating twice over:
+          // the rejected row stopped counting toward topicsPerSlot, so its date read as empty
+          // and was refilled, and its city/service combination dropped out of saExistingCombos,
+          // so the same page became eligible to be written again. Rejection has to mean the
+          // slot is spoken for and the subject is spent -- the blog occupancy guard already
+          // treats 'rejected' as occupied for exactly this reason.
           const { data: allSaTopics } = await db
             .from('content_topics')
             .select('target_publish_date, city, state_abbr, service_name')
             .eq('client_id', saClientId)
             .eq('content_type', 'service_area')
-            .not('status', 'eq', 'rejected')
 
           // Count existing topics per slot
           type SaTopicRow = { target_publish_date: string | null; city: string | null; state_abbr: string | null; service_name: string | null }
@@ -995,7 +1028,31 @@ export async function GET(request: NextRequest) {
             const numAreas    = saServiceAreas.length
             const numServices = saServices.length
 
+            // Slots a human deliberately emptied. The blog loop honours these at the top of
+            // this file and the manual calendar route honours them too; the SA branch never
+            // queried the table, so deleting an SA topic freed its slot and the next run wrote
+            // a replacement -- the exact behaviour migration 209 exists to stop.
+            const saSuppressed = new Set<string>()
+            {
+              const { data: saSup, error: saSupErr } = await db
+                .from('content_slot_suppressions')
+                .select('target_publish_date')
+                .eq('client_id', saClientId)
+                .in('target_publish_date', saSlots)
+              if (saSupErr) {
+                console.warn(`[content-topics cron] SA slot suppressions unavailable (apply migration 209): ${saSupErr.message}`)
+              } else {
+                for (const row of (saSup ?? []) as { target_publish_date: string }[]) {
+                  saSuppressed.add(row.target_publish_date)
+                }
+              }
+            }
+
             for (const slot of saSlots) {
+              if (saSuppressed.has(slot)) {
+                console.log(`[content-topics cron] SA slot ${slot} suppressed for ${saClientId} — skipping`)
+                continue
+              }
               const filled = topicsPerSlot.get(slot) ?? 0
               const needed = Math.max(0, saLimit - filled)
               for (let p = 0; p < needed; p++) {

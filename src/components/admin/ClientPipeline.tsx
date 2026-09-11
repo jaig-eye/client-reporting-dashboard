@@ -186,20 +186,40 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   }
 
   async function purgeItem(kind: 'topic' | 'post', id: string) {
+    // This hard-deletes a post AND its topic on the server and cannot be undone, so it asks
+    // first — every softer action on this page already confirms, and the monthly review card
+    // confirms before the same call.
+    if (!window.confirm(
+      'Delete this permanently? The scheduled item and its draft are both removed, and the '
+      + 'date is left empty so nothing regenerates into it. This cannot be undone.',
+    )) return
+
     setPurgeLoading(p => ({ ...p, [id]: true }))
     const url = kind === 'topic' ? `/api/admin/content/topics/${id}` : `/api/admin/content/posts/${id}`
     try {
       const res = await fetch(url, { method: 'DELETE' })
       if (res.ok) {
-        if (kind === 'topic') {
-          // Use the deduped row-model link so we remove THIS topic's post, not a
-          // different topic that happens to share the same keyword + date.
-          const linked = model.topicIdToPost.get(id)
-          if (linked) setPosts(p => p.filter(post => post.id !== linked.id))
-          setTopics(p => p.filter(x => x.id !== id))
-        } else setPosts(p => p.filter(post => post.id !== id))
+        // BOTH halves leave the screen, whichever one was clicked.
+        //
+        // The server deletes the pair; this only ever dropped the half that was clicked, so
+        // the counterpart stayed rendered as a greyed-out "for review" row pointing at rows
+        // that no longer exist — the ghost that made deleting look like it had failed. The
+        // topic branch also depended on topicIdToPost, which is empty for exactly the
+        // regenerated rows whose keyword no longer matches.
+        const linked = model.topicIdToPost.get(id)
+        const pairedTopicId = kind === 'post'
+          ? topics.find(t => t.post?.id === id || model.topicIdToPost.get(t.id)?.id === id)?.id
+          : id
+
+        setPosts(p => p.filter(post => post.id !== id && post.id !== linked?.id))
+        setTopics(t => t.filter(x => x.id !== id && x.id !== pairedTopicId))
         showToast('Deleted')
-      } else showToast('Delete failed', 'error')
+      } else {
+        // Carry the server's sentence. A published post returns 409 explaining it must be
+        // discarded first; "Delete failed" hid that and invited a retry that always fails.
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        showToast(body.error ?? 'Delete failed', 'error')
+      }
     } catch { showToast('Delete failed', 'error') }
     finally { setPurgeLoading(p => ({ ...p, [id]: false })) }
   }
@@ -241,9 +261,29 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     const allItems: RowItem[] = []
 
     topics.forEach(t => {
-      const linkedPost = t.post?.id
-        ? posts.find(p => p.id === t.post!.id)
-        : posts.find(p => p.target_keyword === t.target_keyword && p.target_publish_date === t.target_publish_date && !seenPostIds.has(p.id))
+      // Three links, strongest first. The keyword+date guess USED to be the only fallback,
+      // and it is guaranteed to break on exactly the rows people look at most: a full
+      // regenerate picks a new topic and a new target_keyword, so the topic and its post stop
+      // agreeing and BOTH halves render — the duplicate rows in the calendar. Neither FK
+      // cascades and both are populated unevenly (content_topics.post_id ~85%,
+      // content_posts.topic_id ~29%), so all three attempts are needed.
+      //
+      // The guess runs twice, preferring a post with no platform ids. A regenerate that keeps
+      // the old article preserves it as its own row carrying the SAME keyword and date, so two
+      // rows answer the guess identically — and .find returning the preserved one would hand
+      // the topic's slot to a retired article and push the working post out to render as a
+      // second card on the same date. A row that is already on the site is a distinct article,
+      // not this topic's working copy, so it is only accepted when nothing else fits.
+      const sameSlot = (p: Post) =>
+        !p.topic_id
+        && p.target_keyword === t.target_keyword
+        && p.target_publish_date === t.target_publish_date
+        && !seenPostIds.has(p.id)
+
+      const linkedPost = (t.post?.id ? posts.find(p => p.id === t.post!.id) : undefined)
+        ?? posts.find(p => p.topic_id === t.id)
+        ?? posts.find(p => sameSlot(p) && !p.wp_post_id && !p.bc_post_id)
+        ?? posts.find(p => sameSlot(p))
       if (linkedPost) { seenPostIds.add(linkedPost.id); topicIdToPost.set(t.id, linkedPost) }
       allItems.push({ kind: 'topic', data: t })
     })
@@ -299,6 +339,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     return {
       item,
       linkedPost: item.kind === 'topic' ? (model.topicIdToPost.get(id) ?? null) : null,
+      connectionId,
       expanded: expandedId === id,
       editing: editingId === id,
       editTitle, editNotes,
@@ -542,6 +583,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           })()}
           onClose={() => setReviewPost(null)}
           onUpdate={() => { setReviewPost(null); loadPipeline() }}
+          onSaved={() => loadPipeline()}
         />
       )}
     </div>

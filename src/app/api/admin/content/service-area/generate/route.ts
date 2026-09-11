@@ -16,6 +16,7 @@ import { generatePostImage }                           from '@/lib/content/gener
 import { sendDiscordMessage }                          from '@/lib/discord'
 import { getNotif, type NotifConfig }                  from '@/lib/notificationConfig'
 import { recheckPostQuality }                          from '@/lib/content/recheckQuality'
+import { completeText }                                from '@/lib/ai/client'
 
 export const maxDuration = 300
 
@@ -420,34 +421,20 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 
   const promptWithSilo = finalPrompt + sasiloSection
 
-  // Call AI — check res.ok so API errors surface the real message, not just "Empty AI response"
+  // Call AI through lib/ai/client — usage is recorded there, and the inline provider branch
+  // this replaces threw the provider's usage block away, so SA spend never reached the ledger.
   let rawText = ''
   try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: 'user', content: promptWithSilo }] }),
-      })
-      if (!res.ok) {
-        const errBody = await res.text()
-        throw new Error(`Anthropic API ${res.status}: ${errBody.slice(0, 300)}`)
-      }
-      const d = await res.json() as { content?: { type: string; text: string }[] }
-      rawText = d.content?.find(b => b.type === 'text')?.text ?? ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: promptWithSilo }], max_tokens: 4096 }),
-      })
-      if (!res.ok) {
-        const errBody = await res.text()
-        throw new Error(`OpenAI API ${res.status}: ${errBody.slice(0, 300)}`)
-      }
-      const d = await res.json() as { choices?: { message: { content: string } }[] }
-      rawText = d.choices?.[0]?.message?.content ?? ''
-    }
+    const { text } = await completeText({
+      provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+      model,
+      apiKey,
+      user:      promptWithSilo,
+      maxTokens: 4096,
+      operation: 'service_area',
+      clientId,
+    })
+    rawText = text
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'AI call failed'
     console.error(`[SA generate] topic ${topicId} AI error:`, msg)

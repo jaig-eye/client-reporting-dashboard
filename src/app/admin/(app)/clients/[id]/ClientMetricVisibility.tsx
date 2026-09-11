@@ -74,7 +74,7 @@ export default function ClientMetricVisibility({
       <div className="card p-5">
         <h3 className="section-title mb-1">Layout Type</h3>
         <p className="section-desc mb-3">
-          Choose which preset layout drives this client's KPI cards, top metrics, and table columns.
+          Choose which preset layout drives this client&rsquo;s KPI cards, top metrics, and table columns.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           {(['auto', 'lead_gen', 'ecom'] as const).map(val => (

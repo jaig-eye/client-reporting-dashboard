@@ -93,12 +93,10 @@ function ResetPasswordForm() {
                 style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
               />
             ) : (
-              <div
-                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg"
-                style={{ background: 'var(--blue)' }}
-              >
-                {branding.agency_name.charAt(0).toUpperCase()}
-              </div>
+              /* Reserve the same box so the header does not jump when the logo lands.
+                 Deliberately empty: the initial-letter fallback that used to sit here
+                 rendered on every first paint, before branding had loaded. */
+              <div className="h-9 w-9" aria-hidden="true" />
             )}
           </div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -106,7 +104,10 @@ function ResetPasswordForm() {
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
             {success
-              ? 'Password updated — signing you in…'
+              /* No session is created here -- reset-password only changes the password, so
+                 "signing you in" promised something that never happens and reads as a
+                 failure when the login form appears. */
+              ? 'Password updated — taking you to sign in…'
               : forced
                 ? 'Your password needs updating for security. Enter the code we emailed you and choose a new one.'
                 : 'Enter the code from your email and choose a new password.'}

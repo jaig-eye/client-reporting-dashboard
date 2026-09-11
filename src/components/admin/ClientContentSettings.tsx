@@ -403,7 +403,15 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           <label className="flex items-center gap-3 cursor-pointer">
             <Toggle label="Auto generate" checked={form.auto_generate ?? false}
               onChange={v => { set('auto_generate', v); set('auto_approve_topics', v); set('auto_push_posts', v) }} />
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Auto-generate — generates topics, approves, and publishes automatically</span>
+            {/* The old wording — "generates topics, approves, and publishes automatically" —
+                parsed as though POSTS publish themselves. The approving it refers to is
+                topics; every post still waits for a person. That sentence was misleading
+                enough to send a reader looking for a bug that did not exist, so it now says
+                where the human step is. */}
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              Topic automation — finds and approves topics and writes the posts. Each post is
+              pushed to the site once you approve it.
+            </span>
           </label>
           <label className="flex items-center gap-3 cursor-pointer">
             <Toggle label="Generate featured image" checked={imageGen} onChange={setImageGen} />

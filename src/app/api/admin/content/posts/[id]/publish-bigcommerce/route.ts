@@ -57,6 +57,12 @@ export async function POST(
       .from('client_connections')
       .select('id, connector:connectors!inner(auth, config)')
       .eq('id', String(p.connection_id))
+      // The connection must belong to THIS post's client. connection_id is a plain column
+      // settable through PATCH, so without this a post can be published to another client's
+      // storefront. The same check was added to /approve's BigCommerce branch — but the
+      // drawer sends BigCommerce pushes HERE, so the hole stayed open on the path the
+      // Approve button actually takes.
+      .eq('client_id', String(p.client_id))
       .maybeSingle()
     connData = data as ConnRow | null
   }

@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession, verifyCronAuth } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { recheckPostQuality } from '@/lib/content/recheckQuality'
+import { completeText } from '@/lib/ai/client'
 
 export const maxDuration = 300
 
@@ -121,17 +122,21 @@ export async function POST(request: NextRequest) {
     const targetLength = (cs.target_length  as number | null) ?? 1500
 
     // Load existing posts and queued topics together to prevent cannibalization
+    // Rejected content STAYS in the avoid-list. Both queries used to exclude it, which had
+    // the rule backwards: rejection is the editorial signal that a human saw this exact angle
+    // and turned it down, so excluding it left the subject free to be commissioned again under
+    // a new title on every subsequent run. lib/content/generateTopics.ts makes the same point
+    // at its own avoid-list query -- deletion, not rejection, is what makes a subject eligible.
     const [{ data: existingPosts }, { data: queuedTopics }] = await Promise.all([
       db.from('content_posts')
         .select('focus_topic, title, target_keyword')
         .eq('client_id', cs.client_id)
-        .not('status', 'eq', 'rejected')
         .order('generated_at', { ascending: false })
         .limit(100),
       db.from('content_topics')
         .select('topic, target_keyword')
         .eq('client_id', cs.client_id)
-        .not('status', 'in', '("rejected","generating")'),
+        .not('status', 'eq', 'generating'),
     ])
 
     const avoidList = [
@@ -199,36 +204,19 @@ export async function POST(request: NextRequest) {
       try {
         const userPrompt = `Write a new SEO-optimized blog post for this business. Research what topics would rank well for this industry — focus on: services they offer, commonly searched questions their customers ask, local/seasonal relevance where applicable, or subjects similar businesses write about. Choose a unique, targeted topic not yet covered. Target approximately ${targetLength} words.`
 
-        let rawText = ''
+        // Routed through lib/ai/client so the call is metered — the inline provider branch this
+        // replaces discarded the usage block the ledger needs.
         const aiSignal = AbortSignal.timeout(85_000)
-        if (provider === 'anthropic') {
-          const res = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            signal: aiSignal,
-            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 8192, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-          })
-          if (!res.ok) {
-            const errBody = await res.text()
-            throw new Error(`AI error ${res.status}: ${errBody.slice(0, 200)}`)
-          }
-          const data = await res.json()
-          const tb = data.content?.find((b: Record<string, unknown>) => b.type === 'text')
-          rawText = tb?.text || ''
-        } else {
-          const res = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            signal: aiSignal,
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-          })
-          if (!res.ok) {
-            const errBody = await res.text()
-            throw new Error(`AI error ${res.status}: ${errBody.slice(0, 200)}`)
-          }
-          const data = await res.json()
-          rawText = data.choices?.[0]?.message?.content || ''
-        }
+        const { text: rawText } = await completeText({
+          provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+          model, apiKey,
+          system: systemPrompt,
+          user:   userPrompt,
+          maxTokens: 8192,
+          operation: 'topics',
+          clientId: cs.client_id,
+          signal: aiSignal,
+        })
 
         const parsed = parseAIResponse(rawText)
         if (!parsed.title && !parsed.content) continue
@@ -244,7 +232,6 @@ export async function POST(request: NextRequest) {
           .select('id, title')
           .eq('client_id', cs.client_id)
           .eq('target_publish_date', todayStr)
-          .not('status', 'eq', 'rejected')
           .maybeSingle()
 
         if (dateConflict) {

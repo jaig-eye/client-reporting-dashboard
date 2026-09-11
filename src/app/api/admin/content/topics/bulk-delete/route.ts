@@ -36,43 +36,99 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No ids provided' }, { status: 400 })
   }
 
-  // For topic IDs: fetch linked post_ids so we can cascade-delete them, plus the slot
-  // each one occupies so the generator can be told not to refill it.
-  let linkedPostIds: string[] = []
+  // Resolve everything BEFORE deleting; the links are unrecoverable afterwards.
+  //
+  // This branch used to carry none of the guards DELETE /posts/[id] has, so the same action
+  // behaved differently depending on which route the UI called:
+  //   - a post live on a client's CMS was deleted here, removing our record while leaving the
+  //     article published -- invisible to /dismiss and to the cannibalisation avoid-list
+  //   - paired rows were resolved through content_topics.post_id only, which is set on ~85% of
+  //     topics but only ~29% of posts, so the other side was routinely stranded. A stranded
+  //     topic keeps its subject in the avoid-list, the opposite of what deleting means.
   const slotsToSuppress: { client_id: string; target_publish_date: string | null }[] = []
-  if (topicIds.length > 0) {
-    const { data: topics } = await db
-      .from('content_topics')
-      .select('id, post_id, client_id, target_publish_date')
-      .in('id', topicIds)
+  const topicIdsToDelete = new Set<string>(topicIds)
+  const postIdsToDelete  = new Set<string>()
+  const skippedLive: { id: string; title: string | null }[] = []
 
-    const rows = (topics ?? []) as {
-      id: string; post_id: string | null; client_id: string; target_publish_date: string | null
-    }[]
-
-    linkedPostIds = rows.map(t => t.post_id).filter((id): id is string => !!id)
-    slotsToSuppress.push(...rows)
+  type PostRow = {
+    id: string; client_id: string; target_publish_date: string | null
+    topic_id: string | null; title: string | null
+    wp_post_id: number | null; bc_post_id: number | null
   }
 
-  // Deleting POSTS directly (not via their topic) frees the same slot, so collect
-  // those too — otherwise clearing a batch of posts leaves the dates open and the
-  // cron rebuilds them within the hour.
-  if (postIds.length > 0) {
+  // Every post reachable from this request: named directly, or linked from a named topic in
+  // either direction. Both link columns are ON DELETE SET NULL, so neither cascades.
+  const candidatePostIds = new Set<string>(postIds)
+
+  if (topicIds.length > 0) {
+    const [{ data: topics }, { data: byTopicId }] = await Promise.all([
+      db.from('content_topics')
+        .select('id, post_id, client_id, target_publish_date')
+        .in('id', topicIds),
+      db.from('content_posts').select('id').in('topic_id', topicIds),
+    ])
+
+    for (const t of (topics ?? []) as {
+      id: string; post_id: string | null; client_id: string; target_publish_date: string | null
+    }[]) {
+      slotsToSuppress.push(t)
+      if (t.post_id) candidatePostIds.add(t.post_id)
+    }
+    for (const r of (byTopicId ?? []) as { id: string }[]) candidatePostIds.add(r.id)
+  }
+
+  if (candidatePostIds.size > 0) {
     const { data: posts } = await db
       .from('content_posts')
-      .select('client_id, target_publish_date')
-      .in('id', postIds)
-    slotsToSuppress.push(...((posts ?? []) as { client_id: string; target_publish_date: string | null }[]))
+      .select('id, client_id, target_publish_date, topic_id, title, wp_post_id, bc_post_id')
+      .in('id', Array.from(candidatePostIds))
+
+    for (const post of (posts ?? []) as PostRow[]) {
+      // A live article is never deleted from here, for the same reason DELETE /posts/[id]
+      // returns 409: removing the row does not take the article off the client's site.
+      // Skipped rather than fatal, so one live post cannot abort the whole batch.
+      if (post.wp_post_id || post.bc_post_id) {
+        skippedLive.push({ id: post.id, title: post.title })
+        continue
+      }
+      postIdsToDelete.add(post.id)
+      slotsToSuppress.push(post)
+      if (post.topic_id) topicIdsToDelete.add(post.topic_id)
+    }
   }
 
-  const allPostIdsToDelete = Array.from(new Set(linkedPostIds.concat(postIds)))
+  // The other direction: topics pointing at a post we are about to delete.
+  if (postIdsToDelete.size > 0) {
+    const { data: pairedTopics } = await db
+      .from('content_topics')
+      .select('id, client_id, target_publish_date')
+      .in('post_id', Array.from(postIdsToDelete))
+    for (const t of (pairedTopics ?? []) as {
+      id: string; client_id: string; target_publish_date: string | null
+    }[]) {
+      topicIdsToDelete.add(t.id)
+      slotsToSuppress.push(t)
+    }
+  }
+
+  if (topicIdsToDelete.size === 0 && postIdsToDelete.size === 0) {
+    return NextResponse.json(
+      {
+        error: skippedLive.length > 0
+          ? 'Every selected post is published on the client’s site. Use Discard to take them down first.'
+          : 'Nothing to delete',
+        skippedLive,
+      },
+      { status: skippedLive.length > 0 ? 409 : 400 },
+    )
+  }
 
   const [topicsRes, postsRes] = await Promise.all([
-    topicIds.length > 0
-      ? db.from('content_topics').delete().in('id', topicIds)
+    topicIdsToDelete.size > 0
+      ? db.from('content_topics').delete().in('id', Array.from(topicIdsToDelete))
       : Promise.resolve({ error: null }),
-    allPostIdsToDelete.length > 0
-      ? db.from('content_posts').delete().in('id', allPostIdsToDelete)
+    postIdsToDelete.size > 0
+      ? db.from('content_posts').delete().in('id', Array.from(postIdsToDelete))
       : Promise.resolve({ error: null }),
   ])
 
@@ -86,7 +142,9 @@ export async function POST(request: NextRequest) {
   await suppressSlots(db, slotsToSuppress, 'bulk delete')
 
   return NextResponse.json({
-    deleted: topicIds.length + postIds.length,
+    deletedTopics:   topicIdsToDelete.size,
+    deletedPosts:    postIdsToDelete.size,
     suppressedSlots: slotsToSuppress.filter(s => s.target_publish_date).length,
+    skippedLive,
   })
 }

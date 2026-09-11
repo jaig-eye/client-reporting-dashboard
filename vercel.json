@@ -21,10 +21,6 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/cleanup-rejected-topics",
-      "schedule": "0 9 * * 1"
-    },
-    {
       "path": "/api/cron/auto-pause-ads",
       "schedule": "15 * * * *"
     },

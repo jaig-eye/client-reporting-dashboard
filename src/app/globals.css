@@ -142,6 +142,26 @@
   100% { transform: scale(1) rotate(0deg);    opacity: 1; }
 }
 
+/* Push lifecycle. A reviewer working down the list watches each post reach the client's
+   site, so "pushing" has to read as motion rather than as a static label — but it sits
+   inside a dense card list, so the movement is a slow opacity breath rather than a spinner
+   competing with the row's own controls. */
+@keyframes monthly-push-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* The moment a post lands. Fires once, on the badge only. */
+@keyframes monthly-live-pop {
+  0%   { transform: scale(0.7); opacity: 0; }
+  70%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monthly-pushing, .monthly-live { animation: none !important; }
+}
+
 @keyframes monthly-dot-drift {
   0%, 100% { transform: translateY(0)  translateX(0);  opacity: 0.15; }
   50%       { transform: translateY(-18px) translateX(8px); opacity: 0.35; }

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { completeText }              from '@/lib/ai/client'
 import { buildServiceAreaSlug }      from '@/lib/content/buildServiceAreaSlug'
 import type { SlugStructure }        from '@/lib/content/buildServiceAreaSlug'
 
@@ -169,24 +170,16 @@ Return ONLY valid JSON array — no markdown, no explanation:
 
   let suggestions: DiscoverySuggestion[] = []
   try {
-    let rawText = ''
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens: 2048, messages: [{ role: 'user', content: aiPrompt }] }),
-      })
-      const d = await res.json() as { content?: { text: string }[] }
-      rawText = d.content?.[0]?.text ?? ''
-    } else {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: aiPrompt }], max_tokens: 2048 }),
-      })
-      const d = await res.json() as { choices?: { message: { content: string } }[] }
-      rawText = d.choices?.[0]?.message?.content ?? ''
-    }
+    // Routed through lib/ai/client so the call is metered — the inline provider branch this
+    // replaces discarded the usage block the ledger needs.
+    const { text: rawText } = await completeText({
+      provider: provider === 'anthropic' ? 'anthropic' : 'openai',
+      model, apiKey,
+      user: aiPrompt,
+      maxTokens: 2048,
+      operation: 'service_area',
+      clientId: client_id,
+    })
 
     const jsonMatch = rawText.match(/\[[\s\S]*\]/)
     if (jsonMatch) {

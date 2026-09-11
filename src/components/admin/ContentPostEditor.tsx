@@ -1,19 +1,22 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
+import { Books, ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
-import { viewLiveUrl, isPublicPermalink, wpDraftPreviewUrl, wpEditUrl, bcEditUrl } from '@/lib/content/postLinks'
+import { viewLiveUrl, isPublicPermalink, isOnSite as postIsOnSite } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
+import QualityFindings from '@/components/admin/QualityFindings'
+import PostSiteLinks from '@/components/admin/PostSiteLinks'
+import type { PostLinkInput } from '@/lib/content/postLinks'
+import ConfirmActionDialog from '@/components/admin/ConfirmActionDialog'
+import ImageDirectionDialog from '@/components/admin/ImageDirectionDialog'
+import ImageLibraryModal from '@/components/admin/ImageLibraryModal'
 import StockImageLightbox from '@/components/admin/StockImageLightbox'
+import ClientImage from '@/components/admin/ClientImage'
+import { proxiedImageSrc } from '@/lib/content/imageProxy'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 /** Keyed on the normalised `source`, not `provider` — provider carries the UPSTREAM
  *  host Openverse aggregated from ('flickr', 'museumsvictoria'), which surfaced raw. */
-const STOCK_SOURCE_LABEL: Record<string, string> = {
-  pexels:    'Pexels',
-  wikimedia: 'Wikimedia',
-  openverse: 'Openverse',
-}
 
 interface Site {
   connectionId:  string
@@ -43,6 +46,13 @@ interface Props {
   sites:               Site[]
   onClose:             () => void
   onUpdate:            (post: UpdatedPost) => void
+  /**
+   * Fired after a successful Save while the drawer STAYS OPEN, so the list behind it can
+   * resync. Distinct from onUpdate, which every consumer treats as "finished — close and
+   * reload"; without it a save flashed "Saved ✓" and told nobody, so the card behind kept
+   * showing the old title and thumbnail until a full page reload.
+   */
+  onSaved?:            (post: UpdatedPost) => void
   onRegenerateStart?:   () => void
   onRegenerateDone?:    (post: Partial<UpdatedPost>) => void
   onRegenerateError?:   () => void
@@ -76,6 +86,9 @@ interface PostDetail {
   bcPostId:         number | null
   bcStoreHash:      string | null
   featuredImageUrl:          string | null
+  imageAltText:              string | null
+  lastPushedAt:              string | null
+  updatedAt:                 string | null
   imageCandidates?:          StockImageCandidate[]
   targetPublishDate:         string | null
   topicId:                   string | null
@@ -83,6 +96,9 @@ interface PostDetail {
   scheduleDefaultAuthorId:   number | null
   schedulePublishMode:       string | null
   scheduleBcAuthor:          string | null
+  bcAuthorName:              string | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  qualityReport:             any | null
 }
 
 interface Author {
@@ -120,14 +136,67 @@ function seoCheck(field: string | null, keyword: string): boolean {
   // substring hits. A keyword word (≥3 chars) counts when a field token equals it,
   // or bridges an abbreviation — one being a short prefix of the other (fl ↔ florida).
   const fieldTokens = f.split(/[^a-z0-9]+/).filter(Boolean)
-  const kwWords = k.split(/\s+/).filter(w => w.length >= 3)
+  // Substantive words only. Counting "what", "does" and "for" as terms the field had to
+  // contain is what made a correct H1 fail its own keyword: six of the nine words in
+  // "what does a downpipe do on an EcoBoost engine" carry no meaning, and no honest headline
+  // repeats them.
+  let kwWords = k.split(/\s+/).filter(w => w.length >= 3 && !KEYWORD_STOP_WORDS.has(w))
+  // A keyword made entirely of filler still has to match on something.
+  if (kwWords.length === 0) kwWords = k.split(/\s+/).filter(w => w.length >= 3)
   if (kwWords.length === 0) return false
-  const hit = (w: string) => fieldTokens.some(t =>
-    t === w ||
-    (w.length >= 4 && t.startsWith(w)) ||                            // repair → repairs
-    (t.length >= 2 && w.startsWith(t) && w.length - t.length <= 5)   // fl → florida
-  )
-  return kwWords.filter(hit).length / kwWords.length >= 0.75
+
+  // Enough morphology to bridge the variation an editor writes without thinking.
+  //
+  // "repair → repairs" was already handled by the prefix test, but "battery → batteries" was
+  // not, and the -ies plural is LONGER than its singular — so it was disproportionately likely
+  // to be picked as the mandatory term below and then be the one term that could not match.
+  // A keyword like "best atv batteries 2026" turned four checklist rows red on an article
+  // carrying every word of it.
+  const norm = (v: string): string => {
+    let x = v
+    if (x.length > 4 && x.endsWith('ies'))                        x = `${x.slice(0, -3)}y`
+    else if (x.length > 3 && x.endsWith('s') && !x.endsWith('ss')) x = x.slice(0, -1)
+    if (x.length > 5 && x.endsWith('ing'))                        x = x.slice(0, -3)
+    return x
+  }
+
+  const bridges = (w: string, t: string): boolean => {
+    const nw = norm(w), nt = norm(t)
+    return nt === nw
+      || (nw.length >= 4 && nt.startsWith(nw))                       // repair → repairs
+      || (nt.length >= 2 && nw.startsWith(nt) && nw.length - nt.length <= 5)  // fl → florida
+  }
+
+  // A hyphenated term is carried when all of its PARTS are.
+  //
+  // Field tokens are split on every non-alphanumeric, so none of them can contain a hyphen —
+  // while keyword terms are split on whitespace and keep theirs. Comparing the two directly
+  // made "pre-owned" unmatchable against a field literally reading "Pre-Owned", and via
+  // keywordInSlug (which hands the slug over with its hyphens turned to spaces) it made the
+  // slug check unsatisfiable for any hyphenated keyword: no spelling of the slug could clear
+  // it. Matching part-by-part keeps the compound a single unit without that dead end.
+  const hit = (w: string): boolean => {
+    const parts = w.split(/[^a-z0-9]+/).filter(Boolean)
+    if (parts.length > 1) return parts.every(part => fieldTokens.some(t => bridges(part, t)))
+    return fieldTokens.some(t => bridges(w, t))
+  }
+
+  // One class of term is not optional: anything carrying a hyphen or a digit. That shape is
+  // almost always a brand, a model or a year — "can-am defender review" is not satisfied by a
+  // slug about a Yamaha Wolverine, however many of the other words line up.
+  //
+  // An earlier version also made the LONGEST term mandatory, on the theory that it stands in
+  // for the most specific one. It does not, reliably: for "e-bike battery range" the longest
+  // term is "battery", so a correct "E-Bike Range: What to Expect" went red for dropping a
+  // word it had no need of. Length is not distinctiveness, and this checklist sits next to the
+  // H1 it is judging — a reviewer can see what it cannot. Erring loose is the right side to
+  // err on here, and it is the specific complaint these checks were rewritten to answer.
+  const mandatory = kwWords.filter(w => /[-\d]/.test(w))
+  if (!mandatory.every(hit)) return false
+
+  // Two thirds. A field carrying "downpipe" and "ecoboost" carries that keyword, and demanding
+  // "engine" as well fails correct work.
+  return kwWords.filter(hit).length / kwWords.length >= 0.66
 }
 
 function countWords(html: string): number {
@@ -153,20 +222,88 @@ function keywordInSubheadings(html: string, keyword: string): boolean {
   return headings.some(h => seoCheck(h.replace(/<[^>]+>/g, ' '), keyword))
 }
 
+/**
+ * Grammar and question words.
+ *
+ * These are the reason the keyword checks were failing good work. A long-tail keyword like
+ * "what does a downpipe do on an EcoBoost engine" is mostly filler: only "downpipe",
+ * "ecoboost" and "engine" carry meaning, and an H1 that covers two of the three genuinely
+ * covers the keyword. Weighting "what" and "does" equally with "downpipe" made the bar
+ * unreachable for exactly the long-tail phrasing these articles target.
+ */
+const KEYWORD_STOP_WORDS = new Set([
+  'a','an','the','of','for','and','to','in','on','with','your','you','is','are','was','were',
+  'be','do','does','did','how','what','why','when','which','who','from','that','this','it',
+  'its','at','as','by','or','vs','versus','my','our','their','can','should','will','about',
+])
+
+/**
+ * Does the slug carry the keyword?
+ *
+ * It used to require the whole keyword, hyphenated, verbatim — so the CORRECT slug
+ * "what-does-downpipe-do-ecoboost" failed against the keyword "what does a downpipe do on an
+ * EcoBoost engine", because it had dropped "a", "on", "an" and "engine". Shortening a slug by
+ * removing filler is standard practice and something we deliberately do, so the check marked
+ * good work red and could not be satisfied without writing a worse slug.
+ *
+ * It now asks the question that matters: are the keyword's SUBSTANTIVE words in there.
+ *
+ * The rule is seoCheck's, deliberately — this had its own parallel implementation and drifted
+ * from it in a way that mattered: it tested `slugText.includes(term)` against the whole slug
+ * string, so "car insurance" passed "carpet-cleaning-insurance-claims" on two substring hits
+ * inside unrelated words. Delegating means the slug is tokenised on its hyphens like any other
+ * field, and the two checks can no longer disagree about what carrying a keyword means.
+ */
 function keywordInSlug(slug: string, keyword: string): boolean {
   if (!slug || !keyword) return false
-  return slug.toLowerCase().includes(keyword.toLowerCase().replace(/\s+/g, '-'))
+  // Hyphens are the slug's word separators; seoCheck splits on non-alphanumerics anyway, but
+  // this keeps the intent visible at the call site.
+  return seoCheck(slug.toLowerCase().replace(/-/g, ' '), keyword)
 }
 
+/**
+ * Keyword density.
+ *
+ * Measured on the keyword's longest substantive term rather than the verbatim phrase.
+ *
+ * The exact-phrase count reported 0.0% for essentially every long-tail keyword, because
+ * nobody writes "what does a downpipe do on an EcoBoost engine" repeatedly in prose — and
+ * an article that DID would be the kind of keyword-stuffed writing the rest of these checks
+ * exist to prevent. So the check was red on good articles and would only go green on bad
+ * ones, which is worse than not having it.
+ *
+ * The longest substantive term is a stand-in for the one the piece is about — not a perfect
+ * one ("what is the difference between a downpipe and a catback" picks "difference"), which is
+ * why this is a density reading and not a verdict.
+ *
+ * Both counts are taken and the HIGHER wins. Returning early on the exact phrase inverted the
+ * whole check: an article that mentioned the phrase once — normal, correct practice — reported
+ * 0.11% and went red, while deleting that one sentence made the same article report 1.09% and
+ * go green. The check was paying for keyword stuffing and penalising good writing, which is the
+ * failure it was rewritten to fix.
+ */
 function computeKeywordDensity(html: string, keyword: string): number {
   if (!keyword || !html) return 0
   // Collapse whitespace (tags become spaces) so a phrase split across tag boundaries still matches.
   const text  = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase()
   const words = text.split(' ').filter(Boolean).length
   if (words === 0) return 0
-  const kw    = keyword.toLowerCase().replace(/\s+/g, ' ').trim()
-  const regex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
-  return ((text.match(regex) || []).length / words) * 100
+
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, m => "\\" + m)
+  const kw  = keyword.toLowerCase().replace(/\s+/g, ' ').trim()
+
+  const exact    = (text.match(new RegExp(esc(kw), 'g')) || []).length
+  const exactPct = (exact / words) * 100
+
+  const head = kw.split(' ')
+    .filter(w => w.length >= 3 && !KEYWORD_STOP_WORDS.has(w))
+    .sort((a, b) => b.length - a.length)[0]
+  if (!head) return exactPct
+
+  const hits    = (text.match(new RegExp("\\b" + esc(head), "g")) || []).length
+  const headPct = (hits / words) * 100
+
+  return Math.max(exactPct, headPct)
 }
 
 function hasImageWithKeywordAlt(html: string, keyword: string): boolean {
@@ -268,7 +405,7 @@ function suggestCategory(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-type SectionId = 'content' | 'seo' | 'publish'
+type SectionId = 'content' | 'images' | 'seo' | 'publish'
 
 interface TopicBreakdown {
   keyword_opportunity?:    string | null
@@ -280,7 +417,7 @@ interface TopicBreakdown {
   competitors_researched?: string[] | null
 }
 
-export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
+export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onSaved, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -297,7 +434,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [fetchedBreakdown, setFetchedBreakdown] = useState<TopicBreakdown | null>(null)
 
   // Two-pane tabless layout: collapsible right-column sections + header strategy panel
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content', 'seo', 'publish']))
+  // Content only. All three used to open together, so the drawer landed on roughly 1,600px
+  // of scroll and a first-time reviewer met the whole data model at once instead of the
+  // article they came to read.
+  //
+  // The order matches what a review actually is: read the piece, check how it will rank,
+  // decide where it goes. Only the first is needed to form an opinion, so only the first is
+  // open — and because Publish holds the one prerequisite Approve can fail on, that section
+  // opens itself when it does. Progressive disclosure that hid a blocker would be worse than
+  // no disclosure at all.
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set<SectionId>(['content']))
   const toggleSection = (id: SectionId) =>
     setOpenSections(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
   const openSection = (id: SectionId) =>
@@ -334,6 +480,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [applyingStockId, setApplyingStockId] = useState<string | null>(null)
   /** The candidate being previewed full-size before it is applied. */
   const [lightboxCandidate, setLightboxCandidate] = useState<StockImageCandidate | null>(null)
+  // Held separately from the drawer-wide error banner, which renders at the top of the edit
+  // column -- far above the Images section, so it was never in view when an apply failed.
+  const [stockApplyError, setStockApplyError] = useState<string | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [qualityReport, setQualityReport] = useState<any | null>(null)
+  // Which confirmation is open, if any. Approve and Reject both reach the client's live site,
+  // so neither fires on a bare click any more.
+  const [confirming, setConfirming] = useState<null | 'approve' | 'reject' | 'discard'>(null)
+  const [imageDialogOpen, setImageDialogOpen] = useState(false)
+  const [libraryOpen,     setLibraryOpen]     = useState(false)
   const [findingStock,    setFindingStock]    = useState(false)
   /** Inline, non-error outcome of a stock search ("nothing new matched"). */
   const [stockNote,       setStockNote]       = useState('')
@@ -375,7 +531,17 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     scannedAt: string
   }
   const [linkScan,        setLinkScan]        = useState<LinkScanResult | 'scanning' | null>(null)
-  const [showBrokenLinks, setShowBrokenLinks] = useState(false)
+
+  /**
+   * Did something change the ROW since the last push, without going through the editor?
+   *
+   * post.updatedAt is a snapshot taken when the drawer opened and nothing refreshes it, so
+   * comparing it against last_pushed_at could only ever see changes that predated the drawer.
+   * Saving, applying an image and regenerating all write server-side and leave isDirty false —
+   * which is exactly the state the push button was being disabled in. This is set by those
+   * handlers and cleared by a successful push.
+   */
+  const [changedSincePush, setChangedSincePush] = useState(false)
 
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -413,7 +579,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setSlug(data.slug ?? '')
         setTags(data.suggestedTags ?? [])
         setAuthorId(data.wpAuthorId ?? data.scheduleDefaultAuthorId ?? null)
-        setBcAuthorName(data.scheduleBcAuthor ?? '')
+        // The post's own byline wins over the client default, so a name typed here survives
+        // a reload instead of being reset to the schedule setting on every open.
+        setBcAuthorName(data.bcAuthorName ?? data.scheduleBcAuthor ?? '')
+        setQualityReport(data.qualityReport ?? null)
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         setImageCandidates(data.imageCandidates ?? [])
@@ -587,7 +756,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const keywordInSubhd     = content ? keywordInSubheadings(content, targetKeyword) : false
   const densityPct         = computeKeywordDensity(content, targetKeyword)
   const densityOk          = densityPct >= 0.5 && densityPct <= 2.0
-  const imgAltKw           = content ? hasImageWithKeywordAlt(content, targetKeyword) : false
+  // The FEATURED image counts, not just images inside the article body.
+  //
+  // This judged the body alone, and the featured image is not in the body — so on a post whose
+  // only picture is the generated featured one, the row was permanently red and no edit a
+  // reviewer could make would clear it. That is the check the alt-text work exists to satisfy,
+  // and it was the half that was never wired up.
+  const imgAltKw           = (targetKeyword && post?.imageAltText ? seoCheck(post.imageAltText, targetKeyword) : false)
+    || (content ? hasImageWithKeywordAlt(content, targetKeyword) : false)
   const metaLenOk          = liveMetaLen >= 150 && liveMetaLen <= 160
   const seoTitleLenOk      = seoTitle.length > 0 && seoTitle.length <= 60
   const isBlogPost         = (post?.contentType ?? 'blog') === 'blog'
@@ -638,6 +814,25 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }, 50)
   }
 
+  // ── Jump to a phone number in the content textarea ──────────────────────────
+  // Matched as literal text rather than through an href, because the scan finds numbers
+  // both ways — inside a tel: link and as bare text in a paragraph — and a plain indexOf
+  // is what covers both. The needle is the raw string the scan itself reported, so when a
+  // number was found it is present in the body verbatim.
+  function jumpToPhone(raw: string) {
+    const textarea = contentTextareaRef.current
+    if (!textarea || !content || !raw) return
+    const idx = content.indexOf(raw)
+    if (idx < 0) return
+    openSection('content')
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(idx, idx + raw.length)
+      const ratio = idx / Math.max(content.length, 1)
+      textarea.scrollTop = Math.max(0, ratio * textarea.scrollHeight - textarea.clientHeight / 3)
+    }, 50)
+  }
+
   // ── Save Changes ────────────────────────────────────────────────────────────
   async function handleSave() {
     setSaving(true)
@@ -657,21 +852,57 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
       setIsDirty(false)
+      // Saved to the row, not to the site. The live article is now behind this.
+      setChangedSincePush(true)
       setSavedFlash(true)
       setTimeout(() => setSavedFlash(false), 2000)
+      // Tell the list behind us, without closing.
+      onSaved?.({
+        id: postId, status: post?.status ?? 'for_review',
+        title: title || null, targetKeyword: targetKeyword || null,
+        wordCount: liveWordCount, headingCount: liveHeadings, internalLinks: liveIntLinks,
+        publishedUrl: post?.publishedUrl ?? null,
+      })
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save')
+      return false
     } finally {
       setSaving(false)
     }
   }
 
   // ── Monthly Review actions ───────────────────────────────────────────────────
-  async function handleMonthlyApprove() {
-    if (isDirty) await handleSave()
-    onMonthlyApprove?.()
-    onClose()
+  /**
+   * Runs only after the reviewer has answered the confirmation.
+   *
+   * @param withEdits true  -> save the drawer first, so the push carries the current edits
+   *                  false -> push what is already stored, discarding unsaved edits
+   * A clean drawer never asks; the two are identical there.
+   */
+  async function performApprove(withEdits: boolean) {
+    if (isDirty && withEdits) {
+      // STOP if the save failed. handleSave reports failure by setting `error` and returning
+      // normally, so simply awaiting it told the caller nothing: a failed save fell straight
+      // through to the push, "Push with my changes" quietly became "push without them", and
+      // the drawer closed over the error explaining why. That is the exact silent-save
+      // failure this confirmation was added to prevent, reintroduced one level down.
+      const saved = await handleSave()
+      if (!saved) return
+    }
+    // Monthly review owns the push lifecycle (polling, live-post handling, the card badge),
+    // so delegate there. Standalone, the drawer pushes for itself — which is the path the
+    // calendar uses, and the one that had no confirmation at all.
+    if (onMonthlyApprove) {
+      onMonthlyApprove()
+      onClose()
+      return
+    }
+    await handleApprove(withEdits)
   }
+
+  /** Both footers' Approve. Opens the confirmation; performApprove does the work. */
+  function handleMonthlyApprove() { setConfirming('approve') }
 
   function handleMonthlyDiscard() {
     onMonthlyDiscard?.()
@@ -679,7 +910,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   // ── Approve ─────────────────────────────────────────────────────────────────
-  async function handleApprove() {
+  /**
+   * @param persistEdits false when the reviewer chose "Push without my changes".
+   *
+   * This PATCHed the whole drawer unconditionally, so the discard choice was honoured one
+   * level up and then undone here — the silent save-then-push the confirmation exists to
+   * prevent, surviving inside the very function the confirmation calls.
+   */
+  async function handleApprove(persistEdits = true) {
     setApproving(true)
     setError('')
     try {
@@ -687,22 +925,39 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
 
       if (!activeSite) {
-        setError('Select a site connection in the Settings tab before approving.')
+        // Open the section that holds the fix and say where it is. The old copy named a
+        // "Settings tab", which this drawer has never had — the control is in Publish, below.
+        openSection('publish')
+        setError('Choose a site connection under Publish below, then approve.')
         setApproving(false)
         return
       }
-      if (!window.confirm(`Push "${title || 'this post'}" to ${activeSite.siteName}?`)) { setApproving(false); return }
+      // No confirm here any more. handleApprove is now reached ONLY through
+      // ConfirmActionDialog, which already states what pushing will do and, on a dirty
+      // drawer, offers the with-edits/without-edits choice this native prompt cannot. Keeping
+      // both meant two confirmations for one action, the second one cruder than the first.
+
+      // Discarding edits does not mean discarding WHERE the post goes.
+      //
+      // The route below is chosen from the drawer's local connectionId, while the push route
+      // reads connection_id from the ROW — so skipping the save entirely let the two disagree:
+      // the browser would call the BigCommerce endpoint while the server resolved a WordPress
+      // connection, or push to whichever site the row still remembered. connectionId is a
+      // routing decision, not content, so it is persisted either way.
+      const body = persistEdits
+        ? {
+            title, seoTitle, content, metaDescription, slug,
+            targetKeyword, suggestedTags: tags,
+            featuredImageUrl: featuredImageUrl || null,
+            wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
+            connectionId,
+          }
+        : { connectionId }
 
       const saveRes = await fetch(`/api/admin/content/posts/${postId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          title, seoTitle, content, metaDescription, slug,
-          targetKeyword, suggestedTags: tags,
-          featuredImageUrl: featuredImageUrl || null,
-          wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
-          connectionId,
-        }),
+        body:    JSON.stringify(body),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save edits')
 
@@ -732,7 +987,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     }
   }
 
-  async function handleReject() {
+  function handleReject() { setConfirming('reject') }
+
+  async function performReject() {
     setError('')
     try {
       const res = await fetch('/api/admin/content/status', {
@@ -749,7 +1006,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   async function handleRetry() {
-    if (!connectionId) { setError('Select a site connection in the Settings tab first'); return }
+    if (!connectionId) {
+      openSection('publish')
+      setError('Choose a site connection under Publish below first.')
+      return
+    }
     setRetrying(true); setError('')
     try {
       // Save all editor state (including connectionId) before pushing — same as handleApprove
@@ -867,7 +1128,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   async function handleScanLinks() {
     setLinkScan('scanning')
-    setShowBrokenLinks(false)
     try {
       const res = await fetch(`/api/admin/content/posts/${postId}/scan-links`, { method: 'POST' })
       if (!res.ok) throw new Error('Scan failed')
@@ -920,11 +1180,22 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       const res = await fetch(`/api/admin/content/posts/${postId}/select-stock-image`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ candidateId }),
+        // Client-library picks carry the connection and attachment id, because they are not
+        // in the post's stored candidate list — the server re-resolves them against that
+        // site's own API rather than trusting a URL from here. Stock picks send neither and
+        // resolve from the stored list exactly as before.
+        body: JSON.stringify(
+          candidateId.startsWith('wp-')
+            ? { candidateId, connectionId, mediaId: Number(candidateId.slice(3)) }
+            : { candidateId },
+        ),
       })
       const data = await res.json() as { url?: string; error?: string }
       if (!res.ok || data.error) throw new Error(data.error ?? 'Could not apply that image')
       setFeaturedImageUrl(data.url ?? '')
+      // Persisted server-side and deliberately not dirty — but the live article still has the
+      // old picture, so the push button must stay reachable.
+      setChangedSincePush(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not apply that image')
       // RETHROW. The modal awaits this and closes on resolve, so swallowing the error
@@ -939,12 +1210,19 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   }
 
   // ── Image generation ────────────────────────────────────────────────────────
-  async function handleGenerateImage() {
+  /** Opens the steering dialog; the request itself is performGenerateImage. */
+  function handleGenerateImage() { setImageDialogOpen(true) }
+
+  async function performGenerateImage(req: { direction: string; notes: string }) {
     setGeneratingImage(true)
     setImageUploadingMsg('')
     setError('')
     try {
-      const res = await fetch(`/api/admin/content/posts/${postId}/generate-image`, { method: 'POST' })
+      const res = await fetch(`/api/admin/content/posts/${postId}/generate-image`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ direction: req.direction, notes: req.notes || undefined }),
+      })
       const data = await res.json() as { url?: string; error?: string; candidates?: StockImageCandidate[] }
       // Generating also REWRITES the stored candidates as a side effect, so adopt the
       // returned list even when generation failed. Without this the strip keeps showing
@@ -1000,16 +1278,77 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     color: 'var(--text-muted)', marginBottom: '0.25rem',
   }
 
-  const isOnSite = post?.status === 'draft_saved' || post?.status === 'published'
+  // "Is there an article on the client's site" — a platform id OR a status that only exists
+  // once something was pushed. Both, because either one alone is wrong.
+  //
+  // Status alone got it wrong in the place it matters most: regenerating a live post with
+  // "replace" deliberately KEEPS wp_post_id — that is what makes the next push overwrite in
+  // place — while setting status back to 'for_review'. The drawer then decided the post was
+  // not on site, the On Site banner vanished, the button reverted to "Approve", and the
+  // confirmation promised to publish something new at the exact moment it was about to
+  // overwrite something already public.
+  //
+  // Shared with the pipeline and monthly-review cards rather than reimplemented here, which is
+  // how the two definitions drifted apart in the first place.
+  const isOnSite = post ? postIsOnSite(post) : false
   const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
+
+  /**
+   * Is the live article behind what this row holds?
+   *
+   * "Not dirty" was being used to mean "the site already has this", and it does not. A
+   * replace-regenerate rewrites the post server-side and keeps the platform ids; applying an
+   * image from the client's library is persisted server-side too. Both leave the editor clean
+   * while the live article is now out of date — and those are precisely the cases where the
+   * push button was greyed out with a tooltip insisting the live article already matched.
+   *
+   * So this reads the timestamps instead. It FAILS OPEN in every uncertain case — no push
+   * recorded, no updated_at, unparseable dates — because a redundant push is one round trip
+   * that overwrites an article with identical content, while a push that cannot be made leaves
+   * the wrong article on a client's site with nothing in the UI admitting it.
+   *
+   * The two-second tolerance is slack, not a fix for a known skew: the updated_at trigger and
+   * last_pushed_at are written in the same statement and land equal, so nothing depends on it.
+   * It is there so a clock or replication wobble cannot make a just-pushed post read as stale.
+   */
+  const liveIsStale = (() => {
+    if (changedSincePush) return true
+    if (!post?.lastPushedAt) return true
+    if (!post?.updatedAt)    return true
+    const pushed  = new Date(post.lastPushedAt).getTime()
+    const written = new Date(post.updatedAt).getTime()
+    if (!Number.isFinite(pushed) || !Number.isFinite(written)) return true
+    return written > pushed + 2000
+  })()
+
+  /** Nothing to send: it is on the site, unedited here, and the site has this version. */
+  const nothingToPush = isOnSite && !isDirty && !liveIsStale
 
   // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
   const liveUrl        = post ? viewLiveUrl(post) : null
   const showLiveLink   = isPublicPermalink(liveUrl)
-  const draftPreview   = post ? wpDraftPreviewUrl(post) : null
-  const wpEdit         = post ? wpEditUrl(post) : null
-  const bcEdit         = post ? bcEditUrl(post) : null
 
+  /**
+   * Is the article actually VISIBLE to the public, as opposed to merely on the site?
+   *
+   * "On site" covers a saved draft too, and a draft has no visitors and no rankings — so the
+   * push confirmation has to tell the two apart before it promises anything about either.
+   *
+   * A public permalink alone does not settle it. BigCommerce is pushed unpublished but is still
+   * given its public storefront URL, so every BC post looked live by that test. The status is
+   * what the push actually recorded, so it decides, and the permalink is only consulted for
+   * WordPress where it genuinely distinguishes a draft from a published post.
+   */
+  const isPubliclyLive = post?.status === 'published' || (!isBc && showLiveLink)
+
+  // The featured image goes through the proxy here too, but this is a raw HTML string rather
+  // than a ClientImage — so the fall-back-to-the-direct-URL behaviour the five React surfaces
+  // get for free has to be written onto the tag. Without it a proxy refusal would leave both
+  // preview panes showing a broken picture that renders fine in the panel beside them.
+  // Prepared here rather than inline: this is a raw HTML string, and an attribute holding a URL
+  // inside a template literal inside JSX is three levels of quoting to get wrong at once.
+  const previewImgSrc      = proxiedImageSrc(featuredImageUrl, connectionId).replace(/"/g, '&quot;')
+  const previewImgFallback = featuredImageUrl.replace(/"/g, '&quot;')
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
     h1{font-size:2rem;line-height:1.3;margin-bottom:.5rem;color:#111}
@@ -1020,7 +1359,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     li{margin-bottom:.4rem}strong{font-weight:700}a{color:#2563eb;text-decoration:underline}
     img{max-width:100%;height:auto;border-radius:4px}
     blockquote{border-left:4px solid #e5e7eb;margin:1.5rem 0;padding:.75rem 1rem;color:#555;font-style:italic}
-  </style></head><body>${featuredImageUrl ? `<img src="${featuredImageUrl.replace(/"/g, '&quot;')}" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
+  </style></head><body>${featuredImageUrl ? `<img src="${previewImgSrc}" onerror="this.onerror=null;this.src=&quot;${previewImgFallback}&quot;" alt="" style="width:100%;border-radius:8px;margin-bottom:1.5rem" />` : ''}<h1>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>${content}</body></html>`
 
   return (
     <>
@@ -1152,21 +1491,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>✓ On Site</span>
-                  {showLiveLink && liveUrl && (
-                    <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>View live ↗</a>
-                  )}
-                  {draftPreview && (
-                    <a href={draftPreview} target="_blank" rel="noopener noreferrer" title="Opens the draft on your WordPress site — requires your WordPress login" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Preview draft ↗</a>
-                  )}
-                  {wpEdit && (
-                    <a href={wpEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)' }}>Open in WordPress ↗</a>
-                  )}
-                  {bcEdit && (
-                    <a href={bcEdit} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--blue)', fontWeight: 600 }}>Edit in BigCommerce ↗</a>
-                  )}
+                  {post && <PostSiteLinks post={post as unknown as PostLinkInput} fontSize={13} />}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-                  This post has been saved to your site as a draft. Preview it live, or edit and publish it directly in the CMS.
+                  {showLiveLink && liveUrl
+                    ? 'This post is published on the client’s site. Edits here do not change the live article until you push them.'
+                    : 'This post is saved to the client’s site as a draft. Nothing is visible to visitors until it is published.'}
                 </p>
               </div>
             )}
@@ -1185,25 +1515,57 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 <textarea ref={contentTextareaRef} value={content} onChange={e => { setContent(e.target.value); markDirty() }} style={{ ...inputStyle, minHeight: 280, fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }} placeholder="<h2>Introduction</h2><p>…</p>" />
               </div>
 
-              {/* Link scan trigger — always visible in content tab so users don't need to go to SEO Checklist */}
-              <div style={{ marginBottom: 8, marginTop: -4, display: 'flex', alignItems: 'center', gap: 8 }}>
-                {(linkScan === null || linkScan === 'scanning') ? (
-                  <button
-                    type="button"
-                    onClick={handleScanLinks}
-                    disabled={linkScan === 'scanning'}
-                    style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
-                  >
-                    {linkScan === 'scanning' ? '⟳ Scanning links…' : '🔗 Scan for broken links'}
-                  </button>
-                ) : (
-                  <span style={{ fontSize: '0.72rem', color: linkScan.links.some(l => !l.ok) ? '#dc2626' : '#16a34a' }}>
-                    {linkScan.links.filter(l => !l.ok).length === 0
-                      ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
-                      : `⚠ ${linkScan.links.filter(l => !l.ok).length} broken link${linkScan.links.filter(l => !l.ok).length !== 1 ? 's' : ''} — see below`}
-                    <button type="button" onClick={handleScanLinks} style={{ marginLeft: 8, fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
-                  </span>
-                )}
+              {/* Content checks — links, phone numbers, and the quality note.
+                  All three ask the same question about the body copy sitting directly above,
+                  so they answer it in one place instead of being scattered down the drawer.
+                  The phone readout comes off the same scan as the links and is the reason the
+                  scan is worth running on a local-business post at all: a mistyped number
+                  costs a call, which is the thing the article was written to earn. */}
+              <div style={{ marginBottom: '1rem', marginTop: -4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minHeight: 24 }}>
+                  {(linkScan === null || linkScan === 'scanning') ? (
+                    <button
+                      type="button"
+                      onClick={handleScanLinks}
+                      disabled={linkScan === 'scanning'}
+                      style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
+                    >
+                      {linkScan === 'scanning' ? '⟳ Scanning…' : '🔗 Scan links & phone numbers'}
+                    </button>
+                  ) : (() => {
+                    const brokenCount = linkScan.links.filter(l => !l.ok).length
+                    const phones      = linkScan.phones ?? []
+                    const badPhones   = phones.filter(p => !p.valid).length
+                    return (
+                      <>
+                        {/* An article with no links is neutral, not a pass — "✓ All 0 links OK"
+                            reads as a check that ran and succeeded, when nothing was checked.
+                            Same treatment the phone readout gets below. */}
+                        <span style={{ fontSize: '0.72rem', color: linkScan.links.length === 0 ? 'var(--text-faint)' : brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
+                          {linkScan.links.length === 0
+                            ? 'No links'
+                            : brokenCount === 0
+                              ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
+                              : `⚠ ${brokenCount} broken link${brokenCount !== 1 ? 's' : ''} — see below`}
+                        </span>
+                        {/* Finding none is neutral, not a pass. Plenty of posts legitimately
+                            carry no number, and colouring that green would claim a check
+                            that never had anything to check. */}
+                        <span style={{ fontSize: '0.72rem', color: phones.length === 0 ? 'var(--text-faint)' : badPhones > 0 ? '#b45309' : '#16a34a' }}>
+                          {phones.length === 0
+                            ? 'No phone numbers'
+                            : badPhones === 0
+                              ? `✓ ${phones.length} phone number${phones.length !== 1 ? 's' : ''} valid`
+                              : `⚠ ${badPhones} of ${phones.length} phone number${phones.length !== 1 ? 's' : ''} to check — see below`}
+                        </span>
+                        <button type="button" onClick={handleScanLinks} style={{ fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
+                      </>
+                    )
+                  })()}
+                </div>
+                {/* Full width on its own line: the pill opens into a list of findings, and at
+                    the end of a flex row that list would unfold into a narrow column. */}
+                <QualityFindings report={qualityReport} />
               </div>
 
               {/* Broken links — inline panel below content HTML */}
@@ -1235,124 +1597,123 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 )
               })()}
 
-              {/* Featured image */}
-              <div className="mb-4">
-                <label style={labelStyle}>Featured Image</label>
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    {generatingImage ? 'Generating…' : '✦ Generate with AI'}
-                  </button>
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                    {imageUploadingMsg || 'Upload Image'}
-                  </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
-                  {featuredImageUrl && (
-                    <button type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
-                      ✕ Remove
-                    </button>
-                  )}
-                </div>
-                <input type="url" value={featuredImageUrl} onChange={e => { setFeaturedImageUrl(e.target.value); markDirty() }} style={inputStyle} placeholder="Or paste image URL…" />
-                {featuredImageUrl && (
-                  <img src={featuredImageUrl} alt="Featured image preview" style={{ maxHeight: 140, marginTop: 8, borderRadius: 6, objectFit: 'cover', maxWidth: '100%', border: '1px solid var(--border)' }} />
-                )}
-
-                {/* Free stock alternatives, banked at generation time and scrolled
-                    horizontally rather than laid out as a grid. A grid of 40 thumbnails
-                    dominates the drawer and pushes every other field off screen; one row
-                    keeps the whole set reachable at the height of a single thumbnail.
-                    This also replaced a modal — the modal existed only to house the
-                    grid, which was never a reason to have a modal. */}
-                {imageCandidates.length > 0 && (
-                  <div style={{ marginTop: 14 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        Free stock alternatives · {imageCandidates.length}
-                      </span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        scroll sideways · the AI image stays selected until you click one
-                      </span>
-                      <div style={{ flex: 1 }} />
-                      <button
-                        type="button"
-                        onClick={handleFindStockImages}
-                        disabled={findingStock}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-                        title="Search Pexels, Wikimedia Commons and Openverse again for this post's topic"
-                      >
-                        {findingStock ? 'Searching…' : '↻ Search again'}
-                      </button>
+              {/* Phone numbers that do not parse as dialable — the same treatment as a
+                  broken link, in amber rather than red because a number can be unusual
+                  without being wrong, and the reviewer is the one who knows which. */}
+              {linkScan !== null && linkScan !== 'scanning' && (() => {
+                const bad = (linkScan.phones ?? []).filter(p => !p.valid)
+                if (bad.length === 0) return null
+                return (
+                  <div className="mb-4" style={{ border: '1px solid #fcd34d', borderRadius: 6, background: '#fffbeb', padding: '0.625rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b45309', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      {bad.length} phone number{bad.length !== 1 ? 's' : ''} to check — click to jump
                     </div>
-
-                    {stockNote && (
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                        {stockNote}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, scrollSnapType: 'x proximity' }}>
-                      {imageCandidates.map(c => {
-                        const busy = applyingStockId === c.id
-                        return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {bad.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, fontSize: '0.75rem', color: '#b45309', wordBreak: 'break-all' }}>
+                            ✗ {p.raw} ({p.digits.length} digit{p.digits.length !== 1 ? 's' : ''})
+                          </span>
                           <button
-                            key={c.id}
                             type="button"
-                            disabled={!!applyingStockId}
-                            onClick={() => setLightboxCandidate(c)}
-                            title={`${c.title}${c.creator ? ` — ${c.creator}` : ''} · ${c.license}`}
-                            style={{
-                              flex: '0 0 132px', scrollSnapAlign: 'start',
-                              padding: 0, border: '1px solid var(--border)', borderRadius: 6,
-                              overflow: 'hidden', background: 'var(--bg-subtle)',
-                              cursor: applyingStockId ? 'default' : 'pointer',
-                              opacity: busy ? 0.5 : 1, textAlign: 'left',
-                            }}
+                            onClick={() => jumpToPhone(p.raw)}
+                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fcd34d', borderRadius: 4, cursor: 'pointer', color: '#b45309', flexShrink: 0, whiteSpace: 'nowrap' }}
                           >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={c.thumbnail} alt={c.title} loading="lazy"
-                              style={{ width: '100%', height: 74, objectFit: 'cover', display: 'block' }} />
-                            <div style={{ padding: '4px 6px', fontSize: '0.62rem', lineHeight: 1.3 }}>
-                              <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-primary)' }}>
-                                {busy ? 'Applying…' : c.title}
-                              </div>
-                              <div style={{ color: 'var(--text-muted)' }}>
-                                {STOCK_SOURCE_LABEL[c.source] ?? 'Stock'}
-                              </div>
-                            </div>
+                            Jump ↓
                           </button>
-                        )
-                      })}
-                    </div>
-
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                      Clicking one copies it into your own storage and records its licence and attribution.
+                        </div>
+                      ))}
                     </div>
                   </div>
-                )}
+                )
+              })()}
 
-                {/* With no candidates the strip does not render, and its refetch button
-                    goes with it — so the empty state needs its own way in. Every post
-                    written before this feature shipped starts here, as does any client
-                    with AI images switched off. */}
-                {imageCandidates.length === 0 && (
-                  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            </CollapsibleSection>
+
+            {/* ── SECTION: Images ──────────────────────────────────────────────
+                Its own section, because it was the only part of the review that had no home:
+                it sat at the bottom of Content, under the article body, as a label and three
+                buttons and a raw storage URL — and the picture, the thing actually being
+                judged, came fourth in reading order.
+
+                So the image leads and the controls sit beneath it, which is also the order a
+                reviewer works in: look, then decide whether to change it. The URL field went
+                entirely — pasting a storage URL into a review panel is not a standard worth
+                setting, and every real source (library, generate, upload) has a button.
+
+                The section is collapsed on open along with the others; only Content starts
+                expanded, because a reviewer's first question is about the words. */}
+            <CollapsibleSection title="Images" open={openSections.has('images')} onToggle={() => toggleSection('images')}>
+              {featuredImageUrl ? (
+                <>
+                  {/* Once one of the client's own pictures is applied, featured_image_url
+                      points at THEIR server — the file is referenced by attachment id rather
+                      than copied, deliberately, so pushing it back does not duplicate it. That
+                      makes this the one image on the page their host can refuse, so it goes
+                      through the proxy. Anything we generated or uploaded is already ours and
+                      is left alone. */}
+                  <ClientImage
+                    src={featuredImageUrl}
+                    alt="Featured image"
+                    connectionId={connectionId || null}
+                    style={{
+                      width: '100%', aspectRatio: '16 / 9', objectFit: 'cover',
+                      borderRadius: 8, border: '1px solid var(--border)', display: 'block',
+                      background: 'var(--bg-subtle)',
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
                     <button
-                      type="button"
-                      onClick={handleFindStockImages}
-                      disabled={findingStock}
-                      className="btn btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-                      title="Search Pexels, Wikimedia Commons and Openverse for photos matching this post's topic"
+                      type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
+                      style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
-                      {findingStock ? 'Searching…' : '⌕ Find free stock images'}
+                      <Books size={14} weight="bold" />
+                      Image library
                     </button>
-                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                      {stockNote || 'Free, commercially usable photos as an alternative to the AI image.'}
-                    </span>
+                    <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                    </button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {imageUploadingMsg || 'Upload'}
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }}
+                      className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}
+                    >
+                      Remove
+                    </button>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                /* Empty state carries the primary action rather than a row of equals. */
+                <div style={{
+                  border: '1px dashed var(--border)', borderRadius: 8, padding: '28px 16px',
+                  textAlign: 'center', background: 'var(--bg-subtle)',
+                }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                    No featured image yet.
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
+                      style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Books size={14} weight="bold" />
+                      Open image library{imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
+                    </button>
+                    <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                    </button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                      {imageUploadingMsg || 'Upload'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFileChange} style={{ display: 'none' }} />
+
             </CollapsibleSection>
 
             {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
@@ -1451,74 +1812,88 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     </span>
                   ) : null}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem 0.75rem', fontSize: '0.775rem', color: 'var(--text-muted)' }}>
-                  <div><Check ok={keywordInTitle} />Keyword in H1</div>
-                  <div><Check ok={keywordInSeoTitle} />Keyword in SEO title</div>
-                  <div><Check ok={keywordInMeta} />Keyword in meta desc</div>
-                  <div><Check ok={!!keywordInFirst} />Keyword in opening</div>
-                  <div><Check ok={keywordInSubhd} />Keyword in subheading</div>
-                  <div><Check ok={densityOk} warn={densityPct > 0 && !densityOk} />{densityPct.toFixed(1)}% density</div>
-                  <div><Check ok={liveWordCount >= 600} />{liveWordCount.toLocaleString()} words</div>
-                  <div><Check ok={liveHeadings >= 2} />{liveHeadings} headings</div>
-                  <div><Check ok={metaLenOk} warn={liveMetaLen > 0 && !metaLenOk} />Meta {liveMetaLen}/160</div>
-                  <div><Check ok={liveIntLinks >= 1} />{liveIntLinks} internal link{liveIntLinks !== 1 ? 's' : ''}</div>
-                  <div><Check ok={liveExtLinks >= 1} />{liveExtLinks} external link{liveExtLinks !== 1 ? 's' : ''}</div>
-                  <div><Check ok={imgAltKw} />Image alt w/ keyword</div>
-                  <div><Check ok={keywordSlug} />Keyword in slug</div>
-                  <div><Check ok={slugLenOk} />{slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug'}</div>
-                  <div><Check ok={seoTitleLenOk} />SEO title ≤60 chars</div>
-                  {isBlogPost && <div><Check ok={hasTakeaways} />Key Takeaways box</div>}
-                  <div><Check ok={headingHierOk} warn={liveHeadings > 0 && !headingHierOk} />Heading hierarchy</div>
-                  <div><Check ok={slugClean} warn={slug.length > 0 && !slugClean} />Clean URL slug</div>
-                </div>
+                {/* Data-driven so the list can be SORTED and SUMMARISED.
+                    Eighteen checks in source order, all styled alike, made a reviewer scan
+                    every row to find the two that were red — and offered no answer to the
+                    only question being asked, which is "is this ready". Failures rise to the
+                    top; the count says how much is left. */}
+                {(() => {
+                  const checks: { ok: boolean; warn?: boolean; label: string }[] = [
+                    { ok: keywordInTitle,    label: 'Keyword in H1' },
+                    { ok: keywordInSeoTitle, label: 'Keyword in SEO title' },
+                    { ok: keywordInMeta,     label: 'Keyword in meta desc' },
+                    { ok: !!keywordInFirst,  label: 'Keyword in opening' },
+                    { ok: keywordInSubhd,    label: 'Keyword in subheading' },
+                    { ok: densityOk,   warn: densityPct > 0 && !densityOk, label: `${densityPct.toFixed(1)}% density` },
+                    { ok: liveWordCount >= 600, label: `${liveWordCount.toLocaleString()} words` },
+                    { ok: liveHeadings >= 2,    label: `${liveHeadings} headings` },
+                    { ok: metaLenOk,   warn: liveMetaLen > 0 && !metaLenOk, label: `Meta ${liveMetaLen}/160` },
+                    { ok: liveIntLinks >= 1, label: `${liveIntLinks} internal link${liveIntLinks !== 1 ? 's' : ''}` },
+                    { ok: liveExtLinks >= 1, label: `${liveExtLinks} external link${liveExtLinks !== 1 ? 's' : ''}` },
+                    { ok: imgAltKw,    label: 'Image alt w/ keyword' },
+                    { ok: keywordSlug, label: 'Keyword in slug' },
+                    { ok: slugLenOk,   label: slug.length > 0 ? `Slug ${slug.length} chars` : 'No slug' },
+                    { ok: seoTitleLenOk, label: 'SEO title ≤60 chars' },
+                    ...(isBlogPost ? [{ ok: hasTakeaways, label: 'Key Takeaways box' }] : []),
+                    { ok: headingHierOk, warn: liveHeadings > 0 && !headingHierOk, label: 'Heading hierarchy' },
+                    { ok: slugClean,     warn: slug.length > 0 && !slugClean,      label: 'Clean URL slug' },
+                  ]
+                  const failed = checks.filter(c => !c.ok)
+                  const passed = checks.filter(c => c.ok)
+                  const ordered = [...failed, ...passed]
 
-                {/* Link Health */}
-                <div style={{ marginTop: '0.75rem', paddingTop: '0.625rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-faint)' }}>LINK HEALTH</span>
-                    {linkScan === null && (
-                      <>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Links: not scanned</span>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Phones: not scanned</span>
-                        <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Scan Now</button>
-                      </>
-                    )}
-                    {linkScan === 'scanning' && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Scanning…</span>
-                    )}
-                    {linkScan !== null && linkScan !== 'scanning' && (() => {
-                      const okLinks    = linkScan.links.filter(l => l.ok).length
-                      const totalLinks = linkScan.links.length
-                      const brokenLinks = linkScan.links.filter(l => !l.ok && !l.redirected)
-                      const okPhones   = linkScan.phones.filter(p => p.valid).length
-                      const totalPhones = linkScan.phones.length
-                      const allLinksOk = brokenLinks.length === 0
-                      return (
-                        <>
-                          <span
-                            style={{ fontSize: '0.75rem', color: allLinksOk ? 'var(--green)' : 'var(--red)', background: 'var(--bg)', border: `1px solid ${allLinksOk ? 'var(--green)' : 'var(--red)'}`, borderRadius: 4, padding: '1px 6px', cursor: brokenLinks.length > 0 ? 'pointer' : 'default' }}
-                            onClick={() => brokenLinks.length > 0 && setShowBrokenLinks(v => !v)}
+                  return (
+                    <>
+                      {/* One status line: the count, and how much of it is left.
+                          The quality note used to sit on the right of this row. It is a
+                          judgement about the ARTICLE rather than about the SEO fields, so it
+                          now sits under the content it is judging, beside the link and phone
+                          scan — the other two readouts that answer "is this sound to send". */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem',
+                        flexWrap: 'wrap',
+                        fontSize: '0.775rem', fontWeight: 600,
+                        color: failed.length === 0 ? 'var(--green)' : 'var(--text-secondary)',
+                      }}>
+                        <span>{passed.length}/{checks.length} passed</span>
+                        {failed.length > 0 && (
+                          <span style={{ color: 'var(--amber, #b45309)', fontWeight: 700 }}>
+                            · {failed.length} to look at
+                          </span>
+                        )}
+                      </div>
+                      {/* auto-fit, not three fixed columns.
+                          At the drawer's width three columns are ~150px each, which is
+                          narrower than "Image alt w/ keyword" — so half the labels wrapped
+                          mid-phrase and the tick drifted away from the words it marks. This
+                          reflows to two columns when narrow and three when there is room, and
+                          each row is a flex line so the mark stays with its label. */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
+                        gap: '0.35rem 0.9rem', fontSize: '0.775rem', color: 'var(--text-muted)',
+                      }}>
+                        {ordered.map(c => (
+                          <div
+                            key={c.label}
+                            style={{
+                              display: 'flex', alignItems: 'baseline', gap: 5, lineHeight: 1.45,
+                              ...(c.ok ? {} : { color: 'var(--text-secondary)', fontWeight: 500 }),
+                            }}
                           >
-                            Links: {okLinks}/{totalLinks} OK{brokenLinks.length > 0 ? ` (${brokenLinks.length} broken)` : ' ✓'}
-                          </span>
-                          <span style={{ fontSize: '0.75rem', color: okPhones === totalPhones ? 'var(--green)' : 'var(--amber)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>
-                            Phones: {totalPhones === 0 ? 'none' : `${okPhones}/${totalPhones} valid`}
-                          </span>
-                          <button onClick={() => void handleScanLinks()} style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', background: 'var(--bg-subtle)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}>Rescan</button>
-                        </>
-                      )
-                    })()}
-                  </div>
-                  {linkScan !== null && linkScan !== 'scanning' && showBrokenLinks && linkScan.links.filter(l => !l.ok).length > 0 && (
-                    <div style={{ marginTop: '0.375rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {linkScan.links.filter(l => !l.ok).map((l, i) => (
-                        <div key={i} style={{ fontSize: '0.7rem', color: l.redirected ? 'var(--amber)' : 'var(--red)', wordBreak: 'break-all' }}>
-                          {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` → ${l.status}` : l.error ? ` (${l.error})` : ''}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                            <Check ok={c.ok} warn={c.warn} />
+                            <span>{c.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )
+                })()}
+
+                {/* Link health lives under the Content field, not here.
+                    Two readouts of the same scan, in two sections, is one too many — and
+                    the useful place is beside the HTML whose links are being reported, not
+                    at the bottom of a checklist about keywords. */}
               </div>
             </CollapsibleSection>
 
@@ -1693,11 +2068,24 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <button
                 type="button"
                 onClick={handleMonthlyApprove}
-                disabled={saving}
+                // Nothing to push when the article is already live and unchanged. Leaving it
+                // enabled invited a pointless round trip to the client's site, and leaving it
+                // labelled "Approve" asked for an approval that had already happened.
+                disabled={saving || nothingToPush}
+                title={isOnSite
+                  ? (isDirty
+                      ? 'Send your changes to the live article'
+                      : liveIsStale
+                        ? 'This version has not been sent to the site yet — push it'
+                        : 'The live article already matches this — edit something to push an update')
+                  : undefined}
                 className="btn btn-sm btn-primary"
-                style={{ background: saving ? undefined : '#16a34a', borderColor: '#16a34a' }}
+                style={{
+                  background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
+                  opacity: nothingToPush ? 0.55 : 1,
+                }}
               >
-                {saving ? '…' : 'Approve →'}
+                {saving ? '…' : isOnSite ? 'Push update' : 'Approve →'}
               </button>
             </div>
           ) : (
@@ -1713,15 +2101,41 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
               </button>
 
-              {/* Approve — push to site */}
-              {!isOnSite && (
-                <button type="button" onClick={handleApprove} disabled={approving} className="btn btn-primary" style={{ fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <ArrowCircleRight size={15} weight="bold" />
-                  {approving ? 'Saving…' : 'Approve'}
-                </button>
-              )}
+              {/* Approve, or push an update to the article already on the site. */}
+              <button
+                type="button"
+                onClick={handleMonthlyApprove}
+                disabled={approving || nothingToPush}
+                title={isOnSite
+                  ? (isDirty
+                      ? 'Send your changes to the live article'
+                      : liveIsStale
+                        ? 'This version has not been sent to the site yet — push it'
+                        : 'The live article already matches this — edit something to push an update')
+                  : undefined}
+                className="btn btn-primary"
+                style={{
+                  fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5,
+                  opacity: nothingToPush ? 0.55 : 1,
+                }}
+              >
+                <ArrowCircleRight size={15} weight="bold" />
+                {approving ? 'Saving…' : isOnSite ? 'Push update' : 'Approve'}
+              </button>
 
               <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                title="Regenerate — rewrite the article, or pick a new topic"
+                aria-label="Regenerate this post"
+                onClick={() => setRegenDialogOpen(true)}
+                className="btn btn-secondary"
+                disabled={saving || regenerating || fullRegenerating}
+                style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                <ArrowClockwise size={14} weight="bold" />
+                Regenerate
+              </button>
               <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
                 Reject
               </button>
@@ -1735,17 +2149,104 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           candidate={lightboxCandidate}
           busy={applyingStockId === lightboxCandidate.id}
           currentImageUrl={featuredImageUrl || null}
-          onClose={() => setLightboxCandidate(null)}
+          connectionId={connectionId || null}
+          error={stockApplyError}
+          onClose={() => { setLightboxCandidate(null); setStockApplyError(null) }}
           onApply={() => {
             const id = lightboxCandidate.id
-            // Close only on success — a failed apply leaves the preview up with the
-            // error visible, rather than dismissing as though it had worked.
+            setStockApplyError(null)
+            // Close only on success — a failed apply leaves the preview up with the reason
+            // shown in the dialog, rather than dismissing as though it had worked.
             void handleSelectStockImage(id)
-              .then(() => setLightboxCandidate(null))
-              .catch(() => {})
+              .then(() => { setLightboxCandidate(null); setStockApplyError(null) })
+              .catch(err => setStockApplyError(
+                err instanceof Error ? err.message : 'Could not apply this image. Please try again.',
+              ))
           }}
         />
       )}
+      {libraryOpen && (
+        <ImageLibraryModal
+          postTitle={title || post?.title || null}
+          connectionId={connectionId || null}
+          stockCandidates={imageCandidates}
+          currentImageUrl={featuredImageUrl || null}
+          applyingId={applyingStockId}
+          applyError={stockApplyError}
+          refreshingStock={findingStock}
+          stockNote={stockNote}
+          onRefreshStock={handleFindStockImages}
+          onClose={() => { setLibraryOpen(false); setStockApplyError(null) }}
+          onPreview={c => setLightboxCandidate(c)}
+          onApply={(c: StockImageCandidate) => {
+            setStockApplyError(null)
+            // Closes only on success, so a failure keeps the grid and the selection on
+            // screen with the reason in the footer, rather than dismissing as though it
+            // had worked.
+            void handleSelectStockImage(c.id)
+              .then(() => { setLibraryOpen(false); setStockApplyError(null) })
+              .catch(err => setStockApplyError(
+                err instanceof Error ? err.message : 'Could not apply that image. Please try again.',
+              ))
+          }}
+        />
+      )}
+
+      {imageDialogOpen && (
+        <ImageDirectionDialog
+          postTitle={title || post?.title || null}
+          busy={generatingImage}
+          onCancel={() => setImageDialogOpen(false)}
+          onConfirm={req => { setImageDialogOpen(false); void performGenerateImage(req) }}
+        />
+      )}
+
+      {confirming === 'approve' && (
+        <ConfirmActionDialog
+          // "On site" covers a saved DRAFT as well as a published article, and a draft has
+          // neither visitors nor rankings — promising that "existing links and rankings stay
+          // with it" described something that does not exist yet. showLiveLink is the same
+          // signal the On Site banner uses to tell those two apart.
+          title={isOnSite
+            ? (isPubliclyLive ? 'Push your changes to the live article' : 'Push your changes to the saved draft')
+            : 'Approve and push to the site'}
+          subtitle={title || post?.title || null}
+          body={
+            isOnSite
+              ? (isPubliclyLive
+                  ? 'This overwrites the article already on the client’s site with what is in this drawer. The URL does not change, so existing links and rankings stay with it.'
+                  : 'This overwrites the draft already saved on the client’s site with what is in this drawer. Nothing is visible to visitors until someone publishes it there.')
+              : wpStatus === 'future'
+                ? 'This pushes the article to the client’s site as a scheduled post. The site publishes it on its scheduled date; if that date has already passed it goes live immediately.'
+                : wpStatus === 'publish'
+                  ? 'This pushes the article to the client’s site and it goes live immediately.'
+                  : 'This pushes the article to the client’s site as a draft. Nothing is visible to visitors until someone publishes it there.'
+          }
+          choices={
+            isDirty
+              ? [
+                  { id: 'save',    label: 'Push with my changes',      hint: 'Saves the edits in this drawer first' },
+                  { id: 'discard', label: 'Push without my changes',   hint: 'Unsaved edits in this drawer are lost' },
+                ]
+              : [{ id: 'save', label: isOnSite ? 'Push update' : 'Approve and push' }]
+          }
+          busy={saving || approving}
+          onCancel={() => setConfirming(null)}
+          onChoose={id => { setConfirming(null); void performApprove(id === 'save') }}
+        />
+      )}
+
+      {confirming === 'reject' && (
+        <ConfirmActionDialog
+          title="Reject this post"
+          subtitle={title || post?.title || null}
+          body={'The post is taken out of the plan and its subject is added to the avoid-list, so it is not suggested again. The date stays filled, so nothing regenerates into it. This can be undone by restoring the post.'}
+          choices={[{ id: 'reject', label: 'Reject', tone: 'destructive' }]}
+          onCancel={() => setConfirming(null)}
+          onChoose={() => { setConfirming(null); void performReject() }}
+        />
+      )}
+
       {regenDialogOpen && (
         <RegenerateDialog
           postTitle={title || post?.title || null}

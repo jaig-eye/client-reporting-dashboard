@@ -66,12 +66,20 @@ function ForgotPasswordForm() {
     }
     setLoading(true)
     setError('')
-    const res  = await fetch('/api/auth/reset-password', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email: email.trim(), code, password }),
-    })
-    const data = await res.json().catch(() => ({}))
+    let res: Response
+    let data: { error?: string }
+    try {
+      res  = await fetch('/api/auth/reset-password', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: email.trim(), code, password }),
+      })
+      data = await res.json().catch(() => ({}))
+    } catch {
+      setLoading(false)
+      setError('Could not reach the server. Check your connection and try again.')
+      return
+    }
     setLoading(false)
     if (res.ok) {
       setDone(true)
@@ -95,12 +103,10 @@ function ForgotPasswordForm() {
                 style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
               />
             ) : (
-              <div
-                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold text-lg"
-                style={{ background: 'var(--blue)' }}
-              >
-                {branding.agency_name.charAt(0).toUpperCase()}
-              </div>
+              /* Reserve the same box so the header does not jump when the logo lands.
+                 Deliberately empty: the initial-letter fallback that used to sit here
+                 rendered on every first paint, before branding had loaded. */
+              <div className="h-9 w-9" aria-hidden="true" />
             )}
           </div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Reset password</h1>
