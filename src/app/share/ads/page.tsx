@@ -35,17 +35,17 @@ export default async function ShareAdsPage({
   const total = meta.length + google.length
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8f9fb' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
       <style>{`
         .adlib-page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
         @media (max-width: 600px) { .adlib-page { padding: 1.25rem 1rem; } }
       `}</style>
       <div className="adlib-page">
         <div style={{ marginBottom: '1.5rem' }}>
-          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: '#111827', margin: 0 }}>
+          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
             {client.name}
           </h1>
-          <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: '0.25rem 0 0' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: '0.25rem 0 0' }}>
             Ad Library · Last 30 days · {total} {total === 1 ? 'ad' : 'ads'}
           </p>
         </div>
@@ -59,13 +59,13 @@ function InvalidLink() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: '#f8f9fb',
+      background: 'var(--bg-base)',
     }}>
       <div style={{ textAlign: 'center', padding: '3rem' }}>
-        <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '0.5rem' }}>
+        <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
           Link invalid or expired
         </h1>
-        <p style={{ color: '#6b7280', fontSize: '0.875rem', margin: 0 }}>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
           Ask your account manager for a new link.
         </p>
       </div>

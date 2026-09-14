@@ -66,8 +66,8 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
 
   return (
     <div style={{
-      background: '#fff',
-      border: '1.5px solid #e5e7eb',
+      background: 'var(--bg-surface)',
+      border: '1.5px solid var(--border)',
       borderRadius: 12,
       overflow: 'hidden',
       display: 'flex',
@@ -77,7 +77,7 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
       {/* Creative thumbnail */}
       <div style={{
         width: '100%', aspectRatio: '16/9',
-        background: '#f3f4f6', flexShrink: 0,
+        background: 'var(--bg-subtle)', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         overflow: 'hidden', position: 'relative',
       }}>
@@ -135,7 +135,7 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
           <div style={{
             width: '100%', height: '100%',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: ad.platform === 'meta' ? '#eff6ff' : '#f0fdf4',
+            background: ad.platform === 'meta' ? 'var(--blue-subtle)' : 'var(--green-subtle)',
           }}>
             <span style={{ fontSize: '1.75rem', opacity: 0.4 }}>
               {ad.platform === 'meta' ? '📘' : '🔵'}
@@ -183,22 +183,22 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
         <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
           <span style={{
             fontSize: '0.6875rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: 4,
-            background: ad.platform === 'meta' ? '#eff6ff' : '#f0fdf4',
-            color:      ad.platform === 'meta' ? '#1d4ed8' : '#15803d',
+            background: ad.platform === 'meta' ? 'var(--blue-subtle)' : 'var(--green-subtle)',
+            color:      ad.platform === 'meta' ? 'var(--blue)' : 'var(--green)',
           }}>
             {ad.platform === 'meta' ? 'Meta' : 'Google'}
           </span>
           <span style={{
             fontSize: '0.6875rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: 4,
-            background: active ? '#f0fdf4' : '#f9fafb',
-            color:      active ? '#15803d' : '#6b7280',
+            background: active ? 'var(--green-subtle)' : 'var(--bg-subtle)',
+            color:      active ? 'var(--green)' : 'var(--text-muted)',
           }}>
             {active ? 'Active' : 'Paused'}
           </span>
           {ad.platform === 'google' && googleTypeLabel(ad.ad_type) && (
             <span style={{
               fontSize: '0.6875rem', fontWeight: 500, padding: '0.125rem 0.5rem', borderRadius: 4,
-              background: '#dcfce7', color: '#166534',
+              background: 'var(--green-subtle)', color: 'var(--green)',
             }}>
               {googleTypeLabel(ad.ad_type)}
             </span>
@@ -206,7 +206,7 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
           {ad.platform === 'meta' && ad.adset_daily_budget != null && (
             <span style={{
               fontSize: '0.6875rem', fontWeight: 500, padding: '0.125rem 0.5rem', borderRadius: 4,
-              background: '#fefce8', color: '#854d0e',
+              background: 'var(--amber-subtle)', color: 'var(--amber)',
             }}>
               {fmtMoney(ad.adset_daily_budget)}/day
             </span>
@@ -214,12 +214,12 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
         </div>
 
         {/* Ad name */}
-        <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#111827', lineHeight: 1.4 }}>
+        <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
           {ad.ad_name || 'Untitled Ad'}
         </p>
 
         {/* Campaign › Adset context */}
-        <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af', lineHeight: 1.3 }}>
+        <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.3 }}>
           {ad.platform === 'meta'
             ? [ad.campaign_name, ad.adset_name].filter(Boolean).join(' › ')
             : [ad.campaign_name, ad.ad_group_name].filter(Boolean).join(' › ')}
@@ -229,14 +229,14 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
         {(headline || body) && (
           <div style={{ flex: 1, minHeight: 0 }}>
             {headline && (
-              <p style={{ margin: '0 0 0.25rem', fontSize: '0.8125rem', fontWeight: 500, color: '#374151' }}>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)' }}>
                 {headline}
               </p>
             )}
             {body && (
               <>
                 <p style={{
-                  margin: 0, fontSize: '0.75rem', color: '#6b7280', lineHeight: 1.5,
+                  margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5,
                   display: '-webkit-box',
                   WebkitLineClamp: expanded ? undefined : 3,
                   WebkitBoxOrient: 'vertical',
@@ -249,7 +249,7 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
                     onClick={() => setExpanded(e => !e)}
                     style={{
                       background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                      color: '#3b82f6', fontSize: '0.75rem', marginTop: '0.25rem',
+                      color: 'var(--blue)', fontSize: '0.75rem', marginTop: '0.25rem',
                     }}
                   >
                     {expanded ? 'Show less' : 'Show more'}
@@ -264,12 +264,12 @@ export function AdLibraryCard({ ad, clientId }: { ad: MetaAdRow | GoogleAdRow; c
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
           gap: '0.25rem', paddingTop: '0.625rem',
-          borderTop: '1px solid #f3f4f6', marginTop: 'auto',
+          borderTop: '1px solid var(--border-subtle)', marginTop: 'auto',
         }}>
           {metrics.map(({ label, value }) => (
             <div key={label} style={{ textAlign: 'center' }}>
-              <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 600, color: '#111827' }}>{value}</p>
-              <p style={{ margin: 0, fontSize: '0.6875rem', color: '#9ca3af' }}>{label}</p>
+              <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>{value}</p>
+              <p style={{ margin: 0, fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{label}</p>
             </div>
           ))}
         </div>

@@ -20,13 +20,13 @@ export interface KeywordRow {
 type SortKey = 'keyword_text' | 'impressions' | 'clicks' | 'spend' | 'conversions' | 'cpl'
 
 const MATCH_BADGE: Record<string, { bg: string; color: string; label: string }> = {
-  BROAD:  { bg: '#fefce8', color: '#854d0e', label: 'Broad' },
-  PHRASE: { bg: '#f0fdf4', color: '#166534', label: 'Phrase' },
-  EXACT:  { bg: '#eff6ff', color: '#1d4ed8', label: 'Exact' },
+  BROAD:  { bg: 'var(--amber-subtle)', color: 'var(--amber)', label: 'Broad' },
+  PHRASE: { bg: 'var(--green-subtle)', color: 'var(--green)', label: 'Phrase' },
+  EXACT:  { bg: 'var(--blue-subtle)', color: 'var(--blue)', label: 'Exact' },
 }
 
 function matchBadge(mt: string | null) {
-  const style = MATCH_BADGE[mt ?? ''] ?? { bg: '#f8fafc', color: '#64748b', label: mt ?? '—' }
+  const style = MATCH_BADGE[mt ?? ''] ?? { bg: 'var(--bg-subtle)', color: 'var(--text-muted)', label: mt ?? '—' }
   return (
     <span
       style={{
@@ -124,11 +124,11 @@ export default function KeywordTable({
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', gap: 4,
                     fontSize: '0.7rem', fontWeight: 600,
-                    color: isEnabled ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                    color: isEnabled ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
                   }}>
                     <span style={{
                       width: 6, height: 6, borderRadius: '50%',
-                      background: isEnabled ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                      background: isEnabled ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
                     }} />
                     {isEnabled ? 'Enabled' : isPaused ? 'Paused' : (statusUpper || '—')}
                   </span>

@@ -21,16 +21,16 @@ function fmtPos(n: number | null | undefined): string {
 
 function posColor(pos: number | null): string {
   if (!pos) return 'var(--text-muted)'
-  if (pos <= 5)  return '#16a34a'
-  if (pos <= 10) return '#d97706'
+  if (pos <= 5)  return 'var(--green)'
+  if (pos <= 10) return 'var(--amber)'
   return 'var(--text-muted)'
 }
 
 function posBackground(pos: number | null): string {
-  if (!pos) return 'var(--bg-muted, #f3f4f6)'
-  if (pos <= 5)  return '#dcfce7'
-  if (pos <= 10) return '#fef3c7'
-  return 'var(--bg-muted, #f3f4f6)'
+  if (!pos) return 'var(--bg-muted)'
+  if (pos <= 5)  return 'var(--green-subtle)'
+  if (pos <= 10) return 'var(--amber-subtle)'
+  return 'var(--bg-muted)'
 }
 
 function truncatePath(url: string, max = 48): string {
@@ -91,7 +91,7 @@ function QueryRow({ r }: { r: GscInsightRow }) {
       gap:            '0.5rem',
       padding:        '0.45rem 0.75rem',
       borderRadius:   7,
-      background:     'var(--bg-base, #fff)',
+      background:     'var(--bg-base)',
     }}>
       {/* Keyword + recently-targeted badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flex: 1, minWidth: 0 }}>
@@ -109,7 +109,7 @@ function QueryRow({ r }: { r: GscInsightRow }) {
         {r.recentlyTargeted && (
           <span style={{
             flexShrink: 0, fontSize: '0.62rem', color: 'var(--text-faint)',
-            padding: '1px 5px', borderRadius: 999, background: 'var(--bg-muted, #f3f4f6)',
+            padding: '1px 5px', borderRadius: 999, background: 'var(--bg-muted)',
             whiteSpace: 'nowrap',
           }}>
             ↩ used
@@ -121,7 +121,7 @@ function QueryRow({ r }: { r: GscInsightRow }) {
       <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0, alignItems: 'center' }}>
         <span style={{
           fontSize: '0.68rem', fontWeight: 500, padding: '2px 6px', borderRadius: 999,
-          background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)',
+          background: 'var(--bg-muted)', color: 'var(--text-muted)',
         }}>
           {fmtImpr(r.impressions)} impr
         </span>
@@ -133,8 +133,8 @@ function QueryRow({ r }: { r: GscInsightRow }) {
         </span>
         <span style={{
           fontSize: '0.68rem', fontWeight: 500, padding: '2px 6px', borderRadius: 999,
-          background: lowCtr ? '#fef3c7' : 'var(--bg-muted, #f3f4f6)',
-          color:      lowCtr ? '#92400e' : 'var(--text-muted)',
+          background: lowCtr ? 'var(--amber-subtle)' : 'var(--bg-muted)',
+          color:      lowCtr ? 'var(--amber)' : 'var(--text-muted)',
         }}>
           {fmtPct(r.ctr)} CTR
         </span>
@@ -149,7 +149,7 @@ function PageCard({ group }: { group: PageGroup }) {
   return (
     <div style={{
       borderRadius: 10,
-      border:       '1px solid var(--border, #e5e7eb)',
+      border:       '1px solid var(--border)',
       overflow:     'hidden',
       marginBottom: '0.625rem',
     }}>
@@ -160,8 +160,8 @@ function PageCard({ group }: { group: PageGroup }) {
         justifyContent: 'space-between',
         gap:            '0.75rem',
         padding:        '0.6rem 0.875rem',
-        background:     'var(--bg-subtle, #f8f9fa)',
-        borderBottom:   '1px solid var(--border, #e5e7eb)',
+        background:     'var(--bg-subtle)',
+        borderBottom:   '1px solid var(--border)',
       }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
@@ -174,7 +174,7 @@ function PageCard({ group }: { group: PageGroup }) {
                 target="_blank"
                 rel="noopener noreferrer"
                 title={group.page}
-                style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--blue, #2563eb)', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}
+                style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--blue)', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}
               >
                 {path}
               </a>
@@ -186,13 +186,13 @@ function PageCard({ group }: { group: PageGroup }) {
         <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0, alignItems: 'center' }}>
           <span style={{
             fontSize: '0.68rem', fontWeight: 500, padding: '2px 7px', borderRadius: 999,
-            background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)',
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
           }}>
             {fmtImpr(group.totalImpr)} impr
           </span>
           <span style={{
             fontSize: '0.68rem', fontWeight: 500, padding: '2px 7px', borderRadius: 999,
-            background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)',
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
           }}>
             {kwCount} {kwCount === 1 ? 'keyword' : 'keywords'}
           </span>
@@ -280,8 +280,8 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
         <>
           <InsightSection
             badge="Growth Targets"
-            badgeColor="#92400e"
-            badgeBg="#fef3c7"
+            badgeColor="var(--amber)"
+            badgeBg="var(--amber-subtle)"
             posRange="Pos 10–20"
             subtitle="Site has relevance but no focused page — strongest signal for a new dedicated article."
             contentHint="Write a new post targeting each keyword, then internally link to the core page."
@@ -289,8 +289,8 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
           />
           <InsightSection
             badge="Quick Wins"
-            badgeColor="#166534"
-            badgeBg="#dcfce7"
+            badgeColor="var(--green)"
+            badgeBg="var(--green-subtle)"
             posRange="Pos 5–10"
             subtitle="Nearly page 1 — cluster content on these keywords can push the core page into the top 5."
             contentHint="Write adjacent or long-tail articles and link back to the core page to strengthen its authority."
@@ -298,8 +298,8 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
           />
           <InsightSection
             badge="CTR Issues"
-            badgeColor="#1e3a8a"
-            badgeBg="#dbeafe"
+            badgeColor="var(--blue)"
+            badgeBg="var(--blue-subtle)"
             posRange="Pos 1–5 · low CTR"
             subtitle="Ranking well but few clicks — the core page isn't fully capturing demand for these queries."
             contentHint="Create supporting articles for each keyword to build topical depth and expand click share."

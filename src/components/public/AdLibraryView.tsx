@@ -20,9 +20,9 @@ function pill(active: boolean): React.CSSProperties {
     fontWeight: 500,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
-    border:     active ? '1.5px solid #3b82f6' : '1.5px solid #e5e7eb',
-    background: active ? '#eff6ff' : '#fff',
-    color:      active ? '#1d4ed8' : '#4b5563',
+    border:     active ? '1.5px solid var(--blue)' : '1.5px solid var(--border)',
+    background: active ? 'var(--blue-subtle)' : 'var(--bg-surface)',
+    color:      active ? 'var(--blue)' : 'var(--text-secondary)',
   }
 }
 
@@ -107,8 +107,8 @@ export function AdLibraryView({
             onChange={e => setSort(e.target.value as SortKey)}
             style={{
               padding: '0.3125rem 0.625rem', borderRadius: 6,
-              border: '1.5px solid #e5e7eb', fontSize: '0.8125rem',
-              color: '#374151', background: '#fff', cursor: 'pointer',
+              border: '1.5px solid var(--border)', fontSize: '0.8125rem',
+              color: 'var(--text-primary)', background: 'var(--bg-surface)', cursor: 'pointer',
             }}
           >
             <option value="spend">Spend</option>

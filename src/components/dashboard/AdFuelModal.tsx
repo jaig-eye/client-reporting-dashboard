@@ -194,7 +194,7 @@ export default function AdFuelModal({ balance, onClose }: { balance: number | nu
                               </span>
                             )}
                             {isPending && (
-                              <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
+                              <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--amber-subtle)', color: 'var(--amber)' }}>
                                 Pending
                               </span>
                             )}

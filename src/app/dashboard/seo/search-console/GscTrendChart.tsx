@@ -51,7 +51,7 @@ export default function GscTrendChart({
     const pt = data.find(d => d.date === label)
     return (
       <div style={{
-        background: '#fff', border: '1px solid var(--border,#e5e7eb)',
+        background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)',
         borderRadius: 8, padding: '8px 12px', fontSize: '0.78rem',
         boxShadow: '0 2px 8px rgba(0,0,0,.08)',
       }}>

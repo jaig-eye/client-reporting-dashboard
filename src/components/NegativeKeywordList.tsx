@@ -9,9 +9,9 @@ export interface NegativeKeywordRow {
 }
 
 const MATCH_STYLE: Record<string, { bg: string; color: string; label: string }> = {
-  BROAD:  { bg: '#fef2f2', color: '#b91c1c', label: 'Broad'  },
-  PHRASE: { bg: '#fff7ed', color: '#c2410c', label: 'Phrase' },
-  EXACT:  { bg: '#fdf4ff', color: '#7e22ce', label: 'Exact'  },
+  BROAD:  { bg: 'var(--red-subtle)', color: 'var(--red)', label: 'Broad'  },
+  PHRASE: { bg: 'rgba(249,115,22,0.14)', color: '#f97316', label: 'Phrase' },
+  EXACT:  { bg: 'rgba(139,92,246,0.12)', color: '#8b5cf6', label: 'Exact'  },
 }
 
 export default function NegativeKeywordList({ rows, level }: { rows: NegativeKeywordRow[]; level: 'campaign' | 'adgroup' }) {
@@ -21,7 +21,7 @@ export default function NegativeKeywordList({ rows, level }: { rows: NegativeKey
   return (
     <div className="flex flex-wrap gap-2">
       {filtered.map(kw => {
-        const style = MATCH_STYLE[kw.match_type ?? ''] ?? { bg: '#f1f5f9', color: '#475569', label: kw.match_type ?? '' }
+        const style = MATCH_STYLE[kw.match_type ?? ''] ?? { bg: 'var(--bg-subtle)', color: 'var(--text-secondary)', label: kw.match_type ?? '' }
         return (
           <div
             key={kw.keyword_id}

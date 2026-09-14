@@ -329,15 +329,15 @@ export default function PipelineCard(props: Props) {
       {expanded && hasDetail && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
           {([
-            { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-            { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-            { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
-            { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-            { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
+            { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: 'var(--blue)',  bg: 'var(--blue-subtle)' },
+            { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+            { key: 'audience_intent'     as const, label: 'Audience Intent',     color: 'var(--green)', bg: 'var(--green-subtle)' },
+            { key: 'why_now'             as const, label: 'Why Now',             color: 'var(--amber)', bg: 'var(--amber-subtle)' },
+            { key: 'competition_level'   as const, label: 'Competition',         color: 'var(--red)',   bg: 'var(--red-subtle)' },
           ]).filter(s => t[s.key]).map(({ key, label, color, bg }) => (
             <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 4px 4px 0', padding: '4px 8px' }}>
               <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: 2 }}>{label}</p>
-              <p style={{ fontSize: 12.5, color: '#374151', lineHeight: 1.4 }}>{t[key] as string}</p>
+              <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.4 }}>{t[key] as string}</p>
             </div>
           ))}
           {t.page_to_support && (

@@ -92,7 +92,7 @@ export function GscQueriesTable({
                   title={`Expected ~${(expectedCtrFloor(q.position) * 100).toFixed(0)}%+ for pos ${q.position.toFixed(1)}`}
                   style={{
                     marginLeft: 5, fontSize: '0.62rem', fontWeight: 600, padding: '1px 5px',
-                    borderRadius: 999, background: '#fef3c7', color: '#92400e', cursor: 'default',
+                    borderRadius: 999, background: 'var(--amber-subtle)', color: 'var(--amber)', cursor: 'default',
                   }}
                 >
                   Low CTR

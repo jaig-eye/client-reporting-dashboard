@@ -231,7 +231,7 @@ export default async function SearchConsolePage({
 
         {/* Sparse data notice */}
         {showCoverageNotice && (
-          <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#fefce8', border: '1px solid #fde047', fontSize: '0.8125rem', color: '#713f12', lineHeight: 1.5 }}>
+          <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: 'var(--amber-subtle)', border: '1px solid var(--amber)', fontSize: '0.8125rem', color: 'var(--amber)', lineHeight: 1.5 }}>
             <strong>Limited data coverage:</strong> Only {availableDays} of {requestedDays} days have data
             {latestAvailable ? ` (through ${latestAvailable})` : ''}.
             {' '}A full backfill sync is needed to populate the complete history for this date range.
@@ -276,10 +276,10 @@ export default async function SearchConsolePage({
               {(dist.top3 + dist.page1 + dist.page2 + dist.beyond) > 0 && (
                 <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
                   {[
-                    { label: 'Top 3',       value: dist.top3,   color: '#16a34a', bg: '#dcfce7' },
-                    { label: 'Page 1 (4–10)', value: dist.page1, color: '#d97706', bg: '#fef3c7' },
-                    { label: 'Page 2 (11–20)', value: dist.page2, color: 'var(--text-muted)', bg: 'var(--bg-subtle,#f8f9fa)' },
-                    { label: 'Beyond 20',   value: dist.beyond, color: 'var(--text-faint)', bg: 'var(--bg-muted,#f3f4f6)' },
+                    { label: 'Top 3',       value: dist.top3,   color: 'var(--green)', bg: 'var(--green-subtle)' },
+                    { label: 'Page 1 (4–10)', value: dist.page1, color: 'var(--amber)', bg: 'var(--amber-subtle)' },
+                    { label: 'Page 2 (11–20)', value: dist.page2, color: 'var(--text-muted)', bg: 'var(--bg-subtle)' },
+                    { label: 'Beyond 20',   value: dist.beyond, color: 'var(--text-faint)', bg: 'var(--bg-muted)' },
                   ].filter(s => s.value > 0).map(s => (
                     <span key={s.label} style={{
                       fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999,
