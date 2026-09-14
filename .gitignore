@@ -16,3 +16,6 @@ yarn-error.log*
 .vercel
 *.tsbuildinfo
 next-env.d.ts
+
+# Screenshots from scripts/design-shots.mjs — reviewed locally, never committed
+/.design-shots/

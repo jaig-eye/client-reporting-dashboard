@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "design:shots": "node scripts/design-shots.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

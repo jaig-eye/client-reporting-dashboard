@@ -17,6 +17,7 @@ npm (never use yarn or pnpm)
 | Design system, component props, color tokens | `docs/DESIGN.md` |
 | Env vars, DB tables, RPCs, cron jobs, API routes | `docs/SYSTEMS.md` |
 | Coding conventions, pitfalls, patterns | `docs/CONVENTIONS.md` |
+| Front-end workflow: Mobbin research, design plan, visual checks | `docs/FRONTEND-WORKFLOW.md` |
 
 ## Key Conventions (read before editing)
 
@@ -46,6 +47,9 @@ Identity comes from `isSuperAdminAuthed()` / `getVerifiedUserId()` / `getAdminSe
 
 **GSC `fetchMetrics` adapter is a no-op stub.**
 All GSC syncing is done by `syncGSCInChunks` in `lib/connectors/sync.ts`, not the adapter method.
+
+**Front-end work follows `docs/FRONTEND-WORKFLOW.md`.**
+Research comparable screens on Mobbin, plan with the `frontend-design` skill inside the existing design system, use theme CSS variables (never hex literals — they break dark mode), and screenshot every state in light and dark before committing. `npm run design:shots` does the screenshots.
 
 **Never auto-push to git.** Stop at commit and wait for an explicit push instruction.
 
