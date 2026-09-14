@@ -82,116 +82,118 @@ export default async function UsersPage() {
             )}
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Last Login</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(user => {
-                const initials = user.name.split(' ').map((p: string) => p[0]).join('').toUpperCase().slice(0, 2)
-                const isMe = session?.userId === user.id
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(user => {
+                  const initials = user.name.split(' ').map((p: string) => p[0]).join('').toUpperCase().slice(0, 2)
+                  const isMe = session?.userId === user.id
 
-                return (
-                  <tr key={user.id}>
-                    <td>
-                      <div className="flex items-center gap-3">
-                        {user.avatar_url ? (
-                          <img src={user.avatar_url} alt={user.name}
-                            className="h-8 w-8 rounded-full object-cover flex-shrink-0" />
-                        ) : (
-                          <div
-                            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
-                            style={{ background: 'var(--blue)' }}
-                          >
-                            {initials}
+                  return (
+                    <tr key={user.id}>
+                      <td>
+                        <div className="flex items-center gap-3">
+                          {user.avatar_url ? (
+                            <img src={user.avatar_url} alt={user.name}
+                              className="h-8 w-8 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div
+                              className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
+                              style={{ background: 'var(--blue)' }}
+                            >
+                              {initials}
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                              {user.name}
+                              {isMe && (
+                                <span className="ml-1.5 text-xs font-normal" style={{ color: 'var(--text-faint)' }}>
+                                  (you)
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                              {user.email}
+                            </p>
                           </div>
-                        )}
-                        <div>
-                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {user.name}
-                            {isMe && (
-                              <span className="ml-1.5 text-xs font-normal" style={{ color: 'var(--text-faint)' }}>
-                                (you)
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                            {user.email}
-                          </p>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`badge ${user.role === 'admin' ? 'badge-blue' : 'badge-gray'}`}>
-                        {user.role}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${user.is_active ? 'badge-green' : 'badge-gray'}`}>
-                        {user.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                      {user.must_reset_password && (
-                        <span
-                          className="badge badge-gray ml-1.5"
-                          title="Cannot sign in until they set a new password"
-                        >
-                          Reset pending
+                      </td>
+                      <td>
+                        <span className={`badge ${user.role === 'admin' ? 'badge-blue' : 'badge-gray'}`}>
+                          {user.role}
                         </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {user.last_login_at
-                          ? new Date(user.last_login_at).toLocaleDateString('en-US', {
-                              month: 'short', day: 'numeric', year: 'numeric'
-                            })
-                          : 'Never'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2 justify-end">
-                        {isSuperAdmin ? (
-                          <Link
-                            href={`/admin/users/${user.id}`}
-                            className="btn btn-secondary"
-                            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                      </td>
+                      <td>
+                        <span className={`badge ${user.is_active ? 'badge-green' : 'badge-gray'}`}>
+                          {user.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        {user.must_reset_password && (
+                          <span
+                            className="badge badge-gray ml-1.5"
+                            title="Cannot sign in until they set a new password"
                           >
-                            Edit
-                          </Link>
-                        ) : isMe ? (
-                          <Link
-                            href="/admin/users/me"
-                            className="btn btn-secondary"
-                            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-                          >
-                            Edit Profile
-                          </Link>
-                        ) : null}
-
-                        {isSuperAdmin && !isMe && (
-                          <ForceResetButton
-                            userId={user.id}
-                            userName={user.name}
-                            alreadyPending={user.must_reset_password === true}
-                          />
+                            Reset pending
+                          </span>
                         )}
+                      </td>
+                      <td>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {user.last_login_at
+                            ? new Date(user.last_login_at).toLocaleDateString('en-US', {
+                                month: 'short', day: 'numeric', year: 'numeric'
+                              })
+                            : 'Never'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-2 justify-end">
+                          {isSuperAdmin ? (
+                            <Link
+                              href={`/admin/users/${user.id}`}
+                              className="btn btn-secondary"
+                              style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                            >
+                              Edit
+                            </Link>
+                          ) : isMe ? (
+                            <Link
+                              href="/admin/users/me"
+                              className="btn btn-secondary"
+                              style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+                            >
+                              Edit Profile
+                            </Link>
+                          ) : null}
 
-                        {isSuperAdmin && (
-                          <DeleteUserButton userId={user.id} userName={user.name} />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                          {isSuperAdmin && !isMe && (
+                            <ForceResetButton
+                              userId={user.id}
+                              userName={user.name}
+                              alreadyPending={user.must_reset_password === true}
+                            />
+                          )}
+
+                          {isSuperAdmin && (
+                            <DeleteUserButton userId={user.id} userName={user.name} />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

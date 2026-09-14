@@ -273,7 +273,7 @@ export default function ContentSettingsPanel({
           <h2 className="section-title" style={{ marginBottom: 0 }}>Global Post Structure</h2>
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>
             Base template applied to all AI-generated posts. Per-client schedule and frequency are set in{' '}
-            <a href="/admin/clients" style={{ color: 'var(--blue)' }}>Client Settings → Content</a>.
+            <a href="/admin/dashboard" style={{ color: 'var(--blue)' }}>Client Settings → Content</a>.
           </p>
         </div>
 

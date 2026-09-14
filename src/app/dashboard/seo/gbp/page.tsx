@@ -3,13 +3,15 @@
 // Shows profile views, calls, website clicks, direction requests, and reviews.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
+import { resolveDashboardRange } from '@/lib/dateRange'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
-import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
+import PageHeader from '@/components/dashboard/PageHeader'
+import EmptyState from '@/components/dashboard/EmptyState'
+import { MapPin } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,8 +47,7 @@ export default async function GBPPage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
-  const toDate   = params.to   ? new Date(params.to)   : new Date()
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
   // Find active GBP connections
@@ -62,11 +63,12 @@ export default async function GBPPage({
   if (gbpConnections.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Google Business Profile not connected"
             description="Ask your account manager to connect your Google Business Profile to start seeing local visibility data here."
+            icon={<MapPin size={22} />}
           />
         </main>
       </div>
@@ -93,9 +95,9 @@ export default async function GBPPage({
   if (gbpRows.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
-          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." />
+          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<MapPin size={22} />} />
         </main>
       </div>
     )
@@ -175,7 +177,7 @@ export default async function GBPPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* KPI cards */}
@@ -222,6 +224,7 @@ export default async function GBPPage({
             colorConversions="#10b981"
             spendLabel="Profile Views"
             conversionsLabel="Website Clicks"
+            variant="count"
           />
         </div>
 
@@ -232,7 +235,7 @@ export default async function GBPPage({
               <h2 className="section-title">Location Breakdown</h2>
               <p className="section-desc">{locations.length} locations</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="data-table" style={{ minWidth: 600 }}>
                 <thead>
                   <tr>
@@ -268,34 +271,6 @@ export default async function GBPPage({
         )}
 
       </main>
-    </div>
-  )
-}
-
-function PageHeader({ client, fromDate, toDate, compare }: { client: Client; fromDate: Date; toDate: Date; compare: string }) {
-  return (
-    <div className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-2">
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#34a853', flexShrink: 0 }} />
-        <h1 className="font-semibold text-base" style={{ color: 'var(--text-primary)', margin: 0 }}>SEO — Google Business Profile</h1>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <Suspense fallback={null}>
-          <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
-        </Suspense>
-      </div>
-    </div>
-  )
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="card p-12 text-center">
-      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '1.5rem' }}>
-        📍
-      </div>
-      <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</p>
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{description}</p>
     </div>
   )
 }

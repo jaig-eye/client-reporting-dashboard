@@ -481,7 +481,7 @@ export default function SitesPage() {
           <p style={{ margin: 0 }}>No sites yet — add one to start monitoring</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <div className="table-scroll">
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
             <thead>
               <tr>
@@ -625,7 +625,7 @@ export default function SitesPage() {
                           {/* Per-page table */}
                           {auditPages[site.id] ? (
                             auditPages[site.id].length > 0 ? (
-                              <div style={{ overflowX: 'auto' }}>
+                              <div className="table-scroll">
                                 <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.75rem' }}>
                                   <thead>
                                     <tr>

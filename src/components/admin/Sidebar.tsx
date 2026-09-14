@@ -61,7 +61,9 @@ const NAV_SECTIONS: NavSection[] = [
 interface SidebarProps {
   agencyName: string
   agencyLogoUrl?: string
-  appVersion: string
+  /** Drawer state below 1024px; ignored on desktop. */
+  open?: boolean
+  onClose?: () => void
   userName: string
   userEmail: string
   userAvatarUrl?: string
@@ -72,7 +74,7 @@ interface SidebarProps {
 export default function Sidebar({
   agencyName,
   agencyLogoUrl,
-  appVersion,
+  open = false,
   userName,
   userEmail,
   userAvatarUrl,
@@ -90,13 +92,8 @@ export default function Sidebar({
 
   return (
     <aside
-      className="flex flex-col h-screen sticky top-0"
-      style={{
-        width: 'var(--sidebar-width)',
-        background: 'var(--sidebar-bg)',
-        borderRight: '1px solid var(--border)',
-        flexShrink: 0,
-      }}
+      className="admin-sidebar flex flex-col"
+      data-open={open ? 'true' : 'false'}
     >
       {/* Agency branding */}
       <div style={{ padding: '1.25rem 1rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
@@ -112,9 +109,6 @@ export default function Sidebar({
             </div>
           )}
         </div>
-        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2 }}>
-          v{appVersion}
-        </p>
       </div>
 
       {/* Navigation */}

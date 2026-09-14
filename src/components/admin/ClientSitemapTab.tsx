@@ -404,7 +404,7 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
           </p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <div className="table-scroll">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>

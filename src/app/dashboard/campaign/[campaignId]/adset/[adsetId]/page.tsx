@@ -208,7 +208,9 @@ export default async function AdSetDetailPage({
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
     ])
-    if (campRow) campaignName = (campRow as { campaign_name: string; campaign_type?: string | null }).campaign_name
+    // Fall back to the raw campaign id only when the campaign row carries no name.
+    const campName = (campRow as { campaign_name: string | null } | null)?.campaign_name
+    if (campName) campaignName = campName
     campTypeRaw  = ((campRow as { campaign_type?: string | null } | null)?.campaign_type ?? '').toUpperCase()
     isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
     pMaxAssets = (assetRows ?? []) as PMaxAsset[]
@@ -346,7 +348,9 @@ export default async function AdSetDetailPage({
         .select('campaign_name').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       priorQ,
     ])
-    if (campRow) campaignName = (campRow as { campaign_name: string }).campaign_name
+    // Fall back to the raw campaign id only when the campaign row carries no name.
+    const campName = (campRow as { campaign_name: string | null } | null)?.campaign_name
+    if (campName) campaignName = campName
 
     // Build current metadata map — first row per ad_id is the most recent (ordered by date desc)
     const currentMeta = new Map<string, MetaAdRow>()
@@ -966,7 +970,7 @@ export default async function AdSetDetailPage({
                     <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
                       Actual search queries that triggered ads in this ad group during the selected period.
                     </p>
-                    <div className="overflow-x-auto">
+                    <div className="table-scroll">
                       <table className="data-table" style={{ minWidth: 600 }}>
                         <thead>
                           <tr>

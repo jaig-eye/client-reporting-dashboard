@@ -293,7 +293,7 @@ export default function SystemPage() {
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No activity recorded yet.</p>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="table-scroll">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -526,7 +526,7 @@ export default function SystemPage() {
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No sync jobs match the current filter.</p>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="data-table">
                 <thead>
                   <tr>

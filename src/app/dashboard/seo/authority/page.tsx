@@ -257,7 +257,7 @@ export default async function AuthorityPage() {
                     Top keywords by estimated traffic · snapshot {latestKwDate}
                   </p>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-scroll">
                   <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
@@ -340,7 +340,7 @@ export default async function AuthorityPage() {
                     Top pages by organic traffic · snapshot {latestKwDate}
                   </p>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-scroll">
                   <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>

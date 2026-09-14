@@ -10,6 +10,7 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { resolveDashboardRange } from '@/lib/dateRange'
 import { getAgencySettings, pctOfBenchmark, scoreColor } from '@/lib/agency-settings'
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
@@ -154,8 +155,7 @@ export default async function DashboardPage({
   if (!client) redirect('/access')
 
   // Default end to yesterday — today is a partial day and inflates totals vs platform dashboards
-  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
+  const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
   const periodMs = toDate.getTime() - fromDate.getTime()

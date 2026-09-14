@@ -4,6 +4,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { resolveDashboardRange } from '@/lib/dateRange'
 import { getAgencySettings } from '@/lib/agency-settings'
 import type { Client } from '@/lib/types'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -89,8 +90,7 @@ export default async function GhlCrmPage({
 
   const crmName = settings.crm_name ?? 'CRM'
 
-  const toDate   = params.to   ? new Date(params.to)   : new Date()
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
   const showCompare = compare !== 'none'
@@ -243,7 +243,7 @@ export default async function GhlCrmPage({
             {formList.length > 0 && (
               <div className="card p-6">
                 <h2 className="section-title mb-4">Forms &amp; Surveys</h2>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-scroll">
                   <table className="data-table" style={{ width: '100%', fontSize: '0.8125rem' }}>
                     <thead>
                       <tr>
@@ -270,7 +270,7 @@ export default async function GhlCrmPage({
             {data.length > 0 && (
               <div className="card p-6">
                 <h2 className="section-title mb-4">Daily Breakdown</h2>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-scroll">
                   <table className="data-table" style={{ width: '100%', fontSize: '0.8125rem' }}>
                     <thead>
                       <tr>

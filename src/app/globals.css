@@ -716,3 +716,310 @@
 /* ── Collapsible chevron rotation ─────────────────────────────────────────── */
 .details-caret { transition: transform 0.15s ease; }
 details[open] > summary .details-caret { transform: rotate(180deg); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE PRIMITIVES
+
+   The app was built at 1440px with inline styles and had no media queries at
+   all, so on a phone it overflowed rather than reflowed. These are the shared
+   layout pieces pages use instead of hand-rolling geometry inline.
+
+   Breakpoints:  <640px phone   640–1023px tablet   >=1024px desktop
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bp-sm: 640px;
+  --bp-lg: 1024px;
+  --page-gutter: 1.5rem;
+  --tap-min: 44px;          /* smallest comfortable touch target */
+}
+
+/* Page shell ─────────────────────────────────────────────────────────────── */
+.page {
+  width: 100%;
+  max-width: var(--content-max, 80rem);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+/* Cards/metrics that must reflow instead of clipping. Replaces fixed
+   grid-template-columns declarations, which could not shrink. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+}
+.stat-grid--wide { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+
+/* Main column + persistent rail, stacked once there isn't room for both. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* A table that is genuinely wide keeps its shape and scrolls — but it must say
+   so. Silent clipping (what we had) hides data with no affordance at all. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.table-scroll > table { min-width: max-content; }
+
+/* Tab strips scroll sideways rather than dropping the tabs that don't fit. */
+.tabs-scroll {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tabs-scroll::-webkit-scrollbar { display: none; }
+.tabs-scroll > * { flex: 0 0 auto; }
+
+/* Visibility helpers ─────────────────────────────────────────────────────── */
+.only-sm { display: none; }
+
+@media (max-width: 1023px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .hide-lg { display: none !important; }
+}
+
+@media (max-width: 639px) {
+  :root { --page-gutter: 1rem; }
+  .hide-sm { display: none !important; }
+  .only-sm { display: revert; }
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.5rem; }
+  .stat-grid--wide { grid-template-columns: minmax(0, 1fr); }
+
+  /* Anything that asked for a fixed width gets to shrink on a phone. */
+  .card { padding: 1rem; }
+
+  /* Touch targets: buttons and icon actions become thumb-sized. */
+  .btn { min-height: var(--tap-min); }
+}
+
+/* Client dashboard page header ───────────────────────────────────────────── */
+.dash-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: var(--content-max, 80rem);
+  margin-inline: auto;
+  padding: 1.5rem var(--page-gutter) 0;
+}
+.dash-page-header__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;                      /* lets a long title wrap instead of pushing the controls off-screen */
+  flex: 1 1 16rem;
+}
+.dash-page-header__title h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-wrap: balance;
+}
+.dash-page-header__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dash-page-header__controls { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+@media (max-width: 639px) {
+  .dash-page-header { padding-top: 1rem; }
+  .dash-page-header__controls { width: 100%; }
+}
+
+/* Empty state ────────────────────────────────────────────────────────────── */
+.dash-empty { padding: 3rem 1.5rem; text-align: center; }
+.dash-empty__icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 1rem;
+}
+.dash-empty__title { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.5rem; }
+.dash-empty__desc  { font-size: 0.875rem; color: var(--text-muted); margin: 0; max-width: 34rem; margin-inline: auto; }
+.dash-empty__action { margin-top: 1.25rem; }
+
+@media (max-width: 639px) {
+  .dash-empty { padding: 2rem 1rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADMIN SHELL — sidebar on desktop, drawer on a phone
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.admin-shell { display: flex; min-height: 100vh; }
+.admin-main    { flex: 1 1 auto; min-width: 0; }
+.admin-content { padding: 2rem; }
+
+.admin-sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+}
+
+.admin-topbar,
+.admin-scrim,
+.admin-drawer-close { display: none; }
+
+@media (max-width: 1023px) {
+  .admin-shell { display: block; }
+
+  .admin-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--sidebar-bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .admin-topbar__name {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .admin-topbar__btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--tap-min);
+    height: var(--tap-min);
+    flex-shrink: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .admin-topbar__btn:hover { background: var(--bg-hover); }
+  .admin-topbar__badge {
+    position: absolute;
+    top: 6px; right: 4px;
+    min-width: 16px; height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--red);
+    color: #fff;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Off-canvas. `visibility` keeps the closed drawer out of the tab order. */
+  .admin-sidebar {
+    position: fixed;
+    inset-block: 0;
+    left: 0;
+    z-index: 70;
+    height: 100dvh;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.22s ease, visibility 0.22s;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.18);
+  }
+  .admin-sidebar[data-open='true'] { transform: none; visibility: visible; }
+
+  .admin-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    background: rgba(15, 23, 32, 0.45);
+  }
+
+  .admin-drawer-close {
+    position: fixed;
+    top: 0.5rem;
+    left: calc(var(--sidebar-width) + 0.5rem);
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--tap-min);
+    height: var(--tap-min);
+    border: none;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .admin-content { padding: 1.25rem; }
+}
+
+@media (max-width: 639px) {
+  .admin-content { padding: 1rem var(--page-gutter) 2rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-sidebar { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIST ROWS ON A PHONE
+
+   A wide table can't shrink to 390px without hiding most of its columns, so
+   below 640px the same data is rendered as one row per record: what it is, the
+   number that matters, and whether anything is wrong.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.client-cards { list-style: none; margin: 0; padding: 0; }
+.client-cards > li + li { border-top: 1px solid var(--border-subtle); }
+
+.client-card {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.875rem 1rem;
+  min-height: var(--tap-min);
+  text-decoration: none;
+  color: inherit;
+}
+.client-card:hover { background: var(--bg-hover); }
+.client-card__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.client-card__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.client-card__name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.client-card__meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.client-card__af {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.client-card__caret { color: var(--text-faint); flex-shrink: 0; }

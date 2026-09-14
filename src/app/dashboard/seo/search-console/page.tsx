@@ -5,19 +5,21 @@
 // (cached 15min via unstable_cache) rather than from a DB sync.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { resolveDashboardRange } from '@/lib/dateRange'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
-import DateRangePicker from '@/components/DateRangePicker'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { GscQueriesTable, GscPagesTable } from './GscSortableTable'
 import GscTrendChart from './GscTrendChart'
 import type { GscDailyPoint } from './GscTrendChart'
 import { fetchGSCLiveData } from '@/lib/gsc-live'
 import type { GSCSummaryResult } from '@/lib/gsc-live'
+import PageHeader from '@/components/dashboard/PageHeader'
+import EmptyState from '@/components/dashboard/EmptyState'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,8 +70,7 @@ export default async function SearchConsolePage({
   if (!client) redirect('/access')
 
   // Default end to yesterday (GSC data has a 2-3 day delay; today adds partial noise)
-  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
+  const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
   // Compute comparison date range
@@ -100,11 +101,12 @@ export default async function SearchConsolePage({
   if (gscConnections.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Search Console not connected"
             description="Ask your account manager to connect your Google Search Console property to start seeing organic search data here."
+            icon={<MagnifyingGlass size={22} />}
           />
         </main>
       </div>
@@ -142,9 +144,9 @@ export default async function SearchConsolePage({
   if (!curr || !hasData) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
-          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." />
+          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<MagnifyingGlass size={22} />} />
         </main>
       </div>
     )
@@ -224,7 +226,7 @@ export default async function SearchConsolePage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* Sparse data notice */}
@@ -304,7 +306,7 @@ export default async function SearchConsolePage({
               <h2 className="section-title">Top Queries</h2>
               <p className="section-desc">Top {topQueries.length} queries by organic clicks · click column headers to sort</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <GscQueriesTable rows={topQueries} showCompare={showCompare} />
             </div>
           </div>
@@ -317,41 +319,13 @@ export default async function SearchConsolePage({
               <h2 className="section-title">Top Pages</h2>
               <p className="section-desc">Top {topPages.length} pages by organic clicks · click column headers to sort</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <GscPagesTable rows={topPages} showCompare={showCompare} />
             </div>
           </div>
         )}
 
       </main>
-    </div>
-  )
-}
-
-function PageHeader({ client, fromDate, toDate, compare }: { client: Client; fromDate: Date; toDate: Date; compare: string }) {
-  return (
-    <div className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-2">
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4285f4', flexShrink: 0 }} />
-        <h1 className="font-semibold text-base" style={{ color: 'var(--text-primary)', margin: 0 }}>SEO — Search Console</h1>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <Suspense fallback={null}>
-          <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
-        </Suspense>
-      </div>
-    </div>
-  )
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="card p-12 text-center">
-      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '1.5rem' }}>
-        🔍
-      </div>
-      <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</p>
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{description}</p>
     </div>
   )
 }

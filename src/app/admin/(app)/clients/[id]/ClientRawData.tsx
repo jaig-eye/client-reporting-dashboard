@@ -111,7 +111,7 @@ export default function ClientRawData({ clientId }: { clientId: string }) {
       )}
 
       {loaded && rows.length > 0 && source === 'google_ads' && (
-        <div style={{ overflowX: 'auto' }}>
+        <div className="table-scroll">
           <table className="data-table" style={{ minWidth: 900, fontSize: '0.75rem' }}>
             <thead>
               <tr>
@@ -164,7 +164,7 @@ export default function ClientRawData({ clientId }: { clientId: string }) {
       )}
 
       {loaded && rows.length > 0 && source === 'meta_ads' && (
-        <div style={{ overflowX: 'auto' }}>
+        <div className="table-scroll">
           <table className="data-table" style={{ minWidth: 1100, fontSize: '0.75rem' }}>
             <thead>
               <tr>

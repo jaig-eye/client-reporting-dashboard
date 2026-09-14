@@ -159,7 +159,7 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <a href="/admin/content?tab=silos" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textDecoration: 'none' }}>← Silos</a>
+          <a href="/admin/content?view=silos" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textDecoration: 'none' }}>← Silos</a>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
@@ -341,7 +341,7 @@ function KeywordsTab({
             {group.length === 0 ? (
               <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)' }}>None yet — build a silo plan or add manually above.</p>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div className="table-scroll">
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: '0.72rem' }}>
@@ -840,7 +840,7 @@ function AuditResults({ audit }: { audit: Record<string, unknown> }) {
       {termUsage.length > 0 && (
         <div className="card" style={{ padding: 16 }}>
           <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 10 }}>Term Coverage</h3>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-scroll">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: '0.72rem' }}>

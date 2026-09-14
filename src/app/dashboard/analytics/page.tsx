@@ -4,16 +4,18 @@
 // from Google Analytics 4, broken down by channel group.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Suspense } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { resolveDashboardRange } from '@/lib/dateRange'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
-import DateRangePicker from '@/components/DateRangePicker'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import TrafficBySourceTable from '@/components/TrafficBySourceTable'
+import PageHeader from '@/components/dashboard/PageHeader'
+import EmptyState from '@/components/dashboard/EmptyState'
+import { ChartLine } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -92,8 +94,7 @@ export default async function GA4Page({
   if (!client) redirect('/access')
 
   // Default end to yesterday — today is a partial day and inflates totals vs GA4 dashboard
-  const toDate   = params.to   ? new Date(params.to)   : new Date(Date.now() - 86_400_000)
-  const fromDate = params.from ? new Date(params.from)  : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
+  const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
   const showCompare = compare !== 'none'
@@ -127,11 +128,12 @@ export default async function GA4Page({
   if (ga4Connections.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="Analytics — GA4" accent="#e37400" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Google Analytics not connected"
             description="Ask your account manager to connect your GA4 property to start seeing traffic data here."
+            icon={<ChartLine size={22} />}
           />
         </main>
       </div>
@@ -297,11 +299,11 @@ export default async function GA4Page({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader client={client} fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="Analytics — GA4" accent="#e37400" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {ga4Rows.length === 0 ? (
-          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." />
+          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<ChartLine size={22} />} />
         ) : (
           <>
             {/* KPI spark cards */}
@@ -367,7 +369,7 @@ export default async function GA4Page({
                   <h2 className="section-title">Traffic by Channel</h2>
                   <p className="section-desc">{channels.length} channels</p>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="data-table" style={{ minWidth: 600 }}>
                     <thead>
                       <tr>
@@ -441,34 +443,6 @@ export default async function GA4Page({
           </>
         )}
       </main>
-    </div>
-  )
-}
-
-function PageHeader({ client, fromDate, toDate, compare }: { client: Client; fromDate: Date; toDate: Date; compare: string }) {
-  return (
-    <div className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-2">
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#e37400', flexShrink: 0 }} />
-        <h1 className="font-semibold text-base" style={{ color: 'var(--text-primary)', margin: 0 }}>Analytics — GA4</h1>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <Suspense fallback={null}>
-          <DateRangePicker from={fromDate.toISOString().split('T')[0]} to={toDate.toISOString().split('T')[0]} compare={compare} />
-        </Suspense>
-      </div>
-    </div>
-  )
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="card p-12 text-center">
-      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '1.5rem' }}>
-        📊
-      </div>
-      <p className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</p>
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{description}</p>
     </div>
   )
 }

@@ -589,41 +589,43 @@ export default async function ClientDetailPage({
             {coverageRows.length === 0 ? (
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No synced data yet.</p>
             ) : (
-              <table className="data-table w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="text-left">Source</th>
-                    <th className="text-left">Earliest</th>
-                    <th className="text-left">Latest</th>
-                    <th className="text-right">Days w/ Data</th>
-                    <th className="text-right">Gap Days</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {coverageRows.map(row => {
-                    const fmtDate = (d: string | null) => d
-                      ? new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                      : '—'
-                    const expectedDays = row.min_date && row.max_date
-                      ? Math.round((new Date(row.max_date + 'T00:00:00Z').getTime() - new Date(row.min_date + 'T00:00:00Z').getTime()) / 86_400_000) + 1
-                      : null
-                    const gapDays = expectedDays !== null ? expectedDays - row.days_with_data : null
-                    return (
-                      <tr key={row.source}>
-                        <td style={{ fontWeight: 500 }}>{SOURCE_LABELS[row.source] ?? row.source}</td>
-                        <td>{fmtDate(row.min_date)}</td>
-                        <td>{fmtDate(row.max_date)}</td>
-                        <td className="text-right">{row.days_with_data.toLocaleString()}</td>
-                        <td className="text-right">
-                          {gapDays !== null ? (
-                            <span className={`badge ${gapDays === 0 ? 'badge-green' : 'badge-amber'}`}>{gapDays}</span>
-                          ) : '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+              <div className="table-scroll">
+                <table className="data-table w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left">Source</th>
+                      <th className="text-left">Earliest</th>
+                      <th className="text-left">Latest</th>
+                      <th className="text-right">Days w/ Data</th>
+                      <th className="text-right">Gap Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coverageRows.map(row => {
+                      const fmtDate = (d: string | null) => d
+                        ? new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : '—'
+                      const expectedDays = row.min_date && row.max_date
+                        ? Math.round((new Date(row.max_date + 'T00:00:00Z').getTime() - new Date(row.min_date + 'T00:00:00Z').getTime()) / 86_400_000) + 1
+                        : null
+                      const gapDays = expectedDays !== null ? expectedDays - row.days_with_data : null
+                      return (
+                        <tr key={row.source}>
+                          <td style={{ fontWeight: 500 }}>{SOURCE_LABELS[row.source] ?? row.source}</td>
+                          <td>{fmtDate(row.min_date)}</td>
+                          <td>{fmtDate(row.max_date)}</td>
+                          <td className="text-right">{row.days_with_data.toLocaleString()}</td>
+                          <td className="text-right">
+                            {gapDays !== null ? (
+                              <span className={`badge ${gapDays === 0 ? 'badge-green' : 'badge-amber'}`}>{gapDays}</span>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 

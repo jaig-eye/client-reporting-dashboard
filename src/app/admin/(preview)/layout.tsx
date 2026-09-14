@@ -32,7 +32,6 @@ export default async function PreviewLayout({ children }: { children: React.Reac
       <Sidebar
         agencyName={settings.agency_name}
         agencyLogoUrl={settings.agency_logo_url ?? undefined}
-        appVersion={(settings as Record<string, unknown>).app_version as string ?? '2.0.0'}
         userName={sessionUser?.name   ?? 'Super Admin'}
         userEmail={sessionUser?.email ?? 'Master account'}
         userAvatarUrl={sessionUser?.avatar_url ?? undefined}

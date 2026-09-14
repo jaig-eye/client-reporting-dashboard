@@ -89,64 +89,66 @@ export default function CategoryEditor({ categories: initial }: Props) {
             </p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>Display Mode</th>
-                <th>Conversion Label</th>
-                <th>Default Value</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {categories.map(cat => (
-                <tr key={cat.id}>
-                  <td>
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className="h-3 w-3 rounded-full flex-shrink-0"
-                        style={{ background: cat.color }}
-                      />
-                      <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
-                        {cat.name}
-                      </span>
-                      {cat.is_default && (
-                        <span className="badge badge-blue" style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }}>
-                          Default
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {DISPLAY_MODES.find(m => m.value === cat.display_mode)?.label ?? cat.display_mode}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      {cat.conversion_label}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      {cat.default_conversion_value > 0 ? `$${cat.default_conversion_value}` : '—'}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => handleDelete(cat.id)}
-                      disabled={saving === cat.id}
-                      className="btn btn-danger"
-                      style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-                    >
-                      {saving === cat.id ? 'Deleting…' : 'Delete'}
-                    </button>
-                  </td>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Display Mode</th>
+                  <th>Conversion Label</th>
+                  <th>Default Value</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {categories.map(cat => (
+                  <tr key={cat.id}>
+                    <td>
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="h-3 w-3 rounded-full flex-shrink-0"
+                          style={{ background: cat.color }}
+                        />
+                        <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
+                          {cat.name}
+                        </span>
+                        {cat.is_default && (
+                          <span className="badge badge-blue" style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }}>
+                            Default
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {DISPLAY_MODES.find(m => m.value === cat.display_mode)?.label ?? cat.display_mode}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        {cat.conversion_label}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        {cat.default_conversion_value > 0 ? `$${cat.default_conversion_value}` : '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => handleDelete(cat.id)}
+                        disabled={saving === cat.id}
+                        className="btn btn-danger"
+                        style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                      >
+                        {saving === cat.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

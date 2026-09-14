@@ -644,7 +644,7 @@ export default function AgencySettingsPage() {
               <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
                 <li><strong>OpenAI:</strong> Go to <strong>platform.openai.com → API Keys</strong> and create a new secret key (<code>sk-…</code>). Set model to <code>gpt-4o</code> or <code>gpt-4o-mini</code>.</li>
                 <li><strong>Anthropic:</strong> Go to <strong>console.anthropic.com → API Keys</strong> and create a key. Set model to <code>claude-sonnet-4-6</code>.</li>
-                <li>The master writing prompt is managed in <a href="/admin/content?tab=settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.</li>
+                <li>The master writing prompt is managed in <a href="/admin/content/settings" style={{ color: 'var(--blue)' }}>Content → Settings</a>.</li>
               </ol>
             }
             onSave={saveAiCredential}

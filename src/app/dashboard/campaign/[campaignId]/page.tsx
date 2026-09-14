@@ -108,6 +108,12 @@ function isMetaDefaultName(name: string) {
   return !name.trim() || META_DEFAULT_NAMES.has(name.trim().toLowerCase())
 }
 
+// The group label is "Ad Group", "Ad Set" or "Asset Group" depending on platform and
+// campaign type, so a hard-coded article read as "a ad group".
+function article(word: string) {
+  return /^[aeiou]/i.test(word.trim()) ? 'an' : 'a'
+}
+
 function normalizeMetaAdStatus(status: string | null): string | null {
   if (!status) return null
   const s = status.toUpperCase()
@@ -277,7 +283,9 @@ export default async function CampaignDetailPage({
     // Sort desc by date so the most-recent row's name/type is used — not the oldest
     const sortedRows = [...campRows].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
     const firstCamp  = sortedRows[0] ?? null
-    if (firstCamp) campaignName = firstCamp.campaign_name
+    // Fall back to the raw campaign id only when no row carries a name.
+    const namedCamp  = sortedRows.find(r => r.campaign_name)
+    if (namedCamp) campaignName = namedCamp.campaign_name
     isPMax = firstCamp?.campaign_type === 'PERFORMANCE_MAX'
       || campaignName.toLowerCase().startsWith('pmax')
     // Average impression share across the period (null if none available)
@@ -836,7 +844,7 @@ export default async function CampaignDetailPage({
             <h2 className="section-title">
               {adGroups.length} {displayGroupLabel}{adGroups.length !== 1 ? 's' : ''}
             </h2>
-            <p className="section-desc">Click a {displayGroupLabel.toLowerCase()} to see individual ads</p>
+            <p className="section-desc">Click {article(displayGroupLabel)} {displayGroupLabel.toLowerCase()} to see individual ads</p>
           </div>
           <AdGroupTable
             rows={adGroups}

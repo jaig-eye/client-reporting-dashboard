@@ -3,7 +3,7 @@
 import { useState, useEffect }  from 'react'
 import Link                      from 'next/link'
 import { ConnectorLogo }         from '@/components/ConnectorLogo'
-import { PresentationChart, BookOpen, Check } from '@phosphor-icons/react/dist/ssr'
+import { PresentationChart, BookOpen, Check, CaretRight } from '@phosphor-icons/react/dist/ssr'
 import type { ConnectorType }    from '@/lib/types'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
@@ -417,7 +417,7 @@ export default function DashboardClientShell({
         </div>
       ) : (
         <div className="card overflow-hidden" style={{ padding: 0 }}>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-scroll hide-sm">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -682,6 +682,41 @@ export default function DashboardClientShell({
               </tbody>
             </table>
           </div>
+
+          {/* Phone: the table's 8 columns become one row per client — name, the number that
+              matters, and whether anything is wrong. Everything else is a tap away. */}
+          <ul className="client-cards only-sm">
+            {clientRows.map(row => {
+              let dot = 'var(--red)'
+              if (row.syncStatus === 'success') dot = row.hoursStale < 48 ? 'var(--green)' : 'var(--amber, #f59e0b)'
+              const afColor = row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)'
+              return (
+                <li key={row.id}>
+                  <Link href={`/admin/clients/${row.id}`} className="client-card">
+                    <span className="client-card__dot" style={{ background: dot }} aria-hidden />
+                    <span className="client-card__body">
+                      <span className="client-card__name">{row.name}</span>
+                      <span className="client-card__meta">
+                        {metricsLoading ? 'Loading…' : (
+                          <>
+                            {fmtSpend(row.spend)} spend
+                            {' · '}
+                            {row.conversions.toLocaleString()} conv.
+                            {row.showRoas && row.roas != null && ` · ${fmtX(row.roas)}`}
+                            {!row.showRoas && row.cpl != null && ` · ${fmtSpend(row.cpl)} CPA`}
+                          </>
+                        )}
+                      </span>
+                    </span>
+                    {!metricsLoading && row.hasAfLedger && (
+                      <span className="client-card__af" style={{ color: afColor }}>{fmtBalance(row.afBalance)}</span>
+                    )}
+                    <CaretRight size={14} className="client-card__caret" aria-hidden />
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
     </div>

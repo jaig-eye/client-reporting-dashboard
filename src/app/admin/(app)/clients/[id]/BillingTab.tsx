@@ -151,7 +151,7 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
             No Stripe invoices found. Set a Stripe Customer ID in Integrations to link billing.
           </p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-scroll">
             <table className="data-table w-full text-sm">
               <thead>
                 <tr>
@@ -193,7 +193,7 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
         {ledger.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No ledger entries yet.</p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-scroll">
             <table className="data-table w-full text-sm">
               <thead>
                 <tr>

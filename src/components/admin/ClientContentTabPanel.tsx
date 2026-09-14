@@ -293,7 +293,7 @@ function GscSection({
         </span>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      <div className="table-scroll">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -477,7 +477,7 @@ function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading
     )
   }
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div className="table-scroll">
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>

@@ -6,7 +6,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import Sidebar from '@/components/admin/Sidebar'
+import AdminShell from '@/components/admin/AdminShell'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
 import ThemeProvider from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
@@ -74,22 +74,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <ThemeProvider initialMode={initialMode} initialAccent={initialAccent}>
-      <div className="flex min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <Sidebar
+      <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
+        <NavigationRefresher />
+        <PaymentNotifier soundUrl={(settings as Record<string, unknown>).payment_sound_url as string | null} />
+        <AdminShell
           agencyName={settings.agency_name}
           agencyLogoUrl={settings.agency_logo_url ?? undefined}
-          appVersion={(settings as Record<string, unknown>).app_version as string ?? '2.0.0'}
           userName={userName}
           userEmail={userEmail}
           userAvatarUrl={avatarUrl}
           isSuperAdmin={adminSession?.isSuperAdmin === true}
           unreadAlertCount={unreadAlertCount}
-        />
-        <NavigationRefresher />
-        <PaymentNotifier soundUrl={(settings as Record<string, unknown>).payment_sound_url as string | null} />
-        <div className="flex-1 min-w-0">
-          <main className="p-8">{children}</main>
-        </div>
+        >
+          {children}
+        </AdminShell>
       </div>
     </ThemeProvider>
   )

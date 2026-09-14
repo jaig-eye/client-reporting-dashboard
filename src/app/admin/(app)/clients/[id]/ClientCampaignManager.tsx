@@ -83,7 +83,7 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
       ].map(group => group.rows.length > 0 && (
         <div key={group.label}>
           <p className="text-xs font-semibold mb-2" style={{ color: group.color }}>{group.label}</p>
-          <div className="overflow-x-auto">
+          <div className="table-scroll">
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
