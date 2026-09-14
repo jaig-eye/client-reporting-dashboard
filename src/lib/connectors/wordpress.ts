@@ -610,6 +610,128 @@ export interface WpMediaItem {
 }
 
 /**
+ * The site answered, but not with the REST API — a Cloudflare challenge, a login redirect, or a
+ * page some plugin or cache served in its place. Its message is written for the reviewer: it says
+ * what is blocking us and what the client needs to change.
+ */
+export class WpBlockedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WpBlockedError'
+  }
+}
+
+/**
+ * GET a read-only REST resource, surviving the ways sites interfere with server-side requests.
+ *
+ * A 200 response is not proof of JSON. Behind Cloudflare, a request from a datacenter IP (which
+ * is where Vercel runs) can get an HTML challenge page instead of the API — and parsing that as
+ * JSON produced "Unexpected token '<'", which told nobody anything. The same site answers
+ * normally from an office connection, so it cannot be diagnosed from the site alone.
+ *
+ * Attempts, in order, stopping at the first real JSON answer:
+ *   1. /wp-json/… with credentials — the normal path.
+ *   2. ?rest_route=… with credentials — the same API without the /wp-json/ path, which some
+ *      hosts, caches and security rules treat differently.
+ *   3. /wp-json/… WITHOUT credentials, when allowAnonymous — media listings are public, and
+ *      some firewalls challenge any request carrying a Basic auth header.
+ *
+ * Redirects are not followed: a redirect from a REST route is a login page or a challenge, and
+ * following it is how an HTML page ended up being parsed as data.
+ */
+async function wpReadJson(
+  siteUrl: string,
+  apiPath: string,
+  params: URLSearchParams,
+  auth: { username: string; app_password: string },
+  opts: { allowAnonymous?: boolean } = {},
+): Promise<{ status: number; data: unknown; headers: Headers }> {
+  const base = siteUrl.replace(/\/+$/, '')
+  let host = base
+  try { host = new URL(base).hostname } catch { /* keep the raw value */ }
+
+  const pretty = new URL(`${base}/wp-json/wp/v2${apiPath}`)
+  params.forEach((v, k) => pretty.searchParams.set(k, v))
+  const plain = new URL(`${base}/`)
+  plain.searchParams.set('rest_route', `/wp/v2${apiPath}`)
+  params.forEach((v, k) => plain.searchParams.set(k, v))
+
+  const attempts: { url: string; withAuth: boolean }[] = [
+    { url: pretty.toString(), withAuth: true },
+    { url: plain.toString(),  withAuth: true },
+    ...(opts.allowAnonymous ? [{ url: pretty.toString(), withAuth: false }] : []),
+  ]
+
+  let behindCloudflare = false
+  let challenged       = false
+  let lastProblem      = ''
+
+  for (const attempt of attempts) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(attempt.url, {
+        headers: {
+          ...(attempt.withAuth ? { Authorization: authHeader(auth.username, auth.app_password) } : {}),
+          Accept:       'application/json',
+          'User-Agent': BROWSER_BOT_UA,
+        },
+        redirect: 'manual',
+        signal:   controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if ((res.headers.get('server') ?? '').toLowerCase().includes('cloudflare')) behindCloudflare = true
+    // Cloudflare sets cf-mitigated when it served a challenge instead of the origin's response.
+    if (res.headers.get('cf-mitigated')) challenged = true
+
+    if (res.status >= 300 && res.status < 400) {
+      lastProblem = `a redirect to ${res.headers.get('location') ?? 'another page'}`
+      continue
+    }
+
+    const contentType = res.headers.get('content-type') ?? ''
+    if (contentType.includes('json')) {
+      if (res.status === 404) return { status: 404, data: null, headers: res.headers }
+      if (!res.ok) {
+        // A genuine REST error (bad credentials, missing permission): the API itself said no,
+        // so another route or dropping credentials would not change the answer.
+        const text = await res.text()
+        throw new Error(`WordPress media error ${res.status}: ${text.slice(0, 300)}`)
+      }
+      return { status: res.status, data: await res.json(), headers: res.headers }
+    }
+
+    const body = (await res.text()).slice(0, 2000)
+    if (/just a moment|cf-chl|challenge-platform|attention required|cf-browser-verification/i.test(body)) {
+      challenged  = true
+      lastProblem = `a Cloudflare challenge page (HTTP ${res.status})`
+    } else {
+      lastProblem = `a web page instead of data (HTTP ${res.status})`
+    }
+  }
+
+  // Blame Cloudflare only when it served a challenge. A site merely BEHIND Cloudflare that returns
+  // HTML is more likely a disabled REST API or a security plugin — say so, and mention Cloudflare
+  // as a possibility rather than asserting it.
+  if (challenged) {
+    throw new WpBlockedError(
+      `Cloudflare on ${host} is blocking our server from its media library. ` +
+      `In the client's Cloudflare dashboard, add a WAF custom rule that skips Bot Fight Mode and ` +
+      `managed rules when the User Agent contains "GoLaunchLocal".`,
+    )
+  }
+  throw new WpBlockedError(
+    `${host} answered with ${lastProblem || 'something other than its media library'}. ` +
+    `The WordPress REST API may be disabled or redirected by a security plugin` +
+    (behindCloudflare ? `, or Cloudflare may be filtering server requests (allow-list User Agent "GoLaunchLocal").` : '.'),
+  )
+}
+
+/**
  * One page of the client's own WordPress media library.
  *
  * Deliberately NOT exhaustive. A mature site can hold thousands of attachments, and pulling
@@ -635,43 +757,24 @@ export async function searchMedia(
   // timeout, and nobody scans 100 thumbnails at once anyway.
   const perPage = Math.min(60, Math.max(1, Math.trunc(opts.perPage ?? 24)))
 
-  const url = new URL(wpApiUrl(siteUrl, '/media'))
-  url.searchParams.set('media_type', 'image')
-  url.searchParams.set('per_page', String(perPage))
-  url.searchParams.set('page', String(page))
-  url.searchParams.set('orderby', opts.search?.trim() ? 'relevance' : 'date')
-  if (!opts.search?.trim()) url.searchParams.set('order', 'desc')
-  if (opts.search?.trim()) url.searchParams.set('search', opts.search.trim())
-  // Only the fields the picker renders. Media rows carry a large `description`/`caption`
-  // payload per item that would otherwise be transferred and discarded.
-  url.searchParams.set('_fields', 'id,title,source_url,media_details,alt_text,mime_type,date')
+  const params = new URLSearchParams()
+  params.set('media_type', 'image')
+  params.set('per_page', String(perPage))
+  params.set('page', String(page))
+  params.set('orderby', opts.search?.trim() ? 'relevance' : 'date')
+  if (!opts.search?.trim()) params.set('order', 'desc')
+  if (opts.search?.trim()) params.set('search', opts.search.trim())
+  // Only the fields the picker renders. Media rows carry a large description/caption payload per
+  // item that would otherwise be transferred and discarded.
+  params.set('_fields', 'id,title,source_url,media_details,alt_text,mime_type,date')
 
-  // A client site that accepts the connection and never answers must not hold this request
-  // open until the platform kills it — the reviewer is waiting on this one.
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
-  let res: Response
-  try {
-    res = await fetch(url.toString(), {
-      headers: {
-        Authorization:  authHeader(auth.username, auth.app_password),
-        'Content-Type': 'application/json',
-        'User-Agent':   BROWSER_BOT_UA,
-      },
-      signal: controller.signal,
-    })
-  } finally {
-    clearTimeout(timer)
-  }
+  // Media listings are public, so an anonymous attempt is a safe last resort when a firewall
+  // challenges authenticated requests. Each attempt carries its own timeout.
+  const { data, headers } = await wpReadJson(siteUrl, '/media', params, auth, { allowAnonymous: true })
 
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`WordPress media error ${res.status}: ${text.slice(0, 300)}`)
-  }
-
-  const rows = (await res.json()) as Record<string, unknown>[]
-  const total      = Number(res.headers.get('x-wp-total')       ?? rows.length)
-  const totalPages = Number(res.headers.get('x-wp-totalpages')  ?? 1)
+  const rows = (Array.isArray(data) ? data : []) as Record<string, unknown>[]
+  const total      = Number(headers.get('x-wp-total')       ?? rows.length)
+  const totalPages = Number(headers.get('x-wp-totalpages')  ?? 1)
 
   const items: WpMediaItem[] = rows.map(r => {
     const details = (r.media_details ?? {}) as Record<string, unknown>
@@ -714,29 +817,13 @@ export async function getMediaItem(
   auth: { username: string; app_password: string },
   mediaId: number,
 ): Promise<WpMediaItem | null> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
-  let res: Response
-  try {
-    res = await fetch(
-      `${wpApiUrl(siteUrl, `/media/${mediaId}`)}?_fields=id,title,source_url,media_details,alt_text,mime_type,date`,
-      {
-        headers: {
-          Authorization:  authHeader(auth.username, auth.app_password),
-          'Content-Type': 'application/json',
-          'User-Agent':   BROWSER_BOT_UA,
-        },
-        signal: controller.signal,
-      },
-    )
-  } finally {
-    clearTimeout(timer)
-  }
+  const params = new URLSearchParams({ _fields: 'id,title,source_url,media_details,alt_text,mime_type,date' })
+  // The attachment is still resolved against the client's own site, never a URL from the request
+  // body — an anonymous fallback reads the same public attachment, so that property holds.
+  const { status, data } = await wpReadJson(siteUrl, `/media/${mediaId}`, params, auth, { allowAnonymous: true })
+  if (status === 404 || !data) return null
 
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`WordPress media error ${res.status}`)
-
-  const r = (await res.json()) as Record<string, unknown>
+  const r = data as Record<string, unknown>
   if (!r.source_url) return null
   const details = (r.media_details ?? {}) as Record<string, unknown>
   const sizes   = (details.sizes   ?? {}) as Record<string, { source_url?: string }>

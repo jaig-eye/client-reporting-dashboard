@@ -26,7 +26,7 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createRateLimiter } from '@/lib/rateLimit'
-import { searchMedia, type WpMediaItem } from '@/lib/connectors/wordpress'
+import { searchMedia, WpBlockedError, type WpMediaItem } from '@/lib/connectors/wordpress'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 
 export const dynamic = 'force-dynamic'
@@ -142,8 +142,11 @@ export async function GET(request: NextRequest) {
     // rendering an empty strip that looks like "they have no images".
     const message = e instanceof Error ? e.message : 'WordPress media request failed'
     console.error(`[wordpress/media] ${siteHost}:`, message)
+    // A blocked request DID reach the site — it was turned away. Its message already names the
+    // site and the fix, so don't bury it under "Could not reach".
+    const blocked = e instanceof WpBlockedError
     return NextResponse.json(
-      { error: `Could not reach ${siteHost}. ${message.slice(0, 200)}` },
+      { error: blocked ? message : `Could not reach ${siteHost}. ${message.slice(0, 200)}` },
       { status: 502 },
     )
   }
