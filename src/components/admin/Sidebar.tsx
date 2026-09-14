@@ -2,17 +2,16 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { isSettingsPath } from './SettingsShell'
 import {
   Buildings,
-  PlugsConnected,
   NotePencil,
-  UsersThree,
   GearSix,
-  HardDrives,
   RocketLaunch,
   Bell,
   GlobeSimple,
   EnvelopeSimple,
+  SunHorizon,
 } from '@phosphor-icons/react'
 import UserMenu from './UserMenu'
 
@@ -21,6 +20,8 @@ interface NavItem {
   label: string
   icon: React.ReactNode
   matchPrefix?: boolean
+  /** Custom active test, for items that own more than one route. */
+  isActive?: (pathname: string) => boolean
   alertsKey?: boolean
   beta?: boolean
 }
@@ -34,21 +35,20 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Operations',
     items: [
+      { href: '/admin/today',     label: 'Today',    icon: <SunHorizon size={16} aria-hidden />,     matchPrefix: true },
       { href: '/admin/alerts',    label: 'Alerts',   icon: <Bell size={16} aria-hidden />,           matchPrefix: true, alertsKey: true },
-      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,      matchPrefix: true },
-      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,     matchPrefix: true },
+      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,      isActive: p => p.startsWith('/admin/dashboard') || p.startsWith('/admin/clients') },
+      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,     isActive: p => p.startsWith('/admin/content') && !p.startsWith('/admin/content/settings') },
       { href: '/admin/emails',    label: 'Emails',   icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
       { href: '/admin/ad-fuel',   label: 'Ad Fuel',  icon: <RocketLaunch size={16} aria-hidden />,   matchPrefix: true },
       { href: '/admin/sites',     label: 'Sites',    icon: <GlobeSimple size={16} aria-hidden />,    matchPrefix: true },
     ],
   },
   {
-    title: 'Settings',
+    // Everything you configure lives behind one item; SettingsShell gives it its own menu.
+    title: 'Workspace',
     items: [
-      { href: '/admin/connections', label: 'Connections',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true },
-      { href: '/admin/users',       label: 'Users',           icon: <UsersThree size={16} aria-hidden />,     matchPrefix: true },
-      { href: '/admin/settings',    label: 'Agency Settings', icon: <GearSix size={16} aria-hidden />,        matchPrefix: true },
-      { href: '/admin/system',      label: 'System',          icon: <HardDrives size={16} aria-hidden />,     matchPrefix: true },
+      { href: '/admin/settings', label: 'Settings', icon: <GearSix size={16} aria-hidden />, isActive: isSettingsPath },
     ],
   },
 ]
@@ -79,6 +79,7 @@ export default function Sidebar({
   const pathname = usePathname()
 
   function isActive(item: NavItem): boolean {
+    if (item.isActive) return item.isActive(pathname)
     if (item.matchPrefix === false) {
       return pathname === item.href
     }

@@ -11,6 +11,7 @@ import { usePathname } from 'next/navigation'
 import { List, X, Bell } from '@phosphor-icons/react'
 import Link from 'next/link'
 import Sidebar from './Sidebar'
+import SettingsShell, { isSettingsPath } from './SettingsShell'
 
 interface Props {
   agencyName: string
@@ -66,7 +67,9 @@ export default function AdminShell({ children, ...nav }: Props) {
       {open && <div className="admin-scrim" onClick={() => setOpen(false)} aria-hidden />}
 
       <div className="admin-main">
-        <main className="admin-content">{children}</main>
+        <main className="admin-content">
+          {isSettingsPath(pathname) ? <SettingsShell>{children}</SettingsShell> : children}
+        </main>
       </div>
 
       {open && (

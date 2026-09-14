@@ -23,7 +23,7 @@ function AdminLoginForm() {
     rawReturn && rawReturn.startsWith('/')
     && !rawReturn.startsWith('//') && !rawReturn.startsWith('/\\')
       ? rawReturn
-      : '/admin/dashboard'
+      : '/admin/today'
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [code,     setCode]     = useState('')

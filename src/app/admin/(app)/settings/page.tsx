@@ -8,7 +8,6 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import ScrollTabs from '@/components/ui/ScrollTabs'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
@@ -174,13 +173,6 @@ function AgencySettingsPageInner() {
   const tabParam  = searchParams.get('tab')
   const activeTab = tabParam && TABS.some(t => t.id === tabParam) ? tabParam : DEFAULT_TAB
 
-  const setActiveTab = useCallback((next: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    if (next === DEFAULT_TAB) params.delete('tab')
-    else params.set('tab', next)
-    const query = params.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
-  }, [router, pathname, searchParams])
 
   // Tabs mount on first view and stay mounted, so their fetches/state survive switching.
   // Seeded from the URL's tab so a deep link renders its own content, not Branding's.
@@ -413,7 +405,6 @@ function AgencySettingsPageInner() {
       </div>
 
       {/* Tab nav */}
-      <ScrollTabs items={TABS} activeId={activeTab} onSelect={setActiveTab} label="Agency settings sections" />
 
       <form onSubmit={handleSave} className="space-y-5">
 
@@ -448,7 +439,7 @@ function AgencySettingsPageInner() {
                 </div>
                 <input
                   className="input"
-                  value={form.agency_logo_url}
+                  value={form.agency_logo_url ?? ''}
                   onChange={e => field('agency_logo_url', e.target.value)}
                   placeholder="Or paste image URL…"
                 />

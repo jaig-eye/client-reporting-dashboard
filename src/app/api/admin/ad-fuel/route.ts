@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { buildGapGroups, collectGapAdjustments, computeLifetimeAdFuel } from '@/lib/adFuelBalance'
 
 function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
@@ -30,19 +31,6 @@ function getCycleStart(today: Date, billDay: number): Date {
   const d = today.getDate()
   if (d >= billDay) return new Date(today.getFullYear(), today.getMonth(), billDay)
   return new Date(today.getFullYear(), today.getMonth() - 1, billDay)
-}
-
-function getEffectiveCutoff(cutoffDate: string, historicBillDay: number): string {
-  const c = new Date(cutoffDate + 'T00:00:00Z')
-  const year = c.getUTCFullYear(), month = c.getUTCMonth(), day = c.getUTCDate()
-  if (day <= historicBillDay) return new Date(Date.UTC(year, month, historicBillDay)).toISOString().slice(0, 10)
-  return new Date(Date.UTC(year, month + 1, historicBillDay)).toISOString().slice(0, 10)
-}
-
-function subtractOneDay(date: string): string {
-  const d = new Date(date + 'T00:00:00Z')
-  d.setUTCDate(d.getUTCDate() - 1)
-  return d.toISOString().slice(0, 10)
 }
 
 function getCycleEnd(cycleStart: Date): Date {
@@ -92,18 +80,10 @@ export async function GET(request: NextRequest) {
   const cycleFloor = new Date(today.getTime() - 65 * 86_400_000).toISOString().slice(0, 10)
 
   // Compute gap groups now that we have clients — lets us fold gap RPCs into Round 2.
-  const clients         = (clientsRes.data ?? []) as ClientRow[]
-  const historicClients = clients.filter(c => c.historic_bill_day != null)
-  const gapGroups: Record<string, string[]> = {}
-  for (const c of historicClients) {
-    const eff = getEffectiveCutoff(cutoffDate, c.historic_bill_day!)
-    if (eff > cutoffDate) {
-      const gapEnd = subtractOneDay(eff)
-      if (!gapGroups[gapEnd]) gapGroups[gapEnd] = []
-      gapGroups[gapEnd].push(c.id)
-    }
-  }
-  const gapEntries = Object.entries(gapGroups)
+  // Gap grouping and the lifetime balance formula live in lib/adFuelBalance.ts so the
+  // Today page computes exactly the same AF Balance as this route.
+  const clients    = (clientsRes.data ?? []) as ClientRow[]
+  const gapEntries = buildGapGroups(clients, cutoffDate)
 
   // ── Round 2 (fully parallel) ──────────────────────────────────────────────
   // Start gap-adjustment promises BEFORE awaiting base RPCs so all requests
@@ -132,13 +112,7 @@ export async function GET(request: NextRequest) {
   for (const r of (gLifeRes.data ?? []) as SumRow[]) gLifeMap[r.client_id] = Number(r.spend ?? 0)
   for (const r of (mLifeRes.data ?? []) as SumRow[]) mLifeMap[r.client_id] = Number(r.spend ?? 0)
 
-  const gapAdjustGoogle: Record<string, number> = {}
-  const gapAdjustMeta:   Record<string, number> = {}
-  gapEntries.forEach(([, ids], i) => {
-    const [gGap, mGap] = gapRpcResults[i]
-    for (const r of (gGap.data ?? []) as SumRow[]) if (ids.includes(r.client_id)) gapAdjustGoogle[r.client_id] = Number(r.spend ?? 0)
-    for (const r of (mGap.data ?? []) as SumRow[]) if (ids.includes(r.client_id)) gapAdjustMeta[r.client_id]   = Number(r.spend ?? 0)
-  })
+  const gapAdjust = collectGapAdjustments(gapEntries, gapRpcResults)
 
   const gCycleRows = (gCycleRes.data ?? []) as DayRow[]
   const mCycleRows = (mCycleRes.data ?? []) as DayRow[]
@@ -171,37 +145,18 @@ export async function GET(request: NextRequest) {
     const cut   = client.ad_fuel_cut ?? agencyCut
     const split = 1 - cut
 
-    const gAdj = gapAdjustGoogle[client.id] ?? 0
-    const mAdj = gapAdjustMeta[client.id]   ?? 0
-    const googleRaw         = Math.max(0, (gLifeMap[client.id] ?? 0) - gAdj)
-    const facebookRaw       = Math.max(0, (mLifeMap[client.id] ?? 0) - mAdj)
-    const lifetimeGoogleRaw = googleRaw
-    const lifetimeMetaRaw   = facebookRaw
-
-    const rawSpend         = googleRaw + facebookRaw
-    const afSpend          = split > 0 ? rawSpend / split : 0
-    const lifetimeRawSpend = lifetimeGoogleRaw + lifetimeMetaRaw
-
-    const ledgerEntries      = ledgerByClient[client.id] ?? []
-    let afPurchased          = 0
-    let rawPurchased         = 0
-    let rawPurchasedLifetime = 0
-
-    for (const e of ledgerEntries) {
-      const s   = e.split_override != null ? Number(e.split_override) : split
-      const af  = Number(e.amount_af)
-      const eMs = new Date(e.date_of_payment + 'T00:00:00Z').getTime()
-      if (isNaN(eMs)) continue
-      if (eMs >= CUTOFF_MS) {
-        afPurchased          += af
-        rawPurchased         += af * s
-        rawPurchasedLifetime += af * s
-      }
-    }
-
-    const afBalance          = afPurchased - afSpend
-    const rawBalance         = rawPurchased - rawSpend
-    const lifetimeRawBalance = rawPurchasedLifetime - lifetimeRawSpend
+    const {
+      googleRaw, facebookRaw, rawSpend, afSpend,
+      afPurchased, rawPurchased, afBalance, rawBalance,
+    } = computeLifetimeAdFuel({
+      cut,
+      cutoffMs:       CUTOFF_MS,
+      googleLifetime: gLifeMap[client.id] ?? 0,
+      metaLifetime:   mLifeMap[client.id] ?? 0,
+      googleGapAdj:   gapAdjust.google[client.id] ?? 0,
+      metaGapAdj:     gapAdjust.meta[client.id]   ?? 0,
+      ledger:         ledgerByClient[client.id]   ?? [],
+    })
 
     const effectiveBillDay = client.bill_day ?? 1
     const cycleStart = getCycleStart(today, effectiveBillDay)

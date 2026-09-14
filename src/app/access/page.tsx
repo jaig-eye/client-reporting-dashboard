@@ -8,7 +8,7 @@ export default async function AccessPage() {
   const adminSession = cookieStore.get('admin_session')?.value
 
   if (isAdminAuthed(adminSession)) {
-    redirect('/admin/dashboard')
+    redirect('/admin/today')
   }
 
   return (
