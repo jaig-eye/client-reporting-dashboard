@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 
 interface PauseLog {
   id:                        string
@@ -28,32 +29,32 @@ export default function ClientAutoPauseSettings({
 }) {
   const [pauseEnabled,  setPauseEnabled]  = useState(autoPauseAds)
   const [resumeEnabled, setResumeEnabled] = useState(autoResumeAds)
-  const [saving,  setSaving]  = useState(false)
-  const [saved,   setSaved]   = useState(false)
-  const [error,   setError]   = useState('')
+  const status = useSaveStatus()
 
-  async function save(nextPause: boolean, nextResume: boolean) {
-    setSaving(true); setError(''); setSaved(false)
-    const res = await fetch(`/api/admin/clients/${clientId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto_pause_ads: nextPause, auto_resume_ads: nextResume }),
+  function save(nextPause: boolean, nextResume: boolean) {
+    const prevPause  = pauseEnabled
+    const prevResume = resumeEnabled
+    void status.run(async () => {
+      setPauseEnabled(nextPause)
+      setResumeEnabled(nextResume)
+      try {
+        await requestJson(`/api/admin/clients/${clientId}`, {
+          method: 'PATCH',
+          json:   { auto_pause_ads: nextPause, auto_resume_ads: nextResume },
+        })
+      } catch (err) {
+        setPauseEnabled(prevPause)
+        setResumeEnabled(prevResume)
+        throw err
+      }
     })
-    setSaving(false)
-    if (!res.ok) { setError((await res.json()).error || 'Save failed'); return }
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
   }
 
   function handlePauseToggle(checked: boolean) {
-    const next = checked
-    const nextResume = next ? resumeEnabled : false
-    setPauseEnabled(next)
-    setResumeEnabled(nextResume)
-    save(next, nextResume)
+    save(checked, checked ? resumeEnabled : false)
   }
 
   function handleResumeToggle(checked: boolean) {
-    setResumeEnabled(checked)
     save(pauseEnabled, checked)
   }
 
@@ -84,7 +85,10 @@ export default function ClientAutoPauseSettings({
 
       {/* Toggles */}
       <div className="card p-5 space-y-4">
-        <h2 className="section-title mb-0">Auto-Pause Settings</h2>
+        <div className="card-head">
+          <h2 className="section-title">Auto-Pause Settings</h2>
+          <SaveStatus state={status.state} error={status.error} retry={status.retry} />
+        </div>
         <p className="section-desc" style={{ marginTop: '0.125rem' }}>
           Automatically pause all active campaigns when the Ad Fuel balance goes negative.
           Requires Google Ads and/or Meta Ads connections to be active.
@@ -94,7 +98,7 @@ export default function ClientAutoPauseSettings({
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer' }}>
             <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginTop: 2 }}>
               <input
-                type="checkbox" checked={pauseEnabled} onChange={e => handlePauseToggle(e.target.checked)}
+                type="checkbox" checked={pauseEnabled} onChange={e => handlePauseToggle(e.target.checked)} disabled={status.saving}
                 style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--blue)' }}
               />
             </div>
@@ -110,7 +114,7 @@ export default function ClientAutoPauseSettings({
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer', marginLeft: '1.75rem' }}>
               <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginTop: 2 }}>
                 <input
-                  type="checkbox" checked={resumeEnabled} onChange={e => handleResumeToggle(e.target.checked)}
+                  type="checkbox" checked={resumeEnabled} onChange={e => handleResumeToggle(e.target.checked)} disabled={status.saving}
                   style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--blue)' }}
                 />
               </div>
@@ -123,10 +127,6 @@ export default function ClientAutoPauseSettings({
             </label>
           )}
         </div>
-
-        {saving && <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)' }}>Saving…</p>}
-        {saved  && <p style={{ fontSize: '0.8rem', color: 'var(--green)' }}>Saved ✓</p>}
-        {error  && <p style={{ fontSize: '0.8rem', color: 'var(--red)' }}>{error}</p>}
       </div>
 
       {/* Pause log */}

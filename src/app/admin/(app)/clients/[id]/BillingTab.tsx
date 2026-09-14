@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 
 interface Invoice {
   id:          string
@@ -39,10 +40,11 @@ function fmtShort(dateStr: string | null): string {
 
 function StatusBadge({ status }: { status: string | null }) {
   const s = status ?? ''
-  const style = s === 'paid' ? { bg: '#dcfce7', color: '#166534' }
-    : s === 'open'   ? { bg: '#dbeafe', color: '#1e40af' }
-    : s === 'void'   ? { bg: '#f3f4f6', color: '#6b7280' }
-    : { bg: '#fef3c7', color: '#92400e' }
+  const style = s === 'paid' ? { bg: 'var(--green-subtle)', color: 'var(--green)' }
+    : s === 'open'   ? { bg: 'var(--blue-subtle)',  color: 'var(--blue)' }
+    : s === 'void'   ? { bg: 'var(--bg-subtle)',    color: 'var(--text-muted)' }
+    : s === 'uncollectible' ? { bg: 'var(--red-subtle)', color: 'var(--red)' }
+    : { bg: 'var(--amber-subtle)', color: 'var(--amber)' }
   return (
     <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: style.bg, color: style.color }}>
       {s || 'unknown'}
@@ -57,9 +59,11 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
   const [error,    setError]    = useState('')
 
   // Ad Fuel cut editing (moved from old client General tab)
-  const [cutValue,  setCutValue]  = useState(adFuelCut != null ? String((adFuelCut * 100).toFixed(1)) : '')
-  const [cutSaving, setCutSaving] = useState(false)
-  const [cutMsg,    setCutMsg]    = useState('')
+  const initialCut = adFuelCut != null ? String((adFuelCut * 100).toFixed(1)) : ''
+  const [cutValue,    setCutValue]    = useState(initialCut)
+  const [cutBaseline, setCutBaseline] = useState(initialCut)
+  const cutStatus = useSaveStatus()
+  const cutDirty  = cutValue.trim() !== cutBaseline.trim()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -78,26 +82,18 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
 
   useEffect(() => { load() }, [load])
 
-  async function saveCut(overrideValue?: number | null) {
-    setCutSaving(true)
-    setCutMsg('')
-    const parsed = overrideValue !== undefined
-      ? overrideValue
-      : (cutValue === '' ? null : parseFloat(cutValue) / 100)
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ad_fuel_cut: parsed }),
-      })
-      if (!res.ok) throw new Error('Save failed')
-      setCutMsg('Saved')
-      setTimeout(() => setCutMsg(''), 2000)
-    } catch {
-      setCutMsg('Error saving')
-    } finally {
-      setCutSaving(false)
-    }
+  function saveCut(value: string) {
+    const parsed = value.trim() === '' ? null : parseFloat(value) / 100
+    void cutStatus.run(async () => {
+      await requestJson(`/api/admin/clients/${clientId}`, { method: 'PATCH', json: { ad_fuel_cut: parsed } })
+      setCutValue(value)
+      setCutBaseline(value)
+    })
+  }
+
+  function resetCut() {
+    if (!window.confirm(`Remove this client's Ad Fuel cut override and use the global default (${(globalCut * 100).toFixed(1)}%)?`)) return
+    saveCut('')
   }
 
   if (loading) {
@@ -115,7 +111,7 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
       <div className="card p-5">
         <h2 className="section-title mb-1">Ad Fuel Cut</h2>
         <p className="section-desc mb-3">Per-client margin override. Ad Fuel Spend = raw spend ÷ (1 − cut). Global default: {(globalCut * 100).toFixed(1)}%.</p>
-        <div className="flex items-center gap-3">
+        <div className="form-actions">
           <div className="flex items-center gap-1.5">
             <input
               type="number" min="0" max="99" step="0.1"
@@ -127,19 +123,21 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
             />
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>%</span>
           </div>
-          <button onClick={() => saveCut()} disabled={cutSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
-            {cutSaving ? 'Saving…' : 'Save'}
+          <button onClick={() => saveCut(cutValue)} disabled={!cutDirty || cutStatus.saving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
+            Save changes
           </button>
-          {cutValue !== '' && (
+          <SaveStatus state={cutStatus.state} error={cutStatus.error} retry={cutStatus.retry} dirty={cutDirty} />
+          {/* Clearing the override is destructive, so it confirms and sits apart from Save. */}
+          {cutBaseline !== '' && (
             <button
-              onClick={() => { setCutValue(''); saveCut(null) }}
-              className="btn btn-secondary"
+              onClick={resetCut}
+              disabled={cutStatus.saving}
+              className="btn btn-danger form-actions__danger"
               style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
             >
               Reset to global
             </button>
           )}
-          {cutMsg && <span style={{ fontSize: '0.75rem', color: cutMsg === 'Saved' ? 'var(--green)' : 'var(--red)' }}>{cutMsg}</span>}
         </div>
       </div>
 

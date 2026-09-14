@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyButton from '@/components/CopyButton'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
 import ClientLogoUpload from './ClientLogoUpload'
 import ClientRelationshipCard from './ClientRelationshipCard'
@@ -90,56 +91,61 @@ export default function OverviewTab({
   const [editingBiz,    setEditingBiz]    = useState(false)
   const [bizForm,       setBizForm]       = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
   const [displayLogoUrl, setDisplayLogoUrl] = useState(logoUrl ?? '')
-  const [bizSaving,  setBizSaving]  = useState(false)
-  const [bizError,   setBizError]   = useState('')
+  // Snapshot taken when editing starts; Save enables only once a field differs.
+  // (The logo uploads and saves on its own, so it is not part of the form diff.)
+  const [bizBaseline, setBizBaseline] = useState(bizForm)
+  const bizStatus = useSaveStatus()
+  const bizDirty  = (['name', 'address', 'phone', 'website'] as const).some(k => bizForm[k].trim() !== bizBaseline[k].trim())
 
-  async function saveBiz(e: React.FormEvent) {
+  function startEditBiz() {
+    setBizBaseline(bizForm)
+    bizStatus.reset()
+    setEditingBiz(true)
+  }
+
+  function cancelEditBiz() {
+    setEditingBiz(false)
+    bizStatus.reset()
+    setBizForm({ ...bizBaseline, logoUrl: displayLogoUrl })
+  }
+
+  function saveBiz(e: React.FormEvent) {
     e.preventDefault()
-    setBizSaving(true)
-    setBizError('')
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          name:     bizForm.name     || undefined,
-          address:  bizForm.address  || null,
-          phone:    bizForm.phone    || null,
-          website:  bizForm.website  || null,
-          logo_url: bizForm.logoUrl  || null,
-        }),
+    if (!bizDirty) return
+    const form = bizForm
+    void bizStatus.run(async () => {
+      await requestJson(`/api/admin/clients/${clientId}`, {
+        method: 'PATCH',
+        json: {
+          name:     form.name     || undefined,
+          address:  form.address  || null,
+          phone:    form.phone    || null,
+          website:  form.website  || null,
+          logo_url: form.logoUrl  || null,
+        },
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Save failed')
+      setBizBaseline(form)
       setEditingBiz(false)
       router.refresh()
-    } catch (err) {
-      setBizError(err instanceof Error ? err.message : 'Error saving')
-    } finally {
-      setBizSaving(false)
-    }
+    })
   }
 
   // ── Account manager ───────────────────────────────────────────────────────
-  const [mgr,       setMgr]       = useState(accountManagerId)
-  const [mgrSaving, setMgrSaving] = useState(false)
+  const [mgr, setMgr] = useState(accountManagerId)
+  const mgrStatus = useSaveStatus()
 
-  async function saveManager(newId: string | null) {
+  function saveManager(newId: string | null) {
     const prev = mgr
-    setMgr(newId)
-    setMgrSaving(true)
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ account_manager_id: newId }),
-      })
-      if (!res.ok) throw new Error('Save failed')
+    void mgrStatus.run(async () => {
+      setMgr(newId)
+      try {
+        await requestJson(`/api/admin/clients/${clientId}`, { method: 'PATCH', json: { account_manager_id: newId } })
+      } catch (err) {
+        setMgr(prev)
+        throw err
+      }
       router.refresh()
-    } catch {
-      setMgr(prev)
-    } finally {
-      setMgrSaving(false)
-    }
+    })
   }
 
   const currentMgr = adminUsers.find(u => u.id === mgr) ?? null
@@ -179,13 +185,21 @@ export default function OverviewTab({
     }
   }
 
-  async function deleteContact(contactId: string) {
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' })
-      if (res.ok) setContacts(prev => prev.filter(c => c.id !== contactId))
-    } catch {
-      // leave contact in list on network failure
-    }
+  const contactStatus = useSaveStatus()
+  const [removingId, setRemovingId] = useState<string | null>(null)
+
+  function deleteContact(contact: Contact) {
+    if (!window.confirm(`Remove ${contact.name} from this client’s contacts?`)) return
+    void contactStatus.run(async () => {
+      setRemovingId(contact.id)
+      try {
+        // The contact stays listed until the server confirms the delete.
+        await requestJson(`/api/admin/clients/${clientId}/contacts/${contact.id}`, { method: 'DELETE' })
+        setContacts(prev => prev.filter(c => c.id !== contact.id))
+      } finally {
+        setRemovingId(null)
+      }
+    })
   }
 
   const roleLabel = (r: string) =>
@@ -226,19 +240,22 @@ export default function OverviewTab({
           <div className="flex items-center justify-between mb-3">
             <h2 className="section-title">Business Info</h2>
             {!editingBiz && (
-              <button
-                onClick={() => setEditingBiz(true)}
-                className="btn btn-secondary"
-                style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-              >
-                Edit
-              </button>
+              <div className="flex items-center gap-3">
+                <SaveStatus state={bizStatus.state} error={bizStatus.error} />
+                <button
+                  onClick={startEditBiz}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                >
+                  Edit
+                </button>
+              </div>
             )}
           </div>
 
           {editingBiz ? (
             <form onSubmit={saveBiz} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {bizError && <p style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{bizError}</p>}
+              {bizStatus.state === 'error' && bizStatus.error && <p style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{bizStatus.error}</p>}
               {([
                 { key: 'name',    label: 'Business Name', required: true  },
                 { key: 'address', label: 'Address',       required: false },
@@ -256,14 +273,15 @@ export default function OverviewTab({
                   />
                 </div>
               ))}
-              <div className="flex items-center gap-2">
-                <button type="submit" disabled={bizSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
-                  {bizSaving ? 'Saving…' : 'Save'}
+              <div className="form-actions">
+                <button type="submit" disabled={!bizDirty || bizStatus.saving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
+                  Save changes
                 </button>
                 <button type="button" className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
-                  onClick={() => { setEditingBiz(false); setBizForm({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' }) }}>
+                  onClick={cancelEditBiz}>
                   Cancel
                 </button>
+                <SaveStatus state={bizStatus.state} error={bizStatus.error} retry={bizStatus.retry} dirty={bizDirty} />
               </div>
             </form>
           ) : (
@@ -295,15 +313,18 @@ export default function OverviewTab({
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="section-title">Contacts</h2>
-            {!addingContact && (
-              <button
-                onClick={() => setAddingContact(true)}
-                className="btn btn-secondary"
-                style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-              >
-                + Add
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              <SaveStatus state={contactStatus.state} error={contactStatus.error} retry={contactStatus.retry} />
+              {!addingContact && (
+                <button
+                  onClick={() => setAddingContact(true)}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                >
+                  + Add
+                </button>
+              )}
+            </div>
           </div>
 
           {contacts.length === 0 && !addingContact && (
@@ -333,9 +354,13 @@ export default function OverviewTab({
                     {contact.phone && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{contact.phone}</p>}
                   </div>
                   <button
-                    onClick={() => deleteContact(contact.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.75rem', padding: '0.125rem 0.25rem', flexShrink: 0 }}
+                    type="button"
+                    onClick={() => deleteContact(contact)}
+                    disabled={removingId === contact.id}
+                    className="icon-btn-danger"
+                    style={{ fontSize: '0.75rem', padding: '0.125rem 0.375rem' }}
                     title="Remove contact"
+                    aria-label={`Remove ${contact.name}`}
                   >
                     ✕
                   </button>
@@ -528,7 +553,10 @@ export default function OverviewTab({
 
         {/* Account manager */}
         <div className="card p-5">
-          <h2 className="section-title mb-3">Account Manager</h2>
+          <div className="card-head mb-3">
+            <h2 className="section-title">Account Manager</h2>
+            <SaveStatus state={mgrStatus.state} error={mgrStatus.error} retry={mgrStatus.retry} />
+          </div>
           {currentMgr ? (
             <div className="flex items-center gap-3 mb-3">
               {currentMgr.avatar_url ? (
@@ -550,7 +578,8 @@ export default function OverviewTab({
             className="input w-full"
             value={mgr ?? ''}
             onChange={e => saveManager(e.target.value || null)}
-            disabled={mgrSaving}
+            disabled={mgrStatus.saving}
+            aria-label="Account manager"
             style={{ fontSize: '0.8125rem' }}
           >
             <option value="">— Unassigned —</option>

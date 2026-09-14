@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 import type { ClientTemperature } from '@/lib/types'
 
 const TEMPERATURES: { key: ClientTemperature; label: string; color: string; hint: string }[] = [
@@ -65,7 +66,8 @@ export default function ClientRelationshipCard({
   const [pendingTemp,     setPendingTemp]     = useState<{ value: ClientTemperature | null } | null>(null)
   const [pendingContact,  setPendingContact]  = useState<string | null>(null)
   const [pendingOverride, setPendingOverride] = useState<string | null>(null)
-  const [saving,   setSaving]   = useState(false)
+  const status = useSaveStatus()
+  const saving = status.saving
   const [editingDate, setEditingDate] = useState(false)
 
   const temp     = pendingTemp ? pendingTemp.value : initialTemp
@@ -83,33 +85,30 @@ export default function ClientRelationshipCard({
   const elapsed     = contact ? daysSince(contact) : null
   const isStale     = elapsed === null || elapsed >= threshold
 
-  async function patch(body: Record<string, unknown>, rollback: () => void) {
-    setSaving(true)
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error('Save failed')
+  // Every change on this card saves instantly. The attempt re-applies the
+  // optimistic value (so "try again" replays it faithfully) and rolls it back
+  // before surfacing the error, so the card never claims a value that did not save.
+  function patch(body: Record<string, unknown>, apply: () => void, rollback: () => void) {
+    void status.run(async () => {
+      apply()
+      try {
+        await requestJson(`/api/admin/clients/${clientId}`, { method: 'PATCH', json: body })
+      } catch (err) {
+        rollback()
+        throw err
+      }
       router.refresh()
-    } catch {
-      rollback()
-    } finally {
-      setSaving(false)
-    }
+    })
   }
 
   function setTemperature(next: ClientTemperature | null) {
-    setPendingTemp({ value: next })
     // Clearing the alert marker re-arms the staleness cron for this client.
-    void patch({ temperature: next }, () => setPendingTemp(null))
+    patch({ temperature: next }, () => setPendingTemp({ value: next }), () => setPendingTemp(null))
   }
 
   function logContactNow() {
     const iso = new Date().toISOString()
-    setPendingContact(iso)
-    void patch({ last_contacted_at: iso }, () => setPendingContact(null))
+    patch({ last_contacted_at: iso }, () => setPendingContact(iso), () => setPendingContact(null))
   }
 
   function setContactDate(dateStr: string) {
@@ -121,30 +120,33 @@ export default function ClientRelationshipCard({
     const picked = new Date(`${dateStr}T12:00:00Z`)
     const now    = new Date()
     const iso    = (picked > now ? now : picked).toISOString()
-    setPendingContact(iso)
     setEditingDate(false)
-    void patch({ last_contacted_at: iso }, () => setPendingContact(null))
+    patch({ last_contacted_at: iso }, () => setPendingContact(iso), () => setPendingContact(null))
   }
 
   function saveOverride(raw: string) {
     const trimmed = raw.trim()
     const value   = trimmed === '' ? null : Number(trimmed)
     if (value !== null && (!Number.isFinite(value) || value < 1 || value > 365)) return
-    setPendingOverride(trimmed)
-    void patch({ contact_stale_days: value }, () => setPendingOverride(null))
+    // Blurring without a change is not a save.
+    if (trimmed === (initialOverride?.toString() ?? '')) { setPendingOverride(null); return }
+    patch({ contact_stale_days: value }, () => setPendingOverride(trimmed), () => setPendingOverride(null))
   }
 
   return (
     <div className="card p-5">
-      <h2 className="section-title mb-1">
-        Relationship
-        <span style={{
-          fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-          background: 'var(--blue)', color: '#fff',
-          padding: '1px 4px', borderRadius: 3,
-          marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
-        }}>BETA</span>
-      </h2>
+      <div className="card-head mb-1">
+        <h2 className="section-title">
+          Relationship
+          <span style={{
+            fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
+            background: 'var(--blue)', color: '#fff',
+            padding: '1px 4px', borderRadius: 3,
+            marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
+          }}>BETA</span>
+        </h2>
+        <SaveStatus state={status.state} error={status.error} retry={status.retry} />
+      </div>
       <p className="section-desc mb-3">Attention level and when we last spoke.</p>
 
       {/* Temperature ------------------------------------------------------- */}

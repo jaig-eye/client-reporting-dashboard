@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 
 interface Props {
   clientId:           string
@@ -21,31 +22,24 @@ export default function ClientConversionMapping({
 }: Props) {
   const [lead,     setLead]     = useState(initialLead     ?? '')
   const [purchase, setPurchase] = useState(initialPurchase ?? '')
-  const [saving,   setSaving]   = useState(false)
-  const [saved,    setSaved]    = useState(false)
-  const [error,    setError]    = useState('')
+  // Last values the server accepted; the form is dirty when it differs.
+  const [baseline, setBaseline] = useState({ lead: initialLead ?? '', purchase: initialPurchase ?? '' })
+  const status = useSaveStatus()
 
-  async function handleSave() {
-    setSaving(true)
-    setSaved(false)
-    setError('')
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
+  const dirty = lead !== baseline.lead || purchase !== baseline.purchase
+
+  function handleSave() {
+    const next = { lead, purchase }
+    void status.run(async () => {
+      await requestJson(`/api/admin/clients/${clientId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lead_action:     lead     || null,
-          purchase_action: purchase || null,
-        }),
+        json: {
+          lead_action:     next.lead     || null,
+          purchase_action: next.purchase || null,
+        },
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Save failed')
-      setSaved(true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
+      setBaseline(next)
+    })
   }
 
   // Combine discovered actions with any existing values so nothing disappears
@@ -117,21 +111,16 @@ export default function ClientConversionMapping({
         </p>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="form-actions">
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={!dirty || status.saving}
           className="btn btn-primary"
           style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
         >
-          {saving ? 'Saving…' : 'Save Mapping'}
+          Save changes
         </button>
-        {saved && (
-          <span className="text-xs" style={{ color: 'var(--green)' }}>✓ Saved</span>
-        )}
-        {error && (
-          <span className="text-xs" style={{ color: 'var(--red)' }}>{error}</span>
-        )}
+        <SaveStatus state={status.state} error={status.error} retry={status.retry} dirty={dirty} />
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 
 interface CampaignRow {
   id: string
@@ -12,13 +13,17 @@ interface CampaignRow {
   hidden: boolean
 }
 
-type SaveState = 'idle' | 'saving' | 'saved' | 'error'
+type RowState = 'idle' | 'saving' | 'error'
 
 export default function ClientCampaignManager({ clientId }: { clientId: string }) {
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
-  const [saveState, setSaveState] = useState<Record<string, SaveState>>({})
+  // Card-level status for the whole table, plus a per-row marker so a failure
+  // points at the campaign that did not save.
+  const status = useSaveStatus()
+  const { run } = status
+  const [rowState, setRowState] = useState<Record<string, RowState>>({})
 
   useEffect(() => {
     fetch(`/api/admin/clients/${clientId}/campaigns`)
@@ -27,36 +32,37 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
       .catch(() => { setError('Failed to load campaigns'); setLoading(false) })
   }, [clientId])
 
-  const update = useCallback(async (
+  const update = useCallback((
     source: string,
     campaign_id: string,
     patch: Partial<Pick<CampaignRow, 'display_mode' | 'hidden'>>
   ) => {
     const key = `${source}:${campaign_id}`
-    setSaveState(s => ({ ...s, [key]: 'saving' }))
+    const match = (c: CampaignRow) => c.source === source && c.campaign_id === campaign_id
 
-    // Optimistic update
-    setCampaigns(prev => prev.map(c =>
-      c.source === source && c.campaign_id === campaign_id ? { ...c, ...patch } : c
-    ))
-
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}/campaigns`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, campaign_id, ...patch }),
-      })
-      if (!res.ok) throw new Error('Save failed')
-      setSaveState(s => ({ ...s, [key]: 'saved' }))
-      setTimeout(() => setSaveState(s => ({ ...s, [key]: 'idle' })), 1500)
-    } catch {
-      setSaveState(s => ({ ...s, [key]: 'error' }))
-      // Revert optimistic update on error
-      setCampaigns(prev => prev.map(c =>
-        c.source === source && c.campaign_id === campaign_id ? { ...c, ...Object.fromEntries(Object.entries(patch).map(([k]) => [k, c[k as keyof CampaignRow]])) } : c
-      ))
-    }
-  }, [clientId])
+    void run(async () => {
+      // Capture the row's values for exactly the fields being changed, so a
+      // rollback cannot clobber a different field edited meanwhile.
+      let previous: Partial<CampaignRow> = {}
+      setCampaigns(prev => prev.map(c => {
+        if (!match(c)) return c
+        previous = Object.fromEntries(Object.keys(patch).map(k => [k, c[k as keyof CampaignRow]]))
+        return { ...c, ...patch }
+      }))
+      setRowState(s => ({ ...s, [key]: 'saving' }))
+      try {
+        await requestJson(`/api/admin/clients/${clientId}/campaigns`, {
+          method: 'PATCH',
+          json:   { source, campaign_id, ...patch },
+        })
+        setRowState(s => ({ ...s, [key]: 'idle' }))
+      } catch (err) {
+        setCampaigns(prev => prev.map(c => match(c) ? { ...c, ...previous } : c))
+        setRowState(s => ({ ...s, [key]: 'error' }))
+        throw err
+      }
+    })
+  }, [clientId, run])
 
   if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading campaigns…</p>
   if (error)   return <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>
@@ -73,9 +79,12 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
 
   return (
     <div className="space-y-5">
-      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        Set the display mode and visibility for each campaign. Ecom campaigns show ROAS and revenue; Lead Gen campaigns show CPL and conversions. Hidden campaigns are excluded from the client dashboard.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.25rem 1rem', flexWrap: 'wrap' }}>
+        <p className="text-xs" style={{ color: 'var(--text-muted)', flex: '1 1 16rem' }}>
+          Set the display mode and visibility for each campaign. Ecom campaigns show ROAS and revenue; Lead Gen campaigns show CPL and conversions. Hidden campaigns are excluded from the client dashboard. Changes save automatically.
+        </p>
+        <SaveStatus state={status.state} error={status.error} retry={status.retry} />
+      </div>
 
       {[
         { label: 'Google Ads', rows: googleCampaigns, color: '#4285F4' },
@@ -96,7 +105,7 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
               <tbody>
                 {group.rows.map(c => {
                   const key   = `${c.source}:${c.campaign_id}`
-                  const state = saveState[key] ?? 'idle'
+                  const state = rowState[key] ?? 'idle'
                   return (
                     <tr key={key} style={{ borderBottom: '1px solid var(--border-subtle)', opacity: c.hidden ? 0.5 : 1 }}>
                       <td style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: 300 }}>
@@ -117,9 +126,8 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
                         />
                       </td>
                       <td style={{ padding: '0.5rem', width: 32, textAlign: 'center' }}>
-                        {state === 'saving' && <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>…</span>}
-                        {state === 'saved'  && <span style={{ fontSize: '0.75rem', color: 'var(--green)' }}>✓</span>}
-                        {state === 'error'  && <span style={{ fontSize: '0.75rem', color: 'var(--red)' }}>✗</span>}
+                        {state === 'saving' && <span aria-hidden="true" style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>…</span>}
+                        {state === 'error'  && <span title="This change did not save" style={{ fontSize: '0.75rem', color: 'var(--red)' }}>✗</span>}
                       </td>
                     </tr>
                   )
@@ -141,7 +149,8 @@ function ModeToggle({ value, onChange }: { value: string; onChange: (v: string) 
         return (
           <button
             key={mode}
-            onClick={() => onChange(mode)}
+            onClick={() => { if (!active) onChange(mode) }}
+            aria-pressed={active}
             style={{
               padding: '0.2rem 0.6rem',
               border: 'none',
@@ -164,6 +173,9 @@ function VisibilityToggle({ visible, onChange }: { visible: boolean; onChange: (
   return (
     <button
       onClick={() => onChange(!visible)}
+      role="switch"
+      aria-checked={visible}
+      aria-label={visible ? 'Visible on dashboard' : 'Hidden from dashboard'}
       title={visible ? 'Click to hide from dashboard' : 'Click to show in dashboard'}
       style={{
         width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',

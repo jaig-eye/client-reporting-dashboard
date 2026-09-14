@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import MetricLayoutEditor from '@/components/admin/MetricLayoutEditor'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
 // Visibility toggles that are not layout-driven
@@ -27,44 +28,57 @@ export default function ClientMetricVisibility({
   const [layoutType,     setLayoutType]     = useState<string>(initialLayoutType ?? 'auto')
   const [layoutOverride, setLayoutOverride] = useState<MetricLayouts | null>(initialLayoutOverride)
   const [showCustom,     setShowCustom]     = useState<boolean>(!!initialLayoutOverride)
-  const [saving,         setSaving]         = useState(false)
-  const [saved,          setSaved]          = useState(false)
+  // One status per sub-card so the confirmation shows where the change was made.
+  const layoutStatus   = useSaveStatus()
+  const overrideStatus = useSaveStatus()
+  const visStatus      = useSaveStatus()
 
-  async function patch(body: Record<string, unknown>) {
-    setSaving(true); setSaved(false)
-    await fetch(`/api/admin/clients/${clientId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    setSaving(false); setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  function patch(body: Record<string, unknown>) {
+    return requestJson(`/api/admin/clients/${clientId}`, { method: 'PATCH', json: body })
   }
 
   function handleLayoutTypeChange(val: string) {
-    setLayoutType(val)
-    patch({ layout_type: val === 'auto' ? null : val })
+    if (val === layoutType) return
+    const prev = layoutType
+    void layoutStatus.run(async () => {
+      setLayoutType(val)
+      try { await patch({ layout_type: val === 'auto' ? null : val }) }
+      catch (err) { setLayoutType(prev); throw err }
+    })
   }
 
   function handleLayoutOverrideChange(v: MetricLayouts) {
     const isDefault = agencyLayouts !== null && JSON.stringify(v) === JSON.stringify(agencyLayouts)
     const effective = isDefault ? null : v
-    setLayoutOverride(effective)
-    patch({ metric_layout_override: effective })
+    const prev = layoutOverride
+    void overrideStatus.run(async () => {
+      setLayoutOverride(effective)
+      try { await patch({ metric_layout_override: effective }) }
+      catch (err) { setLayoutOverride(prev); throw err }
+    })
   }
 
-  async function resetLayoutOverride() {
-    setLayoutOverride(null)
-    setShowCustom(false)
-    patch({ metric_layout_override: null })
+  function resetLayoutOverride() {
+    if (!window.confirm("Discard this client's custom layout and go back to the agency default?")) return
+    const prev = layoutOverride
+    void overrideStatus.run(async () => {
+      setLayoutOverride(null)
+      try { await patch({ metric_layout_override: null }) }
+      catch (err) { setLayoutOverride(prev); throw err }
+      setShowCustom(false)
+    })
   }
 
   function toggleVisibility(id: string) {
+    const prev = hidden
     const next = new Set(hidden)
     if (next.has(id)) next.delete(id)
     else next.add(id)
-    setHidden(next)
-    patch({ hidden_metrics: Array.from(next) })
+    void visStatus.run(async () => {
+      setHidden(next)
+      try { await patch({ hidden_metrics: Array.from(next) }) }
+      catch (err) { setHidden(prev); throw err }
+    })
   }
 
   return (
@@ -72,7 +86,10 @@ export default function ClientMetricVisibility({
 
       {/* ── Layout Type ─────────────────────────────────────────────── */}
       <div className="card p-5">
-        <h3 className="section-title mb-1">Layout Type</h3>
+        <div className="card-head mb-1">
+          <h3 className="section-title">Layout Type</h3>
+          <SaveStatus state={layoutStatus.state} error={layoutStatus.error} retry={layoutStatus.retry} />
+        </div>
         <p className="section-desc mb-3">
           Choose which preset layout drives this client&rsquo;s KPI cards, top metrics, and table columns.
         </p>
@@ -82,7 +99,8 @@ export default function ClientMetricVisibility({
               key={val}
               type="button"
               onClick={() => handleLayoutTypeChange(val)}
-              disabled={saving}
+              disabled={layoutStatus.saving}
+              aria-pressed={layoutType === val}
               style={{
                 padding: '0.375rem 0.875rem',
                 borderRadius: 8,
@@ -91,7 +109,7 @@ export default function ClientMetricVisibility({
                 fontWeight: layoutType === val ? 600 : 400,
                 background: layoutType === val ? 'var(--blue)' : 'var(--bg-surface)',
                 color: layoutType === val ? '#fff' : 'var(--text-secondary)',
-                cursor: saving ? 'not-allowed' : 'pointer',
+                cursor: layoutStatus.saving ? 'not-allowed' : 'pointer',
                 transition: 'background 0.15s, color 0.15s',
               }}
             >
@@ -117,6 +135,7 @@ export default function ClientMetricVisibility({
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <SaveStatus state={overrideStatus.state} error={overrideStatus.error} retry={overrideStatus.retry} />
             {layoutOverride && !showCustom && (
               <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--blue)', background: 'color-mix(in srgb, var(--blue) 12%, transparent)', borderRadius: 4, padding: '0.125rem 0.5rem' }}>
                 Custom
@@ -155,13 +174,9 @@ export default function ClientMetricVisibility({
               <button
                 type="button"
                 onClick={resetLayoutOverride}
-                disabled={saving}
-                style={{
-                  marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)',
-                  border: '1px solid var(--border)', background: 'var(--bg-surface)',
-                  borderRadius: 6, padding: '0.25rem 0.625rem',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                }}
+                disabled={overrideStatus.saving}
+                className="btn btn-danger"
+                style={{ marginTop: '0.75rem', fontSize: '0.75rem', padding: '0.25rem 0.625rem', minHeight: 0 }}
               >
                 Reset to agency default
               </button>
@@ -176,7 +191,10 @@ export default function ClientMetricVisibility({
 
       {/* ── Visibility Overrides ────────────────────────────────────── */}
       <div className="card p-5">
-        <h3 className="section-title mb-1">Visibility</h3>
+        <div className="card-head mb-1">
+          <h3 className="section-title">Visibility</h3>
+          <SaveStatus state={visStatus.state} error={visStatus.error} retry={visStatus.retry} />
+        </div>
         <p className="section-desc mb-3">Show or hide specific dashboard sections for this client.</p>
         <div className="space-y-2">
           {VISIBILITY_DEFS.map(m => {
@@ -185,14 +203,16 @@ export default function ClientMetricVisibility({
               <button
                 key={m.id}
                 onClick={() => toggleVisibility(m.id)}
-                disabled={saving}
+                disabled={visStatus.saving}
+                role="switch"
+                aria-checked={isVisible}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '0.625rem',
                   padding: '0.625rem 0.875rem', borderRadius: '0.5rem',
                   border: '1px solid var(--border)',
                   background: isVisible ? 'var(--bg-surface)' : 'var(--bg-subtle)',
-                  textAlign: 'left', cursor: saving ? 'not-allowed' : 'pointer',
-                  opacity: saving ? 0.6 : 1, width: '100%',
+                  textAlign: 'left', cursor: visStatus.saving ? 'not-allowed' : 'pointer',
+                  opacity: visStatus.saving ? 0.6 : 1, width: '100%',
                   transition: 'background 0.15s',
                 }}
               >
@@ -211,8 +231,6 @@ export default function ClientMetricVisibility({
           })}
         </div>
       </div>
-
-      {saved && <p className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</p>}
     </div>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import SaveStatus, { useSaveStatus, requestJson } from '@/components/ui/SaveStatus'
 
 export default function ClientBcDailyReport({
   clientId,
@@ -14,21 +15,21 @@ export default function ClientBcDailyReport({
 }) {
   const router   = useRouter()
   const [value,  setValue]  = useState(enabled)
-  const [saving, setSaving] = useState(false)
+  const status = useSaveStatus()
+  const saving = status.saving
 
-  async function toggle(next: boolean) {
-    setValue(next)
-    setSaving(true)
-    try {
-      await fetch(`/api/admin/clients/${clientId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bc_daily_report: next }),
-      })
+  function toggle(next: boolean) {
+    const prev = value
+    void status.run(async () => {
+      setValue(next)
+      try {
+        await requestJson(`/api/admin/clients/${clientId}`, { method: 'PATCH', json: { bc_daily_report: next } })
+      } catch (err) {
+        setValue(prev)
+        throw err
+      }
       router.refresh()
-    } finally {
-      setSaving(false)
-    }
+    })
   }
 
   if (!hasDiscord) {
@@ -40,19 +41,22 @@ export default function ClientBcDailyReport({
   }
 
   return (
-    <label
-      style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}
-    >
-      <input
-        type="checkbox"
-        checked={value}
-        disabled={saving}
-        onChange={e => toggle(e.target.checked)}
-        style={{ width: 14, height: 14 }}
-      />
-      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        Send daily sales report to Discord (9 AM UTC)
-      </span>
-    </label>
+    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 12px', marginTop: 10 }}>
+      <label
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}
+      >
+        <input
+          type="checkbox"
+          checked={value}
+          disabled={saving}
+          onChange={e => toggle(e.target.checked)}
+          style={{ width: 14, height: 14 }}
+        />
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          Send daily sales report to Discord (9 AM UTC)
+        </span>
+      </label>
+      <SaveStatus state={status.state} error={status.error} retry={status.retry} />
+    </div>
   )
 }
