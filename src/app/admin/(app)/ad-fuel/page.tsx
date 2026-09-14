@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { Robot } from '@phosphor-icons/react'
+import { Robot, MagnifyingGlass, DotsThree, BellSlash, PencilSimple, Receipt, DownloadSimple, ArrowClockwise } from '@phosphor-icons/react'
 import ScrollTabs from '@/components/ui/ScrollTabs'
 import { balanceColor as colorForBalance, balanceLevel } from '@/lib/adFuelColor'
 
@@ -87,6 +87,27 @@ const DEFAULT_COLS: ColConfig[] = [
 ]
 
 const LS_KEY = 'adfuel_col_config'
+const LS_HIDE_EMPTY_KEY = 'adfuel_hide_empty'
+
+// A client that has never bought or spent Ad Fuel isn't on Ad Fuel. A pending ACH still
+// counts as activity, so a client awaiting its first payment stays visible.
+function hasNoAdFuel(row: DashRow): boolean {
+  return row.afPurchased === 0 && row.afSpend === 0 && (row.pendingAch ?? 0) === 0
+}
+
+function fmtCutoff(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`)
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function MutedTag() {
+  return (
+    <span className="af-muted" title="Low-balance alerts are muted for this client">
+      <BellSlash size={11} weight="bold" aria-hidden />
+      muted
+    </span>
+  )
+}
 
 // Balance colour depends only on how low the balance is — see lib/adFuelColor. No run-out
 // projections: ACH payments land on unpredictable days, so a "runs out on" date would mislead.
@@ -159,7 +180,8 @@ function loadCols(): ColConfig[] {
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
-function AdFuelSummary({ rows }: { rows: DashRow[] }) {
+// Totals always cover every client — search and the "hide" toggle only narrow the list below.
+function AdFuelSummary({ rows, cutoffDate }: { rows: DashRow[]; cutoffDate: string }) {
   const totalFloat = rows.reduce((sum, r) => sum + r.afBalance, 0)
   const pending    = rows.reduce((sum, r) => sum + (r.pendingAch ?? 0), 0)
   const pendingN   = rows.filter(r => (r.pendingAch ?? 0) > 0).length
@@ -169,15 +191,14 @@ function AdFuelSummary({ rows }: { rows: DashRow[] }) {
                          .filter(r => balanceLevel(r.afBalance, r.adFuelAlertThreshold) !== 'healthy')
   const negative   = low.filter(r => r.afBalance < 0)
 
+  const lifetime   = `lifetime · since ${fmtCutoff(cutoffDate)}`
+
   const tiles: { label: string; value: string; sub?: string; color?: string }[] = [
-    { label: 'Total float',       value: fmt$(totalFloat, 0), sub: 'across all clients' },
     {
       label: 'Pending ACH',
       value: fmt$(pending, 0),
       sub:   pendingN ? `${pendingN} client${pendingN === 1 ? '' : 's'} awaiting payment` : 'nothing outstanding',
     },
-    { label: 'Ad Fuel spend',     value: fmt$(spend, 0),      sub: 'this period' },
-    { label: 'Purchased',         value: fmt$(purchased, 0),  sub: 'this period' },
     {
       label: 'Low balance',
       value: String(low.length),
@@ -186,26 +207,27 @@ function AdFuelSummary({ rows }: { rows: DashRow[] }) {
         : 'every client above its alert level',
       color: negative.length ? 'var(--red)' : low.length ? 'var(--amber)' : 'var(--green)',
     },
+    { label: 'Ad Fuel spend',     value: fmt$(spend, 0),      sub: lifetime },
+    { label: 'Purchased',         value: fmt$(purchased, 0),  sub: lifetime },
   ]
 
   return (
-    <div className="stat-grid" style={{ marginBottom: '1rem' }}>
-      {tiles.map(t => (
-        <div key={t.label} className="card" style={{ padding: '0.875rem 1rem' }}>
-          <p style={{ margin: 0, fontSize: '0.6875rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            {t.label}
-          </p>
-          <p style={{ margin: '0.25rem 0 0', fontSize: '1.375rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: t.color ?? 'var(--text-primary)' }}>
-            {t.value}
-          </p>
-          {t.sub && (
-            <p style={{ margin: '0.125rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {t.sub}
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
+    <section className="af-summary" aria-label="Ad Fuel totals">
+      <div className="card af-hero">
+        <p className="af-label">Total float</p>
+        <p className="af-hero__value">{fmt$(totalFloat, 0)}</p>
+        <p className="af-sub">Lifetime Ad Fuel balance across all clients</p>
+      </div>
+      <div className="card af-stats">
+        {tiles.map(t => (
+          <div key={t.label} className="af-stat">
+            <p className="af-label">{t.label}</p>
+            <p className="af-stat__value" style={t.color ? { color: t.color } : undefined}>{t.value}</p>
+            {t.sub && <p className="af-sub af-sub--clip" title={t.sub}>{t.sub}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -219,9 +241,10 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
           {row.clientName}
           {row.autoPauseAds && (
             <span title={row.campaignsPausedAt ? 'Auto-pause active — currently paused' : 'Auto-pause enabled'}>
-              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? 'var(--red)' : '#8b5cf6'} />
+              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? 'var(--red)' : 'var(--accent)'} />
             </span>
           )}
+          {row.adFuelAlertMuted && <MutedTag />}
         </span>
       </td>
     )
@@ -320,7 +343,7 @@ function AdFuelPageInner() {
 
   const [rows,          setRows]          = useState<DashRow[]>([])
   const [cutoffDate,    setCutoffDate]    = useState('2025-01-01')
-  const [loading,       setLoading]       = useState(false)
+  const [loading,       setLoading]       = useState(true)   // avoid a flash of $0 totals before the first fetch
   const [pendingAch,    setPendingAch]    = useState<Record<string, number>>({})
   const [syncingStripe, setSyncingStripe] = useState(false)
   const [stripeMsg,     setStripeMsg]     = useState('')
@@ -330,6 +353,65 @@ function AdFuelPageInner() {
   // Column config (persisted to localStorage)
   const [cols, setCols] = useState<ColConfig[]>(DEFAULT_COLS)
   useEffect(() => { setCols(loadCols()) }, [])
+
+  // Dashboard list filters — search and "hide clients with no Ad Fuel" (persisted, default on)
+  const [query,     setQuery]     = useState('')
+  const [hideEmpty, setHideEmpty] = useState(true)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(LS_HIDE_EMPTY_KEY)
+      if (stored != null) setHideEmpty(stored === '1')
+    } catch {}
+  }, [])
+  function changeHideEmpty(next: boolean) {
+    setHideEmpty(next)
+    try { localStorage.setItem(LS_HIDE_EMPTY_KEY, next ? '1' : '0') } catch {}
+  }
+
+  // Per-row "…" actions menu. Rendered position:fixed so the table's scroll box can't clip it.
+  const [rowMenu, setRowMenu] = useState<{ row: DashRow; top: number; right: number } | null>(null)
+  const rowMenuRef     = useRef<HTMLDivElement>(null)
+  const rowMenuTrigger = useRef<HTMLButtonElement | null>(null)
+
+  function toggleRowMenu(e: React.MouseEvent<HTMLButtonElement>, row: DashRow) {
+    if (rowMenu?.row.clientId === row.clientId) { setRowMenu(null); return }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const menuHeight = 96
+    const top = rect.bottom + 4 + menuHeight > window.innerHeight ? rect.top - 4 - menuHeight : rect.bottom + 4
+    rowMenuTrigger.current = e.currentTarget
+    setRowMenu({ row, top, right: Math.max(8, window.innerWidth - rect.right) })
+  }
+
+  useEffect(() => {
+    if (!rowMenu) return
+    rowMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+    const close = () => setRowMenu(null)
+    const onPointer = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (rowMenuRef.current?.contains(t) || rowMenuTrigger.current?.contains(t)) return
+      close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { close(); rowMenuTrigger.current?.focus(); return }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const items = Array.from(rowMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
+        if (!items.length) return
+        e.preventDefault()
+        const i = items.indexOf(document.activeElement as HTMLButtonElement)
+        items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus()
+      }
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [rowMenu])
   async function fetchPendingAch() {
     try {
       const r = await fetch('/api/admin/ad-fuel/pending-ach')
@@ -633,8 +715,17 @@ function AdFuelPageInner() {
 
   const rowsWithPending = rows.map(r => ({ ...r, pendingAch: pendingAch[r.clientId] ?? 0 }))
 
+  const q = query.trim().toLowerCase()
+  const filteredRows = rowsWithPending.filter(r =>
+    (!hideEmpty || !hasNoAdFuel(r)) && (!q || r.clientName.toLowerCase().includes(q)),
+  )
+  const isFiltered = filteredRows.length !== rowsWithPending.length
+  const rowCountLabel = isFiltered
+    ? `${filteredRows.length} of ${rowsWithPending.length} clients`
+    : `${rowsWithPending.length} client${rowsWithPending.length === 1 ? '' : 's'}`
+
   const displayRows = sortCol && sortDir
-    ? [...rowsWithPending].sort((a, b) => {
+    ? [...filteredRows].sort((a, b) => {
         const va = sortValue(a, sortCol)
         const vb = sortValue(b, sortCol)
         const cmp = typeof va === 'string'
@@ -642,7 +733,11 @@ function AdFuelPageInner() {
           : (va as number) - (vb as number)
         return sortDir === 'asc' ? cmp : -cmp
       })
-    : rowsWithPending
+    : filteredRows
+
+  const emptyListMessage = rowsWithPending.length === 0
+    ? 'No clients found.'
+    : q ? `No clients match “${query.trim()}”.` : 'No clients with Ad Fuel activity.'
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -666,25 +761,31 @@ function AdFuelPageInner() {
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
         <>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', justifyContent: 'flex-end' }}>
-            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Export CSV</button>
-            <button
-              onClick={syncStripeInvoices}
-              disabled={syncingStripe}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem' }}
-              title="Check Stripe for new or unrecorded ACH invoices"
-            >
-              {syncingStripe ? 'Syncing…' : '↻ Sync Stripe'}
-            </button>
-            {stripeMsg && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stripeMsg}</span>}
-          </div>
-
           {loading ? (
             <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
           ) : (
             <>
-            <AdFuelSummary rows={displayRows} />
+            <AdFuelSummary rows={rowsWithPending} cutoffDate={cutoffDate} />
+
+            <div className="af-toolbar">
+              <label className="af-search">
+                <MagnifyingGlass size={16} className="af-search__icon" aria-hidden />
+                <input
+                  type="search"
+                  className="input af-search__input"
+                  placeholder="Search clients"
+                  aria-label="Search clients by name"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                />
+              </label>
+              <label className="af-check">
+                <input type="checkbox" checked={hideEmpty} onChange={e => changeHideEmpty(e.target.checked)} />
+                Hide clients with no Ad Fuel
+              </label>
+              <span className="af-count" aria-live="polite">{rowCountLabel}</span>
+            </div>
+
             <div className="card overflow-hidden" style={{ padding: 0 }}>
               <div className="table-scroll hide-sm">
                 <table className="data-table" style={{ minWidth: 800 }}>
@@ -709,20 +810,28 @@ function AdFuelPageInner() {
                           )}
                         </th>
                       ))}
+                      <th className="af-actions-cell"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {displayRows.length === 0 && (
-                      <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
+                      <tr><td colSpan={visibleCols.length + 1} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>{emptyListMessage}</td></tr>
                     )}
                     {displayRows.map(row => (
-                      <tr
-                        key={row.clientId}
-                        onClick={() => openClientEdit(row)}
-                        style={{ cursor: 'pointer' }}
-                        title="Click to edit bill day, budget, and Ad Fuel cut"
-                      >
+                      <tr key={row.clientId}>
                         {visibleCols.map(col => renderCell(col.key, row))}
+                        <td className="af-actions-cell">
+                          <button
+                            type="button"
+                            className="af-row-menu-btn"
+                            aria-label={`Actions for ${row.clientName}`}
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenu?.row.clientId === row.clientId}
+                            onClick={e => toggleRowMenu(e, row)}
+                          >
+                            <DotsThree size={18} weight="bold" aria-hidden />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -732,6 +841,9 @@ function AdFuelPageInner() {
               {/* Phone: nine money columns can't fit, so each client becomes one row —
                   what's left, how long it lasts, and when we bill them next. */}
               <ul className="client-cards only-sm">
+                {displayRows.length === 0 && (
+                  <li className="af-empty">{emptyListMessage}</li>
+                )}
                 {displayRows.map(row => {
                   return (
                     <li key={row.clientId}>
@@ -742,7 +854,10 @@ function AdFuelPageInner() {
                         onClick={() => openClientEdit(row)}
                       >
                         <span className="client-card__body">
-                          <span className="client-card__name">{row.clientName}</span>
+                          <span className="af-card-name">
+                            <span className="client-card__name">{row.clientName}</span>
+                            {row.adFuelAlertMuted && <MutedTag />}
+                          </span>
                           <span className="client-card__meta">
                             {row.avgDailyAf ? `${fmt$(row.avgDailyAf, 0)}/day avg` : 'No recent spend'}
                             {row.billDay ? ` · bills on day ${row.billDay}` : ''}
@@ -933,9 +1048,9 @@ function AdFuelPageInner() {
       {tab === 'settings' && (
         <div style={{ maxWidth: 900 }}>
           <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-            Lifetime totals run from the data cutoff date. Balance, purchased, and raw spend are all-time figures. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle. Click any row on the Dashboard tab to edit a client&apos;s settings.
+            Balance, purchased, and spend are lifetime figures, counted from the data cutoff date. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle. To edit one client, use the ⋯ menu on its Dashboard row (tap the row on a phone).
           </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div className="af-settings-grid">
 
           {/* Column visibility + rename */}
           <div className="card" style={{ padding: '1.25rem' }}>
@@ -1098,11 +1213,78 @@ function AdFuelPageInner() {
               )}
             </div>
           </div>
+
+          {/* Data — export and Stripe sync (moved here from the Dashboard tab) */}
+          <div className="card af-data" style={{ gridColumn: '1 / -1' }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '0.9375rem', fontWeight: 700 }}>Data</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+              Get balances out, and pull in ACH payments Stripe knows about.
+            </p>
+
+            <div className="af-data__row">
+              <div className="af-data__text">
+                <p className="af-data__title">Export all balances as CSV</p>
+                <p className="af-data__desc">
+                  One line per client ({rows.length}), with the columns currently visible on the Dashboard. Search and filters aren&apos;t applied.
+                </p>
+              </div>
+              <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
+                <DownloadSimple size={15} aria-hidden /> Export CSV
+              </button>
+            </div>
+
+            <div className="af-data__row">
+              <div className="af-data__text">
+                <p className="af-data__title">Check Stripe for new ACH invoices</p>
+                <p className="af-data__desc">
+                  Finds new or unrecorded ACH invoices, then refreshes pending amounts and balances.
+                </p>
+                {stripeMsg && <p className="af-data__result" role="status">{stripeMsg}</p>}
+              </div>
+              <button
+                onClick={syncStripeInvoices}
+                disabled={syncingStripe}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem' }}
+                title="Check Stripe for new or unrecorded ACH invoices"
+              >
+                <ArrowClockwise size={15} aria-hidden /> {syncingStripe ? 'Syncing…' : 'Sync Stripe'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       )}
 
-      {/* ── CLIENT EDIT MODAL (click row on dashboard) ───────────────────────── */}
+      {/* ── ROW ACTIONS MENU (⋯ on a dashboard row) ──────────────────────────── */}
+      {rowMenu && tab === 'dashboard' && (
+        <div
+          ref={rowMenuRef}
+          role="menu"
+          aria-label={`Actions for ${rowMenu.row.clientName}`}
+          className="af-menu"
+          style={{ top: rowMenu.top, right: rowMenu.right }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="af-menu__item"
+            onClick={() => { const r = rowMenu.row; setRowMenu(null); openClientEdit(r) }}
+          >
+            <PencilSimple size={16} aria-hidden /> Edit billing &amp; alerts
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="af-menu__item"
+            onClick={() => { const id = rowMenu.row.clientId; setRowMenu(null); setFilterClient(id); setTab('ledger') }}
+          >
+            <Receipt size={16} aria-hidden /> View ledger entries
+          </button>
+        </div>
+      )}
+
+      {/* ── CLIENT EDIT MODAL (row menu / phone row on dashboard) ────────────── */}
       {clientEditModal && (
         <div
           onClick={() => setClientEditModal(null)}
