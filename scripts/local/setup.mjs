@@ -27,7 +27,8 @@ if (!existsSync(join(TOOLS, 'package.json'))) {
 }
 
 console.log(`Installing portable Postgres ${PG_VERSION}…`)
-execSync(`npm install --prefix "${TOOLS}" --no-audit --no-fund embedded-postgres@${PG_VERSION} pg`, { stdio: 'inherit' })
+// pg talks to the database; ws lets the gateway accept the app's realtime connection.
+execSync(`npm install --prefix "${TOOLS}" --no-audit --no-fund embedded-postgres@${PG_VERSION} pg ws`, { stdio: 'inherit' })
 
 const exe = join(BIN, 'postgrest.exe')
 if (existsSync(exe)) {

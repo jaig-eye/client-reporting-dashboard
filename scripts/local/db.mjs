@@ -111,7 +111,20 @@ export async function migrate(pg, { log = console.log } = {}) {
       }
     }
 
-    log(`Migrations: ${count} applied now, ${files.length} in total.`)
+    // Objects production has that no migration creates — see scripts/local/extras. Each file is
+    // idempotent and says what it inferred, so it runs on every migrate rather than once.
+    const extrasDir = join(ROOT, 'scripts', 'local', 'extras')
+    const extras    = existsSync(extrasDir) ? readdirSync(extrasDir).filter(f => f.endsWith('.sql')).sort() : []
+    for (const file of extras) {
+      try {
+        await client.query(readFileSync(join(extrasDir, file), 'utf8'))
+      } catch (e) {
+        throw new Error(`extras/${file}
+  ${e.message}`)
+      }
+    }
+
+    log(`Migrations: ${count} applied now, ${files.length} in total.` + (extras.length ? ` Local extras: ${extras.length}.` : ''))
     return { applied: count, total: files.length }
   } finally {
     await client.end()
