@@ -50,6 +50,18 @@ export async function POST(req: NextRequest) {
   if (username !== undefined && username !== null && typeof username !== 'string') {
     return NextResponse.json({ error: 'Username must be text' }, { status: 400 })
   }
+  // Normalised once, and checked AFTER trimming. Checking before meant a username of only
+  // spaces passed as present, was stored as an empty string, and made the next such account
+  // collide with it on the unique username index.
+  const cleanUsername = typeof username === 'string' ? username.trim().toLowerCase() : ''
+  // Login treats any identifier containing @ as an email address, so a username with one in it
+  // could be saved but never used to sign in.
+  if (cleanUsername.includes('@')) {
+    return NextResponse.json(
+      { error: 'Usernames can’t contain @ — anything with @ is treated as an email address when signing in.' },
+      { status: 400 },
+    )
+  }
   // typeof, not just truthiness: a JSON number is truthy and would throw inside
   // Buffer.byteLength (passwordTooLong) as an unhandled 500 instead of a 400.
   if (typeof password !== 'string') {
@@ -80,7 +92,7 @@ export async function POST(req: NextRequest) {
     // choose their own (the forced-rotation branch in api/auth/admin-login). That also proves the
     // email address is really theirs before the account is usable.
     must_reset_password: true,
-    ...(username ? { username: username.toLowerCase().trim() } : {}),
+    ...(cleanUsername ? { username: cleanUsername } : {}),
   }
 
   let { data, error } = await db
@@ -103,7 +115,14 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     if (error.code === '23505') {
-      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 })
+      // Email and username are both unique, and the violation names the index that rejected it.
+      // One fixed "email already exists" message sent admins to change the wrong field when it
+      // was the username that clashed.
+      const clash = error.message + ' ' + ((error as { details?: string }).details ?? '')
+      return NextResponse.json(
+        { error: /username/i.test(clash) ? 'That username is already taken' : 'A user with this email already exists' },
+        { status: 409 },
+      )
     }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
