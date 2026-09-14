@@ -289,8 +289,8 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 | `/admin/alerts` | Admin notification center — all alert types with unread/dismiss |
 | `/admin/settings` | Agency settings — 7 tabs: Branding, Benchmarks, Colors, AI, Sync, Notifications, Layouts |
 | `/admin/users` | User list (super admin: edit/delete all; regular admin: view list only) |
-| `/admin/users/new` | Create admin account (super admin only) |
-| `/admin/users/[id]` | Edit user (super admin only) |
+| `/admin/users/new` | Create a user account — admins and super admin; viewers redirected |
+| `/admin/users/[id]` | Edit user (super admin only — an edit can set another account's password) |
 | `/admin/users/me` | Profile editor for the logged-in regular admin |
 | `/admin/categories` | Campaign category taxonomy management |
 | `/admin/system` | Ops page — Sync Logs tab + Activity Log tab; manual sync trigger; clear stuck jobs |
@@ -359,8 +359,8 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 
 ### Settings / Users
 - `GET PUT /api/admin/settings` — read / update agency settings
-- `POST /api/admin/users` — create user (super admin)
-- `PATCH DELETE /api/admin/users/[id]` — update / delete user
+- `POST /api/admin/users` — create user (`requireVerifiedAdmin`: admins and super admin; roles `admin` / `viewer`). New accounts are created with `must_reset_password = true`, so the first sign-in emails a code and the person sets their own password — this requires email (MAILGUN_SMTP_*) to be configured
+- `PATCH DELETE /api/admin/users/[id]` — update / delete user (super admin)
 - `PATCH /api/admin/users/me` — update own profile
 
 ### Alerts

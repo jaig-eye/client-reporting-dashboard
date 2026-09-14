@@ -1,6 +1,6 @@
 // Users — /admin/users
-// Super admin sees all users with Edit + Delete controls, and can add new users.
-// Regular admins see the list but can only navigate to their own profile.
+// Admins and the super admin can add users. Editing, force-resetting and deleting other
+// accounts stays with the super admin; everyone else can edit only their own profile.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminSession } from '@/lib/auth'
@@ -31,6 +31,11 @@ export default async function UsersPage() {
   const users = (rows ?? []) as (User & { must_reset_password?: boolean })[]
   const isSuperAdmin = session?.isSuperAdmin ?? false
 
+  // Adding a team member is open to admins. Changing someone else's account is not: an edit
+  // can set that account's password, which would let one admin sign in as another and act
+  // under their name in the activity log.
+  const canAddUsers = isSuperAdmin || session?.role === 'admin'
+
   return (
     <div>
       <div className="page-header">
@@ -38,11 +43,13 @@ export default async function UsersPage() {
           <h1 className="page-title">Users</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
             {isSuperAdmin
-              ? 'Create and manage admin accounts for your team.'
-              : 'Agency admin accounts.'}
+              ? 'Create and manage accounts for your team.'
+              : canAddUsers
+                ? 'Your team’s accounts. You can add new ones.'
+                : 'Your team’s accounts.'}
           </p>
         </div>
-        {isSuperAdmin && (
+        {canAddUsers && (
           <Link href="/admin/users/new" className="btn btn-primary">
             + Add User
           </Link>
@@ -68,7 +75,7 @@ export default async function UsersPage() {
             <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
               Create accounts for your team so they can sign in with email and password.
             </p>
-            {isSuperAdmin && (
+            {canAddUsers && (
               <Link href="/admin/users/new" className="btn btn-primary">
                 + Add User
               </Link>

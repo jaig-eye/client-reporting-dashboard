@@ -1,10 +1,9 @@
 // GET  /api/admin/users — list active users (any admin)
-// POST /api/admin/users — create a new admin user (super admin only)
+// POST /api/admin/users — create a user (admins and the super admin; viewers are refused)
 
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAdminAuthed, isSuperAdminAuthed, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES, getAdminSession } from '@/lib/auth'
+import { isAdminAuthed, requireVerifiedAdmin, hashPasswordSecure, passwordTooLong, MAX_PASSWORD_BYTES } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { parseBody }   from '@/lib/apiError'
 
@@ -25,23 +24,43 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ users: data ?? [] })
 }
 
-function isSuperAdmin(req: NextRequest): boolean {
-  // Super admin is a SIGNED claim in the session token — not the absence of a
-  // client-editable cookie (which previously allowed trivial escalation).
-  return isSuperAdminAuthed(req.cookies.get('admin_session')?.value)
-}
-
 export async function POST(req: NextRequest) {
-  if (!isSuperAdmin(req)) {
-    return NextResponse.json({ error: 'Super admin access required' }, { status: 403 })
-  }
+  // Admins can add team members, not only the super admin.
+  //
+  // requireVerifiedAdmin rather than the synchronous signed-token check: it reads the user
+  // row, so a deactivated admin — or one whose sessions were revoked by a password change —
+  // is refused even while their cookie still verifies. Viewers are refused outright.
+  //
+  // Nothing here can hand out more than the caller already holds. A row's role is 'admin' or
+  // 'viewer' and nothing else, and super admin is not an account at all (it is the env-var
+  // login), so there is no role above 'admin' for this route to escalate into.
+  const gate = await requireVerifiedAdmin()
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
 
   const body = await parseBody<{ name?: string; email?: string; password?: string; role?: string; username?: string }>(req)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   const { name, email, password, role, username } = body
 
-  if (!name || !email || !password) {
+  // typeof as well as presence: a JSON number or object would throw inside .toLowerCase()
+  // below and surface as a 500. More of these requests now come from outside the one
+  // super-admin form, so the route checks shapes rather than trusting them.
+  if (typeof name !== 'string' || typeof email !== 'string' || !name.trim() || !email.trim() || !password) {
     return NextResponse.json({ error: 'name, email, and password are required' }, { status: 400 })
+  }
+  if (username !== undefined && username !== null && typeof username !== 'string') {
+    return NextResponse.json({ error: 'Username must be text' }, { status: 400 })
+  }
+  // Normalised once, and checked AFTER trimming. Checking before meant a username of only
+  // spaces passed as present, was stored as an empty string, and made the next such account
+  // collide with it on the unique username index.
+  const cleanUsername = typeof username === 'string' ? username.trim().toLowerCase() : ''
+  // Login treats any identifier containing @ as an email address, so a username with one in it
+  // could be saved but never used to sign in.
+  if (cleanUsername.includes('@')) {
+    return NextResponse.json(
+      { error: 'Usernames can’t contain @ — anything with @ is treated as an email address when signing in.' },
+      { status: 400 },
+    )
   }
   // typeof, not just truthiness: a JSON number is truthy and would throw inside
   // Buffer.byteLength (passwordTooLong) as an unhandled 500 instead of a 400.
@@ -57,33 +76,64 @@ export async function POST(req: NextRequest) {
   if (password.length < 8) {
     return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
   }
-  if (!['admin', 'viewer'].includes(role ?? 'admin')) {
+  if (typeof (role ?? 'admin') !== 'string' || !['admin', 'viewer'].includes(role ?? 'admin')) {
     return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
   }
 
   const db = createAdminClient()
-  const { data, error } = await db
+  const newUser = {
+    name:          name.trim(),
+    email:         email.toLowerCase().trim(),
+    password_hash: await hashPasswordSecure(password),
+    role:          role ?? 'admin',
+    is_active:     true,
+    // The password set here is a temporary one that the admin knows. Flagging the account means
+    // the first sign-in with it gets no session: login emails a code and sends the person to
+    // choose their own (the forced-rotation branch in api/auth/admin-login). That also proves the
+    // email address is really theirs before the account is usable.
+    must_reset_password: true,
+    ...(cleanUsername ? { username: cleanUsername } : {}),
+  }
+
+  let { data, error } = await db
     .from('users')
-    .insert({
-      name,
-      email:         email.toLowerCase().trim(),
-      password_hash: await hashPasswordSecure(password),
-      role:          role ?? 'admin',
-      is_active:     true,
-      ...(username ? { username: username.toLowerCase().trim() } : {}),
-    })
+    .insert(newUser)
     .select('id, name, email, role, is_active, created_at')
     .single()
 
+  // Deploy-ordering fallback, as in the sibling user routes: the flag only exists from migration
+  // 195. Without it the account is still created, but nothing forces the rotation — so say so.
+  if (error && /must_reset_password/i.test(error.message)) {
+    console.warn('[users] must_reset_password missing (apply migration 195) — new account will NOT be forced to reset')
+    const { must_reset_password: _flag, ...withoutFlag } = newUser
+    ;({ data, error } = await db
+      .from('users')
+      .insert(withoutFlag)
+      .select('id, name, email, role, is_active, created_at')
+      .single())
+  }
+
   if (error) {
     if (error.code === '23505') {
-      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 })
+      // Email and username are both unique, and the violation names the index that rejected it.
+      // One fixed "email already exists" message sent admins to change the wrong field when it
+      // was the username that clashed.
+      const clash = error.message + ' ' + ((error as { details?: string }).details ?? '')
+      return NextResponse.json(
+        { error: /username/i.test(clash) ? 'That username is already taken' : 'A user with this email already exists' },
+        { status: 409 },
+      )
     }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const adminSession = await getAdminSession()
-  logActivity(adminSession, 'created', 'user', {
+  // The fallback insert reassigns data, so it is no longer narrowed by the error check above;
+  // an insert that returned no row is a failure either way.
+  if (!data) return NextResponse.json({ error: 'The account could not be created' }, { status: 500 })
+
+  // Attributed to whoever created the account — worth knowing now that it is not only the
+  // super admin who can.
+  logActivity(gate.admin, 'created', 'user', {
     resourceId: data.id,
     meta: { name: data.name, email: data.email, role: data.role },
   })
