@@ -23,13 +23,6 @@ interface Contact {
   role:  string
 }
 
-interface Stats {
-  adFuelBalance:        number | null
-  pendingAch:           number
-  mtdSpend:             number | null
-  siteUptime7d:         number | null
-  contentPipelineCount: number
-}
 
 interface Invoice {
   id:          string
@@ -70,19 +63,7 @@ interface Props {
   adsLibraryUrl:    string | null
 }
 
-function fmt$(n: number | null): string {
-  if (n == null) return '—'
-  const abs = Math.abs(n)
-  const formatted = abs >= 1000
-    ? '$' + (abs / 1000).toFixed(1) + 'k'
-    : '$' + abs.toFixed(0)
-  return n < 0 ? '-' + formatted : formatted
-}
 
-function fmtNum(n: number | null): string {
-  if (n == null) return '—'
-  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
-}
 
 function fmtInvoiceDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -104,19 +85,6 @@ export default function OverviewTab({
   dashUrl, adsLibraryUrl,
 }: Props) {
   const router = useRouter()
-
-  // ── Lazy-load stats ───────────────────────────────────────────────────────
-  const [stats, setStats]           = useState<Stats | null>(null)
-  const [statsLoading, setStatsLoading] = useState(true)
-
-  useEffect(() => {
-    fetch(`/api/admin/clients/${clientId}/overview-stats`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: Stats | null) => { if (data) setStats(data) })
-      .catch(() => {})
-      .finally(() => setStatsLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // ── Business info editing ─────────────────────────────────────────────────
   const [editingBiz,    setEditingBiz]    = useState(false)
@@ -224,8 +192,8 @@ export default function OverviewTab({
     r === 'primary' ? 'Primary' : r === 'billing' ? 'Billing' : 'Contact'
 
   const roleColor = (r: string) =>
-    r === 'primary' ? { bg: '#dbeafe', color: '#1d4ed8' }
-    : r === 'billing' ? { bg: '#fef3c7', color: '#92400e' }
+    r === 'primary' ? { bg: 'var(--blue-subtle)', color: 'var(--blue)' }
+    : r === 'billing' ? { bg: 'var(--amber-subtle)', color: 'var(--amber)' }
     : { bg: 'var(--bg-subtle)', color: 'var(--text-muted)' }
 
   // ── Billing data (invoices + ledger) ─────────────────────────────────────
@@ -533,7 +501,7 @@ export default function OverviewTab({
                           </span>
                         )}
                         {isPending && (
-                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--amber-subtle)', color: 'var(--amber)' }}>
                             Pending
                           </span>
                         )}
@@ -557,52 +525,6 @@ export default function OverviewTab({
 
       {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-
-        {/* Key stats */}
-        <div className="card p-5">
-          <h2 className="section-title mb-3">At a Glance</h2>
-          {statsLoading ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              {[0,1,2,3].map(i => (
-                <div key={i} style={{ height: 56, borderRadius: 8, background: 'var(--bg-subtle)', animation: 'pulse 1.5s ease-in-out infinite' }} />
-              ))}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <div>
-                <StatTile
-                  label="Ad Fuel Balance"
-                  value={stats?.adFuelBalance != null
-                    ? `${stats.adFuelBalance < 0 ? '-' : ''}$${Math.abs(stats.adFuelBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : '—'}
-                  valueColor={stats?.adFuelBalance != null && stats.adFuelBalance < 0 ? 'var(--red)' : stats?.adFuelBalance != null && stats.adFuelBalance < 200 ? '#d97706' : 'var(--green)'}
-                />
-                {stats != null && (stats.pendingAch ?? 0) > 0 && (() => {
-                  const proj = (stats.adFuelBalance ?? 0) + stats.pendingAch
-                  return (
-                    <p style={{ fontSize: '0.7rem', marginTop: 2, color: proj >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {proj >= 0 ? '' : '-'}${Math.abs(proj).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} projected
-                    </p>
-                  )
-                })()}
-              </div>
-              <StatTile
-                label="MTD Spend (raw)"
-                value={fmt$(stats?.mtdSpend ?? null)}
-              />
-              <StatTile
-                label="Site Uptime (7d)"
-                value={stats?.siteUptime7d != null ? `${stats.siteUptime7d.toFixed(1)}%` : '—'}
-                valueColor={stats?.siteUptime7d == null ? 'var(--text-faint)' : stats.siteUptime7d >= 99 ? 'var(--green)' : stats.siteUptime7d >= 95 ? '#d97706' : 'var(--red)'}
-              />
-              <StatTile
-                label="Content Pipeline"
-                value={String(stats?.contentPipelineCount ?? 0)}
-                valueColor={(stats?.contentPipelineCount ?? 0) > 0 ? 'var(--blue)' : 'var(--text-muted)'}
-              />
-            </div>
-          )}
-        </div>
 
         {/* Account manager */}
         <div className="card p-5">
@@ -698,25 +620,13 @@ function InfoRow({ label, value, bold, link }: { label: string; value: string | 
   )
 }
 
-function StatTile({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div style={{ padding: '0.75rem', borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}>
-      <p style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', fontWeight: 600, marginBottom: '0.25rem' }}>
-        {label}
-      </p>
-      <p style={{ fontSize: '1.125rem', fontWeight: 700, color: valueColor ?? 'var(--text-primary)', lineHeight: 1.2 }}>
-        {value}
-      </p>
-    </div>
-  )
-}
 
 function InvoiceStatusBadge({ status }: { status: string | null }) {
   const s = status ?? ''
-  const style = s === 'paid' ? { bg: '#dcfce7', color: '#166534' }
-    : s === 'open'   ? { bg: '#dbeafe', color: '#1e40af' }
-    : s === 'void'   ? { bg: '#f3f4f6', color: '#6b7280' }
-    : { bg: '#fef3c7', color: '#92400e' }
+  const style = s === 'paid' ? { bg: 'var(--green-subtle)', color: 'var(--green)' }
+    : s === 'open'   ? { bg: 'var(--blue-subtle)', color: 'var(--blue)' }
+    : s === 'void'   ? { bg: 'var(--bg-subtle)', color: 'var(--text-muted)' }
+    : { bg: 'var(--amber-subtle)', color: 'var(--amber)' }
   return (
     <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: style.bg, color: style.color }}>
       {s || 'unknown'}

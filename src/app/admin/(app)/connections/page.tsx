@@ -84,9 +84,9 @@ export default async function ConnectionsPage({
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Integrations</h1>
+          <h1 className="page-title">Connections</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Connect the agency to external data sources and third-party services. Once connected, assign accounts to clients.
+            The agency&apos;s own sign-ins, one per platform. Connect here first, then assign accounts to each client from their record.
           </p>
         </div>
       </div>

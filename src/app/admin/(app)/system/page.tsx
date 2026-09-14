@@ -2,8 +2,10 @@
 
 // System — /admin/system
 // Sync logs (global + per-client), global backfill, app diagnostics.
+// The active tab lives in the URL (?tab=activity) so an ops log view can be linked.
 
-import { useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useState, useCallback } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { CaretLeft, CaretRight, ArrowsCounterClockwise } from '@phosphor-icons/react'
 import ClientManualSync from '@/app/admin/(app)/clients/[id]/ClientManualSync'
 
@@ -92,8 +94,27 @@ function avatarColor(name: string): string {
   return `hsl(${h},55%,45%)`
 }
 
-export default function SystemPage() {
-  const [activeTab,     setActiveTab]     = useState<'sync' | 'activity'>('sync')
+type SystemTab = 'sync' | 'activity'
+const SYSTEM_TABS: readonly SystemTab[] = ['sync', 'activity'] as const
+const DEFAULT_TAB: SystemTab = 'sync'
+
+function SystemPageInner() {
+  const router       = useRouter()
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+
+  // Active tab comes from ?tab=, validated so a junk param falls back to Sync Logs.
+  const tabParam  = searchParams.get('tab')
+  const activeTab: SystemTab =
+    SYSTEM_TABS.includes(tabParam as SystemTab) ? (tabParam as SystemTab) : DEFAULT_TAB
+
+  const setActiveTab = useCallback((next: SystemTab) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === DEFAULT_TAB) params.delete('tab')
+    else params.set('tab', next)
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [router, pathname, searchParams])
 
   // Sync log state
   const [jobs,          setJobs]          = useState<SyncJob[]>([])
@@ -239,7 +260,7 @@ export default function SystemPage() {
 
       {/* Tab switcher */}
       <div className="flex gap-1 mb-5" style={{ borderBottom: '2px solid var(--border)', paddingBottom: '0' }}>
-        {(['sync', 'activity'] as const).map(tab => (
+        {SYSTEM_TABS.map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -639,5 +660,14 @@ export default function SystemPage() {
       </>
       )}
     </div>
+  )
+}
+
+// useSearchParams() must sit under a Suspense boundary.
+export default function SystemPage() {
+  return (
+    <Suspense fallback={null}>
+      <SystemPageInner />
+    </Suspense>
   )
 }

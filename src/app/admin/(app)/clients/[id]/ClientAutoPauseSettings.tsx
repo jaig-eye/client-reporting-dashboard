@@ -59,11 +59,11 @@ export default function ClientAutoPauseSettings({
 
   function actionLabel(action: string) {
     switch (action) {
-      case 'paused':        return { label: 'Paused',        color: '#dc2626', bg: '#fee2e2' }
-      case 'resumed':       return { label: 'Resumed',       color: '#16a34a', bg: '#dcfce7' }
-      case 'pause_failed':  return { label: 'Pause failed',  color: '#92400e', bg: '#fef3c7' }
-      case 'resume_failed': return { label: 'Resume failed', color: '#92400e', bg: '#fef3c7' }
-      default:              return { label: action,          color: '#6b7280', bg: '#f3f4f6' }
+      case 'paused':        return { label: 'Paused',        color: 'var(--red)', bg: 'var(--red-subtle)' }
+      case 'resumed':       return { label: 'Resumed',       color: 'var(--green)', bg: 'var(--green-subtle)' }
+      case 'pause_failed':  return { label: 'Pause failed',  color: 'var(--amber)', bg: 'var(--amber-subtle)' }
+      case 'resume_failed': return { label: 'Resume failed', color: 'var(--amber)', bg: 'var(--amber-subtle)' }
+      default:              return { label: action,          color: 'var(--text-muted)', bg: 'var(--bg-subtle)' }
     }
   }
 
@@ -71,11 +71,11 @@ export default function ClientAutoPauseSettings({
     <div className="space-y-5">
       {/* Status banner */}
       {campaignsPausedAt && (
-        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#fee2e2', border: '1px solid #fca5a5', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: 'var(--red-subtle)', border: '1px solid var(--red)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '1rem' }}>⏸</span>
           <div>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#dc2626' }}>Campaigns are paused</p>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: '#b91c1c' }}>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: 'var(--red)' }}>Campaigns are paused</p>
+            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--red)' }}>
               Auto-paused on {new Date(campaignsPausedAt).toLocaleString()} due to negative Ad Fuel balance.
             </p>
           </div>

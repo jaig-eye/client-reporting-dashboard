@@ -4,8 +4,8 @@ import { useState } from 'react'
 import type { QualityFinding, QualityReport } from '@/lib/content/qualityGate'
 
 const SEVERITY_STYLE: Record<string, { bg: string; border: string; fg: string; label: string }> = {
-  critical: { bg: '#fee2e2', border: '#fca5a5', fg: '#b91c1c', label: 'Fix before publishing' },
-  warning:  { bg: '#fef3c7', border: '#fcd34d', fg: '#92400e', label: 'Worth a look' },
+  critical: { bg: 'var(--red-subtle)', border: 'var(--red)', fg: 'var(--red)', label: 'Fix before publishing' },
+  warning:  { bg: 'var(--amber-subtle)', border: 'var(--amber)', fg: 'var(--amber)', label: 'Worth a look' },
   info:     { bg: 'var(--bg-subtle)', border: 'var(--border)', fg: 'var(--text-muted)', label: 'Note' },
 }
 
@@ -35,8 +35,8 @@ export default function QualityFindings({
     return compact ? null : (
       <div style={{
         marginTop: 6, padding: '4px 8px', borderRadius: 5,
-        background: '#dcfce7', border: '1px solid #86efac',
-        fontSize: 11.5, color: '#166534', fontWeight: 600,
+        background: 'var(--green-subtle)', border: '1px solid var(--green)',
+        fontSize: 11.5, color: 'var(--green)', fontWeight: 600,
       }}>
         Quality checks passed
       </div>

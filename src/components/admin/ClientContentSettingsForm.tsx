@@ -238,7 +238,7 @@ export default function ClientContentSettingsForm({
         {showSiteInput && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {aiBlocked && (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--amber, #f59e0b)', margin: 0, lineHeight: 1.4 }}>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--amber)', margin: 0, lineHeight: 1.4 }}>
               ⚠ Your site is blocking automated access (likely Cloudflare or security rules). Enter your site URL below to try again, or fill in your business info manually.
             </p>
           )}
@@ -304,12 +304,12 @@ export default function ClientContentSettingsForm({
 
         {/* AI suggestion banner */}
         {aiSuggested && (
-          <div style={{ background: '#fefce8', border: '1px solid #fde047', borderRadius: 6, padding: '0.625rem 0.875rem', fontSize: '0.8125rem', color: '#854d0e' }}>
+          <div style={{ background: 'var(--amber-subtle)', border: '1px solid var(--amber)', borderRadius: 6, padding: '0.625rem 0.875rem', fontSize: '0.8125rem', color: 'var(--amber)' }}>
             ✦ AI-generated suggestions applied — review each field before saving.
           </div>
         )}
         {aiError && (
-          <div style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', borderRadius: 6, padding: '0.5rem 0.75rem', fontSize: '0.8125rem', color: 'var(--red)' }}>
+          <div style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', borderRadius: 6, padding: '0.5rem 0.75rem', fontSize: '0.8125rem', color: 'var(--red)' }}>
             {aiError}
           </div>
         )}

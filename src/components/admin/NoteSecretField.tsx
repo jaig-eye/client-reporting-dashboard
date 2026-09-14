@@ -31,12 +31,12 @@ export function NoteSecretInput({
       padding: '0.5rem 0.6rem', borderRadius: 6,
       background: 'var(--bg-subtle)',
       border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid #f59e0b',
+      borderLeft: '2px solid var(--amber)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         <span style={{
           fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em',
-          textTransform: 'uppercase', color: '#b45309',
+          textTransform: 'uppercase', color: 'var(--amber)',
         }}>
           Password (encrypted)
         </span>
@@ -155,10 +155,10 @@ export function NoteSecretReveal({
       margin: '0 0 0.75rem', padding: '0.55rem 0.7rem', borderRadius: 6,
       background: 'var(--bg-subtle)',
       border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid #f59e0b',
+      borderLeft: '2px solid var(--amber)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--amber)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
           Password
         </span>
 
@@ -171,7 +171,7 @@ export function NoteSecretReveal({
               style={{
                 marginLeft: 'auto', padding: '2px 9px', borderRadius: 5, cursor: 'pointer',
                 fontSize: '0.7rem', fontWeight: 600,
-                background: '#f59e0b', color: '#fff', border: 'none',
+                background: 'var(--amber)', color: '#fff', border: 'none',
                 opacity: loading ? 0.6 : 1,
               }}
             >

@@ -76,9 +76,9 @@ function ContextBadge({ label, ok }: { label: string; ok: boolean }) {
   return (
     <span style={{
       fontSize: '0.6875rem', padding: '2px 8px', borderRadius: 999,
-      background: ok ? '#dcfce7' : 'var(--bg-muted)',
-      color: ok ? '#166534' : 'var(--text-faint)',
-      border: `1px solid ${ok ? '#86efac' : 'var(--border)'}`,
+      background: ok ? 'var(--green-subtle)' : 'var(--bg-muted)',
+      color: ok ? 'var(--green)' : 'var(--text-faint)',
+      border: `1px solid ${ok ? 'var(--green)' : 'var(--border)'}`,
     }}>
       {ok ? '✓' : '—'} {label}
     </span>
@@ -101,11 +101,11 @@ export default function RationaleModal({ item, onClose }: Props) {
   const competitors  = item.competitorsResearched
 
   const ratFields: { label: string; value: string | null | undefined; color: string; bg: string }[] = [
-    { label: 'Keyword Opportunity', value: item.keywordOpportunity, color: '#2563eb', bg: '#eff6ff' },
-    { label: 'Ranking Strategy',    value: item.rankingStrategy,    color: '#7c3aed', bg: '#f5f3ff' },
-    { label: 'Audience Intent',     value: item.audienceIntent,     color: '#059669', bg: '#f0fdf4' },
-    { label: 'Why Now',             value: item.whyNow,             color: '#d97706', bg: '#fffbeb' },
-    { label: 'Competition Detail',  value: item.competitionLevel,   color: '#dc2626', bg: '#fef2f2' },
+    { label: 'Keyword Opportunity', value: item.keywordOpportunity, color: 'var(--blue)', bg: 'var(--blue-subtle)' },
+    { label: 'Ranking Strategy',    value: item.rankingStrategy,    color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+    { label: 'Audience Intent',     value: item.audienceIntent,     color: 'var(--green)', bg: 'var(--green-subtle)' },
+    { label: 'Why Now',             value: item.whyNow,             color: 'var(--amber)', bg: 'var(--amber-subtle)' },
+    { label: 'Competition Detail',  value: item.competitionLevel,   color: 'var(--red)', bg: 'var(--red-subtle)' },
   ]
 
   return (
@@ -120,11 +120,11 @@ export default function RationaleModal({ item, onClose }: Props) {
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-surface, #fff)',
+          background: 'var(--bg-surface)',
           borderRadius: 14, maxWidth: 640, width: '100%',
           maxHeight: '90vh', overflow: 'auto',
           boxShadow: '0 24px 80px rgba(0,0,0,0.22)',
-          borderTop: '4px solid var(--blue, #2563eb)',
+          borderTop: '4px solid var(--blue)',
         }}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}
@@ -164,22 +164,22 @@ export default function RationaleModal({ item, onClose }: Props) {
           {/* ── Overview chips ─────────────────────────────────────────────── */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginBottom: '1rem' }}>
             {item.searchVolume != null && (
-              <span style={{ padding: '3px 10px', borderRadius: 999, background: '#ede9fe', color: '#5b21b6', fontSize: '0.75rem' }}>
+              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', fontSize: '0.75rem' }}>
                 {item.searchVolume.toLocaleString()} searches/mo
               </span>
             )}
             {item.keywordDifficulty != null && (
-              <span style={{ padding: '3px 10px', borderRadius: 999, background: '#fef3c7', color: '#92400e', fontSize: '0.75rem' }}>
+              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--amber-subtle)', color: 'var(--amber)', fontSize: '0.75rem' }}>
                 KD {item.keywordDifficulty}
               </span>
             )}
             {brief?.search_intent && (
-              <span style={{ padding: '3px 10px', borderRadius: 999, background: '#dbeafe', color: '#1e40af', fontSize: '0.75rem' }}>
+              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--blue-subtle)', color: 'var(--blue)', fontSize: '0.75rem' }}>
                 {brief.search_intent.replace('_', ' ')}
               </span>
             )}
             {brief?.funnel_stage && (
-              <span style={{ padding: '3px 10px', borderRadius: 999, background: '#dcfce7', color: '#166534', fontSize: '0.75rem' }}>
+              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--green-subtle)', color: 'var(--green)', fontSize: '0.75rem' }}>
                 {brief.funnel_stage}
               </span>
             )}
@@ -232,8 +232,8 @@ export default function RationaleModal({ item, onClose }: Props) {
                 </div>
               )}
               {brief.local_seo_angle && (
-                <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: 6, background: '#f0fdf4', borderLeft: '3px solid #059669' }}>
-                  <span style={{ fontSize: '0.625rem', fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Local Angle: </span>
+                <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: 6, background: 'var(--green-subtle)', borderLeft: '3px solid var(--green)' }}>
+                  <span style={{ fontSize: '0.625rem', fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Local Angle: </span>
                   <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{brief.local_seo_angle}</span>
                 </div>
               )}
@@ -286,10 +286,10 @@ export default function RationaleModal({ item, onClose }: Props) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '0.875rem' }}>
                 <div style={{
                   width: 56, height: 56, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                  background: score.overall >= 75 ? '#dcfce7' : score.overall >= 50 ? '#fef3c7' : '#fee2e2',
-                  border: `3px solid ${score.overall >= 75 ? '#22c55e' : score.overall >= 50 ? '#f59e0b' : '#ef4444'}`,
+                  background: score.overall >= 75 ? 'var(--green-subtle)' : score.overall >= 50 ? 'var(--amber-subtle)' : 'var(--red-subtle)',
+                  border: `3px solid ${score.overall >= 75 ? 'var(--green)' : score.overall >= 50 ? 'var(--amber)' : 'var(--red)'}`,
                 }}>
-                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: score.overall >= 75 ? '#16a34a' : score.overall >= 50 ? '#d97706' : '#dc2626' }}>
+                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: score.overall >= 75 ? 'var(--green)' : score.overall >= 50 ? 'var(--amber)' : 'var(--red)' }}>
                     {score.overall}
                   </span>
                 </div>
@@ -317,7 +317,7 @@ export default function RationaleModal({ item, onClose }: Props) {
               {score.issues && score.issues.length > 0 && (
                 <div style={{ marginBottom: '0.5rem' }}>
                   {score.issues.map((iss, i) => (
-                    <div key={i} style={{ fontSize: '0.75rem', color: '#dc2626', display: 'flex', gap: 5, alignItems: 'flex-start' }}>
+                    <div key={i} style={{ fontSize: '0.75rem', color: 'var(--red)', display: 'flex', gap: 5, alignItems: 'flex-start' }}>
                       <span style={{ fontWeight: 700, flexShrink: 0 }}>✗</span>{iss}
                     </div>
                   ))}
@@ -326,7 +326,7 @@ export default function RationaleModal({ item, onClose }: Props) {
               {score.warnings && score.warnings.length > 0 && (
                 <div>
                   {score.warnings.map((w, i) => (
-                    <div key={i} style={{ fontSize: '0.75rem', color: '#d97706', display: 'flex', gap: 5, alignItems: 'flex-start' }}>
+                    <div key={i} style={{ fontSize: '0.75rem', color: 'var(--amber)', display: 'flex', gap: 5, alignItems: 'flex-start' }}>
                       <span style={{ fontWeight: 700, flexShrink: 0 }}>⚠</span>{w}
                     </div>
                   ))}
@@ -355,9 +355,9 @@ export default function RationaleModal({ item, onClose }: Props) {
           {item.generationError && (
             <>
               <Divider />
-              <div style={{ background: '#fee2e2', borderRadius: 8, padding: '0.625rem 0.875rem' }}>
-                <div style={{ fontSize: '0.625rem', fontWeight: 700, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Generation Error</div>
-                <div style={{ fontSize: '0.8125rem', color: '#7f1d1d', lineHeight: 1.5 }}>{item.generationError}</div>
+              <div style={{ background: 'var(--red-subtle)', borderRadius: 8, padding: '0.625rem 0.875rem' }}>
+                <div style={{ fontSize: '0.625rem', fontWeight: 700, color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Generation Error</div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>{item.generationError}</div>
               </div>
             </>
           )}

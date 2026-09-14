@@ -87,9 +87,9 @@ function Toggle({ checked, disabled, onChange, color }: {
   color:     'amber' | 'blue' | 'purple' | 'green'
 }) {
   const activeColor =
-    color === 'amber'  ? '#d97706' :
-    color === 'blue'   ? '#2563eb' :
-    color === 'purple' ? '#7c3aed' : '#16a34a'
+    color === 'amber'  ? 'var(--amber)' :
+    color === 'blue'   ? 'var(--blue)' :
+    color === 'purple' ? '#8b5cf6' : 'var(--green)'
   return (
     <button
       role="switch"
@@ -219,26 +219,26 @@ export default function NotificationTypeTable() {
       {/* Channel legend */}
       <div style={{ display: 'flex', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#d97706', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--amber)', display: 'inline-block', flexShrink: 0 }} />
           Agency Discord
         </span>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#2563eb', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--blue)', display: 'inline-block', flexShrink: 0 }} />
           Global Emails
         </span>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#8b5cf6', display: 'inline-block', flexShrink: 0 }} />
           Acc Manager
         </span>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#16a34a', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} />
           Client Discord
         </span>
       </div>
 
       {/* Dirty banner */}
       {isDirty && (
-        <div style={{ background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ background: 'var(--amber-subtle)', border: '1px solid var(--amber)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span>Unsaved changes</span>
           <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save changes'}
@@ -247,13 +247,13 @@ export default function NotificationTypeTable() {
       )}
 
       {error && (
-        <div style={{ background: '#fef2f2', border: '1px solid var(--red)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--red)' }}>
+        <div style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--red)' }}>
           {error}
         </div>
       )}
 
       {success && !isDirty && (
-        <div style={{ background: '#f0fdf4', border: '1px solid #16a34a', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: '#15803d', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 500 }}>
+        <div style={{ background: 'var(--green-subtle)', border: '1px solid var(--green)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 500 }}>
           <span style={{ fontSize: 15 }}>✓</span> Notification settings saved
         </div>
       )}
@@ -268,10 +268,10 @@ export default function NotificationTypeTable() {
                 {group.title}
               </span>
               <div style={{ display: 'flex', gap: 6 }}>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#d97706', width: COL_W, textAlign: 'center' }}>Agency</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb', width: COL_W, textAlign: 'center' }}>Emails</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7c3aed', width: COL_W, textAlign: 'center' }}>Mgr</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#16a34a', width: COL_W, textAlign: 'center' }}>Client</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--amber)', width: COL_W, textAlign: 'center' }}>Agency</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--blue)', width: COL_W, textAlign: 'center' }}>Emails</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#8b5cf6', width: COL_W, textAlign: 'center' }}>Mgr</span>
+                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--green)', width: COL_W, textAlign: 'center' }}>Client</span>
               </div>
             </div>
 
@@ -293,14 +293,14 @@ export default function NotificationTypeTable() {
                     gap:                 8,
                     borderBottom:        isLast ? 'none' : '1px solid var(--border)',
                     alignItems:          'center',
-                    borderLeft:          row.isBc ? '3px solid #f59e0b' : '3px solid transparent',
+                    borderLeft:          row.isBc ? '3px solid var(--amber)' : '3px solid transparent',
                     background:          row.isBc ? 'rgba(245, 158, 11, 0.04)' : undefined,
                   }}
                 >
                   <div>
                     <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
                       {row.isBc && (
-                        <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', borderRadius: 3, padding: '1px 4px', lineHeight: 1.4, flexShrink: 0 }}>
+                        <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--amber-subtle)', color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 3, padding: '1px 4px', lineHeight: 1.4, flexShrink: 0 }}>
                           BC
                         </span>
                       )}

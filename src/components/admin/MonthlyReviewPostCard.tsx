@@ -112,13 +112,13 @@ export default function MonthlyReviewPostCard({
         // were a hover effect rather than a decision the reviewer had made. Regenerating
         // already did this; approved did not.
         border:     `1px solid ${
-          isRegenerating ? '#fca5a5'
-          : isApproved   ? '#86efac'
+          isRegenerating ? 'var(--red)'
+          : isApproved   ? 'var(--green)'
           : 'var(--border)'
         }`,
         borderRadius: 8,
         overflow:   'hidden',
-        background: isRegenerating ? '#fff1f2' : 'var(--bg-surface)',
+        background: isRegenerating ? 'var(--red-subtle)' : 'var(--bg-surface)',
         animation:  isApproved ? 'monthly-approve-flash 0.6s ease forwards' : undefined,
         opacity:    isRejected || isDiscarded ? 0.55 : 1,
         transition: 'opacity 0.3s, background 0.3s',
@@ -170,7 +170,7 @@ export default function MonthlyReviewPostCard({
                  competed with the controls and squeezed the title into an ellipsis; the
                  approval is a property of the post, so it reads with the post's other
                  properties. */
-              <span style={{ color: '#16a34a', fontWeight: 700, marginRight: 6 }}>
+              <span style={{ color: 'var(--green)', fontWeight: 700, marginRight: 6 }}>
                 ✓ Approved ·
               </span>
             )}
@@ -184,14 +184,14 @@ export default function MonthlyReviewPostCard({
                 fontWeight: 700,
                 padding: '1px 6px',
                 borderRadius: 999,
-                background: post.content_type === 'blog' ? '#dbeafe' : post.content_type === 'service_area' ? '#dcfce7' : post.content_type === 'service_page' ? '#ede9fe' : '#f3f4f6',
-                color:      post.content_type === 'blog' ? '#1d4ed8' : post.content_type === 'service_area' ? '#15803d' : post.content_type === 'service_page' ? '#7c3aed' : '#374151',
+                background: post.content_type === 'blog' ? 'var(--blue-subtle)' : post.content_type === 'service_area' ? 'var(--green-subtle)' : post.content_type === 'service_page' ? 'rgba(139,92,246,0.12)' : 'var(--bg-subtle)',
+                color:      post.content_type === 'blog' ? 'var(--blue)' : post.content_type === 'service_area' ? 'var(--green)' : post.content_type === 'service_page' ? '#8b5cf6' : 'var(--text-primary)',
               }}>
                 {post.content_type === 'blog' ? 'Blog' : post.content_type === 'service_area' ? 'SA Page' : post.content_type === 'service_page' ? 'Service Page' : 'Page'}
               </span>
             )}
             {brokenLinkCount != null && brokenLinkCount > 0 && (
-              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fee2e2', color: '#dc2626' }}>
+              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--red-subtle)', color: 'var(--red)' }}>
                 🔗 {brokenLinkCount} broken
               </span>
             )}
@@ -228,8 +228,8 @@ export default function MonthlyReviewPostCard({
           {isStaleLive && (
             <div style={{
               marginTop: 6, padding: '4px 8px', borderRadius: 5,
-              background: '#fef3c7', border: '1px solid #fcd34d',
-              fontSize: 11.5, color: '#92400e', fontWeight: 600,
+              background: 'var(--amber-subtle)', border: '1px solid var(--amber)',
+              fontSize: 11.5, color: 'var(--amber)', fontWeight: 600,
             }}>
               Live copy is out of date — the site still shows the previous version. Push to update it.
             </div>
@@ -256,7 +256,7 @@ export default function MonthlyReviewPostCard({
                 className="monthly-pushing"
                 aria-live="polite"
                 style={{
-                  fontSize: 12, fontWeight: 700, color: '#1d4ed8', background: '#dbeafe',
+                  fontSize: 12, fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-subtle)',
                   padding: '3px 10px', borderRadius: 999,
                   animation: 'monthly-push-pulse 1.1s ease-in-out infinite',
                 }}
@@ -269,7 +269,7 @@ export default function MonthlyReviewPostCard({
                   title={pushError ?? undefined}
                   aria-live="polite"
                   style={{
-                    fontSize: 12, fontWeight: 700, color: '#b91c1c', background: '#fee2e2',
+                    fontSize: 12, fontWeight: 700, color: 'var(--red)', background: 'var(--red-subtle)',
                     padding: '3px 10px', borderRadius: 999, maxWidth: 260,
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}
@@ -287,7 +287,7 @@ export default function MonthlyReviewPostCard({
                 className="monthly-live"
                 aria-live="polite"
                 style={{
-                  fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7',
+                  fontSize: 12, fontWeight: 700, color: 'var(--green)', background: 'var(--green-subtle)',
                   padding: '3px 10px', borderRadius: 999,
                   animation: 'monthly-live-pop 0.32s ease-out',
                 }}
@@ -352,7 +352,7 @@ export default function MonthlyReviewPostCard({
             </button>
           </div>
         ) : isRejected ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', background: 'var(--red-subtle)', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             Rejected
           </span>
         ) : isDiscarded ? (
@@ -365,7 +365,7 @@ export default function MonthlyReviewPostCard({
             </button>
           </div>
         ) : isRegenerating ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber)', background: 'var(--amber-subtle)', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
             ⟳ Regenerating…
           </span>
         ) : (
@@ -400,7 +400,7 @@ export default function MonthlyReviewPostCard({
                     onDelete(post.id)
                   }
                 }}
-                style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: '#dc2626' }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: 'var(--red)' }}
               >
                 <Trash size={15} weight="bold" />
               </button>

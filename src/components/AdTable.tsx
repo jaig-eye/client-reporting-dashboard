@@ -144,8 +144,8 @@ export function AdGroupTable({
                   </a>
                 </td>
                 <td>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : 'var(--text-faint)' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? '#d97706' : '#9ca3af' }} />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? 'var(--amber)' : 'var(--text-faint)' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? 'var(--amber)' : 'var(--text-muted)' }} />
                     {setIsActive ? 'Active' : setIsPaused ? 'Paused' : (setStatusUpper || '—')}
                   </span>
                 </td>
@@ -281,14 +281,14 @@ export function AdRowTable({
           <button
             onClick={() => setViewMode('list')}
             aria-label="List view"
-            style={{ ...btnBase, background: viewMode === 'list' ? 'var(--bg-active, #eff6ff)' : 'var(--bg-surface)', color: viewMode === 'list' ? 'var(--blue, #2563eb)' : 'var(--text-secondary)', borderColor: viewMode === 'list' ? 'var(--blue, #2563eb)' : 'var(--border)' }}
+            style={{ ...btnBase, background: viewMode === 'list' ? 'var(--blue-subtle)' : 'var(--bg-surface)', color: viewMode === 'list' ? 'var(--blue)' : 'var(--text-secondary)', borderColor: viewMode === 'list' ? 'var(--blue)' : 'var(--border)' }}
           >
             <Rows size={14} weight={viewMode === 'list' ? 'bold' : 'regular'} />
           </button>
           <button
             onClick={() => setViewMode('cards')}
             aria-label="Card view"
-            style={{ ...btnBase, background: viewMode === 'cards' ? 'var(--bg-active, #eff6ff)' : 'var(--bg-surface)', color: viewMode === 'cards' ? 'var(--blue, #2563eb)' : 'var(--text-secondary)', borderColor: viewMode === 'cards' ? 'var(--blue, #2563eb)' : 'var(--border)' }}
+            style={{ ...btnBase, background: viewMode === 'cards' ? 'var(--blue-subtle)' : 'var(--bg-surface)', color: viewMode === 'cards' ? 'var(--blue)' : 'var(--text-secondary)', borderColor: viewMode === 'cards' ? 'var(--blue)' : 'var(--border)' }}
           >
             <SquaresFour size={14} weight={viewMode === 'cards' ? 'bold' : 'regular'} />
           </button>
@@ -368,12 +368,12 @@ export function AdRowTable({
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', gap: 4,
                     fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-                    color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                    color: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
                     marginBottom: 6,
                   }}>
                     <span style={{
                       width: 5, height: 5, borderRadius: '50%',
-                      background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                      background: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-muted)',
                     }} />
                     {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || 'Unknown')}
                   </span>
@@ -511,11 +511,11 @@ export function AdRowTable({
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
                         fontSize: '0.7rem', fontWeight: 600,
-                        color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)',
+                        color: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
                       }}>
                         <span style={{
                           width: 6, height: 6, borderRadius: '50%',
-                          background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af',
+                          background: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-muted)',
                         }} />
                         {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
                       </span>

@@ -55,15 +55,15 @@ const EMPTY_FORM = {
 }
 
 function StatusDot({ isUp, status }: { isUp: boolean | null; status: string }) {
-  if (status !== 'active') return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d1d5db', display: 'inline-block' }} title="Paused / archived" />
-  if (isUp === null)  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#9ca3af', display: 'inline-block' }} title="Not yet checked" />
-  if (isUp)           return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} title="Up" />
-  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 0 3px rgba(239,68,68,0.20)', display: 'inline-block' }} title="Down" />
+  if (status !== 'active') return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} title="Paused / archived" />
+  if (isUp === null)  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', display: 'inline-block' }} title="Not yet checked" />
+  if (isUp)           return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} title="Up" />
+  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red)', boxShadow: '0 0 0 3px rgba(239,68,68,0.20)', display: 'inline-block' }} title="Down" />
 }
 
 function SslBadge({ days }: { days: number | null }) {
   if (days === null) return <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-  const color = days <= 7 ? '#ef4444' : days <= 30 ? '#f59e0b' : '#10b981'
+  const color = days <= 7 ? 'var(--red)' : days <= 30 ? 'var(--amber)' : 'var(--green)'
   return <span style={{ fontSize: '0.75rem', fontWeight: 600, color }}>{days}d</span>
 }
 
@@ -350,6 +350,18 @@ export default function SitesPage() {
   }
   const labelStyle: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-faint)', display: 'block', marginBottom: 4 }
 
+                // Lead with the answer: which sites need attention, not how many exist.
+  const downCount    = sites.filter(x => x.is_up === false).length
+  const expiringSoon = sites.filter(x => x.ssl_days_remaining != null && x.ssl_days_remaining <= 30).length
+  const uptimes      = sites.map(x => x.uptime_7d).filter((v): v is number => v != null)
+  const avgUptime    = uptimes.length ? uptimes.reduce((a, b) => a + b, 0) / uptimes.length : null
+  const siteSummary  = [
+    `${sites.length} site${sites.length !== 1 ? 's' : ''}`,
+    downCount > 0 ? `${downCount} down` : null,
+    avgUptime != null ? `${avgUptime.toFixed(1)}% avg uptime` : null,
+    expiringSoon > 0 ? `${expiringSoon} certificate${expiringSoon !== 1 ? 's' : ''} expiring` : null,
+  ].filter(Boolean).join(' · ')
+
   return (
     <div>
       {/* Header */}
@@ -358,7 +370,7 @@ export default function SitesPage() {
           <GlobeSimple size={22} style={{ color: 'var(--text-faint)' }} />
           <div>
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Sites</h1>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>{sites.length} site{sites.length !== 1 ? 's' : ''}</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>{siteSummary}</p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -375,19 +387,19 @@ export default function SitesPage() {
       {!importDismissed && !loading && unmonitoredClients.length > 0 && (
         <div style={{
           marginBottom: '1rem', padding: '0.875rem 1rem',
-          borderRadius: 10, border: '1px solid #bfdbfe',
-          background: '#eff6ff', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+          borderRadius: 10, border: '1px solid var(--blue-border)',
+          background: 'var(--blue-subtle)', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
         }}>
-          <DownloadSimple size={16} style={{ color: '#3b82f6', marginTop: 2, flexShrink: 0 }} />
+          <DownloadSimple size={16} style={{ color: 'var(--blue)', marginTop: 2, flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#1d4ed8', margin: '0 0 0.5rem' }}>
+            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--blue)', margin: '0 0 0.5rem' }}>
               {unmonitoredClients.length} client{unmonitoredClients.length !== 1 ? 's have' : ' has'} a website not yet monitored
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
               {unmonitoredClients.map(c => {
                 const url    = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
                 const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
-                return (
+  return (
                   <button
                     key={c.id}
                     onClick={() => openAdd({
@@ -399,15 +411,15 @@ export default function SitesPage() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.375rem',
                       padding: '0.25rem 0.625rem', borderRadius: 999,
-                      border: '1px solid #93c5fd', background: '#dbeafe',
-                      cursor: 'pointer', fontSize: '0.75rem', color: '#1d4ed8', fontWeight: 500,
+                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
+                      cursor: 'pointer', fontSize: '0.75rem', color: 'var(--blue)', fontWeight: 500,
                     }}
                   >
                     <Plus size={11} /> {c.name}
-                    <span style={{ color: '#60a5fa', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {url.replace(/^https?:\/\//, '')}
                     </span>
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: '#bfdbfe', color: '#1d4ed8' }}>
+                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: 'var(--blue-border)', color: 'var(--blue)' }}>
                       {source}
                     </span>
                   </button>
@@ -419,11 +431,11 @@ export default function SitesPage() {
             <button
               onClick={handleImportAll}
               disabled={importing}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: '#3b82f6', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: 'var(--blue)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
             >
               {importing ? 'Importing…' : `Import all ${unmonitoredClients.length}`}
             </button>
-            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: '0.125rem', fontSize: '0.7rem' }}>
+            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.125rem', fontSize: '0.7rem' }}>
               Dismiss
             </button>
           </div>
@@ -534,7 +546,7 @@ export default function SitesPage() {
                     </td>
                     <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
                       {site.uptime_7d != null ? (
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? '#10b981' : site.uptime_7d >= 95 ? '#f59e0b' : '#ef4444' }}>
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
                           {Number(site.uptime_7d).toFixed(1)}%
                         </span>
                       ) : (
@@ -563,7 +575,7 @@ export default function SitesPage() {
                     <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
                       {site.audit_score != null ? (
                         <>
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? '#10b981' : site.audit_score >= 60 ? '#f59e0b' : '#ef4444' }}>
+                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)' }}>
                             {site.audit_score}
                           </span>
                           {(site.audit_errors != null || site.audit_warnings != null) && (
@@ -594,7 +606,7 @@ export default function SitesPage() {
                           {/* Summary bar */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                             {site.audit_score != null && (
-                              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: site.audit_score >= 80 ? '#10b981' : site.audit_score >= 60 ? '#f59e0b' : '#ef4444', lineHeight: 1 }}>
+                              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)', lineHeight: 1 }}>
                                 {site.audit_score}
                               </span>
                             )}
@@ -644,7 +656,7 @@ export default function SitesPage() {
                                             {page.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
                                           </a>
                                         </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 700, color: (page.score ?? 0) >= 80 ? '#10b981' : (page.score ?? 0) >= 60 ? '#f59e0b' : '#ef4444', whiteSpace: 'nowrap' }}>
+                                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 700, color: (page.score ?? 0) >= 80 ? 'var(--green)' : (page.score ?? 0) >= 60 ? 'var(--amber)' : 'var(--red)', whiteSpace: 'nowrap' }}>
                                           {page.score ?? '—'}
                                         </td>
                                         <td style={{ padding: '0.375rem 0.625rem', color: 'var(--text-muted)', maxWidth: 280 }}>
@@ -658,10 +670,10 @@ export default function SitesPage() {
                                         <td style={{ padding: '0.375rem 0.625rem', color: page.h1_count === 1 ? 'var(--text-primary)' : 'var(--red)', textAlign: 'center' }}>
                                           {page.h1_count}
                                         </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_schema ? '#10b981' : 'var(--text-faint)', textAlign: 'center' }}>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_schema ? 'var(--green)' : 'var(--text-faint)', textAlign: 'center' }}>
                                           {page.has_schema ? '✓' : '—'}
                                         </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_canonical ? '#10b981' : 'var(--text-faint)', textAlign: 'center' }}>
+                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_canonical ? 'var(--green)' : 'var(--text-faint)', textAlign: 'center' }}>
                                           {page.has_canonical ? '✓' : '—'}
                                         </td>
                                       </tr>
@@ -737,11 +749,11 @@ export default function SitesPage() {
                     style={{
                       marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
                       padding: '0.2rem 0.625rem', borderRadius: 999,
-                      border: '1px solid #bfdbfe', background: '#eff6ff',
-                      cursor: 'pointer', fontSize: '0.7rem', color: '#2563eb', fontWeight: 500,
+                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
+                      cursor: 'pointer', fontSize: '0.7rem', color: 'var(--blue)', fontWeight: 500,
                     }}
                   >
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: '#dbeafe', color: '#1d4ed8' }}>{suggestedUrl.source}</span>
+                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'var(--blue-subtle)', color: 'var(--blue)' }}>{suggestedUrl.source}</span>
                     Use: {suggestedUrl.url.replace(/^https?:\/\//, '')}
                   </button>
                 )}

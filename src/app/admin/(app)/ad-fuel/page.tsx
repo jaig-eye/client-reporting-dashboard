@@ -119,7 +119,7 @@ function balanceColor(row: DashRow): string {
   if (isAtRisk(row)) return 'var(--red)'
   const runway = runwayDays(row)
   const bill   = daysToBill(row)
-  if (runway != null && bill != null && runway < bill + 3) return 'var(--amber, #f59e0b)'
+  if (runway != null && bill != null && runway < bill + 3) return 'var(--amber)'
   return 'var(--green)'
 }
 
@@ -147,9 +147,9 @@ function today(): string {
 }
 
 const PACE_STYLE: Record<string, { bg: string; color: string }> = {
-  'On Pace':       { bg: '#dcfce7', color: '#166534' },
-  'Underspending': { bg: '#fef3c7', color: '#92400e' },
-  'Overspending':  { bg: '#fee2e2', color: '#991b1b' },
+  'On Pace':       { bg: 'var(--green-subtle)', color: 'var(--green)' },
+  'Underspending': { bg: 'var(--amber-subtle)', color: 'var(--amber)' },
+  'Overspending':  { bg: 'var(--red-subtle)', color: 'var(--red)' },
 }
 
 const ENTRY_TYPES = ['MRR', 'One-Time', 'ACH', 'Catch Up', 'Other']
@@ -251,7 +251,7 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
           {row.clientName}
           {row.autoPauseAds && (
             <span title={row.campaignsPausedAt ? 'Auto-pause active — currently paused' : 'Auto-pause enabled'}>
-              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? '#dc2626' : '#6366f1'} />
+              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? 'var(--red)' : '#8b5cf6'} />
             </span>
           )}
         </span>
@@ -314,8 +314,8 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
           <span style={{
             display: 'inline-block', padding: '2px 7px', borderRadius: 999,
             fontSize: '0.65rem', fontWeight: 700,
-            background: (PACE_STYLE[row.pace] ?? { bg: '#f3f4f6' }).bg,
-            color: (PACE_STYLE[row.pace] ?? { color: '#374151' }).color,
+            background: (PACE_STYLE[row.pace] ?? { bg: 'var(--bg-subtle)' }).bg,
+            color: (PACE_STYLE[row.pace] ?? { color: 'var(--text-secondary)' }).color,
           }}>
             {row.pace}
           </span>
@@ -325,11 +325,11 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'autoPause': return (
       <td key={key}>
         {row.campaignsPausedAt ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--red-subtle)', color: 'var(--red)' }}>
             ⏸ PAUSED
           </span>
         ) : row.autoPauseAds ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#16a34a' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--green-subtle)', color: 'var(--green)' }}>
             ✓ Auto
           </span>
         ) : (
@@ -843,8 +843,8 @@ function AdFuelPageInner() {
             {importStatus && (
               <div style={{
                 padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
-                background: importStatus.errors.length ? '#fee2e2' : '#dcfce7',
-                color: importStatus.errors.length ? '#991b1b' : '#166534',
+                background: importStatus.errors.length ? 'var(--red-subtle)' : 'var(--green-subtle)',
+                color: importStatus.errors.length ? 'var(--red)' : 'var(--green)',
                 maxWidth: 600,
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -949,17 +949,17 @@ function AdFuelPageInner() {
                         <td style={{ color: 'var(--text-muted)' }}>{e.invoice_id ?? '—'}</td>
                         <td>
                           {e.ach_status === 'pending' && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fef3c7', color: '#92400e', marginRight: 3 }}>
+                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--amber-subtle)', color: 'var(--amber)', marginRight: 3 }}>
                               ACH Pending
                             </span>
                           )}
                           {e.ach_status === 'cleared' && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#166534', marginRight: 3 }}>
+                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--green-subtle)', color: 'var(--green)', marginRight: 3 }}>
                               ACH Cleared
                             </span>
                           )}
                           {e.type && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>
+                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--blue-subtle)', color: 'var(--blue)' }}>
                               {e.type}
                             </span>
                           )}
@@ -1243,7 +1243,7 @@ function AdFuelPageInner() {
                 <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Auto-Pause Campaigns</p>
 
                 {clientEditModal?.campaignsPausedAt && (
-                  <div style={{ padding: '0.5rem 0.75rem', borderRadius: 6, background: '#fee2e2', fontSize: '0.75rem', color: '#dc2626', fontWeight: 500 }}>
+                  <div style={{ padding: '0.5rem 0.75rem', borderRadius: 6, background: 'var(--red-subtle)', fontSize: '0.75rem', color: 'var(--red)', fontWeight: 500 }}>
                     ⏸ Campaigns paused since {new Date(clientEditModal.campaignsPausedAt).toLocaleDateString()}
                   </div>
                 )}

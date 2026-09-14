@@ -49,12 +49,12 @@ function freqLabel(freq: string | null): string {
 }
 
 const STATUS_BADGE: Record<string, { label: string; bg: string; color: string }> = {
-  pending:    { label: 'Pending',    bg: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-muted)' },
-  approved:   { label: 'Approved',   bg: '#dcfce7',                   color: '#166534'            },
-  generating: { label: 'Generating', bg: '#dbeafe',                   color: '#1e40af'            },
-  generated:  { label: 'Generated',  bg: '#dbeafe',                   color: '#1e40af'            },
-  scheduled:  { label: 'Scheduled',  bg: '#ede9fe',                   color: '#5b21b6'            },
-  rejected:   { label: 'Rejected',   bg: '#fee2e2',                   color: '#991b1b'            },
+  pending:    { label: 'Pending',    bg: 'var(--bg-muted)', color: 'var(--text-muted)' },
+  approved:   { label: 'Approved',   bg: 'var(--green-subtle)',                   color: 'var(--green)'            },
+  generating: { label: 'Generating', bg: 'var(--blue-subtle)',                   color: 'var(--blue)'            },
+  generated:  { label: 'Generated',  bg: 'var(--blue-subtle)',                   color: 'var(--blue)'            },
+  scheduled:  { label: 'Scheduled',  bg: 'rgba(139,92,246,0.12)',                   color: '#8b5cf6'            },
+  rejected:   { label: 'Rejected',   bg: 'var(--red-subtle)',                   color: 'var(--red)'            },
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -76,9 +76,9 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const COMP_BADGE: Record<string, { bg: string; color: string }> = {
-  low:    { bg: '#dcfce7', color: '#166534' },
-  medium: { bg: '#fef3c7', color: '#92400e' },
-  high:   { bg: '#fee2e2', color: '#991b1b' },
+  low:    { bg: 'var(--green-subtle)', color: 'var(--green)' },
+  medium: { bg: 'var(--amber-subtle)', color: 'var(--amber)' },
+  high:   { bg: 'var(--red-subtle)', color: 'var(--red)' },
 }
 
 function TopicRow({
@@ -116,23 +116,23 @@ function TopicRow({
   const comp    = COMP_BADGE[compKey]
 
   const ratSnippets = [
-    { label: 'Keyword',     value: topic.keywordOpportunity, color: '#2563eb' },
-    { label: 'Strategy',    value: topic.rankingStrategy,    color: '#7c3aed' },
-    { label: 'Audience',    value: topic.audienceIntent,     color: '#059669' },
-    { label: 'Why now',     value: topic.whyNow,             color: '#d97706' },
-    { label: 'Competition', value: topic.competitionLevel,   color: '#ea580c' },
+    { label: 'Keyword',     value: topic.keywordOpportunity, color: 'var(--blue)' },
+    { label: 'Strategy',    value: topic.rankingStrategy,    color: '#8b5cf6' },
+    { label: 'Audience',    value: topic.audienceIntent,     color: 'var(--green)' },
+    { label: 'Why now',     value: topic.whyNow,             color: 'var(--amber)' },
+    { label: 'Competition', value: topic.competitionLevel,   color: '#f97316' },
   ].filter(f => f.value)
 
   return (
     <>
     {isHighlighted && (
-      <style>{`@keyframes ccqFlash { 0%,100%{background:transparent} 25%,75%{background:#fef9c3} }`}</style>
+      <style>{`@keyframes ccqFlash { 0%,100%{background:transparent} 25%,75%{background:var(--amber-subtle)} }`}</style>
     )}
     <div
       ref={rowRef}
       style={{
         padding:      '0.875rem 1rem',
-        borderBottom: isLast ? 'none' : '1px solid var(--border, #e5e7eb)',
+        borderBottom: isLast ? 'none' : '1px solid var(--border)',
         animation:    isHighlighted ? 'ccqFlash 2s ease 0.3s' : undefined,
       }}
     >
@@ -280,8 +280,8 @@ function CycleCard({ cycle, highlightId }: { cycle: ContentCycle; highlightId?: 
         justifyContent: 'space-between',
         gap:            '0.75rem',
         padding:        '0.5rem 1rem',
-        background:     'var(--bg-subtle, #f8f9fa)',
-        borderBottom:   cardOpen ? '1px solid var(--border, #e5e7eb)' : 'none',
+        background:     'var(--bg-subtle)',
+        borderBottom:   cardOpen ? '1px solid var(--border)' : 'none',
       }}>
         {/* Left: client info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
@@ -290,13 +290,13 @@ function CycleCard({ cycle, highlightId }: { cycle: ContentCycle; highlightId?: 
           </span>
           <a
             href={`/admin/clients/${cycle.clientId}?tab=content`}
-            style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', textDecoration: 'none', whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border, #e5e7eb)' }}
+            style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', textDecoration: 'none', whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border)' }}
           >
             Settings
           </a>
           <span style={{
             fontSize: '0.6875rem', fontWeight: 500, padding: '1px 6px', borderRadius: 999,
-            background: 'var(--bg-muted, #f3f4f6)', color: 'var(--text-faint)', flexShrink: 0,
+            background: 'var(--bg-muted)', color: 'var(--text-faint)', flexShrink: 0,
           }}>
             {freqLabel(cycle.frequency)}
           </span>

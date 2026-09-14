@@ -34,24 +34,19 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Operations',
     items: [
-      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,     matchPrefix: true },
-      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true },
+      { href: '/admin/alerts',    label: 'Alerts',   icon: <Bell size={16} aria-hidden />,           matchPrefix: true, alertsKey: true },
+      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,      matchPrefix: true },
+      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,     matchPrefix: true },
       { href: '/admin/emails',    label: 'Emails',   icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
-      { href: '/admin/ad-fuel',   label: 'Ad Fuel',  icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true },
+      { href: '/admin/ad-fuel',   label: 'Ad Fuel',  icon: <RocketLaunch size={16} aria-hidden />,   matchPrefix: true },
+      { href: '/admin/sites',     label: 'Sites',    icon: <GlobeSimple size={16} aria-hidden />,    matchPrefix: true },
     ],
   },
   {
-    title: 'Our Tools',
+    title: 'Settings',
     items: [
-      { href: '/admin/sites', label: 'Site Monitoring', icon: <GlobeSimple size={16} aria-hidden />, matchPrefix: true },
-    ],
-  },
-  {
-    title: 'Admin',
-    items: [
-      { href: '/admin/connections', label: 'Integrations',    icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true },
+      { href: '/admin/connections', label: 'Connections',     icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true },
       { href: '/admin/users',       label: 'Users',           icon: <UsersThree size={16} aria-hidden />,     matchPrefix: true },
-      { href: '/admin/alerts',      label: 'Alerts',          icon: <Bell size={16} aria-hidden />,           matchPrefix: true, alertsKey: true },
       { href: '/admin/settings',    label: 'Agency Settings', icon: <GearSix size={16} aria-hidden />,        matchPrefix: true },
       { href: '/admin/system',      label: 'System',          icon: <HardDrives size={16} aria-hidden />,     matchPrefix: true },
     ],

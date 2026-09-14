@@ -34,6 +34,7 @@ import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
 import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
+import ClientHeaderStats from './ClientHeaderStats'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,7 +44,7 @@ const TABS = [
   { id: 'performance', label: 'Metrics'      },
   { id: 'content',     label: 'Content'      },
   { id: 'billing',     label: 'Billing'      },
-  { id: 'advanced',    label: 'Advanced'     },
+  { id: 'advanced',    label: 'Health'       },
 ]
 
 export default async function ClientDetailPage({
@@ -196,6 +197,8 @@ export default async function ClientDetailPage({
           </Link>
         </div>
       </div>
+
+      <ClientHeaderStats clientId={id} />
 
       {/* Tab nav */}
       <style>{`.tab-nav-bar::-webkit-scrollbar { display: none; }`}</style>
@@ -367,7 +370,7 @@ export default async function ClientDetailPage({
                   <div className="flex items-start gap-3 flex-1 min-w-0">
                     <div
                       className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ background: state === 'coming-soon' ? '#f3f4f6' : `${def.color}15`, border: `1px solid ${def.color}30` }}
+                      style={{ background: state === 'coming-soon' ? 'var(--bg-subtle)' : `${def.color}15`, border: `1px solid ${def.color}30` }}
                     >
                       {def.logo
                         ? <def.logo size={22} />
@@ -545,32 +548,16 @@ export default async function ClientDetailPage({
 
       {/* ── BILLING ──────────────────────────────────────────────────── */}
       {activeTab === 'billing' && (
-        <BillingTab
-          clientId={id}
-          adFuelCut={client.ad_fuel_cut ?? null}
-          globalCut={globalCut}
-        />
-      )}
+        <div className="space-y-6">
+          <BillingTab
+            clientId={id}
+            adFuelCut={client.ad_fuel_cut ?? null}
+            globalCut={globalCut}
+          />
 
-      {/* ── ADVANCED ─────────────────────────────────────────────────── */}
-      {activeTab === 'advanced' && (
-        <div className="space-y-6 max-w-3xl">
-
-          {/* Client info (name/slug) + logo — moved from old General tab */}
           <div className="card p-5">
-            <h2 className="section-title mb-3">Client Info</h2>
-            <div className="space-y-4">
-              <div>
-                <p className="section-desc mb-3">Edit the client name and slug. The slug appears in internal URLs.</p>
-                <ClientManualSync clientId={id} />
-              </div>
-            </div>
-          </div>
-
-          {/* Ad Fuel auto-pause (moved from removed Ad Fuel tab) */}
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Ad Fuel Auto-Pause</h2>
-            <p className="section-desc mb-3">Automatically pause and resume campaigns when the Ad Fuel balance runs low.</p>
+            <h2 className="section-title mb-1">Pause ads when Ad Fuel runs out</h2>
+            <p className="section-desc mb-3">Stop campaigns automatically when this client&apos;s balance goes negative, and start them again when it&apos;s topped up.</p>
             <ClientAutoPauseSettings
               clientId={id}
               autoPauseAds={(client as unknown as Record<string, unknown>).auto_pause_ads as boolean ?? false}
@@ -579,8 +566,19 @@ export default async function ClientDetailPage({
               pauseLog={pauseLog}
             />
           </div>
+        </div>
+      )}
 
-          {/* Client logo and email schedule removed — logo upload moved to Business Info in Overview tab */}
+      {/* ── ADVANCED ─────────────────────────────────────────────────── */}
+      {activeTab === 'advanced' && (
+        <div className="space-y-6 max-w-3xl">
+
+          {/* Re-sync a source when its data looks wrong or incomplete. */}
+          <div className="card p-5">
+            <h2 className="section-title mb-1">Re-sync data</h2>
+            <p className="section-desc mb-3">Pull a source again when its numbers look wrong or a backfill is needed.</p>
+            <ClientManualSync clientId={id} />
+          </div>
 
           {/* Data Coverage */}
           <div className="card p-5">
@@ -660,7 +658,7 @@ export default async function ClientDetailPage({
                         </span>
                       </div>
                       {job.status === 'error' && job.error_message && (
-                        <p className="text-xs mt-1 pl-1" style={{ color: 'var(--red, #dc2626)' }}>
+                        <p className="text-xs mt-1 pl-1" style={{ color: 'var(--red)' }}>
                           ↳ {job.error_message.slice(0, 120)}{job.error_message.length > 120 ? '…' : ''}
                         </p>
                       )}
@@ -910,7 +908,7 @@ function SourceBadge({ state, compact = false }: { state: string; compact?: bool
         display: 'inline-flex', alignItems: 'center', gap: 3,
         padding: compact ? '1px 5px' : '1px 8px',
         borderRadius: 999, fontSize: compact ? '0.6rem' : '0.7rem', fontWeight: 600,
-        background: '#dcfce7', color: '#166534',
+        background: 'var(--green-subtle)', color: 'var(--green)',
       }}>
         ✓ Connected
       </span>
@@ -935,8 +933,8 @@ function SourceBadge({ state, compact = false }: { state: string; compact?: bool
 
 function Notice({ type, children }: { type: 'success' | 'error'; children: React.ReactNode }) {
   const s = type === 'success'
-    ? { bg: 'var(--green-subtle)', border: '#bbf7d0', color: 'var(--green)' }
-    : { bg: 'var(--red-subtle)',   border: '#fecaca', color: 'var(--red)'   }
+    ? { bg: 'var(--green-subtle)', border: 'var(--green)', color: 'var(--green)' }
+    : { bg: 'var(--red-subtle)',   border: 'var(--red)', color: 'var(--red)'   }
   return (
     <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}>
       {children}

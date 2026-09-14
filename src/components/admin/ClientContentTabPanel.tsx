@@ -152,7 +152,7 @@ export default function ClientContentTabPanel({
                 gap: 8, padding: '16px 8px',
                 borderRadius: 12,
                 border: active ? 'none' : '1px solid var(--border)',
-                background: active ? 'var(--accent, #2563eb)' : 'var(--bg-surface)',
+                background: active ? 'var(--accent)' : 'var(--bg-surface)',
                 color: active ? '#fff' : 'var(--text-muted)',
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.75rem',
@@ -165,7 +165,7 @@ export default function ClientContentTabPanel({
               {tab.badge && (
                 <span style={{
                   position: 'absolute', top: 8, right: 10,
-                  background: '#ef4444', color: '#fff',
+                  background: 'var(--red)', color: '#fff',
                   fontSize: '0.6rem', fontWeight: 700,
                   borderRadius: 99, padding: '1px 5px',
                   minWidth: 16, textAlign: 'center',
@@ -245,14 +245,14 @@ function fmtPos(n: number | null | undefined): string {
 }
 function posColor(pos: number | null): string {
   if (!pos) return 'var(--text-muted)'
-  if (pos <= 3)  return '#16a34a'
-  if (pos <= 10) return '#d97706'
-  return '#9ca3af'
+  if (pos <= 3)  return 'var(--green)'
+  if (pos <= 10) return 'var(--amber)'
+  return 'var(--text-muted)'
 }
 function posBg(pos: number | null): string {
   if (!pos) return 'var(--bg-muted)'
-  if (pos <= 3)  return '#dcfce7'
-  if (pos <= 10) return '#fef3c7'
+  if (pos <= 3)  return 'var(--green-subtle)'
+  if (pos <= 10) return 'var(--amber-subtle)'
   return 'var(--bg-muted)'
 }
 function truncatePage(url: string, max = 44): string {
@@ -435,7 +435,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
           <span style={{
             display: 'inline-block', padding: '2px 10px', borderRadius: 999,
             fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-            background: '#eef2ff', color: '#4338ca',
+            background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
           }}>
             Keyword Rankings
           </span>
@@ -454,10 +454,10 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
       ) : (
         <div className="card p-5">
           <div style={{ marginBottom: 12, fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Search Console Insights</div>
-          <GscSection badge="Growth Opportunities" badgeColor="#92400e" badgeBg="#fef3c7" rows={data.growth}     search={search} />
-          <GscSection badge="Quick Wins"           badgeColor="#166534" badgeBg="#dcfce7" rows={data.quickWins}  search={search} />
-          <GscSection badge="Low CTR"              badgeColor="#1e3a8a" badgeBg="#dbeafe" rows={data.lowCtr}     search={search} />
-          <GscSection badge="High Volume Low Rank" badgeColor="#6b21a8" badgeBg="#f3e8ff" rows={data.highVolume} search={search} />
+          <GscSection badge="Growth Opportunities" badgeColor="var(--amber)" badgeBg="var(--amber-subtle)" rows={data.growth}     search={search} />
+          <GscSection badge="Quick Wins"           badgeColor="var(--green)" badgeBg="var(--green-subtle)" rows={data.quickWins}  search={search} />
+          <GscSection badge="Low CTR"              badgeColor="var(--blue)" badgeBg="var(--blue-subtle)" rows={data.lowCtr}     search={search} />
+          <GscSection badge="High Volume Low Rank" badgeColor="#8b5cf6" badgeBg="rgba(139,92,246,0.12)" rows={data.highVolume} search={search} />
         </div>
       )}
     </div>
@@ -511,7 +511,7 @@ function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading
                 {r.movement === 'dropped'
                   ? <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }} title={r.previous_position != null ? `was #${r.previous_position}` : undefined}>dropped</span>
                   : r.movement === 'entered'
-                  ? <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
+                  ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
                   : <RankDelta delta={r.position_delta} />}
               </td>
               <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.search_volume)}</td>
@@ -531,7 +531,7 @@ function RankDelta({ delta }: { delta: number | null }) {
   if (delta == null || delta === 0) return <span style={{ color: 'var(--text-faint)' }}>—</span>
   const improved = delta > 0
   return (
-    <span style={{ color: improved ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: '0.75rem' }}>
+    <span style={{ color: improved ? 'var(--green)' : 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }}>
       {improved ? '▲' : '▼'} {Math.abs(delta)}
     </span>
   )

@@ -52,19 +52,19 @@ const BADGE_PALETTE = [
 ]
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string; bg: string; border: string }> = {
-  pending:     { label: 'Pending',    dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  scheduled:   { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
-  approved:    { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
-  generating:  { label: 'Generating',dot: '#f97316', color: '#c2410c', bg: '#ffedd5', border: '#f97316' },
-  generated:   { label: 'For Review', dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  for_review:  { label: 'For Review', dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  draft_saved: { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
-  published:   { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
-  rejected:    { label: 'Rejected',  dot: '#ef4444', color: '#991b1b', bg: '#fee2e2', border: '#ef4444' },
+  pending:     { label: 'Pending',    dot: 'var(--amber)', color: 'var(--amber)', bg: 'var(--amber-subtle)', border: 'var(--amber)' },
+  scheduled:   { label: 'Approved',  dot: 'var(--blue)', color: 'var(--blue)', bg: 'var(--blue-subtle)', border: 'var(--blue)' },
+  approved:    { label: 'Approved',  dot: 'var(--blue)', color: 'var(--blue)', bg: 'var(--blue-subtle)', border: 'var(--blue)' },
+  generating:  { label: 'Generating',dot: '#f97316', color: '#f97316', bg: 'rgba(249,115,22,0.14)', border: '#f97316' },
+  generated:   { label: 'For Review', dot: 'var(--amber)', color: 'var(--amber)', bg: 'var(--amber-subtle)', border: 'var(--amber)' },
+  for_review:  { label: 'For Review', dot: 'var(--amber)', color: 'var(--amber)', bg: 'var(--amber-subtle)', border: 'var(--amber)' },
+  draft_saved: { label: 'Published', dot: 'var(--green)', color: 'var(--green)', bg: 'var(--green-subtle)', border: 'var(--green)' },
+  published:   { label: 'Published', dot: 'var(--green)', color: 'var(--green)', bg: 'var(--green-subtle)', border: 'var(--green)' },
+  rejected:    { label: 'Rejected',  dot: 'var(--red)', color: 'var(--red)', bg: 'var(--red-subtle)', border: 'var(--red)' },
 }
 
 function getStatusCfg(status: string) {
-  return STATUS_CONFIG[status] ?? { label: status, dot: '#9ca3af', color: '#374151' }
+  return STATUS_CONFIG[status] ?? { label: status, dot: 'var(--text-faint)', color: 'var(--text-primary)' }
 }
 
 function clusterColor(label: string) {
@@ -83,7 +83,7 @@ function getBadge(item: CalendarItem): { label: string; bg: string; text: string
 }
 
 function getStatusBorder(status: string): string {
-  return STATUS_CONFIG[status]?.border ?? '#e5e7eb'
+  return STATUS_CONFIG[status]?.border ?? 'var(--border)'
 }
 
 function shortDate(dateStr: string): string {
@@ -378,7 +378,7 @@ export default function ContentCalendar({
                   padding: '0.3125rem 0.875rem', fontSize: '0.8125rem',
                   fontWeight: activeCalView === view ? 600 : 400,
                   borderRadius: 6, border: 'none', cursor: 'pointer',
-                  background: activeCalView === view ? 'var(--bg-surface, #fff)' : 'transparent',
+                  background: activeCalView === view ? 'var(--bg-surface)' : 'transparent',
                   color: activeCalView === view ? 'var(--text-primary)' : 'var(--text-muted)',
                   boxShadow: activeCalView === view ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
                   transition: 'all 0.15s', whiteSpace: 'nowrap',
@@ -399,16 +399,16 @@ export default function ContentCalendar({
           gap:          10,
           padding:      '10px 14px',
           marginBottom: 16,
-          background:   '#fef3c7',
-          border:       '1px solid #f59e0b',
+          background:   'var(--amber-subtle)',
+          border:       '1px solid var(--amber)',
           borderRadius: 8,
         }}>
-          <span style={{ fontSize: 13, color: '#92400e', flex: 1 }}>
+          <span style={{ fontSize: 13, color: 'var(--amber)', flex: 1 }}>
             {items.filter(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')).length} posts need approval
           </span>
           <button
             onClick={() => setStatusFilter('for_review')}
-            style={{ fontSize: 12, color: '#92400e', fontWeight: 600, background: 'none', border: '1px solid #f59e0b', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}
+            style={{ fontSize: 12, color: 'var(--amber)', fontWeight: 600, background: 'none', border: '1px solid var(--amber)', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}
           >
             Show pending only
           </button>
@@ -468,7 +468,7 @@ export default function ContentCalendar({
                 {activeCalView === 'blog' && unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length > 0 && (
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: 'var(--text-muted)', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
                       <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled</span>
                       <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                     </div>
@@ -507,7 +507,7 @@ export default function ContentCalendar({
                 {activeCalView === 'service' && unscheduled.filter(i => i.contentType === 'service_area').length > 0 && (
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: 'var(--text-muted)', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
                       <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled Pages</span>
                       <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                     </div>
@@ -599,7 +599,7 @@ function ContentCard({
         <span style={{
           fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
           background: isSA ? 'rgba(99,102,241,0.12)' : 'rgba(107,114,128,0.1)',
-          color: isSA ? '#6366f1' : '#6b7280',
+          color: isSA ? '#6366f1' : 'var(--text-secondary)',
           letterSpacing: '0.04em', flexShrink: 0, textTransform: 'uppercase',
         }}>
           {isSA ? 'Page' : 'Blog'}

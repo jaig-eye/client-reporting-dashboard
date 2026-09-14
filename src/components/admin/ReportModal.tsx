@@ -96,7 +96,7 @@ export default function ReportModal({ from, to, compare, clientId, onClose }: Pr
         </div>
 
         {/* Preview iframe */}
-        <div style={{ flex: 1, overflow: 'hidden', background: '#f3f4f6', minHeight: 420 }}>
+        <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg-subtle)', minHeight: 420 }}>
           <iframe
             src={previewSrc}
             style={{ display: 'block', width: '100%', height: '100%', minHeight: 420, border: 'none' }}

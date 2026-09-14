@@ -1120,3 +1120,38 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
   .benchmark-row { gap: 0.5rem !important; }
   .benchmark-row > span:last-child { min-width: 0 !important; }
 }
+
+/* Client record: the numbers you opened the client to check, in the header. */
+.client-header-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 1px;
+  background: var(--border-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+.client-header-stats__tile {
+  background: var(--bg-surface);
+  padding: 0.625rem 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.client-header-stats__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.client-header-stats__value {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}

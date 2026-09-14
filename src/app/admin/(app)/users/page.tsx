@@ -59,7 +59,7 @@ export default async function UsersPage() {
       {isSuperAdmin && (
         <div
           className="mb-4 rounded-xl px-4 py-3 text-sm"
-          style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: 'var(--blue)' }}
+          style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
         >
           You are signed in as <strong>Super Admin</strong>. Your account is managed via
           environment configuration and does not appear in this list.

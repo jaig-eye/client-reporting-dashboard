@@ -126,15 +126,15 @@ export default function MonthlyReviewClientSection({
           alignItems:   'center',
           gap:          8,
           padding:      '10px 14px',
-          background:   isComplete ? '#f0fdf4' : 'var(--bg-subtle)',
-          border:       `1px solid ${isComplete ? '#bbf7d0' : 'var(--border)'}`,
+          background:   isComplete ? 'var(--green-subtle)' : 'var(--bg-subtle)',
+          border:       `1px solid ${isComplete ? 'var(--green)' : 'var(--border)'}`,
           borderRadius: 8,
           cursor:       'pointer',
           textAlign:    'left',
           marginBottom: effectivelyCollapsed ? 0 : 8,
         }}
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: 13, fontWeight: 600, color: isComplete ? '#15803d' : 'var(--text-primary)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: 13, fontWeight: 600, color: isComplete ? 'var(--green)' : 'var(--text-primary)' }}>
           {isComplete ? '✓ ' : ''}{clientName}
           <span
             role="link"

@@ -55,14 +55,14 @@ export default function IntegrationCard({
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600,
-                background: '#dcfce7', color: '#166534',
+                background: 'var(--green-subtle)', color: 'var(--green)',
                 transition: 'all 0.3s',
               }}
             >
               {animate ? (
                 <svg width="11" height="11" viewBox="0 0 12 12" fill="none" style={{ animation: 'checkmark-draw 0.4s ease forwards' }}>
-                  <circle cx="6" cy="6" r="5.5" stroke="#16a34a" strokeWidth="1" fill="#dcfce7" style={{ animation: 'circle-scale 0.3s ease forwards' }} />
-                  <polyline points="2.5,6 5,8.5 9.5,3.5" stroke="#16a34a" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                  <circle cx="6" cy="6" r="5.5" stroke="var(--green)" strokeWidth="1" fill="var(--green-subtle)" style={{ animation: 'circle-scale 0.3s ease forwards' }} />
+                  <polyline points="2.5,6 5,8.5 9.5,3.5" stroke="var(--green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
                     style={{ strokeDasharray: 10, strokeDashoffset: 10, animation: 'checkmark-draw 0.4s 0.15s ease forwards' }} />
                 </svg>
               ) : '✓'} Connected

@@ -286,8 +286,8 @@ export default function LivePostActionModal({
           {destructive && (
             <div style={{
               marginTop: 12, padding: '8px 10px', borderRadius: 6,
-              background: '#fee2e2', border: '1px solid #fca5a5',
-              fontSize: 11.5, color: '#b91c1c', lineHeight: 1.5,
+              background: 'var(--red-subtle)', border: '1px solid var(--red)',
+              fontSize: 11.5, color: 'var(--red)', lineHeight: 1.5,
             }}>
               {isBoth
                 ? 'This removes the article from both live sites. The WordPress copy goes to the trash and can be restored from wp-admin; the BigCommerce copy is deleted permanently, with no trash and no undo.'
@@ -321,7 +321,7 @@ export default function LivePostActionModal({
             disabled={busy}
             className="btn btn-sm"
             style={{
-              background: destructive ? 'var(--red, #dc2626)' : 'var(--blue)',
+              background: destructive ? 'var(--red)' : 'var(--blue)',
               color: '#fff', border: 'none', fontWeight: 600,
               opacity: busy ? 0.6 : 1,
             }}

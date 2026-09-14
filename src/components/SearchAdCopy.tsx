@@ -18,11 +18,11 @@ export interface SearchAdCopyRow {
 }
 
 const STRENGTH_STYLE: Record<string, { color: string; bg: string }> = {
-  EXCELLENT:    { color: '#166534', bg: '#dcfce7' },
-  GOOD:         { color: '#1d4ed8', bg: '#dbeafe' },
-  AVERAGE:      { color: '#854d0e', bg: '#fef3c7' },
-  POOR:         { color: '#991b1b', bg: '#fee2e2' },
-  PENDING:      { color: '#64748b', bg: '#f1f5f9' },
+  EXCELLENT:    { color: 'var(--green)', bg: 'var(--green-subtle)' },
+  GOOD:         { color: 'var(--blue)', bg: 'var(--blue-subtle)' },
+  AVERAGE:      { color: 'var(--amber)', bg: 'var(--amber-subtle)' },
+  POOR:         { color: 'var(--red)', bg: 'var(--red-subtle)' },
+  PENDING:      { color: 'var(--text-muted)', bg: 'var(--bg-subtle)' },
 }
 
 function adTypeLabel(t: string | null) {
@@ -39,7 +39,7 @@ function statusDot(s: string | null) {
     <span
       style={{
         display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-        background: on ? '#22c55e' : '#94a3b8', marginRight: 5, flexShrink: 0,
+        background: on ? 'var(--green)' : 'var(--text-muted)', marginRight: 5, flexShrink: 0,
       }}
     />
   )
@@ -57,7 +57,7 @@ export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
   return (
     <div className="space-y-4">
       {ads.map(ad => {
-        const strengthStyle = STRENGTH_STYLE[(ad.ad_strength ?? '').toUpperCase()] ?? { color: '#64748b', bg: '#f1f5f9' }
+        const strengthStyle = STRENGTH_STYLE[(ad.ad_strength ?? '').toUpperCase()] ?? { color: 'var(--text-muted)', bg: 'var(--bg-subtle)' }
         const typeLabel     = adTypeLabel(ad.ad_type)
         const urlDisplay    = ad.final_url
           ? ad.final_url.replace(/^https?:\/\//, '').replace(/\/$/, '')
@@ -79,7 +79,7 @@ export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
                 <span
                   style={{
                     fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em',
-                    padding: '1px 7px', borderRadius: 99, background: '#f0f4ff', color: '#4338ca',
+                    padding: '1px 7px', borderRadius: 99, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
                   }}
                 >
                   {typeLabel}
@@ -107,7 +107,7 @@ export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
             {urlDisplay && (
               <p
                 className="text-xs mb-2 font-medium truncate"
-                style={{ color: '#16a34a' }}
+                style={{ color: 'var(--green)' }}
                 title={ad.final_url ?? undefined}
               >
                 {urlDisplay}

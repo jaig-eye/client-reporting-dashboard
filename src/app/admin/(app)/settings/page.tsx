@@ -2,8 +2,11 @@
 
 // Agency Settings — /admin/settings
 // Tabbed: Branding / Benchmarks / Colors / AI / Sync / Notifications
+// The active tab lives in the URL (?tab=…) so every tab is linkable — this is what
+// makes /admin/settings/notifications' redirect to ?tab=notifications actually land.
 
-import { useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
@@ -160,9 +163,32 @@ const HIDEABLE_CONNECTORS = [
   { type: 'ghl',                   label: 'CRM (LaunchLocal)',     hint: 'Contacts, calls, forms, opportunities — GoHighLevel CRM tab'   },
 ]
 
-export default function AgencySettingsPage() {
-  const [activeTab,  setActiveTab]  = useState('branding')
-  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['branding']))
+const DEFAULT_TAB = 'branding'
+
+function AgencySettingsPageInner() {
+  const router       = useRouter()
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+
+  // Active tab comes from ?tab=, validated against TABS so a junk param falls back
+  // to Branding rather than rendering an empty page.
+  const tabParam  = searchParams.get('tab')
+  const activeTab = tabParam && TABS.some(t => t.id === tabParam) ? tabParam : DEFAULT_TAB
+
+  const setActiveTab = useCallback((next: string) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === DEFAULT_TAB) params.delete('tab')
+    else params.set('tab', next)
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [router, pathname, searchParams])
+
+  // Tabs mount on first view and stay mounted, so their fetches/state survive switching.
+  // Seeded from the URL's tab so a deep link renders its own content, not Branding's.
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set([activeTab]))
+  useEffect(() => {
+    setVisitedTabs(prev => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)))
+  }, [activeTab])
   const [form,       setForm]       = useState<Settings>(DEFAULT)
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
@@ -398,7 +424,7 @@ export default function AgencySettingsPage() {
           <button
             key={tab.id}
             type="button"
-            onClick={() => { setActiveTab(tab.id); setVisitedTabs(p => new Set(p).add(tab.id)) }}
+            onClick={() => setActiveTab(tab.id)}
             style={{
               padding: '0.5rem 1rem', border: 'none', background: 'transparent',
               fontSize: '0.8125rem', fontWeight: activeTab === tab.id ? 600 : 400,
@@ -1196,6 +1222,15 @@ export default function AgencySettingsPage() {
         </div>
       </form>
     </div>
+  )
+}
+
+// useSearchParams() must sit under a Suspense boundary.
+export default function AgencySettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AgencySettingsPageInner />
+    </Suspense>
   )
 }
 
