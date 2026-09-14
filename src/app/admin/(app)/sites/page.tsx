@@ -1,52 +1,26 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
-import { GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple, DownloadSimple, X } from '@phosphor-icons/react'
+// Sites — /admin/sites
+// Uptime, SSL and SEO-audit monitoring for every site. Summary first (status headline + figures),
+// then one compact row per site with a 30-day uptime bar, and a recent-incidents rail.
+
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent } from 'react'
+import {
+  GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple, DownloadSimple,
+  ArrowSquareOut, MagnifyingGlassPlus, CalendarCheck, CalendarX, X,
+} from '@phosphor-icons/react'
+import ScrollTabs from '@/components/ui/ScrollTabs'
+import SitesOverview from './SitesOverview'
+import SiteRow from './SiteRow'
+import IncidentsRail from './IncidentsRail'
+import {
+  type AuditPageRow, type Client, type DailyRow, type Group, type IncidentRow, type Site,
+  HISTORY_DAYS, PLATFORM_LABELS, STATE_RANK, detectPlatform, fmtPct, lastNDates, plural, scoreTone, siteState, timeAgo,
+} from './siteData'
 
 const PLATFORMS = ['wordpress', 'ghl', 'bigcommerce', 'shopify', 'custom', 'other'] as const
 const HOSTING_TYPES = ['ours', 'client'] as const
 const STATUSES = ['active', 'paused', 'archived'] as const
-
-interface Site {
-  id:               string
-  name:             string
-  url:              string
-  platform:         string
-  hosting_type:     string
-  hosting_provider: string | null
-  server_account:   string | null
-  status:           string
-  notes:            string | null
-  is_up:            boolean | null
-  last_checked_at:  string | null
-  last_status_code: number | null
-  last_response_ms: number | null
-  uptime_7d:        number | null
-  ssl_days_remaining: number | null
-  ssl_expires_at:   string | null
-  consecutive_failures: number
-  client_id:        string | null
-  group_id:         string | null
-  discord_channel_id: string | null
-  clients:          { id: string; name: string } | null
-  site_groups:      { id: string; name: string } | null
-  audit_enabled:    boolean
-  audit_scope:      string
-  last_audit_at:    string | null
-  audit_score:      number | null
-  audit_errors:     number | null
-  audit_warnings:   number | null
-}
-
-interface Group  { id: string; name: string }
-interface Client { id: string; name: string; website: string | null }
-
-interface AuditPageRow {
-  url: string; score: number | null
-  errors: number; warnings: number; title: string | null
-  h1_count: number; has_schema: boolean; has_canonical: boolean
-  issues: { type: string; sev: string; msg: string }[]
-}
 
 const EMPTY_FORM = {
   name: '', url: '', client_id: '', platform: 'custom', hosting_type: 'client',
@@ -54,52 +28,17 @@ const EMPTY_FORM = {
   discord_channel_id: '',
 }
 
-function StatusDot({ isUp, status }: { isUp: boolean | null; status: string }) {
-  if (status !== 'active') return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} title="Paused / archived" />
-  if (isUp === null)  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', display: 'inline-block' }} title="Not yet checked" />
-  if (isUp)           return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} title="Up" />
-  return <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red)', boxShadow: '0 0 0 3px rgba(239,68,68,0.20)', display: 'inline-block' }} title="Down" />
-}
+const toneColor = (tone: string) => tone === 'muted' ? 'var(--text-faint)' : `var(--${tone})`
 
-function SslBadge({ days }: { days: number | null }) {
-  if (days === null) return <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-  const color = days <= 7 ? 'var(--red)' : days <= 30 ? 'var(--amber)' : 'var(--green)'
-  return <span style={{ fontSize: '0.75rem', fontWeight: 600, color }}>{days}d</span>
-}
-
-function PlatformBadge({ p }: { p: string }) {
-  const colors: Record<string, string> = {
-    wordpress: '#21759b', ghl: '#0ea5e9', bigcommerce: '#121118',
-    shopify: '#5cb85c', custom: '#6b7280', other: '#9ca3af',
-  }
-  return (
-    <span style={{
-      fontSize: '0.625rem', fontWeight: 700, padding: '2px 6px', borderRadius: 999,
-      background: colors[p] ?? '#6b7280', color: '#fff', textTransform: 'uppercase', letterSpacing: '0.04em',
-    }}>{p}</span>
-  )
-}
-
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return '—'
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (diff < 60)    return `${diff}s ago`
-  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
-
-function detectPlatform(url: string): string {
-  const lower = url.toLowerCase()
-  if (lower.includes('gohighlevel') || lower.includes('.ghl.'))  return 'ghl'
-  if (lower.includes('bigcommerce'))                              return 'bigcommerce'
-  if (lower.includes('myshopify'))                               return 'shopify'
-  return 'custom'
-}
+interface MenuState { site: Site; top: number; right: number }
 
 export default function SitesPage() {
-  const [sites,   setSites]   = useState<Site[]>([])
-  const [allMonitoredClientIds, setAllMonitoredClientIds] = useState<Set<string>>(new Set())
+  const [sites,    setSites]    = useState<Site[]>([])
+  // Unfiltered list: drives the summary, the filter counts, the incidents rail and "unmonitored".
+  const [allSites, setAllSites] = useState<Site[]>([])
+  const [daily,     setDaily]     = useState<DailyRow[]>([])
+  const [incidents, setIncidents] = useState<IncidentRow[]>([])
+  const [allLoaded, setAllLoaded] = useState(false)
   const [groups,  setGroups]  = useState<Group[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [wpUrlsByClient,  setWpUrlsByClient]  = useState<Record<string, string>>({})
@@ -124,6 +63,10 @@ export default function SitesPage() {
 
   // Delete confirm
   const [deleteId, setDeleteId] = useState<string | null>(null)
+
+  // Row actions menu
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   // Audit expand / data
   const [openAuditId,  setOpenAuditId]  = useState<string | null>(null)
@@ -170,36 +113,71 @@ export default function SitesPage() {
     setClients(data.clients ?? [])
   }, [])
 
-  const fetchAllMonitoredClientIds = useCallback(async () => {
+  const fetchAllSites = useCallback(async () => {
     const res = await fetch('/api/admin/sites')
-    if (!res.ok) return
+    if (!res.ok) { setAllLoaded(true); return }
     const data = await res.json()
-    setAllMonitoredClientIds(new Set((data.sites ?? []).map((s: Site) => s.client_id).filter(Boolean)))
+    setAllSites(data.sites ?? [])
+    setDaily(data.daily ?? [])
+    setIncidents(data.incidents ?? [])
+    setAllLoaded(true)
   }, [])
+
+  const refreshAll = useCallback(() => { fetchSites(); fetchAllSites() }, [fetchSites, fetchAllSites])
 
   useEffect(() => { fetchSites() }, [fetchSites])
   useEffect(() => { fetchClients() }, [fetchClients])
-  useEffect(() => { fetchAllMonitoredClientIds() }, [fetchAllMonitoredClientIds])
+  useEffect(() => { fetchAllSites() }, [fetchAllSites])
 
-  // DOWN-first sort: down → active/unchecked → active/up → paused/archived, then alpha
-  const sortedSites = useMemo(() => {
-    const rank = (s: Site) => {
-      if (s.status !== 'active') return 4
-      if (s.is_up === false)     return 1
-      if (s.is_up === null)      return 2
-      return 3
+  // Close the row menu on outside click, Escape, scroll or resize; focus its first item on open.
+  useEffect(() => {
+    if (!menu) return
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const close = () => setMenu(null)
+    const onDown = (e: globalThis.MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) close() }
+    const onKey  = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
     }
-    return [...sites].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
-  }, [sites])
+  }, [menu])
+
+  // Down first, then degraded, unchecked, up, paused/archived; alphabetical within each.
+  const sortedSites = useMemo(
+    () => [...sites].sort((a, b) => STATE_RANK[siteState(a)] - STATE_RANK[siteState(b)] || a.name.localeCompare(b.name)),
+    [sites],
+  )
+
+  const dates = useMemo(() => lastNDates(HISTORY_DAYS), [])
+  const historyBySite = useMemo(() => {
+    const m = new Map<string, Map<string, DailyRow>>()
+    for (const row of daily) {
+      if (!m.has(row.site_id)) m.set(row.site_id, new Map())
+      m.get(row.site_id)!.set(row.date, row)
+    }
+    return m
+  }, [daily])
+  const anyHistory = historyBySite.size > 0
+
+  const allMonitoredClientIds = useMemo(
+    () => new Set(allSites.map(s => s.client_id).filter((v): v is string => !!v)),
+    [allSites],
+  )
 
   // Clients that have a known URL (profile, WordPress, or GSC) but no site record yet
   const unmonitoredClients = useMemo(() => {
-    if (loading) return []
+    if (loading || !allLoaded) return []
     return clients.filter(c => {
       const hasUrl = !!(c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id])
       return hasUrl && !allMonitoredClientIds.has(c.id)
     })
-  }, [clients, allMonitoredClientIds, wpUrlsByClient, gscUrlsByClient, loading])
+  }, [clients, allMonitoredClientIds, wpUrlsByClient, gscUrlsByClient, loading, allLoaded])
 
   // URL suggestion + source label for the selected client in the modal
   // Priority: profile website > WordPress connection > GSC property
@@ -230,15 +208,12 @@ export default function SitesPage() {
     )
     setImporting(false)
     setImportDismissed(true)
-    await Promise.all([fetchSites(), fetchAllMonitoredClientIds()])
+    await Promise.all([fetchSites(), fetchAllSites()])
   }
 
   function openAdd(prefill?: { name: string; url: string; client_id: string; platform: string }) {
     setEditSite(null)
-    setForm(prefill
-      ? { ...EMPTY_FORM, ...prefill }
-      : EMPTY_FORM
-    )
+    setForm(prefill ? { ...EMPTY_FORM, ...prefill } : EMPTY_FORM)
     setSaveError('')
     setModalOpen(true)
   }
@@ -284,13 +259,19 @@ export default function SitesPage() {
     const data = await res.json()
     if (!res.ok) { setSaveError(data.error ?? 'Save failed'); setSaving(false); return }
     setModalOpen(false)
-    fetchSites()
+    refreshAll()
     setSaving(false)
   }
 
   async function handleDelete(id: string) {
     const res = await fetch(`/api/admin/sites/${id}`, { method: 'DELETE' })
-    if (res.ok) { setDeleteId(null); fetchSites() }
+    if (res.ok) { setDeleteId(null); if (openAuditId === id) setOpenAuditId(null); refreshAll() }
+  }
+
+  const patchSite = (siteId: string, patch: Partial<Site>) => {
+    const apply = (list: Site[]) => list.map(s => s.id === siteId ? { ...s, ...patch } : s)
+    setSites(apply)
+    setAllSites(apply)
   }
 
   async function handleAuditToggle(siteId: string, enabled: boolean, scope: string) {
@@ -308,17 +289,16 @@ export default function SitesPage() {
         return
       }
       const data = await res.json()
-      setSites(prev => prev.map(s => s.id === siteId ? {
-        ...s,
-        audit_enabled:  enabled,
-        audit_scope:    scope,
+      patchSite(siteId, {
+        audit_enabled: enabled,
+        audit_scope:   scope,
         ...(data.audit?.score != null && {
           audit_score:    data.audit.score,
           audit_errors:   data.audit.errors,
           audit_warnings: data.audit.warnings,
           last_audit_at:  new Date().toISOString(),
         }),
-      } : s))
+      })
       if (!data.disabled) loadAuditPages(siteId, true)
     } finally {
       setAuditLoading(prev => { const n = new Set(prev); n.delete(siteId); return n })
@@ -340,573 +320,438 @@ export default function SitesPage() {
       body: JSON.stringify({ audit_scope: scope }),
     })
     if (!res.ok) return
-    setSites(prev => prev.map(s => s.id === siteId ? { ...s, audit_scope: scope } : s))
+    patchSite(siteId, { audit_scope: scope })
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '0.5rem 0.75rem', borderRadius: 8,
-    border: '1px solid var(--border)', background: 'var(--bg-subtle)',
-    color: 'var(--text-primary)', fontSize: '0.875rem',
+  function toggleAudit(siteId: string, forceOpen = false) {
+    const next = !forceOpen && openAuditId === siteId ? null : siteId
+    setOpenAuditId(next)
+    if (next) loadAuditPages(siteId)
   }
-  const labelStyle: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-faint)', display: 'block', marginBottom: 4 }
 
-                // Lead with the answer: which sites need attention, not how many exist.
-  const downCount    = sites.filter(x => x.is_up === false).length
-  const expiringSoon = sites.filter(x => x.ssl_days_remaining != null && x.ssl_days_remaining <= 30).length
-  const uptimes      = sites.map(x => x.uptime_7d).filter((v): v is number => v != null)
-  const avgUptime    = uptimes.length ? uptimes.reduce((a, b) => a + b, 0) / uptimes.length : null
+  function openSiteFromRail(siteId: string) {
+    toggleAudit(siteId, true)
+    requestAnimationFrame(() => {
+      document.getElementById(`site-audit-${siteId}`)?.closest('li')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }
+
+  function toggleMenu(e: MouseEvent<HTMLButtonElement>, site: Site) {
+    if (menu?.site.id === site.id) { setMenu(null); return }
+    const r = e.currentTarget.getBoundingClientRect()
+    const MENU_H = 232
+    const top = r.bottom + 4 + MENU_H > window.innerHeight ? Math.max(8, r.top - 4 - MENU_H) : r.bottom + 4
+    setMenu({ site, top, right: Math.max(8, window.innerWidth - r.right) })
+  }
+
+  const clearFilters = () => { setSearch(''); setFilterStatus(''); setFilterPlatform(''); setFilterUp(''); setFilterGroup('') }
+  const hasFilters = !!(search || filterStatus || filterPlatform || filterUp || filterGroup)
+
+  const labelStyle: React.CSSProperties = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }
+
+  // Header summary line — leads with what needs attention.
+  const downCount    = allSites.filter(x => x.status === 'active' && x.is_up === false).length
+  const expiringSoon = allSites.filter(x => x.ssl_days_remaining != null && x.ssl_days_remaining <= 30).length
+  const upCount      = allSites.filter(x => x.is_up === true).length
   const siteSummary  = [
-    `${sites.length} site${sites.length !== 1 ? 's' : ''}`,
+    plural(allSites.length, 'site'),
     downCount > 0 ? `${downCount} down` : null,
-    avgUptime != null ? `${avgUptime.toFixed(1)}% avg uptime` : null,
-    expiringSoon > 0 ? `${expiringSoon} certificate${expiringSoon !== 1 ? 's' : ''} expiring` : null,
+    expiringSoon > 0 ? `${plural(expiringSoon, 'certificate')} expiring` : null,
   ].filter(Boolean).join(' · ')
 
-  // Shared by the desktop table row and the phone row, so both open the same audit.
-  const renderAuditToggle = (site: Site) => (
-    <>
-                      {auditLoading.has(site.id) ? (
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Running…</span>
-                      ) : (
-                        <label style={{ position: 'relative', display: 'inline-block', width: 36, height: 20, cursor: 'pointer', flexShrink: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={site.audit_enabled ?? false}
-                            onChange={e => handleAuditToggle(site.id, e.target.checked, site.audit_scope ?? 'key')}
-                            style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
-                          />
-                          <span style={{ position: 'absolute', inset: 0, borderRadius: 999, background: site.audit_enabled ? 'var(--blue)' : 'var(--border)', transition: 'background 0.2s' }} />
-                          <span style={{ position: 'absolute', top: 2, left: site.audit_enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
-                        </label>
-                      )}
-    </>
-  )
-
-  const renderAuditPanel = (site: Site) => (
-                        <div style={{ padding: '1rem 1.25rem' }}>
-                          {/* Summary bar */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-                            {site.audit_score != null && (
-                              <span style={{ fontSize: '1.5rem', fontWeight: 800, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)', lineHeight: 1 }}>
-                                {site.audit_score}
-                              </span>
-                            )}
-                            {(site.audit_errors != null || site.audit_warnings != null) && (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                {site.audit_errors ?? 0} errors · {site.audit_warnings ?? 0} warnings
-                                {auditPages[site.id] && ` · ${auditPages[site.id].length} pages`}
-                              </span>
-                            )}
-                            {site.last_audit_at && (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
-                                Last audited {timeAgo(site.last_audit_at)}
-                              </span>
-                            )}
-                            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Scope:</span>
-                              <select
-                                value={site.audit_scope ?? 'key'}
-                                onChange={e => handleScopeChange(site.id, e.target.value)}
-                                style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
-                              >
-                                <option value="key">Key pages</option>
-                                <option value="all">All pages</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Per-page table */}
-                          {auditPages[site.id] ? (
-                            auditPages[site.id].length > 0 ? (
-                              <div className="table-scroll">
-                                <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.75rem' }}>
-                                  <thead>
-                                    <tr>
-                                      {['URL', 'Score', 'Top Issue', 'Title', 'H1', 'Schema', 'Canonical'].map((h, i) => (
-                                        <th key={i} style={{ padding: '0.375rem 0.625rem', textAlign: 'left', fontSize: '0.625rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
-                                          {h}
-                                        </th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {auditPages[site.id].slice(0, 15).map((page, i) => (
-                                      <tr key={i}>
-                                        <td style={{ padding: '0.375rem 0.625rem', maxWidth: 280 }}>
-                                          <a href={page.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>
-                                            {page.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
-                                          </a>
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 700, color: (page.score ?? 0) >= 80 ? 'var(--green)' : (page.score ?? 0) >= 60 ? 'var(--amber)' : 'var(--red)', whiteSpace: 'nowrap' }}>
-                                          {page.score ?? '—'}
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: 'var(--text-muted)', maxWidth: 280 }}>
-                                          <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>
-                                            {page.issues?.[0]?.msg ?? 'Clean'}
-                                          </span>
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.title ? 'var(--text-primary)' : 'var(--red)', textAlign: 'center' }}>
-                                          {page.title ? '✓' : '✗'}
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.h1_count === 1 ? 'var(--text-primary)' : 'var(--red)', textAlign: 'center' }}>
-                                          {page.h1_count}
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_schema ? 'var(--green)' : 'var(--text-faint)', textAlign: 'center' }}>
-                                          {page.has_schema ? '✓' : '—'}
-                                        </td>
-                                        <td style={{ padding: '0.375rem 0.625rem', color: page.has_canonical ? 'var(--green)' : 'var(--text-faint)', textAlign: 'center' }}>
-                                          {page.has_canonical ? '✓' : '—'}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                                {auditPages[site.id].length > 15 && (
-                                  <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.5rem 0 0', paddingLeft: '0.625rem' }}>
-                                    Showing 15 of {auditPages[site.id].length} pages
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>No pages crawled yet.</p>
-                            )
-                          ) : (
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)', margin: 0 }}>
-                              {site.audit_enabled ? 'Loading audit data…' : 'Enable weekly audit to start crawling.'}
-                            </p>
-                          )}
-
-                          {/* Footer */}
-                          <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', margin: '0.75rem 0 0', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
-                            Cloudflare users: whitelist User-Agent <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border)' }}>GoLaunchLocal</code> in a WAF custom rule (Skip WAF + Bot Fight Mode).
-                            {site.audit_enabled && ' Runs weekly (Mon 3 AM UTC).'}
-                          </p>
-                        </div>
-  )
-
-  return (
-    <div>
-      {/* Header */}
-      <div className="sites-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-          <GlobeSimple size={22} style={{ color: 'var(--text-faint)' }} />
-          <div>
-            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Sites</h1>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>{siteSummary}</p>
+  const renderAuditPanel = (site: Site) => {
+    const pages   = auditPages[site.id]
+    const running = auditLoading.has(site.id)
+    return (
+      <div className="site-audit">
+        <div className="site-audit__bar">
+          <div className="site-audit__heading">
+            <span className="site-audit__title">SEO audit</span>
+            <span className="site-beta">Beta</span>
+          </div>
+          <div className="site-audit__controls">
+            <label className="site-audit__scope">
+              <span>Scope</span>
+              <select className="input" value={site.audit_scope ?? 'key'} onChange={e => handleScopeChange(site.id, e.target.value)}>
+                <option value="key">Key pages</option>
+                <option value="all">All pages</option>
+              </select>
+            </label>
+            <label className="site-switch">
+              <span>{running ? 'Running…' : 'Weekly audit'}</span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={site.audit_enabled ?? false}
+                disabled={running}
+                onChange={e => handleAuditToggle(site.id, e.target.checked, site.audit_scope ?? 'key')}
+              />
+              <span className="site-switch__track" aria-hidden><span className="site-switch__knob" /></span>
+            </label>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={fetchSites} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            <ArrowClockwise size={14} /> Refresh
+
+        {(site.audit_score != null || site.audit_errors != null || site.audit_warnings != null || site.last_audit_at) && (
+          <div className="site-audit__summary">
+          {site.audit_score != null && (
+            <span className="site-audit__score" style={{ color: toneColor(scoreTone(site.audit_score)) }}>{site.audit_score}</span>
+          )}
+          <span className="site-audit__facts">
+            {(site.audit_errors != null || site.audit_warnings != null) && (
+              <span>{site.audit_errors ?? 0} errors · {site.audit_warnings ?? 0} warnings{pages && ` · ${pages.length} pages`}</span>
+            )}
+            {site.last_audit_at && <span className="site-audit__faint">Last audited {timeAgo(site.last_audit_at)}</span>}
+          </span>
+        </div>
+        )}
+
+        {pages ? (
+          pages.length > 0 ? (
+            <div className="table-scroll site-audit__table">
+              <table>
+                <thead>
+                  <tr>
+                    {['URL', 'Score', 'Top issue', 'Title', 'H1', 'Schema', 'Canonical'].map(h => <th key={h}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pages.slice(0, 15).map((page, i) => (
+                    <tr key={i}>
+                      <td className="site-audit__url">
+                        <a href={page.url} target="_blank" rel="noopener noreferrer">{page.url.replace(/^https?:\/\/[^/]+/, '') || '/'}</a>
+                      </td>
+                      <td style={{ fontWeight: 700, color: toneColor(scoreTone(page.score ?? 0)) }}>{page.score ?? '—'}</td>
+                      <td className="site-audit__issue"><span>{page.issues?.[0]?.msg ?? 'Clean'}</span></td>
+                      <td className="site-audit__c" style={{ color: page.title ? 'var(--text-primary)' : 'var(--red)' }}>{page.title ? '✓' : '✗'}</td>
+                      <td className="site-audit__c" style={{ color: page.h1_count === 1 ? 'var(--text-primary)' : 'var(--red)' }}>{page.h1_count}</td>
+                      <td className="site-audit__c" style={{ color: page.has_schema ? 'var(--green)' : 'var(--text-faint)' }}>{page.has_schema ? '✓' : '—'}</td>
+                      <td className="site-audit__c" style={{ color: page.has_canonical ? 'var(--green)' : 'var(--text-faint)' }}>{page.has_canonical ? '✓' : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {pages.length > 15 && <p className="site-audit__faint site-audit__more">Showing 15 of {pages.length} pages</p>}
+            </div>
+          ) : (
+            <p className="site-audit__note">No pages crawled yet.</p>
+          )
+        ) : (
+          <p className="site-audit__note">{site.audit_enabled ? 'Loading audit data…' : 'Turn on the weekly audit to start crawling this site.'}</p>
+        )}
+
+        <p className="site-audit__foot">
+          Cloudflare users: whitelist User-Agent <code>GoLaunchLocal</code> in a WAF custom rule (Skip WAF + Bot Fight Mode).
+          {site.audit_enabled && ' Runs weekly (Mon 3 AM UTC).'}
+        </p>
+      </div>
+    )
+  }
+
+  const noSitesAtAll = allLoaded && allSites.length === 0 && !error
+
+  return (
+    <div className="site-page">
+      {/* Header */}
+      <header className="site-head">
+        <div className="site-head__text">
+          <h1 className="page-title">Sites</h1>
+          <p className="site-head__line">{allLoaded ? siteSummary : 'Uptime, SSL and SEO monitoring'}</p>
+        </div>
+        <div className="site-head__actions">
+          <button type="button" className="btn btn-secondary" onClick={refreshAll} aria-label="Refresh sites">
+            <ArrowClockwise size={15} aria-hidden /> <span className="site-hide-xs">Refresh</span>
           </button>
-          <button onClick={() => openAdd()} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: 'pointer', fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>
-            <Plus size={14} /> Add Site
+          <button type="button" className="btn btn-primary" onClick={() => openAdd()}>
+            <Plus size={15} weight="bold" aria-hidden /> Add site
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Unmonitored clients banner */}
-      {!importDismissed && !loading && unmonitoredClients.length > 0 && (
-        <div style={{
-          marginBottom: '1rem', padding: '0.875rem 1rem',
-          borderRadius: 10, border: '1px solid var(--blue-border)',
-          background: 'var(--blue-subtle)', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
-        }}>
-          <DownloadSimple size={16} style={{ color: 'var(--blue)', marginTop: 2, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--blue)', margin: '0 0 0.5rem' }}>
+      {!importDismissed && unmonitoredClients.length > 0 && (
+        <div className="card site-import">
+          <DownloadSimple size={18} className="site-import__icon" aria-hidden />
+          <div className="site-import__body">
+            <p className="site-import__title">
               {unmonitoredClients.length} client{unmonitoredClients.length !== 1 ? 's have' : ' has'} a website not yet monitored
             </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+            <div className="site-import__chips">
               {unmonitoredClients.map(c => {
                 const url    = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
                 const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
-  return (
+                return (
                   <button
                     key={c.id}
-                    onClick={() => openAdd({
-                      name:      c.name,
-                      url,
-                      client_id: c.id,
-                      platform:  detectPlatform(url),
-                    })}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.375rem',
-                      padding: '0.25rem 0.625rem', borderRadius: 999,
-                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
-                      cursor: 'pointer', fontSize: '0.75rem', color: 'var(--blue)', fontWeight: 500,
-                    }}
+                    type="button"
+                    className="site-import__chip"
+                    onClick={() => openAdd({ name: c.name, url, client_id: c.id, platform: detectPlatform(url) })}
                   >
-                    <Plus size={11} /> {c.name}
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {url.replace(/^https?:\/\//, '')}
-                    </span>
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: 'var(--blue-border)', color: 'var(--blue)' }}>
-                      {source}
-                    </span>
+                    <Plus size={11} aria-hidden /> {c.name}
+                    <span className="site-import__url">{url.replace(/^https?:\/\//, '')}</span>
+                    <span className="site-import__src">{source}</span>
                   </button>
                 )
               })}
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', flexShrink: 0, alignItems: 'flex-end' }}>
-            <button
-              onClick={handleImportAll}
-              disabled={importing}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: 'var(--blue)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
-            >
+          <div className="site-import__actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleImportAll} disabled={importing}>
               {importing ? 'Importing…' : `Import all ${unmonitoredClients.length}`}
             </button>
-            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.125rem', fontSize: '0.7rem' }}>
-              Dismiss
-            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setImportDismissed(true)}>Dismiss</button>
           </div>
         </div>
       )}
 
-      {/* Filters */}
-      <div className="sites-filters" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
-          <MagnifyingGlass size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }} />
-          <input
-            placeholder="Search name or URL…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ ...inputStyle, paddingLeft: '2rem' }}
-          />
-        </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">All statuses</option>
-          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">All platforms</option>
-          {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={filterUp} onChange={e => setFilterUp(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">Up / Down</option>
-          <option value="true">Up only</option>
-          <option value="false">Down only</option>
-        </select>
-        {groups.length > 0 && (
-          <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-            <option value="">All groups</option>
-            {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-        )}
-      </div>
-
-      {/* Audit error banner */}
-      {auditError && (
-        <div style={{ padding: '0.625rem 0.875rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <span>{auditError}</span>
-          <button onClick={() => setAuditError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: '1rem', lineHeight: 1, padding: 0, opacity: 0.6 }}>✕</button>
-        </div>
-      )}
-
-      {/* Table */}
-      {error ? (
-        <p style={{ color: 'var(--red)' }}>{error}</p>
-      ) : loading ? (
-        <p style={{ color: 'var(--text-faint)', padding: '3rem 0', textAlign: 'center' }}>Loading…</p>
-      ) : sites.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-faint)' }}>
-          <GlobeSimple size={40} style={{ marginBottom: '0.75rem', opacity: 0.3 }} />
-          <p style={{ margin: 0 }}>No sites yet — add one to start monitoring</p>
+      {noSitesAtAll ? (
+        <div className="card site-empty">
+          <span className="site-empty__icon" aria-hidden><GlobeSimple size={28} /></span>
+          <h2 className="site-empty__title">No sites yet</h2>
+          <p className="site-empty__desc">Add your first site to start monitoring uptime and SSL.</p>
+          <button type="button" className="btn btn-primary" onClick={() => openAdd()}>
+            <Plus size={15} weight="bold" aria-hidden /> Add site
+          </button>
         </div>
       ) : (
         <>
-        {/* Phone: one stacked row per site. Tapping the row opens the same audit panel
-            as the desktop table; edit/delete stay in the row as icon buttons. */}
-        <div className="only-sm">
-          <ul className="admin-rows admin-rows--boxed">
-            {sortedSites.map(site => {
-              const open = openAuditId === site.id
-              const statusLabel = site.status !== 'active' ? 'Paused or archived'
-                : site.is_up === null ? 'Not yet checked'
-                : site.is_up ? 'Up' : 'Down'
-              return (
-                <li key={site.id}>
-                  <div className="admin-row">
-                    <button
-                      type="button"
-                      className="admin-row__main"
-                      aria-expanded={open}
-                      onClick={() => {
-                        const next = open ? null : site.id
-                        setOpenAuditId(next)
-                        if (next) loadAuditPages(site.id)
-                      }}
-                    >
-                      <span className="admin-row__lead">
-                        <StatusDot isUp={site.is_up} status={site.status} />
-                        <span className="sr-only">{statusLabel}</span>
-                      </span>
-                      <span className="admin-row__body">
-                        <span className="admin-row__title">
-                          <span className="admin-row__name">{site.name}</span>
-                          {site.status !== 'active' && (
-                            <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
-                              {site.status}
-                            </span>
-                          )}
-                          <PlatformBadge p={site.platform} />
-                        </span>
-                        <span className="admin-row__sub">{site.url.replace(/^https?:\/\//, '')}</span>
-                        <span className="admin-row__meta">
-                          <span>SSL <SslBadge days={site.ssl_days_remaining} /></span>
-                          {site.clients?.name && <span>{site.clients.name}</span>}
-                          {site.audit_score != null && <span>Audit {site.audit_score}</span>}
-                        </span>
-                      </span>
-                    </button>
-                    <div className="admin-row__side">
-                      {site.uptime_7d != null ? (
-                        <span className="admin-row__figure" style={{ color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
-                          {Number(site.uptime_7d).toFixed(1)}%<small>7d</small>
-                        </span>
-                      ) : (
-                        <span className="admin-row__figure" style={{ color: 'var(--text-faint)' }}>—<small>7d</small></span>
-                      )}
-                      <div className="admin-row__actions">
-                        <button type="button" className="admin-row__icon-btn" aria-label={`Edit ${site.name}`} onClick={() => openEdit(site)}>
-                          <PencilSimple size={16} />
-                        </button>
-                        <button type="button" className="admin-row__icon-btn admin-row__icon-btn--danger" aria-label={`Delete ${site.name}`} onClick={() => setDeleteId(site.id)}>
-                          <TrashSimple size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  {open && (
-                    <div className="admin-row__panel">
-                      <div className="admin-row__panel-bar">
-                        <span>Weekly audit</span>
-                        {renderAuditToggle(site)}
-                      </div>
-                      {renderAuditPanel(site)}
-                    </div>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+          <SitesOverview sites={allSites} incidents={incidents} loading={!allLoaded} />
 
-        <div className="table-scroll hide-sm">
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
-            <thead>
-              <tr>
-                {(['', 'Name', 'Client', '7d Uptime', 'SSL', 'AUDIT_COL', 'Score', ''] as const).map((h, i) => (
-                  <th key={i} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)' }}>
-                    {h === 'AUDIT_COL' ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        Audit
-                        <span style={{ fontSize: '0.45rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--blue)', color: '#fff', padding: '1px 4px', borderRadius: 3, textTransform: 'uppercase' }}>BETA</span>
-                      </span>
-                    ) : h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedSites.map(site => (
-                <Fragment key={site.id}>
-                  <tr
-                    onClick={() => {
-                      const next = openAuditId === site.id ? null : site.id
-                      setOpenAuditId(next)
-                      if (next) loadAuditPages(site.id)
-                    }}
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
-                    onMouseLeave={e => { if (openAuditId !== site.id) e.currentTarget.style.background = '' }}
-                  >
-                    <td style={{ padding: '0.625rem 0.75rem', paddingRight: 4 }}>
-                      <StatusDot isUp={site.is_up} status={site.status} />
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {site.name}
-                        {site.status !== 'active' && (
-                          <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
-                            {site.status}
-                          </span>
-                        )}
-                        <PlatformBadge p={site.platform} />
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>
-                        <a href={site.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
-                          {site.url.replace(/^https?:\/\//, '')}
-                        </a>
-                      </div>
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                      {site.clients?.name ?? '—'}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
-                      {site.uptime_7d != null ? (
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
-                          {Number(site.uptime_7d).toFixed(1)}%
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }}>
-                      <SslBadge days={site.ssl_days_remaining} />
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
-                      {renderAuditToggle(site)}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
-                      {site.audit_score != null ? (
-                        <>
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)' }}>
-                            {site.audit_score}
-                          </span>
-                          {(site.audit_errors != null || site.audit_warnings != null) && (
-                            <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)', marginTop: 1 }}>
-                              {site.audit_errors ?? 0}E · {site.audit_warnings ?? 0}W
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: 'flex', gap: '0.375rem' }}>
-                        <button onClick={() => openEdit(site)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-faint)' }}>
-                          <PencilSimple size={13} />
-                        </button>
-                        <button onClick={() => setDeleteId(site.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--red)' }}>
-                          <TrashSimple size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {openAuditId === site.id && (
-                    <tr>
-                      <td colSpan={8} style={{ padding: 0, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)' }}>
-                        {renderAuditPanel(site)}
-                      </td>
-                    </tr>
+          <div className="site-layout">
+            <div className="site-main">
+              {/* Toolbar: search, up/down pills, compact selects — wraps on a phone */}
+              <div className="site-toolbar">
+                <label className="site-search">
+                  <MagnifyingGlass size={16} className="site-search__icon" aria-hidden />
+                  <span className="sr-only">Search sites</span>
+                  <input
+                    className="input site-search__input"
+                    placeholder="Search name or URL…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                </label>
+                <ScrollTabs
+                  className="site-tabs"
+                  label="Filter by uptime"
+                  activeId={filterUp || 'all'}
+                  onSelect={id => setFilterUp(id === 'all' ? '' : id)}
+                  items={[
+                    { id: 'all',   label: 'All',  count: allSites.length },
+                    { id: 'false', label: 'Down', count: downCount },
+                    { id: 'true',  label: 'Up',   count: upCount },
+                  ]}
+                />
+                <div className="site-selects">
+                  <label className="sr-only" htmlFor="site-f-status">Status</label>
+                  <select id="site-f-status" className="input site-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                    <option value="">Status</option>
+                    {STATUSES.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
+                  </select>
+                  <label className="sr-only" htmlFor="site-f-platform">Platform</label>
+                  <select id="site-f-platform" className="input site-select" value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)}>
+                    <option value="">Platform</option>
+                    {PLATFORMS.map(p => <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>)}
+                  </select>
+                  {groups.length > 0 && (
+                    <>
+                      <label className="sr-only" htmlFor="site-f-group">Group</label>
+                      <select id="site-f-group" className="input site-select" value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
+                        <option value="">Group</option>
+                        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    </>
                   )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                </div>
+              </div>
+
+              {auditError && (
+                <div className="site-alert" role="alert">
+                  <span>{auditError}</span>
+                  <button type="button" className="site-alert__close" onClick={() => setAuditError('')} aria-label="Dismiss"><X size={14} /></button>
+                </div>
+              )}
+
+              <section className="card site-list" aria-label="Monitored sites">
+                <div className="site-list__head">
+                  <span>{loading ? 'Loading…' : hasFilters ? `${plural(sites.length, 'site')} match` : plural(sites.length, 'site')}</span>
+                  <span className="site-list__legend hide-sm">
+                    {anyHistory ? `Uptime, last ${HISTORY_DAYS} days` : 'Uptime, 7 days'}
+                  </span>
+                </div>
+
+                {error ? (
+                  <p className="site-list__empty" style={{ color: 'var(--red)' }}>{error}</p>
+                ) : loading && sites.length === 0 ? (
+                  <p className="site-list__empty">Loading sites…</p>
+                ) : sortedSites.length === 0 ? (
+                  <div className="site-list__empty">
+                    <p>No sites match these filters.</p>
+                    {hasFilters && <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>Clear filters</button>}
+                  </div>
+                ) : (
+                  <ul className="site-rows">
+                    {sortedSites.map(site => (
+                      <SiteRow
+                        key={site.id}
+                        site={site}
+                        state={siteState(site)}
+                        dates={dates}
+                        history={historyBySite.get(site.id)}
+                        open={openAuditId === site.id}
+                        menuOpen={menu?.site.id === site.id}
+                        onToggle={() => toggleAudit(site.id)}
+                        onMenu={e => toggleMenu(e, site)}
+                      >
+                        {renderAuditPanel(site)}
+                      </SiteRow>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+
+            <aside className="site-aside">
+              <IncidentsRail sites={allSites} incidents={incidents} loading={!allLoaded} onOpenSite={openSiteFromRail} />
+            </aside>
+          </div>
         </>
+      )}
+
+      {/* Row actions menu */}
+      {menu && (
+        <div ref={menuRef} role="menu" aria-label={`Actions for ${menu.site.name}`} className="site-menu" style={{ top: menu.top, right: menu.right }}>
+          <button type="button" role="menuitem" className="site-menu__item" onClick={() => { const s = menu.site; setMenu(null); openEdit(s) }}>
+            <PencilSimple size={16} aria-hidden /> Edit site
+          </button>
+          <button type="button" role="menuitem" className="site-menu__item" onClick={() => { const s = menu.site; setMenu(null); toggleAudit(s.id) }}>
+            <MagnifyingGlassPlus size={16} aria-hidden /> {openAuditId === menu.site.id ? 'Hide SEO audit' : 'Open SEO audit'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="site-menu__item"
+            disabled={auditLoading.has(menu.site.id)}
+            onClick={() => {
+              const s = menu.site
+              setMenu(null)
+              toggleAudit(s.id, true)
+              handleAuditToggle(s.id, !s.audit_enabled, s.audit_scope ?? 'key')
+            }}
+          >
+            {menu.site.audit_enabled
+              ? <><CalendarX size={16} aria-hidden /> Turn off weekly audit</>
+              : <><CalendarCheck size={16} aria-hidden /> Run audit weekly</>}
+          </button>
+          <a role="menuitem" className="site-menu__item" href={menu.site.url} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(null)}>
+            <ArrowSquareOut size={16} aria-hidden /> Visit site
+          </a>
+          <div className="site-menu__sep" role="separator" />
+          <button type="button" role="menuitem" className="site-menu__item site-menu__item--danger" onClick={() => { const id = menu.site.id; setMenu(null); setDeleteId(id) }}>
+            <TrashSimple size={16} aria-hidden /> Delete site
+          </button>
+        </div>
       )}
 
       {/* Add / Edit modal */}
       {modalOpen && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
-          onClick={e => { if (e.target === e.currentTarget) setModalOpen(false) }}
-        >
-          <div style={{ background: 'var(--bg-surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.18)', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{editSite ? 'Edit Site' : 'Add Site'}</h2>
-              <button onClick={() => setModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1.1rem' }}>✕</button>
+        <div className="site-overlay" onClick={e => { if (e.target === e.currentTarget) setModalOpen(false) }}>
+          <div className="site-modal" role="dialog" aria-modal="true" aria-labelledby="site-modal-title">
+            <div className="site-modal__head">
+              <h2 id="site-modal-title" className="site-modal__title">{editSite ? 'Edit site' : 'Add site'}</h2>
+              <button type="button" className="site-icon-btn" onClick={() => setModalOpen(false)} aria-label="Close"><X size={16} /></button>
             </div>
-            <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="site-modal__body">
               <div>
-                <label style={labelStyle}>Name *</label>
-                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="My Client Site" style={inputStyle} />
+                <label style={labelStyle} htmlFor="site-name">Name *</label>
+                <input id="site-name" className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="My Client Site" />
               </div>
               <div>
-                <label style={labelStyle}>Client</label>
-                <select value={form.client_id} onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))} style={inputStyle}>
+                <label style={labelStyle} htmlFor="site-client">Client</label>
+                <select id="site-client" className="input" value={form.client_id} onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))}>
                   <option value="">— None —</option>
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
-                <label style={labelStyle}>URL *</label>
-                <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://example.com" style={inputStyle} />
+                <label style={labelStyle} htmlFor="site-url">URL *</label>
+                <input id="site-url" className="input" value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://example.com" />
                 {/* Suggest URL from client's profile, WordPress connection, or GSC property */}
                 {suggestedUrl && suggestedUrl.url !== form.url && (
                   <button
                     type="button"
+                    className="site-import__chip site-suggest"
                     onClick={() => setForm(f => ({
                       ...f,
                       url:      suggestedUrl.url,
                       platform: f.platform === 'custom' ? detectPlatform(suggestedUrl.url) : f.platform,
                     }))}
-                    style={{
-                      marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
-                      padding: '0.2rem 0.625rem', borderRadius: 999,
-                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
-                      cursor: 'pointer', fontSize: '0.7rem', color: 'var(--blue)', fontWeight: 500,
-                    }}
                   >
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'var(--blue-subtle)', color: 'var(--blue)' }}>{suggestedUrl.source}</span>
+                    <span className="site-import__src">{suggestedUrl.source}</span>
                     Use: {suggestedUrl.url.replace(/^https?:\/\//, '')}
                   </button>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div className="site-modal__pair">
                 <div>
-                  <label style={labelStyle}>Platform</label>
-                  <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} style={inputStyle}>
-                    {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+                  <label style={labelStyle} htmlFor="site-platform">Platform</label>
+                  <select id="site-platform" className="input" value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))}>
+                    {PLATFORMS.map(p => <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Hosting</label>
-                  <select value={form.hosting_type} onChange={e => setForm(f => ({ ...f, hosting_type: e.target.value }))} style={inputStyle}>
+                  <label style={labelStyle} htmlFor="site-hosting">Hosting</label>
+                  <select id="site-hosting" className="input" value={form.hosting_type} onChange={e => setForm(f => ({ ...f, hosting_type: e.target.value }))}>
                     {HOSTING_TYPES.map(h => <option key={h} value={h}>{h === 'ours' ? 'Ours' : 'Client'}</option>)}
                   </select>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div className="site-modal__pair">
                 <div>
-                  <label style={labelStyle}>Hosting Provider</label>
-                  <input value={form.hosting_provider} onChange={e => setForm(f => ({ ...f, hosting_provider: e.target.value }))} placeholder="Kinsta, WP Engine…" style={inputStyle} />
+                  <label style={labelStyle} htmlFor="site-provider">Hosting provider</label>
+                  <input id="site-provider" className="input" value={form.hosting_provider} onChange={e => setForm(f => ({ ...f, hosting_provider: e.target.value }))} placeholder="Kinsta, WP Engine…" />
                 </div>
                 <div>
-                  <label style={labelStyle}>Server Account</label>
-                  <input value={form.server_account} onChange={e => setForm(f => ({ ...f, server_account: e.target.value }))} placeholder="cPanel user / account" style={inputStyle} />
+                  <label style={labelStyle} htmlFor="site-account">Server account</label>
+                  <input id="site-account" className="input" value={form.server_account} onChange={e => setForm(f => ({ ...f, server_account: e.target.value }))} placeholder="cPanel user / account" />
                 </div>
               </div>
               {groups.length > 0 && (
                 <div>
-                  <label style={labelStyle}>Group</label>
-                  <select value={form.group_id} onChange={e => setForm(f => ({ ...f, group_id: e.target.value }))} style={inputStyle}>
+                  <label style={labelStyle} htmlFor="site-group">Group</label>
+                  <select id="site-group" className="input" value={form.group_id} onChange={e => setForm(f => ({ ...f, group_id: e.target.value }))}>
                     <option value="">— None —</option>
                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
                 </div>
               )}
               <div>
-                <label style={labelStyle}>Status</label>
-                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
-                  {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                <label style={labelStyle} htmlFor="site-status">Status</label>
+                <select id="site-status" className="input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                  {STATUSES.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
                 </select>
               </div>
               <div>
-                <label style={labelStyle}>Notes</label>
-                <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+                <label style={labelStyle} htmlFor="site-notes">Notes</label>
+                <textarea id="site-notes" className="input" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} style={{ resize: 'vertical' }} />
               </div>
               <div>
-                <label style={labelStyle}>Discord Channel ID <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional — DOWN alerts post here)</span></label>
+                <label style={labelStyle} htmlFor="site-discord">
+                  Discord channel ID <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional — DOWN alerts post here)</span>
+                </label>
                 <input
+                  id="site-discord"
+                  className="input"
                   value={form.discord_channel_id}
                   onChange={e => setForm(f => ({ ...f, discord_channel_id: e.target.value }))}
                   placeholder="e.g. 1234567890123456789"
-                  style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                  style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
                 />
               </div>
               {saveError && <p style={{ color: 'var(--red)', fontSize: '0.8125rem', margin: 0 }}>{saveError}</p>}
-              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
-                <button onClick={() => setModalOpen(false)} style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-subtle)', cursor: 'pointer', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                  Cancel
-                </button>
-                <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.url.trim()} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '0.875rem', color: '#fff', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
-                  {saving ? 'Saving…' : editSite ? 'Save Changes' : 'Add Site'}
+              <div className="site-modal__foot">
+                <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>Cancel</button>
+                <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !form.name.trim() || !form.url.trim()}>
+                  {saving ? 'Saving…' : editSite ? 'Save changes' : 'Add site'}
                 </button>
               </div>
             </div>
@@ -916,13 +761,17 @@ export default function SitesPage() {
 
       {/* Delete confirm */}
       {deleteId && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div style={{ background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', maxWidth: 360, width: '100%' }}>
-            <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>Delete site?</h3>
-            <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>This will permanently delete the site and all its check history. This cannot be undone.</p>
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteId(null)} style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-subtle)', cursor: 'pointer', fontSize: '0.875rem', color: 'var(--text-muted)' }}>Cancel</button>
-              <button onClick={() => handleDelete(deleteId)} style={{ padding: '0.5rem 1rem', borderRadius: 8, border: 'none', background: 'var(--red)', cursor: 'pointer', fontSize: '0.875rem', color: '#fff', fontWeight: 600 }}>Delete</button>
+        <div className="site-overlay site-overlay--top">
+          <div className="site-modal site-modal--sm" role="alertdialog" aria-modal="true" aria-labelledby="site-del-title">
+            <div className="site-modal__body">
+              <h3 id="site-del-title" className="site-modal__title">Delete site?</h3>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                This will permanently delete the site and all its check history. This cannot be undone.
+              </p>
+              <div className="site-modal__foot">
+                <button type="button" className="btn btn-secondary" onClick={() => setDeleteId(null)}>Cancel</button>
+                <button type="button" className="btn site-btn-danger" onClick={() => handleDelete(deleteId)}>Delete</button>
+              </div>
             </div>
           </div>
         </div>

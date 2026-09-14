@@ -45,6 +45,9 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // Read-only uptime history for the listed sites: the 30-day bars and the incidents rail.
+  const history = await loadUptimeHistory(db, (data ?? []).map((s: { id: string }) => s.id))
+
   // Two-step GSC URL lookup: first get GSC connector IDs, then get their client connections.
   // Direct embedded-filter (.eq('connectors.type', ...)) on a PostgREST join is ambiguous
   // across client versions and can silently return all connections unfiltered.
@@ -74,7 +77,43 @@ export async function GET(request: NextRequest) {
     url:       c.external_id,
   }))
 
-  return NextResponse.json({ sites: data ?? [], groups: groups ?? [], wpSites: wpSites ?? [], gscUrls })
+  return NextResponse.json({ sites: data ?? [], groups: groups ?? [], wpSites: wpSites ?? [], gscUrls, daily: history.daily, incidents: history.incidents })
+}
+
+const HISTORY_DAYS    = 30
+const HISTORY_PAGE    = 1000
+const HISTORY_MAX_PGS = 20
+
+/** Last 30 days of site_check_daily rows and the most recent incidents (plus any still open). */
+async function loadUptimeHistory(db: ReturnType<typeof createAdminClient>, siteIds: string[]) {
+  if (siteIds.length === 0) return { daily: [], incidents: [] }
+  const since = new Date(Date.now() - (HISTORY_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
+
+  const daily: unknown[] = []
+  for (let page = 0; page < HISTORY_MAX_PGS; page++) {
+    const { data, error } = await db
+      .from('site_check_daily')
+      .select('site_id, date, uptime_pct, check_count, incident_count')
+      .in('site_id', siteIds)
+      .gte('date', since)
+      .order('date', { ascending: true })
+      .order('site_id', { ascending: true })
+      .range(page * HISTORY_PAGE, (page + 1) * HISTORY_PAGE - 1)
+    if (error) { console.error('site_check_daily query failed:', error); break }
+    daily.push(...(data ?? []))
+    if ((data ?? []).length < HISTORY_PAGE) break
+  }
+
+  const { data: incidents, error: incidentsError } = await db
+    .from('site_incidents')
+    .select('id, site_id, started_at, ended_at, duration_s, cause')
+    .in('site_id', siteIds)
+    .or(`started_at.gte.${since}T00:00:00Z,ended_at.is.null`)
+    .order('started_at', { ascending: false })
+    .limit(20)
+  if (incidentsError) console.error('site_incidents query failed:', incidentsError)
+
+  return { daily, incidents: incidents ?? [] }
 }
 
 export async function POST(request: NextRequest) {
