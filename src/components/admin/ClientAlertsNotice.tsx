@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { X, WarningCircle, Info } from '@phosphor-icons/react'
+import AlertBody from './AlertBody'
 
 interface Alert {
   id:         string
@@ -20,6 +21,18 @@ interface Alert {
   body:       string | null
   link_url:   string | null
   created_at: string
+  meta?:      Record<string, unknown> | null
+}
+
+// Routine content notices (posts ready for review, auto-published, digests) belong in the content
+// workflow, not on a client's record or dashboard. Only content alerts that need someone to act —
+// a publish that failed, or a post due to be published by hand — surface here.
+const ACTIONABLE_CONTENT = new Set(['auto_push_error', 'sa_auto_push_error', 'bc_spot_check', 'bc_sa_spot_check'])
+
+function shouldShow(alert: Alert): boolean {
+  if (alert.type !== 'content') return true
+  const kind = typeof alert.meta?.content_type === 'string' ? alert.meta.content_type : ''
+  return ACTIONABLE_CONTENT.has(kind)
 }
 
 const tone = (severity: string | null) =>
@@ -37,7 +50,7 @@ export default function ClientAlertsNotice({ clientId, max = 3 }: { clientId: st
     let live = true
     fetch(`/api/admin/alerts?client_id=${encodeURIComponent(clientId)}&limit=${max + 5}`)
       .then(r => (r.ok ? r.json() : null))
-      .then((data: { alerts?: Alert[] } | null) => { if (live && data?.alerts) setAlerts(data.alerts) })
+      .then((data: { alerts?: Alert[] } | null) => { if (live && data?.alerts) setAlerts(data.alerts.filter(shouldShow)) })
       .catch(() => {})
     return () => { live = false }
   }, [clientId, max])
@@ -63,7 +76,7 @@ export default function ClientAlertsNotice({ clientId, max = 3 }: { clientId: st
             <span className="client-alerts__icon" style={{ color: t.fg }} aria-hidden>{t.icon}</span>
             <div className="client-alerts__text">
               <p className="client-alerts__title">{alert.title}</p>
-              {alert.body && <p className="client-alerts__body">{alert.body}</p>}
+              {alert.body && <AlertBody body={alert.body} lines={2} className="client-alerts__body" />}
             </div>
             {alert.link_url && (
               <Link href={alert.link_url} className="client-alerts__link" style={{ color: t.fg }}>View</Link>
