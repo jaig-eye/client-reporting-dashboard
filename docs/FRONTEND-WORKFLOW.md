@@ -67,22 +67,19 @@ UI work is not done until it has been rendered and looked at.
 |---|---|---|
 | Design sandbox — `/dev/design` | Real components with made-up data. No login, no database. Returns 404 in production. | `npm run dev`, then open `http://localhost:3000/dev/design` |
 | `scripts/design-shots.mjs` | Full-page screenshots of any pages, light and dark × desktop and mobile, saved to `.design-shots/` | `npm run design:shots -- dev/design` |
-| Full-page tour *(planned)* | Every real page with realistic data, signed in as a test admin | Needs a staging database — see below |
+| Local platform | Every real page — admin and client dashboards — against a local database with realistic fake data | `npm run local:up`, `npm run local:seed` — see `docs/LOCAL-PLATFORM.md` |
 
 To show a component in the sandbox, add a section to `src/app/dev/design/DesignGallery.tsx` covering its states.
 
 Pass page paths with or without the leading slash. In Git Bash leave it off (`dev/design`, not `/dev/design`) — Git Bash rewrites a leading-slash argument into a Windows path before the script sees it. The script detects that and tells you.
 
-`design-shots` can sign in through the real login route with `DESIGN_SHOTS_EMAIL` and `DESIGN_SHOTS_PASSWORD`, and target another host with `DESIGN_SHOTS_BASE_URL`. Only ever point it at a staging environment with a test account — never production.
+`design-shots` can sign in through the real login route with `DESIGN_SHOTS_EMAIL` and `DESIGN_SHOTS_PASSWORD`, open a client dashboard through its magic link with `DESIGN_SHOTS_CLIENT_TOKEN`, and target another host with `DESIGN_SHOTS_BASE_URL`. Point it at the local platform — never production.
 
-### Planned: full pages against a staging database
+### Real pages: the local platform
 
-The sandbox shows components. It cannot show a real page, a broken query, or a missing column. The target setup:
+The sandbox shows components. It cannot show a real page, a broken query, or a missing column — the local platform can. Its first tour found a Business Profile summary card that had been querying columns that don't exist, so it read "No data" on every client dashboard.
 
-- **A separate Supabase project for staging**, with the full schema and realistic seeded data: clients, posts in every status, metrics, connections. `supabase/schema_master.sql` only covers migrations 001–065, so the full migration history is needed.
-- **A seeded test admin account**, so screenshots go through the real login. No auth bypass in the code.
-- **Vercel Preview and local development pointed at staging**, so previews stop running unreviewed code against production data.
-- **`design-shots` run over every page** — 31 admin, 11 client dashboard — before a UI change is committed.
+For a UI change, run the local platform, sign in as the seeded admin, and screenshot every page the change touches — admin and client side. Full setup in `docs/LOCAL-PLATFORM.md`.
 
 ---
 

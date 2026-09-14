@@ -711,8 +711,8 @@ async function seed(c) {
     id: cl.id, name: cl.name, slug: cl.slug, email: cl.email, website: cl.website, phone: cl.phone, address: cl.address,
     dashboard_token: cl.dashboard_token, layout_type: cl.layout_type, bill_day: cl.bill_day, historic_bill_day: cl.bill_day,
     monthly_budget: cl.monthly_budget, ad_fuel_cut: cl.ad_fuel_cut, temperature: cl.temperature, account_manager_id: adminId,
-    purchase_action: cl.purchase_action ?? null, show_benchmarks: true, benchmark_ctr: 3.5, benchmark_cpc: 2.8,
-    benchmark_conv_rate: 6, benchmark_roas: cl.layout_type === 'ecom' ? 4 : null, benchmark_cpl: cl.layout_type === 'ecom' ? null : 45,
+    purchase_action: cl.purchase_action ?? null, show_benchmarks: true, benchmark_ctr: 0.035, benchmark_cpc: 2.8,
+    benchmark_conv_rate: 0.06, benchmark_roas: cl.layout_type === 'ecom' ? 4 : null, benchmark_cpl: cl.layout_type === 'ecom' ? null : 45,
     show_blog_posts: cl.sources.includes('wordpress'), last_contacted_at: stamp(CLIENTS.indexOf(cl) * 4 + 2),
   })))
 

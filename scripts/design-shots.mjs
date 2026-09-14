@@ -14,6 +14,9 @@
 // Signed in, through the real login route — staging with a test account only, never production:
 //   DESIGN_SHOTS_EMAIL=test-admin@example.com DESIGN_SHOTS_PASSWORD=... npm run design:shots -- admin/dashboard
 //
+// A client dashboard, through the real magic link (dashboard token from `npm run local:seed`):
+//   DESIGN_SHOTS_CLIENT_TOKEN=... npm run design:shots -- dashboard dashboard/meta-ads
+//
 // Output: .design-shots/<page>/<theme>-<viewport>.png — full-page captures, git-ignored.
 // Exits non-zero if any page errored, returned 4xx/5xx, or redirected somewhere else (usually login).
 
@@ -62,6 +65,19 @@ if (process.env.DESIGN_SHOTS_EMAIL && process.env.DESIGN_SHOTS_PASSWORD) {
     process.exit(1)
   }
   console.log(`Signed in as ${process.env.DESIGN_SHOTS_EMAIL}`)
+}
+
+// A client's dashboard is reached the way a client reaches it: the magic link sets a client_token
+// cookie. Pass that client's dashboard token to screenshot /dashboard pages.
+if (process.env.DESIGN_SHOTS_CLIENT_TOKEN) {
+  const token = encodeURIComponent(process.env.DESIGN_SHOTS_CLIENT_TOKEN)
+  const res = await context.request.get(`${BASE}/api/auth/access?token=${token}`, { maxRedirects: 0 })
+  if (!(await context.cookies(BASE)).some(c => c.name === 'client_token')) {
+    console.error(`The client link did not start a session (HTTP ${res.status()}).`)
+    await browser.close()
+    process.exit(1)
+  }
+  console.log('Opened the client dashboard link')
 }
 
 let problems = 0
