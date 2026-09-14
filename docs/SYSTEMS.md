@@ -359,7 +359,7 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 
 ### Settings / Users
 - `GET PUT /api/admin/settings` — read / update agency settings
-- `POST /api/admin/users` — create user (`requireVerifiedAdmin`: admins and super admin; roles `admin` / `viewer`)
+- `POST /api/admin/users` — create user (`requireVerifiedAdmin`: admins and super admin; roles `admin` / `viewer`). New accounts are created with `must_reset_password = true`, so the first sign-in emails a code and the person sets their own password — this requires email (MAILGUN_SMTP_*) to be configured
 - `PATCH DELETE /api/admin/users/[id]` — update / delete user (super admin)
 - `PATCH /api/admin/users/me` — update own profile
 

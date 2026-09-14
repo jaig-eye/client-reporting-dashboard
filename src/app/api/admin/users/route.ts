@@ -69,18 +69,37 @@ export async function POST(req: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { data, error } = await db
+  const newUser = {
+    name:          name.trim(),
+    email:         email.toLowerCase().trim(),
+    password_hash: await hashPasswordSecure(password),
+    role:          role ?? 'admin',
+    is_active:     true,
+    // The password set here is a temporary one that the admin knows. Flagging the account means
+    // the first sign-in with it gets no session: login emails a code and sends the person to
+    // choose their own (the forced-rotation branch in api/auth/admin-login). That also proves the
+    // email address is really theirs before the account is usable.
+    must_reset_password: true,
+    ...(username ? { username: username.toLowerCase().trim() } : {}),
+  }
+
+  let { data, error } = await db
     .from('users')
-    .insert({
-      name:          name.trim(),
-      email:         email.toLowerCase().trim(),
-      password_hash: await hashPasswordSecure(password),
-      role:          role ?? 'admin',
-      is_active:     true,
-      ...(username ? { username: username.toLowerCase().trim() } : {}),
-    })
+    .insert(newUser)
     .select('id, name, email, role, is_active, created_at')
     .single()
+
+  // Deploy-ordering fallback, as in the sibling user routes: the flag only exists from migration
+  // 195. Without it the account is still created, but nothing forces the rotation — so say so.
+  if (error && /must_reset_password/i.test(error.message)) {
+    console.warn('[users] must_reset_password missing (apply migration 195) — new account will NOT be forced to reset')
+    const { must_reset_password: _flag, ...withoutFlag } = newUser
+    ;({ data, error } = await db
+      .from('users')
+      .insert(withoutFlag)
+      .select('id, name, email, role, is_active, created_at')
+      .single())
+  }
 
   if (error) {
     if (error.code === '23505') {
@@ -88,6 +107,10 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  // The fallback insert reassigns data, so it is no longer narrowed by the error check above;
+  // an insert that returned no row is a failure either way.
+  if (!data) return NextResponse.json({ error: 'The account could not be created' }, { status: 500 })
 
   // Attributed to whoever created the account — worth knowing now that it is not only the
   // super admin who can.

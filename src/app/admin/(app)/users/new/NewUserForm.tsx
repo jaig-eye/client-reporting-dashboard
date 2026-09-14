@@ -100,7 +100,7 @@ export default function NewUserForm() {
 
           <div>
             <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Password
+              Temporary password
               <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
                 — min. 8 characters
               </span>
@@ -110,10 +110,13 @@ export default function NewUserForm() {
               type="password"
               required
               minLength={8}
-              placeholder="Set initial password"
+              placeholder="Temporary password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
             />
+            <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+              The first time they sign in, they’ll be emailed a code to choose their own password.
+            </p>
           </div>
 
           <div>
