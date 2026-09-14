@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { LockSimple } from '@phosphor-icons/react'
 
 /** Auto-hide again after this long, so a revealed password does not sit on screen. */
 const AUTO_HIDE_MS = 30_000
@@ -27,68 +28,39 @@ export function NoteSecretInput({
   const [show, setShow] = useState(false)
 
   return (
-    <div style={{
-      padding: '0.5rem 0.6rem', borderRadius: 6,
-      background: 'var(--bg-subtle)',
-      border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid var(--amber)',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <span style={{
-          fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em',
-          textTransform: 'uppercase', color: 'var(--amber)',
-        }}>
-          Password (encrypted)
-        </span>
+    <div className="note-secret">
+      <div className="note-secret__head">
+        <LockSimple size={12} weight="bold" aria-hidden />
+        <span className="note-secret__label">Password · encrypted</span>
         {hasSecret && (
-          <span style={{ fontSize: '0.6rem', color: 'var(--text-faint)' }}>
-            — one is stored; leave blank to keep it
-          </span>
+          <span className="note-secret__sub">One is stored — leave blank to keep it</span>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 5 }}>
+      <div className="note-secret__row">
         <input
           type={show ? 'text' : 'password'}
           value={value}
           autoComplete="new-password"
           spellCheck={false}
           onChange={e => onChange(e.target.value)}
-          placeholder={hasSecret ? '•••••••• (unchanged)' : 'Leave blank to store only the vault pointer'}
-          style={{
-            flex: 1, minWidth: 0, padding: '0.32rem 0.5rem', boxSizing: 'border-box',
-            background: 'var(--bg-surface)', border: '1px solid var(--border)',
-            borderRadius: 5, fontSize: '0.75rem', color: 'var(--text-primary)', fontFamily: 'inherit',
-          }}
+          placeholder={hasSecret ? '•••••••• (unchanged)' : 'Optional'}
+          aria-label="Password"
+          className="note-field__input note-secret__input"
         />
-        <button
-          type="button"
-          onClick={() => setShow(s => !s)}
-          style={{
-            padding: '0 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.68rem',
-            background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
-          }}
-        >
+        <button type="button" onClick={() => setShow(s => !s)} className="note-btn note-btn--ghost">
           {show ? 'Hide' : 'Show'}
         </button>
         {hasSecret && onClear && (
-          <button
-            type="button"
-            onClick={onClear}
-            style={{
-              padding: '0 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.68rem',
-              background: 'transparent', border: '1px solid var(--border)', color: 'var(--red)',
-            }}
-          >
+          <button type="button" onClick={onClear} className="note-btn note-btn--ghost note-btn--danger">
             Clear
           </button>
         )}
       </div>
 
-      <p style={{ fontSize: '0.63rem', color: 'var(--text-faint)', margin: '5px 0 0', lineHeight: 1.5 }}>
-        Encrypted before it is written, never returned by a list, and never shown again without an
-        unlock that is recorded. Anyone who can run code on the server can still decrypt it, so treat
-        this as a shared team password store rather than a place for banking or payment logins.
+      <p className="note-secret__fine">
+        Encrypted before it is saved and only shown again through a recorded unlock. Anyone who can run
+        code on the server can still decrypt it — don&apos;t store banking or payment logins here.
       </p>
     </div>
   )
@@ -151,53 +123,26 @@ export function NoteSecretReveal({
   }
 
   return (
-    <div style={{
-      margin: '0 0 0.75rem', padding: '0.55rem 0.7rem', borderRadius: 6,
-      background: 'var(--bg-subtle)',
-      border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid var(--amber)',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--amber)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-          Password
-        </span>
+    <div className="note-secret note-secret--reveal">
+      <div className="note-secret__row note-secret__row--wrap">
+        <LockSimple size={13} weight="bold" className="note-secret__icon" aria-hidden />
+        <span className="note-secret__label">Password</span>
 
         {secret === null ? (
           <>
-            <code style={{ fontSize: '0.8rem', color: 'var(--text-faint)', letterSpacing: '0.12em' }}>••••••••••</code>
-            <button
-              onClick={reveal}
-              disabled={loading}
-              style={{
-                marginLeft: 'auto', padding: '2px 9px', borderRadius: 5, cursor: 'pointer',
-                fontSize: '0.7rem', fontWeight: 600,
-                background: 'var(--amber)', color: '#fff', border: 'none',
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              {loading ? 'Unlocking...' : 'Unlock'}
+            <code className="note-secret__mask" aria-label="Hidden password">••••••••••</code>
+            <button onClick={reveal} disabled={loading} className="note-btn note-btn--amber note-secret__push">
+              {loading ? 'Unlocking…' : 'Unlock'}
             </button>
           </>
         ) : (
           <>
-            <code style={{
-              fontSize: '0.82rem', color: 'var(--text-primary)', wordBreak: 'break-all',
-              background: 'var(--bg-surface)', border: '1px solid var(--border)',
-              padding: '2px 6px', borderRadius: 4,
-            }}>
-              {secret}
-            </code>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
-              <button
-                onClick={copy}
-                style={{ padding: '2px 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.7rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-              >
+            <code className="note-secret__value">{secret}</code>
+            <div className="note-secret__push note-secret__btns">
+              <button onClick={copy} className="note-btn note-btn--ghost">
                 {copied ? 'Copied' : 'Copy'}
               </button>
-              <button
-                onClick={hide}
-                style={{ padding: '2px 8px', borderRadius: 5, cursor: 'pointer', fontSize: '0.7rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-              >
+              <button onClick={hide} className="note-btn note-btn--ghost">
                 Hide
               </button>
             </div>
@@ -205,13 +150,9 @@ export function NoteSecretReveal({
         )}
       </div>
 
-      {error && (
-        <p style={{ fontSize: '0.68rem', color: 'var(--red)', margin: '5px 0 0', lineHeight: 1.45 }}>{error}</p>
-      )}
+      {error && <p className="note-secret__error">{error}</p>}
       {secret !== null && !error && (
-        <p style={{ fontSize: '0.62rem', color: 'var(--text-faint)', margin: '5px 0 0' }}>
-          Hides again in 30 seconds. This unlock was recorded.
-        </p>
+        <p className="note-secret__fine">Hides again in 30 seconds. This unlock was recorded.</p>
       )}
     </div>
   )

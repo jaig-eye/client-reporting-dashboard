@@ -1,96 +1,107 @@
 'use client'
 
+import { useState } from 'react'
+import { CaretDown } from '@phosphor-icons/react'
 import type { NoteField, NoteTemplate } from '@/lib/note-templates'
 
+function hasValue(values: Record<string, string>, key: string) {
+  return (values[key] ?? '').trim() !== ''
+}
+
 /**
- * Renders a note category's structured fields as a compact 2-column grid.
- * Fields marked `wide` span both columns. Shared by the add form and the
- * expanded-note editor so both stay in step when a template changes shape.
+ * A note category's structured fields, in two tiers:
+ *
+ * - essential fields sit in a compact grid, always visible;
+ * - optional ('more') fields sit behind a "More details" disclosure;
+ * - retired ('legacy') fields never appear for a blank note, but show up inside
+ *   the disclosure when the note being edited already holds a value, so that
+ *   value can still be seen, changed or cleared rather than silently kept.
+ *
+ * Shared by the composer and the note editor so both stay in step.
  */
 export function NoteTemplateFields({
   template,
   values,
   onChange,
   disabled,
+  afterEssential,
 }: {
   template: NoteTemplate
   values:   Record<string, string>
   onChange: (key: string, value: string) => void
   disabled?: boolean
+  /** Rendered between the essential fields and "More details" (the credential box). */
+  afterEssential?: React.ReactNode
 }) {
-  if (template.fields.length === 0) return null
+  const essential = template.fields.filter(f => !f.tier)
+  const optional  = template.fields.filter(f =>
+    f.tier === 'more' || (f.tier === 'legacy' && hasValue(values, f.key)),
+  )
+  const optionalFilled = optional.filter(f => hasValue(values, f.key)).length
+  // Open by default when there is something in there to see.
+  const [open, setOpen] = useState(optionalFilled > 0)
 
-  const inp: React.CSSProperties = {
-    width: '100%', padding: '0.32rem 0.5rem', boxSizing: 'border-box',
-    background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 5, fontSize: '0.75rem', color: 'var(--text-primary)', fontFamily: 'inherit',
-  }
+  if (essential.length === 0 && optional.length === 0 && !afterEssential) return null
 
   function renderInput(f: NoteField) {
     const v = values[f.key] ?? ''
+    const id = `note-field-${template.key}-${f.key}`
+    let control: React.ReactNode
     if (f.type === 'select') {
-      return (
-        <select
-          value={v}
-          disabled={disabled}
-          onChange={e => onChange(f.key, e.target.value)}
-          style={{ ...inp, cursor: disabled ? 'default' : 'pointer' }}
-        >
-          <option value="">—</option>
+      control = (
+        <select id={id} className="note-field__input" value={v} disabled={disabled}
+          onChange={e => onChange(f.key, e.target.value)}>
+          <option value="">Select…</option>
+          {/* Keep a stored answer selectable even if the option list changed. */}
+          {v && !(f.options ?? []).includes(v) && <option value={v}>{v}</option>}
           {(f.options ?? []).map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       )
-    }
-    if (f.type === 'textarea') {
-      return (
-        <textarea
-          value={v}
-          disabled={disabled}
-          rows={2}
-          placeholder={f.placeholder}
-          onChange={e => onChange(f.key, e.target.value)}
-          style={{ ...inp, resize: 'vertical', lineHeight: 1.5 }}
-        />
+    } else if (f.type === 'textarea') {
+      control = (
+        <textarea id={id} className="note-field__input" value={v} disabled={disabled} rows={2}
+          placeholder={f.placeholder} onChange={e => onChange(f.key, e.target.value)} />
+      )
+    } else {
+      control = (
+        <input id={id} className="note-field__input"
+          type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : f.type === 'url' ? 'url' : 'text'}
+          value={v} disabled={disabled} placeholder={f.placeholder}
+          onChange={e => onChange(f.key, e.target.value)} />
       )
     }
     return (
-      <input
-        type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : f.type === 'url' ? 'url' : 'text'}
-        value={v}
-        disabled={disabled}
-        placeholder={f.placeholder}
-        onChange={e => onChange(f.key, e.target.value)}
-        style={inp}
-      />
+      <div key={f.key} className={`note-field${f.wide ? ' note-field--wide' : ''}`}>
+        <label htmlFor={id} className="note-field__label">{f.label}</label>
+        {control}
+      </div>
     )
   }
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-      gap: 6,
-      padding: '0.5rem',
-      background: 'var(--bg-subtle)',
-      border: `1px solid ${template.color}33`,
-      borderLeft: `2px solid ${template.color}`,
-      borderRadius: 6,
-    }}>
-      {template.fields.map(f => (
-        <label key={f.key} style={{ gridColumn: f.wide ? '1 / -1' : 'auto', minWidth: 0 }}>
-          <span style={{
-            display: 'block', fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.03em',
-            textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 2,
-          }}>
-            {f.label}
-          </span>
-          {renderInput(f)}
-        </label>
-      ))}
+    <div className="note-fields">
+      {essential.length > 0 && <div className="note-fields__grid">{essential.map(renderInput)}</div>}
+      {afterEssential}
+      {optional.length > 0 && (
+        <div className="note-fields__more">
+          <button
+            type="button"
+            className="note-fields__toggle"
+            aria-expanded={open}
+            onClick={() => setOpen(o => !o)}
+          >
+            <CaretDown size={12} weight="bold" className="note-fields__caret" aria-hidden />
+            More details
+            {optionalFilled > 0 && <span className="note-fields__count">{optionalFilled}</span>}
+          </button>
+          {open && <div className="note-fields__grid">{optional.map(renderInput)}</div>}
+        </div>
+      )}
     </div>
   )
 }
 
-/** Read-only rendering of whatever answers a note actually has. */
+/** Read-only rendering of whatever answers a note actually has — every tier, legacy included. */
 export function NoteFieldsReadout({
   template,
   values,
@@ -98,26 +109,17 @@ export function NoteFieldsReadout({
   template: NoteTemplate
   values:   Record<string, string>
 }) {
-  const present = template.fields.filter(f => (values[f.key] ?? '').trim() !== '')
+  const present = template.fields.filter(f => hasValue(values, f.key))
   if (present.length === 0) return null
 
   return (
-    <dl style={{
-      display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)',
-      gap: '4px 10px', margin: '0 0 0.75rem', padding: '0.55rem 0.7rem',
-      background: 'var(--bg-subtle)',
-      border: `1px solid ${template.color}33`,
-      borderLeft: `2px solid ${template.color}`,
-      borderRadius: 6, fontSize: '0.76rem',
-    }}>
+    <dl className="note-readout">
       {present.map(f => (
-        <div key={f.key} style={{ display: 'contents' }}>
-          <dt style={{ color: 'var(--text-faint)', whiteSpace: 'nowrap', fontSize: '0.7rem', paddingTop: 1 }}>
-            {f.label}
-          </dt>
-          <dd style={{ margin: 0, color: 'var(--text-primary)', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+        <div key={f.key} className="note-readout__row">
+          <dt>{f.label}</dt>
+          <dd>
             {f.type === 'url' && /^https?:\/\//i.test(values[f.key])
-              ? <a href={values[f.key]} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>{values[f.key]}</a>
+              ? <a href={values[f.key]} target="_blank" rel="noopener noreferrer">{values[f.key]}</a>
               : values[f.key]}
           </dd>
         </div>
@@ -126,21 +128,25 @@ export function NoteFieldsReadout({
   )
 }
 
-/** Small colour-coded category pill. */
+/**
+ * One-line summary of a structure-only note for the feed preview: the essential
+ * answers, in template order. Never includes the credential, which is not in
+ * the note payload at all.
+ */
+export function noteFieldsSummary(template: NoteTemplate, values: Record<string, string> | null): string {
+  if (!values) return ''
+  const ordered = [...template.fields.filter(f => !f.tier), ...template.fields.filter(f => f.tier)]
+  return ordered
+    .filter(f => hasValue(values, f.key))
+    .slice(0, 3)
+    .map(f => values[f.key].split('\n')[0])
+    .join(' · ')
+}
+
+/** Small tone-coded category pill. */
 export function NoteCategoryChip({ template, size = 'sm' }: { template: NoteTemplate; size?: 'sm' | 'md' }) {
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: size === 'md' ? '0.15rem 0.45rem' : '0.05rem 0.35rem',
-      background: `${template.color}1a`,
-      color: template.color,
-      border: `1px solid ${template.color}40`,
-      borderRadius: 999,
-      fontSize: size === 'md' ? '0.68rem' : '0.6rem',
-      fontWeight: 600,
-      whiteSpace: 'nowrap',
-      lineHeight: 1.4,
-    }}>
+    <span className={`note-chip note-tone--${template.tone}${size === 'md' ? ' note-chip--md' : ''}`}>
       {template.label}
     </span>
   )

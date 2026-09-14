@@ -408,6 +408,16 @@ export default function OverviewTab({
           )}
         </div>
 
+        {/* Notes — used far more than Relationship, so it sits right under Contacts */}
+        <div className="card p-5">
+          <ClientNotesStream
+            clientId={clientId}
+            // A contact-log note stamps last_contacted_at server-side; refresh so
+            // the Relationship card below reflects it without a manual reload.
+            onContactLogged={() => router.refresh()}
+          />
+        </div>
+
         {/* Relationship: attention level + last contact */}
         <ClientRelationshipCard
           clientId={clientId}
@@ -416,16 +426,6 @@ export default function OverviewTab({
           contactStaleDays={contactStaleDays}
           agencyStaleDays={agencyStaleDays}
         />
-
-        {/* Notes card */}
-        <div className="card p-5">
-          <ClientNotesStream
-            clientId={clientId}
-            // A contact-log note stamps last_contacted_at server-side; refresh so
-            // the Relationship card above reflects it without a manual reload.
-            onContactLogged={() => router.refresh()}
-          />
-        </div>
 
         {/* Stripe invoice history */}
         <div className="card p-5">
