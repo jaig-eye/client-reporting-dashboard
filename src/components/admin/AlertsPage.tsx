@@ -378,8 +378,8 @@ export default function AlertsPage({ initialAlerts, initialCounts, initialTotalC
 
         {/* Tab bar */}
         <div
+          className="tabs-scroll"
           style={{
-            display:      'flex',
             gap:          4,
             marginBottom: '1rem',
             borderBottom: '1px solid var(--border)',

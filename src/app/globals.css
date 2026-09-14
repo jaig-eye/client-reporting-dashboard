@@ -1023,3 +1023,100 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
   flex-shrink: 0;
 }
 .client-card__caret { color: var(--text-faint); flex-shrink: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CLIENT DASHBOARD ON A PHONE
+
+   The client's own report is the thing they open on a phone most, so below
+   1024px the sidebar steps aside and its destinations move to a bottom bar.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.dash-bottom-nav { display: none; }
+
+@media (max-width: 1023px) {
+  /* The sidebar and its loading placeholder are desktop furniture. */
+  .dashboard-sidebar,
+  .hide-lg-down { display: none !important; }
+
+  .dash-bottom-nav {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 60;
+    display: flex;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .dash-bottom-nav__item {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0.375rem 0.25rem;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .dash-bottom-nav__item[data-active='true'] { color: var(--accent, var(--blue)); }
+  .dash-bottom-nav__icon  { display: flex; }
+  .dash-bottom-nav__label {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Room for the bar, so it never sits on top of the last card. */
+  .dash-shell main { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0)); }
+
+  .dash-sheet__scrim { position: fixed; inset: 0; z-index: 70; background: rgba(15, 23, 32, 0.45); }
+  .dash-sheet {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 80;
+    background: var(--bg-surface);
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    padding: 0.75rem 0.5rem calc(1rem + env(safe-area-inset-bottom, 0));
+    box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.2);
+  }
+  .dash-sheet__title {
+    margin: 0.25rem 0.75rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .dash-sheet__item {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap-min);
+    padding: 0 0.75rem;
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.9375rem;
+  }
+  .dash-sheet__item[aria-current='page'] { color: var(--accent, var(--blue)); font-weight: 600; }
+  .dash-sheet__item:hover { background: var(--bg-hover); }
+}
+
+/* Benchmarks card: a score ring beside fixed-width metric rows. The widths could
+   not shrink, so on a phone the block ran past the card that contained it. */
+@media (max-width: 639px) {
+  .benchmark-block { flex-direction: column; gap: 1rem !important; align-items: stretch !important; }
+  .benchmark-row__label { width: 5.5rem !important; }
+  .benchmark-row { gap: 0.5rem !important; }
+  .benchmark-row > span:last-child { min-width: 0 !important; }
+}

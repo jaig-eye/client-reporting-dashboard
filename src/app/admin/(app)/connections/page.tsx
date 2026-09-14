@@ -154,7 +154,7 @@ export default async function ConnectionsPage({
               </div>
             </div>
 
-            <div className="flex-shrink-0 flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
               {googleStatus !== 'none' && <GoogleRefreshButton />}
               {googleStatus === 'none' ? (
                 <Link href="/admin/connections/new?type=google" className="btn btn-primary">

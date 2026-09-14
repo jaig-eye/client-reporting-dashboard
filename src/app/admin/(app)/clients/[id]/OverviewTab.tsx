@@ -248,7 +248,7 @@ export default function OverviewTab({
   useEffect(() => { loadBilling() }, [loadBilling])
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.5rem', alignItems: 'start' }}>
+    <div className="split">
 
       {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

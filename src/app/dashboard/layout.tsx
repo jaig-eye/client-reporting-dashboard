@@ -30,6 +30,7 @@ export async function generateMetadata(): Promise<Metadata> {
 import type { Client, Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import DashboardSidebar from '@/components/DashboardSidebar'
+import DashboardMobileNav from '@/components/dashboard/MobileNav'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 
@@ -144,14 +145,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </Suspense>
       )}
 
-      <div style={{
+      <div className="dash-shell" style={{
         display: 'flex',
         minHeight: '100vh',
         background: 'var(--bg-base)',
         paddingTop: isAdmin && client ? 40 : 0,
       }}>
         {client && (
-          <Suspense fallback={<div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }} />}>
+          <Suspense fallback={<div className="hide-lg-down" style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }} />}>
             <DashboardSidebar
               activeConnectorTypes={activeConnectorTypes}
               agencyLogoUrl={settings?.agency_logo_url}
@@ -167,6 +168,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {children}
         </div>
       </div>
+
+      {client && (
+        <Suspense fallback={null}>
+          <DashboardMobileNav
+            activeConnectorTypes={activeConnectorTypes}
+            crmName={settings?.crm_name ?? 'CRM'}
+            hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
+          />
+        </Suspense>
+      )}
     </>
   )
 }

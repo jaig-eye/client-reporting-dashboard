@@ -780,7 +780,7 @@ export default async function DashboardPage({
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* ── Inline page header ───────────────────────────────── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             {isFiltered && (
               <a href="/dashboard" className="back-overview-link" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
@@ -796,7 +796,7 @@ export default async function DashboardPage({
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {afPurchased > 0 && (
               <AdFuelBadgeWithModal balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
             )}
@@ -827,7 +827,7 @@ export default async function DashboardPage({
             )}
 
             {/* ── KPI cards (sparklines) — driven by displayLayout.kpi_cards ─── */}
-            <div className={`grid grid-cols-2 lg:grid-cols-${displayLayout.kpi_cards.length || 3} gap-4`}>
+            <div className="stat-grid stat-grid--wide">
               {displayLayout.kpi_cards.map((key, i) => {
                 const m = metricValMap[key]
                 if (!m) return null
@@ -848,7 +848,7 @@ export default async function DashboardPage({
 
             {/* ── Top metrics (compact, no sparkline) — driven by displayLayout.top_metrics ─── */}
             {displayLayout.top_metrics.length > 0 && (
-              <div className={`grid grid-cols-2 lg:grid-cols-${displayLayout.top_metrics.length} gap-4`}>
+              <div className="stat-grid">
                 {displayLayout.top_metrics.map(key => {
                   const m = metricValMap[key]
                   if (!m) return null
@@ -893,7 +893,7 @@ export default async function DashboardPage({
             {/* ── Performance Benchmarks ──────────────────────────── */}
             {showBenchmarkPanel && benchmarkRows.length > 0 && (
               <div className="card p-6">
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 28 }}>
+                <div className="benchmark-block" style={{ display: 'flex', alignItems: 'flex-start', gap: 28 }}>
                   {/* Circle meter */}
                   <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                     <svg width="96" height="96" viewBox="0 0 100 100" style={{ overflow: 'visible' }}>
@@ -917,8 +917,8 @@ export default async function DashboardPage({
                     <p className="section-desc" style={{ marginBottom: 16 }}>Tracking against your targets this period</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {benchmarkRows.map(row => (
-                        <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)', width: 96, flexShrink: 0 }}>{row.label}</span>
+                        <div key={row.key} className="benchmark-row" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span className="benchmark-row__label" style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)', width: 96, flexShrink: 0 }}>{row.label}</span>
                           <div style={{ flex: 1, height: 6, borderRadius: 9999, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
                             <div style={{ height: '100%', borderRadius: 9999, width: `${Math.min(100, row.pct)}%`, background: row.color, transition: 'width 0.5s ease' }} />
                           </div>

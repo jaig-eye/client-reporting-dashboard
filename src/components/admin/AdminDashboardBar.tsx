@@ -86,6 +86,8 @@ export default function AdminDashboardBar({
       paddingLeft: '0.75rem',
       paddingRight: '0.75rem',
       gap: '0.75rem',
+      overflowX: 'auto',
+      scrollbarWidth: 'none',
       boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
     }}>
       {/* Back button */}

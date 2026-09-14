@@ -26,7 +26,7 @@ interface SidebarProps {
   hasLocalDominator?: boolean
 }
 
-interface NavItem {
+export interface NavItem {
   key: string
   label: string
   href?: string
@@ -37,7 +37,7 @@ interface NavItem {
   disabled?: boolean
 }
 
-const NAV: NavItem[] = [
+export const NAV: NavItem[] = [
   {
     key: 'summary',
     label: 'Summary',
@@ -186,6 +186,7 @@ export default function DashboardSidebar({
 
   return (
     <aside
+      className="dashboard-sidebar"
       style={{
         width: 'var(--sidebar-width)',
         flexShrink: 0,
