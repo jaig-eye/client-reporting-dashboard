@@ -10,7 +10,10 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
-    "design:shots": "node scripts/design-shots.mjs"
+    "design:shots": "node scripts/design-shots.mjs",
+    "local:setup": "node scripts/local/setup.mjs",
+    "local:migrate": "node scripts/local/migrate.mjs",
+    "local:up": "node scripts/local/up.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

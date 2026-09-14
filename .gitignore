@@ -19,3 +19,6 @@ next-env.d.ts
 
 # Screenshots from scripts/design-shots.mjs — reviewed locally, never committed
 /.design-shots/
+
+# Local-only platform: portable Postgres, PostgREST, data and uploads (scripts/local/)
+/.local/
