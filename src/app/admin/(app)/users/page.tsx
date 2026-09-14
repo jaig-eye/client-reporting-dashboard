@@ -50,7 +50,7 @@ export default async function UsersPage() {
           </p>
         </div>
         {canAddUsers && (
-          <Link href="/admin/users/new" className="btn btn-primary">
+          <Link href="/admin/users/new" className="btn btn-primary" style={{ whiteSpace: 'nowrap' }}>
             + Add User
           </Link>
         )}
@@ -82,7 +82,8 @@ export default async function UsersPage() {
             )}
           </div>
         ) : (
-          <div className="table-scroll">
+          <>
+          <div className="table-scroll hide-sm">
             <table className="data-table">
               <thead>
                 <tr>
@@ -194,6 +195,75 @@ export default async function UsersPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Phone: one stacked row per user instead of a sideways-scrolling table. */}
+          <ul className="admin-rows admin-rows--flush only-sm">
+            {users.map(user => {
+              const initials = user.name.split(' ').map((p: string) => p[0]).join('').toUpperCase().slice(0, 2)
+              const isMe = session?.userId === user.id
+              const lastLogin = user.last_login_at
+                ? new Date(user.last_login_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                : 'Never'
+              const hasActions = isSuperAdmin || isMe
+
+              return (
+                <li key={user.id}>
+                  <div className="admin-row">
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt="" className="admin-row__avatar object-cover" />
+                    ) : (
+                      <span className="admin-row__avatar text-white" style={{ background: 'var(--blue)' }} aria-hidden>
+                        {initials}
+                      </span>
+                    )}
+                    <div className="admin-row__body">
+                      <p className="admin-row__title">
+                        <span className="admin-row__name">{user.name}</span>
+                        {isMe && <span className="admin-row__aside">(you)</span>}
+                      </p>
+                      <p className="admin-row__sub">{user.email}</p>
+                      <div className="admin-row__pills">
+                        <span className={`badge ${user.role === 'admin' ? 'badge-blue' : 'badge-gray'}`}>{user.role}</span>
+                        <span className={`badge ${user.is_active ? 'badge-green' : 'badge-gray'}`}>
+                          {user.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        {user.must_reset_password && (
+                          <span className="badge badge-gray" title="Cannot sign in until they set a new password">
+                            Reset pending
+                          </span>
+                        )}
+                      </div>
+                      <p className="admin-row__meta">Last login {lastLogin}</p>
+                      {hasActions && (
+                        <div className="admin-row__btns">
+                          {isSuperAdmin ? (
+                            <Link href={`/admin/users/${user.id}`} className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
+                              Edit
+                            </Link>
+                          ) : (
+                            <Link href="/admin/users/me" className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
+                              Edit Profile
+                            </Link>
+                          )}
+                          {isSuperAdmin && !isMe && (
+                            <ForceResetButton
+                              userId={user.id}
+                              userName={user.name}
+                              alreadyPending={user.must_reset_password === true}
+                            />
+                          )}
+                          {isSuperAdmin && (
+                            <DeleteUserButton userId={user.id} userName={user.name} />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          </>
         )}
       </div>
     </div>

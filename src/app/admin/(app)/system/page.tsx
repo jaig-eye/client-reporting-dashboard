@@ -85,6 +85,21 @@ function metaSummary(meta: Record<string, unknown>): string {
   return parts.join(' · ')
 }
 
+// Started label and duration for a sync job — shared by the table row and the phone row.
+function jobTiming(job: SyncJob): { startedStr: string; durStr: string } {
+  const started  = new Date(job.started_at)
+  const finished = job.completed_at ? new Date(job.completed_at) : null
+  const durMs    = finished ? finished.getTime() - started.getTime() : null
+  const durStr   = durMs != null
+    ? durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(1)}s`
+    : job.status === 'running' ? 'running…' : '—'
+  const startedStr = started.toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  })
+  return { startedStr, durStr }
+}
+
 function initials(name: string): string {
   return name.split(/\s+/).map(w => w[0]?.toUpperCase() ?? '').join('').slice(0, 2)
 }
@@ -303,7 +318,7 @@ function SystemPageInner() {
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No activity recorded yet.</p>
           ) : (
             <>
-              <div className="table-scroll">
+              <div className="table-scroll hide-sm">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -360,6 +375,36 @@ function SystemPageInner() {
                 </table>
               </div>
 
+              {/* Phone: one stacked row per activity entry. */}
+              <ul className="admin-rows admin-rows--flush only-sm">
+                {actLogs.map(log => {
+                  const details = metaSummary(log.meta)
+                  return (
+                    <li key={log.id}>
+                      <div className="admin-row">
+                        <span className="admin-row__avatar text-white" style={{ background: avatarColor(log.user_name) }} aria-hidden>
+                          {initials(log.user_name)}
+                        </span>
+                        <div className="admin-row__body">
+                          <p className="admin-row__title">
+                            <span className="admin-row__name">{log.user_name}</span>
+                            <span className={`badge ${ACTION_BADGE[log.action] ?? 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
+                              {log.action}
+                            </span>
+                          </p>
+                          <p className="admin-row__meta">
+                            <span title={new Date(log.created_at).toLocaleString()}>{relativeTime(log.created_at)}</span>
+                            <span>{log.resource_type.replace(/_/g, ' ')}</span>
+                            {log.client_name && <span>{log.client_name}</span>}
+                          </p>
+                          {details && <p className="admin-row__detail">{details}</p>}
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+
               {actTotal > 50 && (
                 <div className="flex items-center justify-between mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -406,7 +451,7 @@ function SystemPageInner() {
         <p className="section-desc mb-4">
           Pulls historical ad data for all clients. Runs sequentially — may take several minutes.
         </p>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap sync-controls">
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Days back</label>
             <input
@@ -456,7 +501,7 @@ function SystemPageInner() {
       {/* ── Sync Logs ─────────────────────────────────────────────────── */}
       <div className="card p-5">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2 className="section-title">Sync Logs</h2>
             {runningCount > 0 && (
               <>
@@ -475,9 +520,9 @@ function SystemPageInner() {
           </div>
 
           {/* Filters */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap sync-filters">
             {/* Source filter */}
-            <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+            <div className="flex rounded-lg overflow-hidden sync-filter-group" style={{ border: '1px solid var(--border)' }}>
               {(['all', 'global', 'client'] as const).map(f => (
                 <button
                   key={f}
@@ -494,7 +539,7 @@ function SystemPageInner() {
               ))}
             </div>
             {/* Status filter */}
-            <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+            <div className="flex rounded-lg overflow-hidden sync-filter-group" style={{ border: '1px solid var(--border)' }}>
               {(['all', 'success', 'error', 'running'] as const).map((s, i, arr) => (
                 <button
                   key={s}
@@ -513,7 +558,7 @@ function SystemPageInner() {
             {/* Client filter */}
             {clients.length > 0 && (
               <select
-                className="input"
+                className="input sync-filter-select"
                 style={{ fontSize: '0.75rem', padding: '4px 8px', height: 32, minWidth: 160 }}
                 value={clientFilter}
                 onChange={e => {
@@ -536,7 +581,7 @@ function SystemPageInner() {
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No sync jobs match the current filter.</p>
         ) : (
           <>
-            <div className="table-scroll">
+            <div className="table-scroll hide-sm">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -553,20 +598,12 @@ function SystemPageInner() {
                 </thead>
                 <tbody>
                   {filtered.map(job => {
-                    const started  = new Date(job.started_at)
-                    const finished = job.completed_at ? new Date(job.completed_at) : null
-                    const durMs    = finished ? finished.getTime() - started.getTime() : null
-                    const durStr   = durMs != null
-                      ? durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(1)}s`
-                      : job.status === 'running' ? 'running…' : '—'
+                    const { startedStr, durStr } = jobTiming(job)
 
                     return (
                       <tr key={job.id}>
                         <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {started.toLocaleString('en-US', {
-                            month: 'short', day: 'numeric',
-                            hour: 'numeric', minute: '2-digit',
-                          })}
+                          {startedStr}
                         </td>
                         <td style={{ color: 'var(--text-secondary)' }}>
                           {job.client_name ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}
@@ -616,6 +653,39 @@ function SystemPageInner() {
                 </tbody>
               </table>
             </div>
+
+            {/* Phone: one stacked row per job; the error wraps instead of truncating. */}
+            <ul className="admin-rows admin-rows--flush only-sm">
+              {filtered.map(job => {
+                const { startedStr, durStr } = jobTiming(job)
+                return (
+                  <li key={job.id}>
+                    <div className="admin-row">
+                      <div className="admin-row__body">
+                        <p className="admin-row__title">
+                          <span className="admin-row__name">{job.client_name ?? (job.client_id ? '—' : 'Global')}</span>
+                          {job.connector_type && (
+                            <span className="badge badge-gray" style={{ fontSize: '0.6875rem' }}>
+                              {job.connector_type.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                        </p>
+                        <p className="admin-row__meta">
+                          <span>{startedStr}</span>
+                          <span>{job.records_synced != null ? `${job.records_synced.toLocaleString()} records` : '— records'}</span>
+                          <span>{durStr}</span>
+                          <span>{job.job_type}{job.triggered_by ? ` · ${job.triggered_by}` : ''}</span>
+                        </p>
+                        {job.error_message && <p className="admin-row__error">{job.error_message}</p>}
+                      </div>
+                      <span className={`badge ${STATUS_BADGE[job.status] ?? 'badge-gray'} admin-row__status`} style={{ fontSize: '0.6875rem' }}>
+                        {job.status}
+                      </span>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
 
             {/* Pagination */}
             {total > PER_PAGE && (

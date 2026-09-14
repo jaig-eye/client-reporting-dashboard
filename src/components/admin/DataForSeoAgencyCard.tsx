@@ -89,7 +89,7 @@ export default function DataForSeoAgencyCard({
             <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
               <li>Create an account at <strong>dataforseo.com</strong> (min. $50 prepaid top-up; balance rolls over).</li>
               <li>Open <strong>API Access</strong> in the dashboard and copy your <strong>API login</strong> and the auto-generated <strong>API password</strong> (not your account password).</li>
-              <li>Paste them below, then attach each client&apos;s domain from their Integrations tab to start rank tracking.</li>
+              <li>Paste them below, then attach each client&apos;s domain from their Connections tab to start rank tracking.</li>
             </ol>
             <p style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
               Cost scales with rank-tracking depth and device coverage — set the defaults below (override per client on their connection).

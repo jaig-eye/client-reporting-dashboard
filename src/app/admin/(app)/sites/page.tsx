@@ -362,201 +362,9 @@ export default function SitesPage() {
     expiringSoon > 0 ? `${expiringSoon} certificate${expiringSoon !== 1 ? 's' : ''} expiring` : null,
   ].filter(Boolean).join(' · ')
 
-  return (
-    <div>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-          <GlobeSimple size={22} style={{ color: 'var(--text-faint)' }} />
-          <div>
-            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Sites</h1>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>{siteSummary}</p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={fetchSites} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            <ArrowClockwise size={14} /> Refresh
-          </button>
-          <button onClick={() => openAdd()} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: 'pointer', fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>
-            <Plus size={14} /> Add Site
-          </button>
-        </div>
-      </div>
-
-      {/* Unmonitored clients banner */}
-      {!importDismissed && !loading && unmonitoredClients.length > 0 && (
-        <div style={{
-          marginBottom: '1rem', padding: '0.875rem 1rem',
-          borderRadius: 10, border: '1px solid var(--blue-border)',
-          background: 'var(--blue-subtle)', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
-        }}>
-          <DownloadSimple size={16} style={{ color: 'var(--blue)', marginTop: 2, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--blue)', margin: '0 0 0.5rem' }}>
-              {unmonitoredClients.length} client{unmonitoredClients.length !== 1 ? 's have' : ' has'} a website not yet monitored
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
-              {unmonitoredClients.map(c => {
-                const url    = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
-                const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
-  return (
-                  <button
-                    key={c.id}
-                    onClick={() => openAdd({
-                      name:      c.name,
-                      url,
-                      client_id: c.id,
-                      platform:  detectPlatform(url),
-                    })}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.375rem',
-                      padding: '0.25rem 0.625rem', borderRadius: 999,
-                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
-                      cursor: 'pointer', fontSize: '0.75rem', color: 'var(--blue)', fontWeight: 500,
-                    }}
-                  >
-                    <Plus size={11} /> {c.name}
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {url.replace(/^https?:\/\//, '')}
-                    </span>
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: 'var(--blue-border)', color: 'var(--blue)' }}>
-                      {source}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', flexShrink: 0, alignItems: 'flex-end' }}>
-            <button
-              onClick={handleImportAll}
-              disabled={importing}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: 'var(--blue)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
-            >
-              {importing ? 'Importing…' : `Import all ${unmonitoredClients.length}`}
-            </button>
-            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.125rem', fontSize: '0.7rem' }}>
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
-          <MagnifyingGlass size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }} />
-          <input
-            placeholder="Search name or URL…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ ...inputStyle, paddingLeft: '2rem' }}
-          />
-        </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">All statuses</option>
-          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">All platforms</option>
-          {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select value={filterUp} onChange={e => setFilterUp(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          <option value="">Up / Down</option>
-          <option value="true">Up only</option>
-          <option value="false">Down only</option>
-        </select>
-        {groups.length > 0 && (
-          <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-            <option value="">All groups</option>
-            {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-        )}
-      </div>
-
-      {/* Audit error banner */}
-      {auditError && (
-        <div style={{ padding: '0.625rem 0.875rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <span>{auditError}</span>
-          <button onClick={() => setAuditError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: '1rem', lineHeight: 1, padding: 0, opacity: 0.6 }}>✕</button>
-        </div>
-      )}
-
-      {/* Table */}
-      {error ? (
-        <p style={{ color: 'var(--red)' }}>{error}</p>
-      ) : loading ? (
-        <p style={{ color: 'var(--text-faint)', padding: '3rem 0', textAlign: 'center' }}>Loading…</p>
-      ) : sites.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-faint)' }}>
-          <GlobeSimple size={40} style={{ marginBottom: '0.75rem', opacity: 0.3 }} />
-          <p style={{ margin: 0 }}>No sites yet — add one to start monitoring</p>
-        </div>
-      ) : (
-        <div className="table-scroll">
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
-            <thead>
-              <tr>
-                {(['', 'Name', 'Client', '7d Uptime', 'SSL', 'AUDIT_COL', 'Score', ''] as const).map((h, i) => (
-                  <th key={i} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)' }}>
-                    {h === 'AUDIT_COL' ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        Audit
-                        <span style={{ fontSize: '0.45rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--blue)', color: '#fff', padding: '1px 4px', borderRadius: 3, textTransform: 'uppercase' }}>BETA</span>
-                      </span>
-                    ) : h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedSites.map(site => (
-                <Fragment key={site.id}>
-                  <tr
-                    onClick={() => {
-                      const next = openAuditId === site.id ? null : site.id
-                      setOpenAuditId(next)
-                      if (next) loadAuditPages(site.id)
-                    }}
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
-                    onMouseLeave={e => { if (openAuditId !== site.id) e.currentTarget.style.background = '' }}
-                  >
-                    <td style={{ padding: '0.625rem 0.75rem', paddingRight: 4 }}>
-                      <StatusDot isUp={site.is_up} status={site.status} />
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {site.name}
-                        {site.status !== 'active' && (
-                          <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
-                            {site.status}
-                          </span>
-                        )}
-                        <PlatformBadge p={site.platform} />
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>
-                        <a href={site.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
-                          {site.url.replace(/^https?:\/\//, '')}
-                        </a>
-                      </div>
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                      {site.clients?.name ?? '—'}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
-                      {site.uptime_7d != null ? (
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
-                          {Number(site.uptime_7d).toFixed(1)}%
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }}>
-                      <SslBadge days={site.ssl_days_remaining} />
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
+  // Shared by the desktop table row and the phone row, so both open the same audit.
+  const renderAuditToggle = (site: Site) => (
+    <>
                       {auditLoading.has(site.id) ? (
                         <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>Running…</span>
                       ) : (
@@ -571,37 +379,10 @@ export default function SitesPage() {
                           <span style={{ position: 'absolute', top: 2, left: site.audit_enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
                         </label>
                       )}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
-                      {site.audit_score != null ? (
-                        <>
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)' }}>
-                            {site.audit_score}
-                          </span>
-                          {(site.audit_errors != null || site.audit_warnings != null) && (
-                            <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)', marginTop: 1 }}>
-                              {site.audit_errors ?? 0}E · {site.audit_warnings ?? 0}W
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: 'flex', gap: '0.375rem' }}>
-                        <button onClick={() => openEdit(site)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-faint)' }}>
-                          <PencilSimple size={13} />
-                        </button>
-                        <button onClick={() => setDeleteId(site.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--red)' }}>
-                          <TrashSimple size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {openAuditId === site.id && (
-                    <tr>
-                      <td colSpan={8} style={{ padding: 0, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)' }}>
+    </>
+  )
+
+  const renderAuditPanel = (site: Site) => (
                         <div style={{ padding: '1rem 1.25rem' }}>
                           {/* Summary bar */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
@@ -701,6 +482,314 @@ export default function SitesPage() {
                             {site.audit_enabled && ' Runs weekly (Mon 3 AM UTC).'}
                           </p>
                         </div>
+  )
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="sites-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+          <GlobeSimple size={22} style={{ color: 'var(--text-faint)' }} />
+          <div>
+            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Sites</h1>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: 0 }}>{siteSummary}</p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={fetchSites} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+            <ArrowClockwise size={14} /> Refresh
+          </button>
+          <button onClick={() => openAdd()} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.4375rem 0.875rem', borderRadius: 8, border: 'none', background: 'var(--blue)', cursor: 'pointer', fontSize: '0.8125rem', color: '#fff', fontWeight: 600 }}>
+            <Plus size={14} /> Add Site
+          </button>
+        </div>
+      </div>
+
+      {/* Unmonitored clients banner */}
+      {!importDismissed && !loading && unmonitoredClients.length > 0 && (
+        <div style={{
+          marginBottom: '1rem', padding: '0.875rem 1rem',
+          borderRadius: 10, border: '1px solid var(--blue-border)',
+          background: 'var(--blue-subtle)', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+        }}>
+          <DownloadSimple size={16} style={{ color: 'var(--blue)', marginTop: 2, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--blue)', margin: '0 0 0.5rem' }}>
+              {unmonitoredClients.length} client{unmonitoredClients.length !== 1 ? 's have' : ' has'} a website not yet monitored
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+              {unmonitoredClients.map(c => {
+                const url    = c.website?.trim() || wpUrlsByClient[c.id] || gscUrlsByClient[c.id] || ''
+                const source = c.website?.trim() ? 'Profile' : wpUrlsByClient[c.id] ? 'WP' : 'GSC'
+  return (
+                  <button
+                    key={c.id}
+                    onClick={() => openAdd({
+                      name:      c.name,
+                      url,
+                      client_id: c.id,
+                      platform:  detectPlatform(url),
+                    })}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.375rem',
+                      padding: '0.25rem 0.625rem', borderRadius: 999,
+                      border: '1px solid var(--blue-border)', background: 'var(--blue-subtle)',
+                      cursor: 'pointer', fontSize: '0.75rem', color: 'var(--blue)', fontWeight: 500,
+                    }}
+                  >
+                    <Plus size={11} /> {c.name}
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {url.replace(/^https?:\/\//, '')}
+                    </span>
+                    <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 4px', borderRadius: 4, background: 'var(--blue-border)', color: 'var(--blue)' }}>
+                      {source}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', flexShrink: 0, alignItems: 'flex-end' }}>
+            <button
+              onClick={handleImportAll}
+              disabled={importing}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0.3125rem 0.75rem', borderRadius: 7, border: 'none', background: 'var(--blue)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: importing ? 0.7 : 1, whiteSpace: 'nowrap' }}
+            >
+              {importing ? 'Importing…' : `Import all ${unmonitoredClients.length}`}
+            </button>
+            <button onClick={() => setImportDismissed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.125rem', fontSize: '0.7rem' }}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="sites-filters" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
+          <MagnifyingGlass size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }} />
+          <input
+            placeholder="Search name or URL…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ ...inputStyle, paddingLeft: '2rem' }}
+          />
+        </div>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          <option value="">All statuses</option>
+          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          <option value="">All platforms</option>
+          {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={filterUp} onChange={e => setFilterUp(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          <option value="">Up / Down</option>
+          <option value="true">Up only</option>
+          <option value="false">Down only</option>
+        </select>
+        {groups.length > 0 && (
+          <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+            <option value="">All groups</option>
+            {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Audit error banner */}
+      {auditError && (
+        <div style={{ padding: '0.625rem 0.875rem', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <span>{auditError}</span>
+          <button onClick={() => setAuditError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: '1rem', lineHeight: 1, padding: 0, opacity: 0.6 }}>✕</button>
+        </div>
+      )}
+
+      {/* Table */}
+      {error ? (
+        <p style={{ color: 'var(--red)' }}>{error}</p>
+      ) : loading ? (
+        <p style={{ color: 'var(--text-faint)', padding: '3rem 0', textAlign: 'center' }}>Loading…</p>
+      ) : sites.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-faint)' }}>
+          <GlobeSimple size={40} style={{ marginBottom: '0.75rem', opacity: 0.3 }} />
+          <p style={{ margin: 0 }}>No sites yet — add one to start monitoring</p>
+        </div>
+      ) : (
+        <>
+        {/* Phone: one stacked row per site. Tapping the row opens the same audit panel
+            as the desktop table; edit/delete stay in the row as icon buttons. */}
+        <div className="only-sm">
+          <ul className="admin-rows admin-rows--boxed">
+            {sortedSites.map(site => {
+              const open = openAuditId === site.id
+              const statusLabel = site.status !== 'active' ? 'Paused or archived'
+                : site.is_up === null ? 'Not yet checked'
+                : site.is_up ? 'Up' : 'Down'
+              return (
+                <li key={site.id}>
+                  <div className="admin-row">
+                    <button
+                      type="button"
+                      className="admin-row__main"
+                      aria-expanded={open}
+                      onClick={() => {
+                        const next = open ? null : site.id
+                        setOpenAuditId(next)
+                        if (next) loadAuditPages(site.id)
+                      }}
+                    >
+                      <span className="admin-row__lead">
+                        <StatusDot isUp={site.is_up} status={site.status} />
+                        <span className="sr-only">{statusLabel}</span>
+                      </span>
+                      <span className="admin-row__body">
+                        <span className="admin-row__title">
+                          <span className="admin-row__name">{site.name}</span>
+                          {site.status !== 'active' && (
+                            <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
+                              {site.status}
+                            </span>
+                          )}
+                          <PlatformBadge p={site.platform} />
+                        </span>
+                        <span className="admin-row__sub">{site.url.replace(/^https?:\/\//, '')}</span>
+                        <span className="admin-row__meta">
+                          <span>SSL <SslBadge days={site.ssl_days_remaining} /></span>
+                          {site.clients?.name && <span>{site.clients.name}</span>}
+                          {site.audit_score != null && <span>Audit {site.audit_score}</span>}
+                        </span>
+                      </span>
+                    </button>
+                    <div className="admin-row__side">
+                      {site.uptime_7d != null ? (
+                        <span className="admin-row__figure" style={{ color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
+                          {Number(site.uptime_7d).toFixed(1)}%<small>7d</small>
+                        </span>
+                      ) : (
+                        <span className="admin-row__figure" style={{ color: 'var(--text-faint)' }}>—<small>7d</small></span>
+                      )}
+                      <div className="admin-row__actions">
+                        <button type="button" className="admin-row__icon-btn" aria-label={`Edit ${site.name}`} onClick={() => openEdit(site)}>
+                          <PencilSimple size={16} />
+                        </button>
+                        <button type="button" className="admin-row__icon-btn admin-row__icon-btn--danger" aria-label={`Delete ${site.name}`} onClick={() => setDeleteId(site.id)}>
+                          <TrashSimple size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {open && (
+                    <div className="admin-row__panel">
+                      <div className="admin-row__panel-bar">
+                        <span>Weekly audit</span>
+                        {renderAuditToggle(site)}
+                      </div>
+                      {renderAuditPanel(site)}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+
+        <div className="table-scroll hide-sm">
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8125rem' }}>
+            <thead>
+              <tr>
+                {(['', 'Name', 'Client', '7d Uptime', 'SSL', 'AUDIT_COL', 'Score', ''] as const).map((h, i) => (
+                  <th key={i} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--border)' }}>
+                    {h === 'AUDIT_COL' ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        Audit
+                        <span style={{ fontSize: '0.45rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--blue)', color: '#fff', padding: '1px 4px', borderRadius: 3, textTransform: 'uppercase' }}>BETA</span>
+                      </span>
+                    ) : h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSites.map(site => (
+                <Fragment key={site.id}>
+                  <tr
+                    onClick={() => {
+                      const next = openAuditId === site.id ? null : site.id
+                      setOpenAuditId(next)
+                      if (next) loadAuditPages(site.id)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
+                    onMouseLeave={e => { if (openAuditId !== site.id) e.currentTarget.style.background = '' }}
+                  >
+                    <td style={{ padding: '0.625rem 0.75rem', paddingRight: 4 }}>
+                      <StatusDot isUp={site.is_up} status={site.status} />
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {site.name}
+                        {site.status !== 'active' && (
+                          <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)', textTransform: 'uppercase' }}>
+                            {site.status}
+                          </span>
+                        )}
+                        <PlatformBadge p={site.platform} />
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>
+                        <a href={site.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
+                          {site.url.replace(/^https?:\/\//, '')}
+                        </a>
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {site.clients?.name ?? '—'}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
+                      {site.uptime_7d != null ? (
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: site.uptime_7d >= 99 ? 'var(--green)' : site.uptime_7d >= 95 ? 'var(--amber)' : 'var(--red)' }}>
+                          {Number(site.uptime_7d).toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }}>
+                      <SslBadge days={site.ssl_days_remaining} />
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
+                      {renderAuditToggle(site)}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', whiteSpace: 'nowrap' }}>
+                      {site.audit_score != null ? (
+                        <>
+                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: site.audit_score >= 80 ? 'var(--green)' : site.audit_score >= 60 ? 'var(--amber)' : 'var(--red)' }}>
+                            {site.audit_score}
+                          </span>
+                          {(site.audit_errors != null || site.audit_warnings != null) && (
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)', marginTop: 1 }}>
+                              {site.audit_errors ?? 0}E · {site.audit_warnings ?? 0}W
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: '0.375rem' }}>
+                        <button onClick={() => openEdit(site)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-faint)' }}>
+                          <PencilSimple size={13} />
+                        </button>
+                        <button onClick={() => setDeleteId(site.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--red)' }}>
+                          <TrashSimple size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {openAuditId === site.id && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)' }}>
+                        {renderAuditPanel(site)}
                       </td>
                     </tr>
                   )}
@@ -709,6 +798,7 @@ export default function SitesPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Add / Edit modal */}

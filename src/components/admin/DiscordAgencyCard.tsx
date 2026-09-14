@@ -37,7 +37,7 @@ export default function DiscordAgencyCard({ initialBotToken, initialOpsChannelId
       <IntegrationCard
         icon="🤖"
         name="Discord"
-        description="Shared bot for all channel notifications. Each client's Channel ID is set in their Integrations tab."
+        description="Shared bot for all channel notifications. Each client's Channel ID is set in their Connections tab."
         isConnected={isConnected}
         connectedLabel={isConnected ? 'Bot token configured' : undefined}
         onConfigure={() => setOpen(true)}
@@ -56,7 +56,7 @@ export default function DiscordAgencyCard({ initialBotToken, initialOpsChannelId
             <li>Open the <strong>Bot</strong> section → click <strong>Add Bot</strong>.</li>
             <li>Under <strong>Token</strong>, click <strong>Reset Token</strong> and copy it.</li>
             <li>Invite the bot to your server via OAuth2 with the <strong>Send Messages</strong> and <strong>View Channels</strong> permissions.</li>
-            <li>Each client&apos;s Channel ID is set in their Integrations tab (Discord card).</li>
+            <li>Each client&apos;s Channel ID is set in their Connections tab (Discord card).</li>
           </ol>
         }
         onSave={handleSave}

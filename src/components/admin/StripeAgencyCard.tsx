@@ -35,7 +35,7 @@ export default function StripeAgencyCard({ initialApiKey, initialWebhookSecret }
       <IntegrationCard
         icon={<StripeLogo size={22} />}
         name="Stripe"
-        description="Auto-log ad fuel payments from Stripe invoices. Configure each client's Customer ID in their Integrations tab."
+        description="Auto-log ad fuel payments from Stripe invoices. Configure each client's Customer ID in their Connections tab."
         isConnected={isConnected}
         connectedLabel={isConnected ? 'Secret key configured' : undefined}
         onConfigure={() => setOpen(true)}

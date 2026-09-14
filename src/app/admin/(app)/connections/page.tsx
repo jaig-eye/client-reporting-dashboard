@@ -93,37 +93,37 @@ export default async function ConnectionsPage({
 
       {/* OAuth result notices */}
       {sp.connected === 'google' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle, #f0fdf4)', border: '1px solid var(--green-border, #bbf7d0)', color: 'var(--green)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle)', border: '1px solid var(--green)', color: 'var(--green)' }}>
           Google account connected — all four data sources are now active.
         </div>
       )}
       {sp.error === 'google_auth_failed' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', color: 'var(--red)' }}>
           Google sign-in was cancelled or denied. Try again, or check that your Google account has access to the required data.
         </div>
       )}
       {sp.error === 'google_failed' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', color: 'var(--red)' }}>
           Google connection failed. Check Vercel function logs for details (<code>/api/auth/google/callback</code>).
         </div>
       )}
       {sp.error === 'google_save_failed' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', color: 'var(--red)' }}>
           Google tokens were received but could not be saved to the database. Check Vercel logs.
         </div>
       )}
       {sp.connected === 'meta' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle, #f0fdf4)', border: '1px solid var(--green-border, #bbf7d0)', color: 'var(--green)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--green-subtle)', border: '1px solid var(--green)', color: 'var(--green)' }}>
           Meta Ads reconnected successfully — your 60-day token has been refreshed.
         </div>
       )}
       {sp.error === 'meta_auth_failed' && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', color: 'var(--red)' }}>
           Meta sign-in was cancelled or denied. Try reconnecting from the Meta Ads connector settings.
         </div>
       )}
       {(sp.error === 'meta_save_failed' || sp.error === 'meta_failed') && (
-        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'var(--red-subtle)', border: '1px solid var(--red)', color: 'var(--red)' }}>
           Meta connection failed — the token was received but could not be saved. Check Vercel function logs (<code>/api/auth/meta/callback</code>).
         </div>
       )}
@@ -133,7 +133,7 @@ export default async function ConnectionsPage({
         {/* ── Google Group Card ──────────────────────────────────────────────── */}
         <div className="card p-5">
           {/* Header row */}
-          <div className="flex items-start justify-between gap-4">
+          <div className="conn-group__head flex items-start justify-between gap-4">
             <div className="flex items-start gap-4">
               <div
                 className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
@@ -154,7 +154,7 @@ export default async function ConnectionsPage({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="conn-group__actions flex items-center gap-2 flex-wrap justify-end">
               {googleStatus !== 'none' && <GoogleRefreshButton />}
               {googleStatus === 'none' ? (
                 <Link href="/admin/connections/new?type=google" className="btn btn-primary">
@@ -185,10 +185,10 @@ export default async function ConnectionsPage({
                 return (
                   <div
                     key={type}
-                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2"
+                    className="conn-subrow flex items-center justify-between gap-3 rounded-lg px-3 py-2"
                     style={{ background: 'var(--bg-subtle)' }}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="conn-subrow__main flex items-center gap-2.5 min-w-0">
                       {/* Small logo */}
                       <div
                         className="h-6 w-6 rounded flex items-center justify-center flex-shrink-0"
@@ -196,7 +196,7 @@ export default async function ConnectionsPage({
                       >
                         <GoogleSubLogo type={type} size={14} />
                       </div>
-                      <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      <span className="conn-subrow__name text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                         {def.label}
                       </span>
                       {connector
@@ -206,7 +206,7 @@ export default async function ConnectionsPage({
                       {missingDevToken && (
                         <span
                           className="text-xs"
-                          style={{ color: '#f59e0b' }}
+                          style={{ color: 'var(--amber)' }}
                           title="Developer token missing — Google Ads sync will fail. Configure to fix."
                         >
                           ⚠ No dev token
