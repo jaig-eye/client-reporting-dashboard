@@ -4,6 +4,7 @@ import { useState, useEffect }  from 'react'
 import Link                      from 'next/link'
 import { ConnectorLogo }         from '@/components/ConnectorLogo'
 import { PresentationChart, BookOpen, Check, CaretRight } from '@phosphor-icons/react/dist/ssr'
+import { balanceColor } from '@/lib/adFuelColor'
 import type { ConnectorType }    from '@/lib/types'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
@@ -689,7 +690,7 @@ export default function DashboardClientShell({
             {clientRows.map(row => {
               let dot = 'var(--red)'
               if (row.syncStatus === 'success') dot = row.hoursStale < 48 ? 'var(--green)' : 'var(--amber, #f59e0b)'
-              const afColor = row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)'
+              const afColor = balanceColor(row.afBalance)
               return (
                 <li key={row.id}>
                   <Link href={`/admin/clients/${row.id}`} className="client-card">

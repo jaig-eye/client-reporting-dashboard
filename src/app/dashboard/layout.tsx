@@ -30,7 +30,8 @@ export async function generateMetadata(): Promise<Metadata> {
 import type { Client, Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import DashboardSidebar from '@/components/DashboardSidebar'
-import DashboardMobileNav from '@/components/dashboard/MobileNav'
+import DashboardNavDrawer from '@/components/dashboard/NavDrawer'
+import ClientAlertsNotice from '@/components/admin/ClientAlertsNotice'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 
@@ -153,31 +154,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }}>
         {client && (
           <Suspense fallback={<div className="hide-lg-down" style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }} />}>
-            <DashboardSidebar
-              activeConnectorTypes={activeConnectorTypes}
-              agencyLogoUrl={settings?.agency_logo_url}
-              agencyName={settings?.agency_name}
-              clientLogoUrl={client.logo_url}
-              clientName={client.name}
-              crmName={settings?.crm_name ?? 'CRM'}
-              hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
-            />
+            <DashboardNavDrawer clientName={client.name} clientLogoUrl={client.logo_url} topOffset={isAdmin ? 40 : 0}>
+              <DashboardSidebar
+                activeConnectorTypes={activeConnectorTypes}
+                agencyLogoUrl={settings?.agency_logo_url}
+                agencyName={settings?.agency_name}
+                clientLogoUrl={client.logo_url}
+                clientName={client.name}
+                crmName={settings?.crm_name ?? 'CRM'}
+                hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
+              />
+            </DashboardNavDrawer>
           </Suspense>
         )}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          {isAdmin && client && (
+            <div className="dash-admin-alerts">
+              <ClientAlertsNotice clientId={client.id} />
+            </div>
+          )}
           {children}
         </div>
       </div>
-
-      {client && (
-        <Suspense fallback={null}>
-          <DashboardMobileNav
-            activeConnectorTypes={activeConnectorTypes}
-            crmName={settings?.crm_name ?? 'CRM'}
-            hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
-          />
-        </Suspense>
-      )}
     </>
   )
 }

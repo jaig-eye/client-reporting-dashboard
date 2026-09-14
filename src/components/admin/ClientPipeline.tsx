@@ -404,9 +404,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         </div>
 
         {!dataLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
+          <div className="cp-legend">
             <ContentStatusBar counts={statusCounts} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0, marginLeft: 12 }}>{topics.length + posts.length} items</span>
+            <span className="cp-legend__count">{topics.length + posts.length} items</span>
           </div>
         )}
 

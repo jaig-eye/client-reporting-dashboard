@@ -148,7 +148,7 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
         <h2 className="section-title mb-3">Stripe Invoice History</h2>
         {invoices.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-            No Stripe invoices found. Set a Stripe Customer ID in Integrations to link billing.
+            No Stripe invoices found. Set a Stripe Customer ID in Connections to link billing.
           </p>
         ) : (
           <div className="table-scroll">

@@ -183,11 +183,11 @@ export default async function GBPPage({
         {/* KPI cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {metricCards.map(card => (
-            <div key={card.label} className="card p-5">
+            <div key={card.label} className="card p-4 sm:p-5 min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
                 {card.label}
               </p>
-              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
+              <p className="kpi-card__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
               {card.sub && <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{card.sub}</p>}
               <div style={{ width: '100%', height: 3, borderRadius: 9999, background: 'var(--border)', marginTop: 8 }}>
                 <div style={{ width: '60%', height: '100%', borderRadius: 9999, background: card.color }} />
@@ -213,7 +213,7 @@ export default async function GBPPage({
         )}
 
         {/* Daily views trend chart */}
-        <div className="card p-6">
+        <div className="card p-4 sm:p-6">
           <div className="mb-4">
             <h2 className="section-title">Views & Website Clicks Over Time</h2>
             <p className="section-desc">{fmtDate(fromDate)} – {fmtDate(toDate)}</p>

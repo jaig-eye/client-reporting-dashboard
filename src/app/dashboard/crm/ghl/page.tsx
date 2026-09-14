@@ -231,7 +231,7 @@ export default async function GhlCrmPage({
             {totals.calls > 0 && (
               <div className="card p-6">
                 <h2 className="section-title mb-4">Call Performance</h2>
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="metric-row">
                   <Stat label="Incoming Calls" value={fmtNum(totals.incoming)} />
                   <Stat label="Outgoing Calls" value={fmtNum(totals.outgoing)} />
                   <Stat label="Incoming Missed" value={fmtNum(totals.missed)} sub={pct(totals.missed, totals.incoming)} />
@@ -316,8 +316,8 @@ export default async function GhlCrmPage({
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
-      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{value}</p>
+      <p className="metric-row__label text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
+      <p className="metric-row__value">{value}</p>
       {sub && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{sub}</p>}
     </div>
   )

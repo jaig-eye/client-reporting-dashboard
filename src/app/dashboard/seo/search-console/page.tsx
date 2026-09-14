@@ -244,11 +244,11 @@ export default async function SearchConsolePage({
           {metricCards.map(card => {
             const positive = card.invertDelta ? (card.delta !== null && card.delta < 0) : (card.delta !== null && card.delta >= 0)
             return (
-              <div key={card.label} className="card p-5">
+              <div key={card.label} className="card p-4 sm:p-5 min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
                   {card.label}
                 </p>
-                <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
+                <p className="kpi-card__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
                 {card.delta !== null && (
                   <p style={{
                     fontSize: '0.75rem', fontWeight: 600, marginTop: 3,

@@ -138,18 +138,17 @@ export default function ClientContentTabPanel({
       )}
 
       {/* Card nav */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: '1.5rem' }}>
+      {/* Grid + card layout in globals.css (.cc-mode-*): 4 across on desktop, 2×2 below 640px. */}
+      <div className="cc-mode-grid">
         {TABS.map(tab => {
           const active = activeTab === tab.id
           return (
             <button
               key={tab.id}
-              className={`cc-nav-card${active ? ' cc-nav-card--active' : ''}`}
+              className={`cc-mode-card cc-nav-card${active ? ' cc-nav-card--active' : ''}`}
               onClick={() => handleTabChange(tab.id)}
               style={{
                 position: 'relative',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 8, padding: '16px 8px',
                 borderRadius: 12,
                 border: active ? 'none' : '1px solid var(--border)',
                 background: active ? 'var(--accent)' : 'var(--bg-surface)',

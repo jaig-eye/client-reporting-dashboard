@@ -128,42 +128,39 @@ export default async function GA4SummaryCard({
       hasData={hasData}
     >
       {/* Metric tiles */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
-        gap: '1rem',
+      <div className="metric-row metric-row--dense" style={{
         marginBottom: (topSources.length > 0) ? '1.25rem' : 0,
       }}>
         <div>
           <p className="metric-label mb-1">Sessions</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+          <p className="metric-row__value">
             {fmtNum(totSessions)}
           </p>
           <DeltaBadge delta={deltaSessions} />
         </div>
         <div>
           <p className="metric-label mb-1">New Users</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+          <p className="metric-row__value">
             {fmtNum(totNewUsers)}
           </p>
           <DeltaBadge delta={deltaNewUsers} />
         </div>
         <div>
           <p className="metric-label mb-1">Engagement</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+          <p className="metric-row__value">
             {fmtPct(engagementRate)}
           </p>
           <DeltaBadge delta={deltaEngagement} />
         </div>
         <div>
           <p className="metric-label mb-1">Avg. Duration</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+          <p className="metric-row__value">
             {fmtDur(avgDur)}
           </p>
         </div>
         <div>
           <p className="metric-label mb-1">Conversions</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>
+          <p className="metric-row__value">
             {fmtNum(totConversions)}
           </p>
           <DeltaBadge delta={deltaConversions} />

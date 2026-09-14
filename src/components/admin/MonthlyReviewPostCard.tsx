@@ -125,14 +125,9 @@ export default function MonthlyReviewPostCard({
       }}
     >
       {/* Card row */}
-      <div
-        style={{
-          display:    'flex',
-          alignItems: 'center',
-          gap:        12,
-          padding:    '10px 14px',
-        }}
-      >
+      {/* Layout lives in globals.css (.mr-card__*): one row on desktop, stacked below 640px
+          so the title gets the full width instead of truncating beside the actions. */}
+      <div className="mr-card__row">
         {/* Thumbnail */}
         {post.featured_image_url ? (
           // Through the proxy: when the picture came from the client's own media library the
@@ -150,16 +145,16 @@ export default function MonthlyReviewPostCard({
         )}
 
         {/* Title + meta */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="mr-card__body">
           <button
             type="button"
+            className="mr-card__title"
             onClick={() => onOpenEditor(post.id)}
             title="Open the review panel"
             style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: 0,
+              width: '100%', textAlign: 'left', padding: 0,
               background: 'none', border: 'none', cursor: 'pointer',
               fontWeight: 500, fontSize: 14, color: 'var(--text-primary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >
             {post.title ?? '(untitled)'}
@@ -191,7 +186,7 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
             {brokenLinkCount != null && brokenLinkCount > 0 && (
-              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--red-subtle)', color: 'var(--red)' }}>
+              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--red-subtle)', color: 'var(--red)', whiteSpace: 'nowrap' }}>
                 🔗 {brokenLinkCount} broken
               </span>
             )}
@@ -244,7 +239,7 @@ export default function MonthlyReviewPostCard({
           // Regenerate stays available AFTER approval on purpose: changing your
           // mind about a post you just approved is the common case, and the
           // button being absent here is why it looked like the feature was missing.
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div className="mr-card__actions">
             {/* The badge reports the PUSH, not the approval.
                 Approval is a settled property of the post and reads in the meta line under
                 the title; repeating it here as a pill was what crowded the action row and
@@ -356,7 +351,7 @@ export default function MonthlyReviewPostCard({
             Rejected
           </span>
         ) : isDiscarded ? (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div className="mr-card__actions">
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '3px 10px', borderRadius: 999 }}>
               Discarded
             </span>
@@ -369,7 +364,7 @@ export default function MonthlyReviewPostCard({
             ⟳ Regenerating…
           </span>
         ) : (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <div className="mr-card__actions">
             {/* Icon-only, with the meaning in the tooltip and aria-label. Three text
                 buttons plus "Review →" crowded the row and pushed the card wider than
                 its content needed. */}

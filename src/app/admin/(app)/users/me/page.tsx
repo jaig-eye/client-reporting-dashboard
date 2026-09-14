@@ -7,6 +7,7 @@ import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import ProfileForm  from './ProfileForm'
 import McpTokens   from './McpTokens'
+import ThemePreferences from './ThemePreferences'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,7 @@ export default async function MyProfilePage() {
               environment variable. Account details are not editable here.
             </p>
           </div>
+          <ThemePreferences />
         </div>
       </div>
     )
@@ -66,6 +68,7 @@ export default async function MyProfilePage() {
           initialEmail={user?.email ?? ''}
           initialAvatarUrl={user?.avatar_url ?? ''}
         />
+        <ThemePreferences />
         <McpTokens appUrl={process.env.NEXT_PUBLIC_APP_URL ?? 'https://dash.golaunchlocal.com'} />
       </div>
     </div>

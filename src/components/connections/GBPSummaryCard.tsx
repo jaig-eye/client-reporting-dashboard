@@ -48,20 +48,11 @@ export default async function GBPSummaryCard({ clientId, connectionId, dateFrom,
       href="/dashboard/seo/gbp"
       hasData={hasData}
     >
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
-        gap: '1rem',
-      }}>
+      <div className="metric-row">
         {metrics.map(m => (
           <div key={m.label}>
             <p className="metric-label mb-1">{m.label}</p>
-            <p style={{
-              fontSize: '1.25rem', fontWeight: 700,
-              color: 'var(--text-primary)',
-              fontVariantNumeric: 'tabular-nums',
-              letterSpacing: '-0.01em',
-            }}>
+            <p className="metric-row__value">
               {m.value}
             </p>
           </div>

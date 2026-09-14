@@ -6,6 +6,7 @@ import { isAdminAuthed }       from '@/lib/auth'
 import { cookies }             from 'next/headers'
 import { redirect }            from 'next/navigation'
 import ContentCalendar         from './ContentCalendar'
+import ScrollTabs              from '@/components/ui/ScrollTabs'
 import type { CalendarItem }   from './ContentCalendar'
 import MonthlyReviewSession    from '@/components/admin/MonthlyReviewSession'
 import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
@@ -165,26 +166,11 @@ export default async function ContentPage({
         <div style={{ flex: 1 }} />
 
         {/* View switcher */}
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3 }}>
-          {views.map(v => (
-            <a
-              key={v.id}
-              href={`?view=${v.id}`}
-              style={{
-                display:        'inline-block',
-                padding:        '5px 14px',
-                borderRadius:   6,
-                fontSize:       '0.8125rem',
-                fontWeight:     activeView === v.id ? 600 : 400,
-                color:          activeView === v.id ? '#fff' : 'var(--text-muted)',
-                background:     activeView === v.id ? 'var(--blue, #2563eb)' : 'transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {v.label}
-            </a>
-          ))}
-        </div>
+        <ScrollTabs
+          items={views.map(v => ({ id: v.id, label: v.label, href: `/admin/content?view=${v.id}` }))}
+          activeId={activeView}
+          label="Content views"
+        />
       </div>
 
       {activeView === 'review' && reviewData && (

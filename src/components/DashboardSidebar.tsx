@@ -186,7 +186,7 @@ export default function DashboardSidebar({
 
   return (
     <aside
-      className="dashboard-sidebar"
+      className="dash-sidebar"
       style={{
         width: 'var(--sidebar-width)',
         flexShrink: 0,

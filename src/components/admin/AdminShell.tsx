@@ -52,6 +52,7 @@ export default function AdminShell({ children, ...nav }: Props) {
           <List size={20} />
         </button>
 
+        {nav.agencyLogoUrl && <img src={nav.agencyLogoUrl} alt="" className="admin-topbar__logo" />}
         <span className="admin-topbar__name">{nav.agencyName}</span>
 
         <Link href="/admin/alerts" className="admin-topbar__btn focus-ring" aria-label={alerts > 0 ? `Alerts, ${alerts} unread` : 'Alerts'}>

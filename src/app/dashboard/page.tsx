@@ -870,7 +870,7 @@ export default async function DashboardPage({
 
             {/* ── Daily Performance chart ───────────────────────────── */}
             {!hiddenMetrics.has('daily_chart') && (
-              <div className="card p-6">
+              <div className="card p-4 sm:p-6">
                 <div className="mb-4">
                   <h2 className="section-title">Daily Performance</h2>
                   <p className="section-desc">
@@ -964,7 +964,7 @@ export default async function DashboardPage({
                   {hasGoogle && (
                     <a href={sourceUrl('google_ads')} style={{ textDecoration: 'none' }}>
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem 0.75rem', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <ConnectorLogo type="google_ads" size={22} aria-hidden />
                             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Google Ads</span>
@@ -974,11 +974,11 @@ export default async function DashboardPage({
                         {(() => {
                           const keys = activeLayout.platform_google_metrics ?? ['spend', 'conversions', 'ctr']
                           return (
-                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
+                            <div className="metric-row metric-row--compact">
                               {keys.map(k => (
                                 <div key={k}>
-                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
-                                  <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{googleCardMap[k] ?? '—'}</p>
+                                  <p className="metric-row__label" style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p className="metric-row__value" style={{ fontSize: '1rem' }}>{googleCardMap[k] ?? '—'}</p>
                                 </div>
                               ))}
                             </div>
@@ -995,7 +995,7 @@ export default async function DashboardPage({
                   {hasMeta && (
                     <a href={sourceUrl('meta_ads')} style={{ textDecoration: 'none' }}>
                       <div className="card p-5 card-hover" style={{ cursor: 'pointer' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem 0.75rem', marginBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <ConnectorLogo type="meta_ads" size={22} aria-hidden />
                             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Meta Ads</span>
@@ -1005,11 +1005,11 @@ export default async function DashboardPage({
                         {(() => {
                           const keys = activeLayout.platform_meta_metrics ?? ['spend', 'impressions', 'ctr']
                           return (
-                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${keys.length}, 1fr)`, gap: 8 }}>
+                            <div className="metric-row metric-row--compact">
                               {keys.map(k => (
                                 <div key={k}>
-                                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
-                                  <p style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{metaCardMap[k] ?? '—'}</p>
+                                  <p className="metric-row__label" style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: 2 }}>{METRIC_LABELS[k as MetricKey] ?? PLATFORM_CARD_LABELS[k as keyof typeof PLATFORM_CARD_LABELS] ?? k}</p>
+                                  <p className="metric-row__value" style={{ fontSize: '1rem' }}>{metaCardMap[k] ?? '—'}</p>
                                 </div>
                               ))}
                             </div>
@@ -1037,25 +1037,25 @@ export default async function DashboardPage({
                   <p className="section-desc">{settings.crm_name ?? 'CRM'} data for {fmtDate(fromDate)} – {fmtDate(toDate)}</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Contacts</p>
-                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.contacts)}</p>
+                  <div className="card p-4 crm-stat" style={{ background: 'var(--bg-base)' }}>
+                    <p className="crm-stat__label text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Contacts</p>
+                    <p className="crm-stat__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.contacts)}</p>
                     {ghlTotals.spam > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--red)' }}>{ghlTotals.spam} spam</p>}
                   </div>
-                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Total Calls</p>
-                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.calls)}</p>
+                  <div className="card p-4 crm-stat" style={{ background: 'var(--bg-base)' }}>
+                    <p className="crm-stat__label text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Total Calls</p>
+                    <p className="crm-stat__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.calls)}</p>
                     {ghlTotals.missedCalls > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--amber, #f59e0b)' }}>{ghlTotals.missedCalls} missed</p>}
                   </div>
-                  <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                    <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Opportunities</p>
-                    <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.newOpps)}</p>
+                  <div className="card p-4 crm-stat" style={{ background: 'var(--bg-base)' }}>
+                    <p className="crm-stat__label text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>New Opportunities</p>
+                    <p className="crm-stat__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.newOpps)}</p>
                     {ghlTotals.forms > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{fmtNum(ghlTotals.forms)} forms</p>}
                   </div>
                   {ghlTotals.wonOpps > 0 && (
-                    <div className="card p-4" style={{ background: 'var(--bg-base)' }}>
-                      <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Won</p>
-                      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.wonOpps)}</p>
+                    <div className="card p-4 crm-stat" style={{ background: 'var(--bg-base)' }}>
+                      <p className="crm-stat__label text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)', letterSpacing: '0.05em' }}>Won</p>
+                      <p className="crm-stat__value text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{fmtNum(ghlTotals.wonOpps)}</p>
                       {ghlTotals.wonValue > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>{fmt$(ghlTotals.wonValue)}</p>}
                     </div>
                   )}

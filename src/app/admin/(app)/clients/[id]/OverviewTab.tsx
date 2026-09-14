@@ -419,7 +419,7 @@ export default function OverviewTab({
             <p className="text-sm" style={{ color: 'var(--text-faint)' }}>Loading…</p>
           ) : invoices.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-              No Stripe invoices. Set a Stripe Customer ID in Integrations to link billing.
+              No Stripe invoices. Set a Stripe Customer ID in Connections to link billing.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>

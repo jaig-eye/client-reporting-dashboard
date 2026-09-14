@@ -8,13 +8,12 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import ScrollTabs from '@/components/ui/ScrollTabs'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
 import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
 import AiUsagePanel from '@/components/admin/AiUsagePanel'
-import { useTheme } from '@/components/ThemeProvider'
-import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
 const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status', 'ad_fuel'] as const
@@ -414,30 +413,7 @@ function AgencySettingsPageInner() {
       </div>
 
       {/* Tab nav */}
-      <style>{`.settings-tabs::-webkit-scrollbar { display: none; }`}</style>
-      <div className="settings-tabs" style={{
-        display: 'flex', gap: 2, marginBottom: '1.5rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none',
-      }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '0.5rem 1rem', border: 'none', background: 'transparent',
-              fontSize: '0.8125rem', fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: activeTab === tab.id ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
-              cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: -1,
-              transition: 'color 0.15s',
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <ScrollTabs items={TABS} activeId={activeTab} onSelect={setActiveTab} label="Agency settings sections" />
 
       <form onSubmit={handleSave} className="space-y-5">
 
@@ -616,9 +592,6 @@ function AgencySettingsPageInner() {
                 <ColorInput value={form.brand_primary} onChange={v => field('brand_primary', v)} />
               </FormField>
             </div>
-
-            {/* Per-user theme preferences */}
-            <ThemeControls />
 
             {/* Chart colors */}
             <div className="card p-6 space-y-4">
@@ -1231,106 +1204,6 @@ export default function AgencySettingsPage() {
     <Suspense fallback={null}>
       <AgencySettingsPageInner />
     </Suspense>
-  )
-}
-
-// ─── Per-user theme controls ──────────────────────────────────────────────────
-
-const ACCENT_PRESETS = [
-  { label: 'Blue',    value: '#2563eb' },
-  { label: 'Purple',  value: '#7c3aed' },
-  { label: 'Emerald', value: '#059669' },
-  { label: 'Rose',    value: '#e11d48' },
-  { label: 'Amber',   value: '#d97706' },
-  { label: 'Slate',   value: '#475569' },
-]
-
-function ThemeControls() {
-  const theme = useTheme()
-  if (!theme) return null
-  const { mode, accentColor, setMode, setAccent } = theme
-
-  const modeLabels: { value: ThemeMode; label: string }[] = [
-    { value: 'light', label: 'Light' },
-    { value: 'dark',  label: 'Dark'  },
-    { value: 'auto',  label: 'Auto'  },
-  ]
-
-  return (
-    <div className="card p-6 space-y-5">
-      <div>
-        <h2 className="section-title">Your Theme Preferences</h2>
-        <p className="section-desc">Personal settings — only affect your own view. Each admin can set their own.</p>
-      </div>
-
-      {/* Mode toggle */}
-      <div>
-        <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
-          Color mode
-        </label>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {modeLabels.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setMode(value)}
-              style={{
-                padding: '0.375rem 1rem',
-                borderRadius: '0.5rem',
-                fontSize: '0.8125rem',
-                fontWeight: mode === value ? 600 : 400,
-                border: mode === value ? '2px solid var(--accent)' : '1px solid var(--border)',
-                background: mode === value ? 'var(--accent-subtle)' : 'var(--bg-surface)',
-                color: mode === value ? 'var(--accent)' : 'var(--text-muted)',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Accent color */}
-      <div>
-        <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
-          Accent color
-        </label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {ACCENT_PRESETS.map(preset => (
-            <button
-              key={preset.value}
-              type="button"
-              title={preset.label}
-              onClick={() => setAccent(preset.value)}
-              style={{
-                width: 28, height: 28, borderRadius: '50%',
-                background: preset.value,
-                border: accentColor === preset.value ? '3px solid var(--text-primary)' : '2px solid transparent',
-                boxShadow: accentColor === preset.value ? '0 0 0 2px var(--bg-surface), 0 0 0 4px var(--text-primary)' : '0 1px 3px rgba(0,0,0,0.2)',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            />
-          ))}
-          <input
-            type="color"
-            value={accentColor || '#2563eb'}
-            onChange={e => setAccent(e.target.value)}
-            title="Custom color"
-            style={{
-              width: 28, height: 28, borderRadius: '50%',
-              padding: 2, border: '1px solid var(--border)',
-              cursor: 'pointer', background: 'var(--bg-surface)',
-            }}
-          />
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', fontFamily: 'monospace' }}>
-            {accentColor}
-          </span>
-        </div>
-      </div>
-    </div>
   )
 }
 

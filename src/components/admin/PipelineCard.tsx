@@ -183,8 +183,10 @@ function LiveLinks({ post }: { post: Post }) {
   )
 }
 
+// Visual shell only. Row layout is in globals.css (.pc-card / .pc-slot__row) so it can
+// stack below 640px — inline flex properties would override the breakpoint.
 const cardShell: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 12, padding: '9px 12px',
+  padding: '9px 12px',
   border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)',
 }
 
@@ -202,18 +204,21 @@ export default function PipelineCard(props: Props) {
     const ds = getPostDisplayStatus(post)
     const onSite = post.status === 'draft_saved' || post.status === 'published'
     return (
-      <div style={cardShell}>
+      <div className="pc-card" style={cardShell}>
         <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="pc-card__body">
+          {/* Phone only: status sits above the title, as on slot cards, instead of
+              crowding the action row. The desktop copy lives in the action row. */}
+          <div className="only-sm pc-card__status"><StatusPill status={ds} /></div>
           <button
             type="button"
+            className="pc-card__title"
             onClick={e => { e.stopPropagation(); props.onReview(post) }}
             title="Open the review panel"
             style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: 0,
+              width: '100%', textAlign: 'left', padding: 0,
               background: 'none', border: 'none', cursor: 'pointer',
               fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >
             {post.title ?? topic?.topic ?? '(generating…)'}
@@ -237,8 +242,8 @@ export default function PipelineCard(props: Props) {
           </div>
           {onSite && <LiveLinks post={post} />}
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-          <StatusPill status={ds} />
+        <div className="pc-card__actions">
+          <span className="hide-sm"><StatusPill status={ds} /></span>
           <button className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
             onClick={() => props.onReview(post)}>
             <ArrowRight size={12} weight="bold" /> {post.status === 'draft_saved' || post.status === 'published' ? 'Edit' : 'Review'}
@@ -259,17 +264,18 @@ export default function PipelineCard(props: Props) {
   const hasDetail = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
 
   return (
-    <div style={{ ...cardShell, flexDirection: 'column', alignItems: 'stretch', gap: 8, background: 'var(--bg-subtle)', borderLeft: hasError ? '2px solid #f59e0b' : cardShell.border as string }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ ...cardShell, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 8, background: 'var(--bg-subtle)', borderLeft: hasError ? '2px solid #f59e0b' : cardShell.border as string }}>
+      <div className="pc-slot__row">
         <div
-          style={{ flex: 1, minWidth: 0, cursor: hasDetail ? 'pointer' : 'default' }}
+          className="pc-card__body"
+          style={{ cursor: hasDetail ? 'pointer' : 'default' }}
           onClick={() => { if (hasDetail && !editing) props.onToggleExpand() }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <StatusPill status={ds} generating={t.status === 'generating'} />
             {hasError && <span title={t.generation_error ?? ''} style={{ fontSize: 12, color: '#f59e0b', cursor: 'help', lineHeight: 1 }}>⚠</span>}
           </div>
-          <div style={{ fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div className="pc-card__title" style={{ fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)', marginTop: 3 }}>
             {t.topic}
             {hasDetail && <span style={{ fontSize: 10, marginLeft: 5, opacity: 0.5 }}>{expanded ? '▲' : '▾'}</span>}
           </div>
@@ -295,8 +301,8 @@ export default function PipelineCard(props: Props) {
             </div>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(t.target_publish_date)}</div>
-        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+        <div className="pc-slot__date" style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(t.target_publish_date)}</div>
+        <div className="pc-card__actions" style={{ gap: 5 }}>
           {hasError && (
             <IconBtn label="Retry generation" color="#f59e0b" disabled={loading} onClick={() => props.onRetry(t.id)}><ArrowClockwise size={13} weight="bold" /></IconBtn>
           )}

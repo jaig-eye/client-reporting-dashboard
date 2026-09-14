@@ -170,7 +170,7 @@ export default async function AuthorityPage() {
               return (
                 <div className="card p-4">
                   <p className="metric-label mb-3" style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Link Velocity</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="metric-row">
                     {nb != null && (
                       <div>
                         <p className="metric-label mb-1">New Backlinks</p>

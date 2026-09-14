@@ -136,11 +136,11 @@ export default async function AhrefsSummaryCard({
     >
       {tileDefs.length > 0 ? (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+          <div className="metric-row metric-row--max3">
             {tileDefs.map(t => (
               <div key={t.key}>
                 <p className="metric-label mb-1">{t.label}</p>
-                <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
+                <p className="metric-row__value">
                   {t.display}
                 </p>
                 {t.delta}

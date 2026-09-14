@@ -1,5 +1,6 @@
 'use client'
 
+import ScrollTabs from '@/components/ui/ScrollTabs'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -377,66 +378,12 @@ export default function AlertsPage({ initialAlerts, initialCounts, initialTotalC
         </div>
 
         {/* Tab bar */}
-        <div
-          className="tabs-scroll"
-          style={{
-            gap:          4,
-            marginBottom: '1rem',
-            borderBottom: '1px solid var(--border)',
-            paddingBottom: 0,
-          }}
-        >
-          {TABS.map(tab => {
-            const n      = tabCount(totalCounts, tab.key)
-            const active = activeTab === tab.key
-            return (
-              <button
-                key={tab.key}
-                onClick={() => handleTabChange(tab.key)}
-                style={{
-                  background:    'transparent',
-                  border:        'none',
-                  cursor:        'pointer',
-                  padding:       '6px 10px',
-                  fontSize:      '0.8rem',
-                  fontWeight:    active ? 600 : 400,
-                  color:         active ? 'var(--blue)' : 'var(--text-muted)',
-                  borderBottom:  active ? '2px solid var(--blue)' : '2px solid transparent',
-                  marginBottom:  -1,
-                  display:       'flex',
-                  alignItems:    'center',
-                  gap:           5,
-                  transition:    'color 0.12s, border-color 0.12s',
-                  whiteSpace:    'nowrap',
-                }}
-                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}
-                onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
-              >
-                {tab.label}
-                {n > 0 && (
-                  <span
-                    style={{
-                      minWidth:       16,
-                      height:         16,
-                      background:     active ? 'var(--blue)' : 'var(--red)',
-                      color:          '#fff',
-                      borderRadius:   8,
-                      fontSize:       '0.575rem',
-                      fontWeight:     700,
-                      display:        'flex',
-                      alignItems:     'center',
-                      justifyContent: 'center',
-                      padding:        '0 4px',
-                      animation:      'badge-pop 0.2s ease',
-                    }}
-                  >
-                    {n > 99 ? '99+' : n}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+        <ScrollTabs
+          items={TABS.map(tab => ({ id: tab.key, label: tab.label, count: tabCount(totalCounts, tab.key) }))}
+          activeId={activeTab}
+          onSelect={id => handleTabChange(id as TabKey)}
+          label="Alert types"
+        />
 
         {/* Alert list */}
         {filteredAlerts.length === 0 ? (

@@ -319,7 +319,7 @@ export default function ClientContentSettingsForm({
           <textarea className="input" rows={4} style={{ width: '100%' }} value={form.business_background} onChange={e => setField('business_background', e.target.value)} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4 cs-form-grid">
           <div>
             <Label hint="comma-separated">Services Offered</Label>
             <textarea className="input" rows={2} style={{ width: '100%' }} value={form.services} onChange={e => setField('services', e.target.value)} />
@@ -361,13 +361,16 @@ export default function ClientContentSettingsForm({
       </div>
 
       {/* ── Trust & Credibility (E-E-A-T) ────────────────────────────────── */}
-      <details className="card" style={{ overflow: 'hidden' }} open={eeatOpen} onToggle={e => setEeatOpen((e.currentTarget as HTMLDetailsElement).open)}>
-        <summary className="p-6 cursor-pointer font-semibold text-sm flex items-center justify-between" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
+      {/* Spacing in globals.css (.cs-eeat*): same outer padding and 1rem field rhythm as the
+          Business Context card. The .card itself carries no padding here — on phones .card
+          gets 1rem, which stacked on top of the summary/body padding and doubled it. */}
+      <details className="card cs-eeat" style={{ overflow: 'hidden' }} open={eeatOpen} onToggle={e => setEeatOpen((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary className="cs-eeat__summary cursor-pointer font-semibold text-sm flex items-center justify-between" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
           <span>Trust &amp; Credibility <span className="text-xs font-normal ml-1" style={{ color: 'var(--text-muted)' }}>(E-E-A-T signals — used in every AI prompt)</span></span>
           <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{eeatOpen ? '▾' : '▸'}</span>
         </summary>
 
-        <div className="p-6 pt-0 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
+        <div className="cs-eeat__body space-y-4">
           <p className="section-desc">
             These signals let the AI write as a genuine expert — not generic AI filler. Even a few filled fields make a noticeable difference in content quality.
           </p>
@@ -396,7 +399,7 @@ export default function ClientContentSettingsForm({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 cs-form-grid">
             <div>
               <Label>Year Founded</Label>
               <input className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
@@ -444,7 +447,7 @@ export default function ClientContentSettingsForm({
               <Label>Warranties</Label>
               <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.warranties} onChange={e => setEeatField('warranties', e.target.value)} placeholder="e.g. 5-yr parts, 10-yr labor on new systems" />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingTop: '1.25rem' }}>
+            <div className="cs-eeat__toggle">
               <Toggle checked={eeat.emergency_availability} onChange={v => setEeatField('emergency_availability', v)} />
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>24/7 Emergency Service Available</span>
             </div>

@@ -1,5 +1,5 @@
 // Client Detail — /admin/clients/[id]
-// Tabbed management page: Overview / Integrations / Metrics / Content / Billing / Advanced
+// Tabbed management page: Overview / Connections / Metrics / Content / Billing / Advanced
 
 import { unstable_noStore as noStore } from 'next/cache'
 import { Suspense } from 'react'
@@ -33,14 +33,15 @@ import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
-import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
+import ScrollTabs from '@/components/ui/ScrollTabs'
+import ClientAlertsNotice from '@/components/admin/ClientAlertsNotice'
 import ClientHeaderStats from './ClientHeaderStats'
 
 export const dynamic = 'force-dynamic'
 
 const TABS = [
   { id: 'overview',    label: 'Overview'     },
-  { id: 'sources',     label: 'Integrations' },
+  { id: 'sources',     label: 'Connections'  },
   { id: 'performance', label: 'Metrics'      },
   { id: 'content',     label: 'Content'      },
   { id: 'billing',     label: 'Billing'      },
@@ -183,47 +184,37 @@ export default async function ClientDetailPage({
       {sp.error     && <Notice type="error">Error: {sp.error.replace(/_/g, ' ')}</Notice>}
 
       {/* Page heading */}
-      <div className="page-header" style={{ marginBottom: '0.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      {/* Below 640px the title takes the full width and the actions drop to their own row. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ marginBottom: '0.5rem' }}>
+        <div className="flex items-center gap-3 min-w-0">
           {client.logo_url && (
             <img src={client.logo_url} alt={client.name} style={{ height: 36, maxWidth: 100, objectFit: 'contain', flexShrink: 0 }} />
           )}
           <h1 className="page-title">{client.name}</h1>
         </div>
-        <div className="flex gap-2">
-          {adsLibraryUrl && <CopyAdLibraryButton url={adsLibraryUrl} />}
-          <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
-            Preview Dashboard →
+        <div className="flex gap-2 flex-shrink-0">
+          {adsLibraryUrl && (
+            <a href={adsLibraryUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary whitespace-nowrap" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
+              Ad library
+            </a>
+          )}
+          <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary whitespace-nowrap" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
+            View dashboard
           </Link>
         </div>
       </div>
 
-      <ClientHeaderStats clientId={id} />
+      <ClientHeaderStats clientId={id} lowBalanceThreshold={client.ad_fuel_alert_threshold ?? null} />
+
+      {/* This client's open alerts — shown on every tab */}
+      <ClientAlertsNotice clientId={id} />
 
       {/* Tab nav */}
-      <style>{`.tab-nav-bar::-webkit-scrollbar { display: none; }`}</style>
-      <div className="tab-nav-bar" style={{
-        display: 'flex', gap: 2, marginBottom: '1.5rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none',
-      }}>
-        {TABS.map(tab => (
-          <Link
-            key={tab.id}
-            href={tabUrl(tab.id)}
-            style={{
-              display: 'inline-block',
-              padding: '0.5rem 1rem', textDecoration: 'none',
-              fontSize: '0.8125rem', fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: activeTab === tab.id ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
-              whiteSpace: 'nowrap', marginBottom: -1,
-            }}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </div>
+      <ScrollTabs
+        items={TABS.map(tab => ({ id: tab.id, label: tab.label, href: tabUrl(tab.id) }))}
+        activeId={activeTab}
+        label="Client sections"
+      />
 
       {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
@@ -281,7 +272,7 @@ export default async function ClientDetailPage({
                 return (
                   <div
                     key={type}
-                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+                    className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 rounded-lg px-3 py-2.5"
                     style={{ background: 'var(--bg-subtle)' }}
                   >
                     <div className="flex items-center gap-2.5 flex-1 min-w-0">
@@ -295,7 +286,7 @@ export default async function ClientDetailPage({
                         }
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center flex-wrap gap-1.5">
                           <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                             {def.label}
                           </span>
@@ -315,7 +306,7 @@ export default async function ClientDetailPage({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <div className="flex items-center flex-wrap gap-1.5 flex-shrink-0 pl-[34px] sm:pl-0 empty:hidden">
                       {state === 'connected' && connection && (
                         <>
                           <ClientSyncButton clientId={id} connectionId={connection.id} />
@@ -366,7 +357,7 @@ export default async function ClientDetailPage({
 
             return (
               <div key={type} className="card p-5">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                   <div className="flex items-start gap-3 flex-1 min-w-0">
                     <div
                       className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
@@ -378,7 +369,7 @@ export default async function ClientDetailPage({
                       }
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center flex-wrap gap-2 mb-1">
                         <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{def.label}</h3>
                         <SourceBadge state={state} />
                       </div>
@@ -398,7 +389,7 @@ export default async function ClientDetailPage({
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center flex-wrap gap-2 flex-shrink-0 pl-12 sm:pl-0 empty:hidden">
                     {state === 'connected' && connection && (
                       <>
                         <ClientSyncButton clientId={id} connectionId={connection.id} />
@@ -415,7 +406,7 @@ export default async function ClientDetailPage({
                   </div>
                 </div>
                 {state === 'direct-connect' && isDirectType && (
-                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                  <div className="client-conn-cards" style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
                     <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress' | 'bigcommerce'} />
                   </div>
                 )}
@@ -427,7 +418,7 @@ export default async function ClientDetailPage({
                       hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
                     />
                     <div style={{ marginTop: 12 }}>
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                         <div className="flex items-start gap-2.5 flex-1 min-w-0">
                           <div
                             className="h-7 w-7 rounded flex items-center justify-center flex-shrink-0 text-sm"
@@ -452,13 +443,13 @@ export default async function ClientDetailPage({
                           </div>
                         </div>
                         {analyticsBcConn && (
-                          <Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-secondary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}>
+                          <Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-secondary self-start ml-[38px] sm:ml-0" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}>
                             Settings
                           </Link>
                         )}
                       </div>
                       {!analyticsBcConn && (
-                        <div style={{ marginTop: 10 }}>
+                        <div className="client-conn-cards" style={{ marginTop: 10 }}>
                           <ClientDirectConnections
                             clientId={id}
                             existingTypes={existingDirectTypes}
@@ -475,7 +466,7 @@ export default async function ClientDetailPage({
           })}
 
           {/* ── Third-party integration cards ─────────────────────── */}
-          <div>
+          <div className="client-conn-cards">
             <ClientIntegrationCards
               clientId={id}
               discordChannelId={(client as unknown as { discord_channel_id?: string }).discord_channel_id ?? null}

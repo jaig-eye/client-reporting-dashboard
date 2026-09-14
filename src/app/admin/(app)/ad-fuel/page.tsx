@@ -3,6 +3,8 @@
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Robot } from '@phosphor-icons/react'
+import ScrollTabs from '@/components/ui/ScrollTabs'
+import { balanceColor as colorForBalance, balanceLevel } from '@/lib/adFuelColor'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,7 +70,6 @@ const DEFAULT_COLS: ColConfig[] = [
   { key: 'fbAcct',       label: 'FB Acct',             visible: false },
   { key: 'crmId',        label: 'CRM ID',              visible: false },
   { key: 'afBalance',         label: 'Ad Fuel Balance',     visible: true  },
-  { key: 'runway',            label: 'Runway',              visible: true  },
   { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
   { key: 'afPurchased',       label: 'Ad Fuel Purchased',   visible: true  },
   { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
@@ -87,47 +88,12 @@ const DEFAULT_COLS: ColConfig[] = [
 
 const LS_KEY = 'adfuel_col_config'
 
-// ─── Runway ───────────────────────────────────────────────────────────────────
-//
-// The page used to show a balance and leave "will this client run dry before we bill them again?"
-// as mental arithmetic across nine columns — even though the alerts cron already answers it.
-
-/** Days of Ad Fuel left at the current burn rate. null when nothing is being spent. */
-function runwayDays(row: DashRow): number | null {
-  if (!row.avgDailyAf || row.avgDailyAf <= 0) return null
-  return row.afBalance / row.avgDailyAf
-}
-
-/** Days until this client's next bill date. null when no bill day is set. */
-function daysToBill(row: DashRow, today: Date = new Date()): number | null {
-  if (!row.billDay) return null
-  const dayOfMonth  = today.getDate()
-  if (row.billDay >= dayOfMonth) return row.billDay - dayOfMonth
-  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
-  return (daysInMonth - dayOfMonth) + row.billDay
-}
-
-/** Runs dry before we next bill them — the condition worth colouring red. */
-function isAtRisk(row: DashRow): boolean {
-  if (row.afBalance <= 0) return true
-  const runway = runwayDays(row)
-  const bill   = daysToBill(row)
-  return runway != null && bill != null && runway < bill
-}
-
+// Balance colour depends only on how low the balance is — see lib/adFuelColor. No run-out
+// projections: ACH payments land on unpredictable days, so a "runs out on" date would mislead.
 function balanceColor(row: DashRow): string {
-  if (isAtRisk(row)) return 'var(--red)'
-  const runway = runwayDays(row)
-  const bill   = daysToBill(row)
-  if (runway != null && bill != null && runway < bill + 3) return 'var(--amber)'
-  return 'var(--green)'
-}
-
-function fmtRunway(row: DashRow): string {
-  const runway = runwayDays(row)
-  if (runway == null) return '—'
-  if (runway < 0) return 'Overspent'
-  return `${Math.floor(runway)}d`
+  // A client that has never bought or spent Ad Fuel isn't "low" — it isn't on Ad Fuel.
+  if (row.afPurchased === 0 && row.afSpend === 0) return 'var(--text-muted)'
+  return colorForBalance(row.afBalance, row.adFuelAlertThreshold)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -169,7 +135,6 @@ function sortValue(row: DashRow, key: string): string | number {
     case 'budget':             return row.monthlyBudget ?? -1
     case 'afSinceBill':        return row.afSinceBill ?? -1
     case 'avgDaily':           return row.avgDailyAf    ?? -1
-    case 'runway':             return runwayDays(row)   ?? Number.MAX_SAFE_INTEGER
     case 'rawDailyBudget':     return row.rawDailyBudget ?? -1
     case 'afDailyBudget':      return row.afDailyBudget  ?? -1
     case 'pace': {
@@ -195,28 +160,31 @@ function loadCols(): ColConfig[] {
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 function AdFuelSummary({ rows }: { rows: DashRow[] }) {
-  const totalFloat   = rows.reduce((sum, r) => sum + r.afBalance, 0)
-  const spend        = rows.reduce((sum, r) => sum + r.afSpend, 0)
-  const purchased    = rows.reduce((sum, r) => sum + r.afPurchased, 0)
-  const atRisk       = rows.filter(isAtRisk)
-  const soonest      = [...rows]
-    .filter(r => runwayDays(r) != null && r.afBalance > 0)
-    .sort((a, b) => (runwayDays(a) ?? 0) - (runwayDays(b) ?? 0))[0]
+  const totalFloat = rows.reduce((sum, r) => sum + r.afBalance, 0)
+  const pending    = rows.reduce((sum, r) => sum + (r.pendingAch ?? 0), 0)
+  const pendingN   = rows.filter(r => (r.pendingAch ?? 0) > 0).length
+  const spend      = rows.reduce((sum, r) => sum + r.afSpend, 0)
+  const purchased  = rows.reduce((sum, r) => sum + r.afPurchased, 0)
+  const low        = rows.filter(r => r.afSpend > 0 || r.afPurchased > 0)
+                         .filter(r => balanceLevel(r.afBalance, r.adFuelAlertThreshold) !== 'healthy')
+  const negative   = low.filter(r => r.afBalance < 0)
 
   const tiles: { label: string; value: string; sub?: string; color?: string }[] = [
-    { label: 'Total float',      value: fmt$(totalFloat, 0) },
-    { label: 'Ad Fuel spend',    value: fmt$(spend, 0),     sub: 'this period' },
-    { label: 'Purchased',        value: fmt$(purchased, 0), sub: 'this period' },
+    { label: 'Total float',       value: fmt$(totalFloat, 0), sub: 'across all clients' },
     {
-      label: 'Runs dry before rebill',
-      value: String(atRisk.length),
-      sub:   atRisk.length ? atRisk.map(r => r.clientName).slice(0, 2).join(', ') : 'all clients funded',
-      color: atRisk.length ? 'var(--red)' : 'var(--green)',
+      label: 'Pending ACH',
+      value: fmt$(pending, 0),
+      sub:   pendingN ? `${pendingN} client${pendingN === 1 ? '' : 's'} awaiting payment` : 'nothing outstanding',
     },
+    { label: 'Ad Fuel spend',     value: fmt$(spend, 0),      sub: 'this period' },
+    { label: 'Purchased',         value: fmt$(purchased, 0),  sub: 'this period' },
     {
-      label: 'Next to run out',
-      value: soonest ? fmtRunway(soonest) : '—',
-      sub:   soonest ? soonest.clientName : undefined,
+      label: 'Low balance',
+      value: String(low.length),
+      sub:   low.length
+        ? (negative.length ? `${negative.length} below zero · ` : '') + low.map(r => r.clientName).slice(0, 2).join(', ')
+        : 'every client above its alert level',
+      color: negative.length ? 'var(--red)' : low.length ? 'var(--amber)' : 'var(--green)',
     },
   ]
 
@@ -287,15 +255,6 @@ function renderCell(key: string, row: DashRow): React.ReactNode {
     case 'budget':       return <td key={key} style={{ textAlign: 'right', color: row.monthlyBudget ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : '—'}</td>
     case 'afSinceBill':  return <td key={key} style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(row.afSinceBill)}</td>
     case 'avgDaily':         return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
-    case 'runway': {
-      const bill = daysToBill(row)
-      return (
-        <td key={key} style={{ textAlign: 'right', fontWeight: isAtRisk(row) ? 600 : 400, color: balanceColor(row) }}
-            title={bill != null ? `Next bill in ${bill} days` : 'No bill day set'}>
-          {fmtRunway(row)}
-        </td>
-      )
-    }
     case 'rawDailyBudget':   return (
       <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}
           title="Current total daily budget across all active campaigns (Google + Meta) — not date-filtered">
@@ -658,7 +617,6 @@ function AdFuelPageInner() {
           case 'budget':       return row.monthlyBudget ?? ''
           case 'afSinceBill':  return row.afSinceBill?.toFixed(2) ?? ''
           case 'avgDaily':     return row.avgDailyAf?.toFixed(2) ?? ''
-          case 'runway':       return runwayDays(row)?.toFixed(1) ?? ''
           case 'pace':         return row.pace
           default: return ''
         }
@@ -694,30 +652,16 @@ function AdFuelPageInner() {
         <h1 className="page-title">Ad Fuel</h1>
       </div>
 
-      {/* Tabs */}
-      <div style={{
-        display: 'flex', gap: 2, marginBottom: '1.5rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto', scrollbarWidth: 'none',
-      }}>
-        {(['dashboard', 'ledger', 'settings'] as const).map(t => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            style={{
-              padding: '0.5rem 1rem', border: 'none', background: 'transparent',
-              fontSize: '0.8125rem', fontWeight: tab === t ? 600 : 400,
-              color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: tab === t ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
-              cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: -1,
-              transition: 'color 0.15s',
-            }}
-          >
-            {t === 'dashboard' ? 'Dashboard' : t === 'ledger' ? 'Ledger' : 'Settings'}
-          </button>
-        ))}
-      </div>
+      <ScrollTabs
+        label="Ad Fuel sections"
+        activeId={tab}
+        onSelect={id => setTab(id as 'dashboard' | 'ledger' | 'settings')}
+        items={[
+          { id: 'dashboard', label: 'Dashboard' },
+          { id: 'ledger',    label: 'Ledger' },
+          { id: 'settings',  label: 'Settings' },
+        ]}
+      />
 
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
@@ -789,7 +733,6 @@ function AdFuelPageInner() {
                   what's left, how long it lasts, and when we bill them next. */}
               <ul className="client-cards only-sm">
                 {displayRows.map(row => {
-                  const bill = daysToBill(row)
                   return (
                     <li key={row.clientId}>
                       <button
@@ -801,9 +744,9 @@ function AdFuelPageInner() {
                         <span className="client-card__body">
                           <span className="client-card__name">{row.clientName}</span>
                           <span className="client-card__meta">
-                            {runwayDays(row) == null ? 'No spend yet' : `${fmtRunway(row)} left`}
-                            {bill != null && ` · bills in ${bill}d`}
-                            {row.avgDailyAf ? ` · ${fmt$(row.avgDailyAf, 0)}/day` : ''}
+                            {row.avgDailyAf ? `${fmt$(row.avgDailyAf, 0)}/day avg` : 'No recent spend'}
+                            {row.billDay ? ` · bills on day ${row.billDay}` : ''}
+                            {(row.pendingAch ?? 0) > 0 ? ` · ${fmt$(row.pendingAch ?? 0, 0)} ACH pending` : ''}
                           </span>
                         </span>
                         <span className="client-card__af" style={{ color: balanceColor(row) }}>{fmt$(row.afBalance, 0)}</span>

@@ -347,7 +347,7 @@ export default async function GA4Page({
             </div>
 
             {/* Sessions trend chart */}
-            <div className="card p-6">
+            <div className="card p-4 sm:p-6">
               <div className="mb-4">
                 <h2 className="section-title">Sessions & Conversions Over Time</h2>
                 <p className="section-desc">{fmtDate(fromDate)} – {fmtDate(toDate)}</p>

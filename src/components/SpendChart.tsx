@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -12,6 +13,27 @@ import {
   Legend,
 } from 'recharts'
 import type { DailyMetric } from '@/lib/types'
+
+/** True below the 640px (Tailwind `sm`) breakpoint. SSR / first paint assume desktop. */
+function useIsNarrow(query = '(max-width: 639px)') {
+  const [narrow, setNarrow] = useState(false)
+  useEffect(() => {
+    const mql = window.matchMedia(query)
+    const update = () => setNarrow(mql.matches)
+    update()
+    mql.addEventListener('change', update)
+    return () => mql.removeEventListener('change', update)
+  }, [query])
+  return narrow
+}
+
+/** 1234 -> 1.2k, 1500000 -> 1.5M — keeps the y-axis narrow on phones. */
+function compactNum(v: number) {
+  const abs = Math.abs(v)
+  if (abs >= 1_000_000) return `${+(v / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000)     return `${+(v / 1_000).toFixed(1)}k`
+  return `${+v.toFixed(abs < 10 && abs % 1 !== 0 ? 1 : 0)}`
+}
 
 export default function SpendChart({
   data,
@@ -38,6 +60,11 @@ export default function SpendChart({
   const spendFormatter = variant === 'count'
     ? (v: number) => v.toLocaleString()
     : (v: number) => `$${v.toFixed(2)}`
+  const isNarrow = useIsNarrow()
+  // Phones: compact left-axis labels so the axis doesn't eat the plot area.
+  const axisFormatter = isNarrow
+    ? (v: number) => (variant === 'count' ? compactNum(v) : `$${compactNum(v)}`)
+    : spendFormatter
   if (!data.length) {
     return (
       <div className="h-64 flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -61,27 +88,29 @@ export default function SpendChart({
   }))
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
+    <ResponsiveContainer width="100%" height={280} minHeight={240}>
       <ComposedChart
         data={formatted}
-        margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+        margin={isNarrow ? { top: 4, right: 4, bottom: 0, left: -4 } : { top: 4, right: 16, bottom: 0, left: 0 }}
         barCategoryGap={isCompare ? '18%' : '25%'}
         barGap={2}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11, fill: '#6b7280' }}
+          tick={{ fontSize: isNarrow ? 10 : 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
+          {...(isNarrow ? { interval: 'preserveStartEnd' as const, minTickGap: 28 } : {})}
         />
         <YAxis
           yAxisId="spend"
           orientation="left"
-          tick={{ fontSize: 11, fill: '#6b7280' }}
+          tick={{ fontSize: isNarrow ? 10 : 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={v => spendFormatter(v)}
+          tickFormatter={v => axisFormatter(v)}
+          {...(isNarrow ? { width: 40, tickCount: 4 } : {})}
         />
         <YAxis
           yAxisId="conversions"
@@ -89,6 +118,9 @@ export default function SpendChart({
           tick={{ fontSize: 11, fill: '#6b7280' }}
           tickLine={false}
           axisLine={false}
+          // Phones: keep the axis for scaling the line but reserve no width for
+          // its ticks — the legend + tooltip identify the values.
+          hide={isNarrow}
         />
         <Tooltip
           formatter={(value: number, name: string) => {
@@ -112,7 +144,7 @@ export default function SpendChart({
           }}
           cursor={{ fill: 'rgba(0,0,0,0.03)' }}
         />
-        <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
+        <Legend wrapperStyle={{ fontSize: isNarrow ? 11 : 12, color: '#6b7280' }} />
 
         {/* Current period spend bar */}
         <Bar

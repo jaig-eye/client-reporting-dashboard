@@ -7,6 +7,7 @@
 // and see nothing but their mailing address.
 
 import { useEffect, useState } from 'react'
+import { balanceColor } from '@/lib/adFuelColor'
 
 interface Stats {
   adFuelBalance?:        number | null
@@ -19,7 +20,11 @@ interface Stats {
 const money = (n: number) =>
   `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
-export default function ClientHeaderStats({ clientId }: { clientId: string }) {
+export default function ClientHeaderStats({ clientId, lowBalanceThreshold }: {
+  clientId: string
+  /** The client's own low-balance alert threshold; the shared rule's default applies when unset. */
+  lowBalanceThreshold?: number | null
+}) {
   const [stats, setStats]     = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -41,10 +46,7 @@ export default function ClientHeaderStats({ clientId }: { clientId: string }) {
     {
       label: 'Ad Fuel',
       value: balance != null ? money(balance) : '—',
-      color: balance == null ? undefined
-           : balance < 0     ? 'var(--red)'
-           : balance < 200   ? 'var(--amber)'
-           : 'var(--green)',
+      color: balance == null ? undefined : balanceColor(balance, lowBalanceThreshold),
     },
     { label: 'Spend this month', value: stats?.mtdSpend != null ? money(stats.mtdSpend) : '—' },
     {

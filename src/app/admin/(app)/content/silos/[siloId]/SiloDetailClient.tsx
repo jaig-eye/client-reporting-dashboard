@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
+import ScrollTabs from '@/components/ui/ScrollTabs'
 import type { SiloKeyword, SiloPage, SiloInternalLink, KeywordType, InternalLinkStatus } from '@/lib/types'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -204,27 +205,7 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
       </div>
 
       {/* Tab nav */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '0.5rem 1rem',
-              fontSize: '0.875rem',
-              fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--blue)' : 'var(--text-muted)',
-              background: 'none',
-              border: 'none',
-              borderBottom: `2px solid ${activeTab === tab.id ? 'var(--blue)' : 'transparent'}`,
-              cursor: 'pointer',
-              marginBottom: -1,
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <ScrollTabs items={TABS} activeId={activeTab} onSelect={setActiveTab} label="Silo sections" />
 
       {/* ── Keywords tab ── */}
       {activeTab === 'keywords' && (

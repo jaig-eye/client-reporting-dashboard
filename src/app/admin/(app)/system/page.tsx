@@ -4,6 +4,7 @@
 // Sync logs (global + per-client), global backfill, app diagnostics.
 // The active tab lives in the URL (?tab=activity) so an ops log view can be linked.
 
+import ScrollTabs from '@/components/ui/ScrollTabs'
 import { Suspense, useEffect, useState, useCallback } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { CaretLeft, CaretRight, ArrowsCounterClockwise } from '@phosphor-icons/react'
@@ -259,24 +260,12 @@ function SystemPageInner() {
       </div>
 
       {/* Tab switcher */}
-      <div className="flex gap-1 mb-5" style={{ borderBottom: '2px solid var(--border)', paddingBottom: '0' }}>
-        {SYSTEM_TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className="text-sm font-medium px-4 py-2"
-            style={{
-              borderBottom: activeTab === tab ? '2px solid var(--blue)' : '2px solid transparent',
-              marginBottom: '-2px',
-              color: activeTab === tab ? 'var(--blue)' : 'var(--text-muted)',
-              background: 'none',
-              cursor: 'pointer', transition: 'color 0.15s',
-            }}
-          >
-            {tab === 'sync' ? 'Sync Logs' : 'Activity Log'}
-          </button>
-        ))}
-      </div>
+      <ScrollTabs
+        items={SYSTEM_TABS.map(tab => ({ id: tab, label: tab === 'sync' ? 'Sync Logs' : 'Activity Log' }))}
+        activeId={activeTab}
+        onSelect={id => setActiveTab(id as SystemTab)}
+        label="System sections"
+      />
 
       {activeTab === 'activity' && (
         <div className="card p-5">
