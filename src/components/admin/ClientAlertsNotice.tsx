@@ -29,7 +29,13 @@ interface Alert {
 // a publish that failed, or a post due to be published by hand — surface here.
 const ACTIONABLE_CONTENT = new Set(['auto_push_error', 'sa_auto_push_error', 'bc_spot_check', 'bc_sa_spot_check'])
 
-function shouldShow(alert: Alert): boolean {
+// Same window as the Today page's "Needs attention": a notice on a client's record is about what is
+// happening now. Anything older is still in the Alerts inbox, filtered to this client.
+const RECENT_MS = 48 * 60 * 60 * 1000
+
+function shouldShow(alert: Alert, now: number): boolean {
+  const created = Date.parse(alert.created_at)
+  if (!Number.isFinite(created) || now - created > RECENT_MS) return false
   if (alert.type !== 'content') return true
   const kind = typeof alert.meta?.content_type === 'string' ? alert.meta.content_type : ''
   return ACTIONABLE_CONTENT.has(kind)
@@ -48,9 +54,13 @@ export default function ClientAlertsNotice({ clientId, max = 3 }: { clientId: st
 
   useEffect(() => {
     let live = true
-    fetch(`/api/admin/alerts?client_id=${encodeURIComponent(clientId)}&limit=${max + 5}`)
+    fetch(`/api/admin/alerts?client_id=${encodeURIComponent(clientId)}&limit=${Math.max(25, max * 5)}`)
       .then(r => (r.ok ? r.json() : null))
-      .then((data: { alerts?: Alert[] } | null) => { if (live && data?.alerts) setAlerts(data.alerts.filter(shouldShow)) })
+      .then((data: { alerts?: Alert[] } | null) => {
+        if (!live || !data?.alerts) return
+        const now = Date.now()
+        setAlerts(data.alerts.filter(a => shouldShow(a, now)))
+      })
       .catch(() => {})
     return () => { live = false }
   }, [clientId, max])
@@ -95,7 +105,7 @@ export default function ClientAlertsNotice({ clientId, max = 3 }: { clientId: st
       })}
       {more > 0 && (
         <Link href="/admin/alerts" className="client-alerts__more">
-          {more} more alert{more === 1 ? '' : 's'} for this client
+          {more} more recent alert{more === 1 ? '' : 's'} for this client
         </Link>
       )}
     </div>

@@ -31,7 +31,6 @@ import type { Client, Connector } from '@/lib/types'
 import type { ConnectorType } from '@/lib/types'
 import DashboardSidebar from '@/components/DashboardSidebar'
 import DashboardNavDrawer from '@/components/dashboard/NavDrawer'
-import ClientAlertsNotice from '@/components/admin/ClientAlertsNotice'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 
@@ -168,11 +167,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </Suspense>
         )}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          {isAdmin && client && (
-            <div className="dash-admin-alerts">
-              <ClientAlertsNotice clientId={client.id} />
-            </div>
-          )}
           {children}
         </div>
       </div>

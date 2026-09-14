@@ -1171,18 +1171,19 @@ function AgencySettingsPageInner() {
         </div>}
 
         {/* ─── Sticky save bar ───────────────────────────────────── */}
-        <div style={{
-          position: 'sticky', bottom: 0,
-          background: 'var(--bg-surface)',
-          borderTop: '1px solid var(--border)',
-          padding: '12px 0', zIndex: 10,
-          display: 'flex', alignItems: 'center', gap: '0.75rem',
-        }}>
+        {/* A floating bar rather than a bare strip: it stays in reach on long tabs and reads as part
+            of the page, with the result of the last save beside the button. */}
+        <div className="settings-savebar" role="region" aria-label="Save settings">
+          <p className="settings-savebar__status" aria-live="polite">
+            {error
+              ? <span style={{ color: 'var(--red)' }}>{error}</span>
+              : saved
+              ? <span style={{ color: 'var(--green)' }}>✓ Settings saved</span>
+              : <span>Changes apply to every client dashboard once saved.</span>}
+          </p>
           <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? 'Saving…' : 'Save Settings'}
+            {saving ? 'Saving…' : 'Save settings'}
           </button>
-          {saved  && <span className="text-sm" style={{ color: 'var(--green)' }}>Saved ✓</span>}
-          {error  && <span className="text-sm" style={{ color: 'var(--red)' }}>{error}</span>}
         </div>
       </form>
     </div>
