@@ -126,8 +126,10 @@
 
 @keyframes monthly-approve-flash {
   0%   { background: inherit; }
-  25%  { background: #dcfce7; }
-  100% { background: #f0fdf4; }
+  /* Tokens, not hex: with `forwards` the last frame is the card's permanent background, so a
+     light-mode mint here left every approved card mint in dark mode, under near-white text. */
+  25%  { background: var(--green-subtle); }
+  100% { background: var(--bg-surface); }
 }
 
 @keyframes monthly-card-collapse {

@@ -1261,7 +1261,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // ── Styles ──────────────────────────────────────────────────────────────────
   const Check = ({ ok, warn }: { ok: boolean; warn?: boolean }) => (
-    <span style={{ color: ok ? 'var(--green)' : warn ? 'var(--amber, #f59e0b)' : 'var(--red)', fontWeight: 600, marginRight: 4, fontSize: '0.75rem' }}>
+    <span style={{ color: ok ? 'var(--green)' : warn ? 'var(--amber)' : 'var(--red)', fontWeight: 600, marginRight: 4, fontSize: '0.75rem' }}>
       {ok ? '✓' : '✗'}
     </span>
   )
@@ -1394,7 +1394,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             Review Post
           </h2>
           {isDirty && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--amber, #f59e0b)', fontWeight: 500 }}>
+            <span style={{ fontSize: '0.7rem', color: 'var(--amber)', fontWeight: 500 }}>
               ● Unsaved changes
             </span>
           )}
@@ -1432,16 +1432,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {([
-                    { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-                    { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-                    { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
-                    { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-                    { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-                  ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
+                    { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: 'var(--blue)', bg: 'var(--blue-subtle)', border: 'var(--blue-border)' },
+                    { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', border: 'rgba(139,92,246,0.35)' },
+                    { key: 'audience_intent',     label: 'Audience Intent',     color: 'var(--green)', bg: 'var(--green-subtle)', border: 'rgba(22,163,74,0.35)' },
+                    { key: 'why_now',             label: 'Why Now',             color: 'var(--amber)', bg: 'var(--amber-subtle)', border: 'rgba(217,119,6,0.35)' },
+                    { key: 'competition_level',   label: 'Competition',         color: 'var(--red)', bg: 'var(--red-subtle)', border: 'rgba(220,38,38,0.35)' },
+                  ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string; border: string }>).map(({ key, label, color, bg, border }) => {
                     const val = bd[key]
                     if (!val || typeof val !== 'string') return null
                     return (
-                      <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.625rem 0.875rem' }}>
+                      <div key={key} style={{ borderRadius: 8, border: `1px solid ${border}`, background: bg, padding: '0.625rem 0.875rem' }}>
                         <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
                         <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
                       </div>
@@ -1473,7 +1473,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
             {/* Left: live rendered preview (wide screens only) */}
             {!isNarrow && (
-              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: '#fff' }}>
+              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: 'var(--bg-surface)' }}>
                 <iframe srcDoc={previewSrcdoc} title="Live preview" style={{ width: '100%', height: '100%', border: 'none' }} />
               </div>
             )}
@@ -1541,7 +1541,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                         {/* An article with no links is neutral, not a pass — "✓ All 0 links OK"
                             reads as a check that ran and succeeded, when nothing was checked.
                             Same treatment the phone readout gets below. */}
-                        <span style={{ fontSize: '0.72rem', color: linkScan.links.length === 0 ? 'var(--text-faint)' : brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
+                        <span style={{ fontSize: '0.72rem', color: linkScan.links.length === 0 ? 'var(--text-faint)' : brokenCount > 0 ? 'var(--red)' : 'var(--green)' }}>
                           {linkScan.links.length === 0
                             ? 'No links'
                             : brokenCount === 0
@@ -1551,7 +1551,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                         {/* Finding none is neutral, not a pass. Plenty of posts legitimately
                             carry no number, and colouring that green would claim a check
                             that never had anything to check. */}
-                        <span style={{ fontSize: '0.72rem', color: phones.length === 0 ? 'var(--text-faint)' : badPhones > 0 ? '#b45309' : '#16a34a' }}>
+                        <span style={{ fontSize: '0.72rem', color: phones.length === 0 ? 'var(--text-faint)' : badPhones > 0 ? 'var(--amber)' : 'var(--green)' }}>
                           {phones.length === 0
                             ? 'No phone numbers'
                             : badPhones === 0
@@ -1573,20 +1573,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 const broken = linkScan.links.filter(l => !l.ok)
                 if (broken.length === 0) return null
                 return (
-                  <div className="mb-4" style={{ border: '1px solid #fca5a5', borderRadius: 6, background: '#fff1f2', padding: '0.625rem 0.75rem' }}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <div className="mb-4" style={{ border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-subtle)', padding: '0.625rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--red)', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       🔗 {broken.length} broken link{broken.length !== 1 ? 's' : ''} — click to jump
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {broken.map((l, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, fontSize: '0.75rem', color: l.redirected ? '#b45309' : '#dc2626', wordBreak: 'break-all' }}>
+                          <span style={{ flex: 1, fontSize: '0.75rem', color: l.redirected ? 'var(--amber)' : 'var(--red)', wordBreak: 'break-all' }}>
                             {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` (${l.status})` : l.error ? ` (${l.error})` : ''}
                           </span>
                           <button
                             type="button"
                             onClick={() => jumpToLink(l.url)}
-                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', color: '#dc2626', flexShrink: 0, whiteSpace: 'nowrap' }}
+                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: 'var(--bg-surface)', border: '1px solid var(--red)', borderRadius: 4, cursor: 'pointer', color: 'var(--red)', flexShrink: 0, whiteSpace: 'nowrap' }}
                           >
                             Jump ↓
                           </button>
@@ -1604,20 +1604,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 const bad = (linkScan.phones ?? []).filter(p => !p.valid)
                 if (bad.length === 0) return null
                 return (
-                  <div className="mb-4" style={{ border: '1px solid #fcd34d', borderRadius: 6, background: '#fffbeb', padding: '0.625rem 0.75rem' }}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b45309', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <div className="mb-4" style={{ border: '1px solid var(--amber)', borderRadius: 6, background: 'var(--amber-subtle)', padding: '0.625rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--amber)', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       {bad.length} phone number{bad.length !== 1 ? 's' : ''} to check — click to jump
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {bad.map((p, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, fontSize: '0.75rem', color: '#b45309', wordBreak: 'break-all' }}>
+                          <span style={{ flex: 1, fontSize: '0.75rem', color: 'var(--amber)', wordBreak: 'break-all' }}>
                             ✗ {p.raw} ({p.digits.length} digit{p.digits.length !== 1 ? 's' : ''})
                           </span>
                           <button
                             type="button"
                             onClick={() => jumpToPhone(p.raw)}
-                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fcd34d', borderRadius: 4, cursor: 'pointer', color: '#b45309', flexShrink: 0, whiteSpace: 'nowrap' }}
+                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: 'var(--bg-surface)', border: '1px solid var(--amber)', borderRadius: 4, cursor: 'pointer', color: 'var(--amber)', flexShrink: 0, whiteSpace: 'nowrap' }}
                           >
                             Jump ↓
                           </button>
@@ -1722,7 +1722,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div className="mb-4">
                 <label style={labelStyle}>
                   SEO Title
-                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 60 ? 'var(--amber, #f59e0b)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 60 ? 'var(--amber)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
                     {seoTitle.length}/60
                   </span>
                 </label>
@@ -1780,7 +1780,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <div className="mb-4">
                 <label style={labelStyle}>
                   Meta Description
-                  <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber, #f59e0b)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
                     {liveMetaLen}/160
                   </span>
                 </label>
@@ -1796,8 +1796,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       title="Current keyword rank (DataForSEO)"
                       style={{
                         fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999,
-                        background: keywordRank.current_position <= 3 ? '#dcfce7' : keywordRank.current_position <= 10 ? '#fef3c7' : 'var(--bg-muted)',
-                        color: keywordRank.current_position <= 3 ? '#166534' : keywordRank.current_position <= 10 ? '#92400e' : 'var(--text-muted)',
+                        background: keywordRank.current_position <= 3 ? 'var(--green-subtle)' : keywordRank.current_position <= 10 ? 'var(--amber-subtle)' : 'var(--bg-muted)',
+                        color: keywordRank.current_position <= 3 ? 'var(--green)' : keywordRank.current_position <= 10 ? 'var(--amber)' : 'var(--text-muted)',
                       }}
                     >
                       Rank #{keywordRank.current_position}
@@ -1857,7 +1857,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       }}>
                         <span>{passed.length}/{checks.length} passed</span>
                         {failed.length > 0 && (
-                          <span style={{ color: 'var(--amber, #b45309)', fontWeight: 700 }}>
+                          <span style={{ color: 'var(--amber)', fontWeight: 700 }}>
                             · {failed.length} to look at
                           </span>
                         )}
@@ -1987,7 +1987,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${categorySuggestion.isNew ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
                       <span style={{ color: 'var(--text-muted)' }}>Auto:</span>
                       <strong>{categorySuggestion.name}</strong>
-                      <span style={{ color: categorySuggestion.isNew ? '#f59e0b' : '#10b981' }}>
+                      <span style={{ color: categorySuggestion.isNew ? 'var(--amber)' : 'var(--green)' }}>
                         {categorySuggestion.isNew ? '(will create)' : '(existing)'}
                       </span>
                       {!categorySuggestion.isNew && categorySuggestion.id && (
@@ -2081,7 +2081,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   : undefined}
                 className="btn btn-sm btn-primary"
                 style={{
-                  background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
+                  background: saving ? undefined : 'var(--green)', borderColor: 'var(--green)',
                   opacity: nothingToPush ? 0.55 : 1,
                 }}
               >

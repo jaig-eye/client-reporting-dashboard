@@ -68,7 +68,7 @@ export const NAV: NavItem[] = [
     children: [
       { key: 'gsc',          label: 'Search Console',       requiredConnector: 'google_search_console',  href: '/dashboard/seo/search-console' },
       { key: 'gbp',          label: 'Business Profile',     requiredConnector: 'google_business_profile', href: '/dashboard/seo/gbp'            },
-      { key: 'ahrefs',       label: 'Authority (Ahrefs)',   requiredConnector: 'ahrefs',                 href: '/dashboard/seo/authority'      },
+      { key: 'ahrefs',       label: 'Search visibility',     requiredConnector: 'ahrefs',                 href: '/dashboard/seo/authority'      },
       { key: 'maps_ranking', label: 'Google Maps Ranking',  href: '/dashboard/seo/maps'                                                       },
     ],
   },

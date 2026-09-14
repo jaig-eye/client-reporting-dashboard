@@ -111,7 +111,7 @@ export default async function AuthorityPage() {
         <div className="page-header" style={{ marginBottom: 0 }}>
           <div className="flex items-center gap-2">
             <LinkSimple size={18} weight="duotone" style={{ color: '#f59e0b' }} aria-hidden />
-            <h1 className="page-title">Authority</h1>
+            <h1 className="page-title">Search visibility</h1>
             {!hasAhrefs && (
               <span className="badge badge-amber" style={{ fontSize: '0.6875rem' }}>Not connected</span>
             )}
@@ -133,26 +133,30 @@ export default async function AuthorityPage() {
         ) : (
           <>
             {/* KPI cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="stat-grid stat-grid--wide">
               <SparkMetricCard
-                label="Domain Rating"
+                label="Visitors from search"
+                value={latest?.organic_traffic != null ? latest.organic_traffic.toLocaleString() : '—'}
+                sub="people arriving each month without an ad"
+                sparkData={otTrend}
+              />
+              <SparkMetricCard
+                label="Site strength"
                 value={latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : '—'}
+                sub="how Google weighs your site, 0 to 100"
                 sparkData={drTrend}
               />
               <SparkMetricCard
-                label="Backlinks"
+                label="Links to your site"
                 value={latest?.backlinks != null ? latest.backlinks.toLocaleString() : '—'}
+                sub="from other websites"
                 sparkData={blTrend}
               />
               <SparkMetricCard
-                label="Referring Domains"
+                label="Sites linking to you"
                 value={latest?.referring_domains != null ? latest.referring_domains.toLocaleString() : '—'}
+                sub="how many different websites"
                 sparkData={rdTrend}
-              />
-              <SparkMetricCard
-                label="Organic Traffic"
-                value={latest?.organic_traffic != null ? latest.organic_traffic.toLocaleString() : '—'}
-                sparkData={otTrend}
               />
             </div>
 
@@ -203,22 +207,28 @@ export default async function AuthorityPage() {
               const pt = (latest as Record<string, unknown> | undefined)?.paid_traffic  as number | null | undefined
               if (tv == null && pk == null && pt == null) return null
               return (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="stat-grid stat-grid--wide">
                   <SparkMetricCard
-                    label="Traffic Value"
+                    label="What that traffic is worth"
                     value={tv != null ? `$${tv.toLocaleString()}` : '—'}
+                    sub="what you'd pay in ads for the same visitors"
                     sparkData={tvTrend}
                   />
-                  <SparkMetricCard
-                    label="Paid Keywords"
-                    value={pk != null ? pk.toLocaleString() : '—'}
-                    sparkData={pkTrend}
-                  />
-                  <SparkMetricCard
-                    label="Paid Traffic"
-                    value={pt != null ? pt.toLocaleString() : '—'}
-                    sparkData={ptTrend}
-                  />
+                  {/* Only when there is paid-search data; two cards of dashes read as broken. */}
+                  {pk != null && (
+                    <SparkMetricCard
+                      label="Paid Keywords"
+                      value={pk.toLocaleString()}
+                      sparkData={pkTrend}
+                    />
+                  )}
+                  {pt != null && (
+                    <SparkMetricCard
+                      label="Paid Traffic"
+                      value={pt.toLocaleString()}
+                      sparkData={ptTrend}
+                    />
+                  )}
                 </div>
               )
             })()}
@@ -229,9 +239,7 @@ export default async function AuthorityPage() {
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
                     Latest snapshot: <span style={{ color: 'var(--text-primary)' }}>{latest.date}</span>
-                    {latest.ahrefs_rank && (
-                      <> — Ahrefs Rank: <span style={{ color: 'var(--text-primary)' }}>#{latest.ahrefs_rank.toLocaleString()}</span></>
-                    )}
+
                   </p>
                   <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
                     Organic keywords: {latest.organic_keywords?.toLocaleString() ?? '—'}

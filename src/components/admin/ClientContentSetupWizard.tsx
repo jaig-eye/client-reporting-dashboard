@@ -684,18 +684,18 @@ function StepWelcome({ clientName, hasGsc, wpUrl }: { clientName: string; hasGsc
       </div>
 
       {hasGsc === false && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#fef3c7', border: '1px solid #fde68a', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#92400e', marginBottom: 3 }}>Google Search Console not connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#92400e', lineHeight: 1.5 }}>
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--amber-subtle)', border: '1px solid var(--amber)', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--amber)', marginBottom: 3 }}>Google Search Console not connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--amber)', lineHeight: 1.5 }}>
             Topic suggestions will be less precise without real keyword data. Connect GSC in Data Connections for best results.
           </div>
         </div>
       )}
 
       {wpUrl && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#166534', marginBottom: 2 }}>WordPress connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#166534' }}>{wpUrl}</div>
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--green-subtle)', border: '1px solid var(--green)', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--green)', marginBottom: 2 }}>WordPress connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--green)' }}>{wpUrl}</div>
         </div>
       )}
     </div>
@@ -736,13 +736,13 @@ function StepWpConnect({
         <div style={{
           padding: '1.25rem 1.5rem',
           borderRadius: 12,
-          border: '2px solid #86efac',
-          background: '#f0fdf4',
+          border: '2px solid var(--green)',
+          background: 'var(--green-subtle)',
           display: 'flex', alignItems: 'center', gap: 16,
           animation: 'wp-slide-in 0.35s ease',
         }}>
           <div style={{
-            width: 44, height: 44, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+            width: 44, height: 44, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -750,8 +750,8 @@ function StepWpConnect({
             </svg>
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>Connected</div>
-            <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{wpUrl}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--green)' }}>Connected</div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--green)', opacity: 0.8, marginTop: 2 }}>{wpUrl}</div>
           </div>
         </div>
         <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -778,13 +778,13 @@ function StepWpConnect({
           <div style={{
             padding: '1.5rem',
             borderRadius: 12,
-            border: '2px solid #86efac',
-            background: '#f0fdf4',
+            border: '2px solid var(--green)',
+            background: 'var(--green-subtle)',
             display: 'flex', alignItems: 'center', gap: 16,
             animation: 'wp-check-in 0.4s cubic-bezier(0.34,1.56,0.64,1)',
           }}>
             <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+              width: 48, height: 48, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -801,8 +801,8 @@ function StepWpConnect({
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>WordPress connected!</div>
-              <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
+              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--green)' }}>WordPress connected!</div>
+              <div style={{ fontSize: '0.8125rem', color: 'var(--green)', opacity: 0.8, marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
             </div>
           </div>
           <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -846,7 +846,7 @@ function StepWpConnect({
           </p>
 
           {connectMsg && (
-            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: '#fee2e2', color: '#dc2626', fontSize: '0.8125rem', marginBottom: 16 }}>
+            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: 16 }}>
               {connectMsg}
             </div>
           )}
@@ -1116,7 +1116,7 @@ function StepSchedule({
               padding: '1rem',
               borderRadius: 10,
               border: `2px solid ${schedule.frequency === opt.id ? 'var(--blue)' : 'var(--border)'}`,
-              background: schedule.frequency === opt.id ? '#eff6ff' : 'var(--bg-surface)',
+              background: schedule.frequency === opt.id ? 'var(--blue-subtle)' : 'var(--bg-surface)',
               cursor: 'pointer',
               textAlign: 'left',
             }}
@@ -1283,7 +1283,7 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
             {!done ? (
               <StatusRow label="Searching keywords…" status="loading" />
             ) : !research?.hasSerpApi ? (
-              <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--amber)', background: 'var(--amber-subtle)', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
                 Add a SerpAPI key in Agency Settings for richer keyword research.
               </div>
             ) : research.keywords.length === 0 ? (
@@ -1295,7 +1295,7 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>{kw.keyword}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {kw.relatedSearches.slice(0, 4).map((q, j) => (
-                        <span key={j} style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8' }}>{q}</span>
+                        <span key={j} style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, background: 'var(--blue-subtle)', color: 'var(--blue)' }}>{q}</span>
                       ))}
                     </div>
                   </div>
@@ -1321,7 +1321,7 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {research!.competitors.map((c, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
                     <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{c}</span>
                   </div>
                 ))}
@@ -1332,7 +1332,7 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
       </div>
 
       {done && (
-        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', fontSize: '0.8125rem', color: '#166534' }}>
+        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: 'var(--green-subtle)', border: '1px solid var(--green)', fontSize: '0.8125rem', color: 'var(--green)' }}>
           Research complete. This data will improve topic relevance when generating.
         </div>
       )}
@@ -1344,8 +1344,8 @@ function StatusRow({ label, status }: { label: string; status: 'loading' | 'done
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
       {status === 'loading' && <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>}
-      {status === 'done'    && <span style={{ color: '#16a34a' }}>✓</span>}
-      {status === 'error'   && <span style={{ color: '#dc2626' }}>✗</span>}
+      {status === 'done'    && <span style={{ color: 'var(--green)' }}>✓</span>}
+      {status === 'error'   && <span style={{ color: 'var(--red)' }}>✗</span>}
       {label}
     </div>
   )
@@ -1403,7 +1403,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {statusChecks.map(c => (
               <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>
-                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? '#dcfce7' : '#f3f4f6', color: c.ok ? '#16a34a' : '#9ca3af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
+                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? 'var(--green-subtle)' : 'var(--bg-subtle)', color: c.ok ? 'var(--green)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
                   {c.ok ? '✓' : '—'}
                 </span>
                 <span style={{ color: c.ok ? 'var(--text-primary)' : 'var(--text-faint)' }}>{c.label}</span>
