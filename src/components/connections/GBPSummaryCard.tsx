@@ -19,7 +19,7 @@ export default async function GBPSummaryCard({ clientId, connectionId, dateFrom,
 
   const { data: rows } = await db
     .from('gbp_metrics')
-    .select('views, calls, direction_requests, website_clicks')
+    .select('views_search, views_maps, call_clicks, direction_clicks, website_clicks')
     .eq('client_id', clientId)
     .eq('connection_id', connectionId)
     .gte('date', dateFrom)
@@ -28,9 +28,9 @@ export default async function GBPSummaryCard({ clientId, connectionId, dateFrom,
   const data = rows ?? []
   const hasData = data.length > 0
 
-  const totViews      = data.reduce((s, r) => s + (r.views ?? 0), 0)
-  const totCalls      = data.reduce((s, r) => s + (r.calls ?? 0), 0)
-  const totDirections = data.reduce((s, r) => s + (r.direction_requests ?? 0), 0)
+  const totViews      = data.reduce((s, r) => s + (r.views_search ?? 0) + (r.views_maps ?? 0), 0)
+  const totCalls      = data.reduce((s, r) => s + (r.call_clicks ?? 0), 0)
+  const totDirections = data.reduce((s, r) => s + (r.direction_clicks ?? 0), 0)
   const totWebClicks  = data.reduce((s, r) => s + (r.website_clicks ?? 0), 0)
 
   const metrics = [

@@ -446,7 +446,7 @@ export default function AgencySettingsPage() {
                 </div>
                 <input
                   className="input"
-                  value={form.agency_logo_url}
+                  value={form.agency_logo_url ?? ''}
                   onChange={e => field('agency_logo_url', e.target.value)}
                   placeholder="Or paste image URL…"
                 />
