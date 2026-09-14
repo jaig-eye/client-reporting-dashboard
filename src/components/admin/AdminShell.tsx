@@ -53,8 +53,14 @@ export default function AdminShell({ children, ...nav }: Props) {
           <List size={20} />
         </button>
 
-        {nav.agencyLogoUrl && <img src={nav.agencyLogoUrl} alt="" className="admin-topbar__logo" />}
-        <span className="admin-topbar__name">{nav.agencyName}</span>
+        {/* The logo already carries the agency's name, so show one or the other — never both. */}
+        {nav.agencyLogoUrl ? (
+          <span className="admin-topbar__brand">
+            <img src={nav.agencyLogoUrl} alt={nav.agencyName} className="admin-topbar__logo" />
+          </span>
+        ) : (
+          <span className="admin-topbar__name">{nav.agencyName}</span>
+        )}
 
         <Link href="/admin/alerts" className="admin-topbar__btn focus-ring" aria-label={alerts > 0 ? `Alerts, ${alerts} unread` : 'Alerts'}>
           <Bell size={20} />

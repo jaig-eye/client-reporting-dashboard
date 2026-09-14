@@ -10,6 +10,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
 } from 'recharts'
 import type { TooltipProps } from 'recharts'
 import type { DailyMetric } from '@/lib/types'
@@ -35,6 +36,48 @@ function compactNum(v: number) {
   return `${+v.toFixed(abs < 10 && abs % 1 !== 0 ? 1 : 0)}`
 }
 
+/**
+ * Nice, evenly spaced ticks from 0 up to just above `max` (≥4% headroom).
+ * Tries each interval count and keeps the tightest top value.
+ */
+function niceTicks(max: number, intervalOptions: number[]): number[] {
+  const MULTIPLIERS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+  const target = Math.max(max, 0) * 1.04
+  let best: number[] | null = null
+  for (const intervals of intervalOptions) {
+    if (target <= 0) break
+    const p = Math.pow(10, Math.floor(Math.log10(target / intervals)))
+    for (const m of MULTIPLIERS) {
+      const step = m * p
+      // Integer data (>= 3) shouldn't get fractional ticks like 2.5.
+      if (max >= 3 && step % 1 !== 0) continue
+      if (step * intervals >= target) {
+        const ticks = Array.from({ length: intervals + 1 }, (_, i) => +(step * i).toFixed(6))
+        if (!best || ticks[ticks.length - 1] < best[best.length - 1]) best = ticks
+        break
+      }
+    }
+  }
+  return best ?? Array.from({ length: intervalOptions[0] + 1 }, (_, i) => i)
+}
+
+/**
+ * Evenly spaced x-axis tick indices that always include the first and last day.
+ * Prefers a label count that divides the range exactly (uniform spacing, no
+ * trailing gap); otherwise spreads labels as evenly as rounding allows.
+ */
+function evenTickIndices(n: number, maxLabels: number): number[] {
+  if (n <= maxLabels) return Array.from({ length: n }, (_, i) => i)
+  const span = n - 1
+  for (let labels = maxLabels; labels >= 4; labels--) {
+    if (span % (labels - 1) === 0) {
+      const step = span / (labels - 1)
+      return Array.from({ length: labels }, (_, i) => i * step)
+    }
+  }
+  return Array.from({ length: maxLabels }, (_, i) => Math.round((i * span) / (maxLabels - 1)))
+}
+
 type Row = {
   date:              string
   spend:             number
@@ -44,8 +87,9 @@ type Row = {
   priorDate?:        string
 }
 
-const GRID_STROKE = 'var(--border-subtle)'
-const AXIS_TEXT   = 'var(--text-muted)'
+const GRID_STROKE     = 'var(--border-subtle)'
+const BASELINE_STROKE = 'var(--border)'
+const AXIS_TEXT       = 'var(--text-muted)'
 
 /**
  * Two stacked charts sharing one x-axis: primary series (spend / sessions /
@@ -113,35 +157,44 @@ export default function SpendChart({
     } : {}),
   }))
 
-  // Both charts must reserve the SAME y-axis width or their plot areas (and so
-  // the days) won't line up vertically. Estimate from the widest label.
   const maxSpend = Math.max(0, ...formatted.map(r => Math.max(r.spend, r.priorSpend ?? 0)))
   const maxConv  = Math.max(0, ...formatted.map(r => Math.max(r.conversions, r.priorConversions ?? 0)))
+
+  // Explicit 0-based domains + nice ticks so both plots are anchored at 0 and
+  // the $0 / 0 tick is always drawn.
+  const spendTicks = niceTicks(maxSpend, isNarrow ? [3, 2] : [4, 5])
+  const convTicks  = niceTicks(maxConv, isNarrow ? [2] : [2])
+  const spendDomain: [number, number] = [0, spendTicks[spendTicks.length - 1]]
+  const convDomain:  [number, number] = [0, convTicks[convTicks.length - 1]]
+
+  // Both charts must reserve the SAME y-axis width or their plot areas (and so
+  // the days) won't line up vertically. Size from the widest tick label.
   const fontSize = isNarrow ? 10 : 11
-  const charPx   = isNarrow ? 6 : 6.6
-  // Round up to a "nice" ceiling so the top tick label is represented.
-  const niceCeil = (v: number) => {
-    if (v <= 0) return 0
-    const p = Math.pow(10, Math.floor(Math.log10(v)))
-    return Math.ceil(v / p) * p
-  }
+  const charPx   = isNarrow ? 6.2 : 6.6
   const labelLen = Math.max(
-    spendAxisFormatter(niceCeil(maxSpend)).length,
-    convAxisFormatter(niceCeil(maxConv)).length,
+    ...spendTicks.map(t => spendAxisFormatter(t).length),
+    ...convTicks.map(t => convAxisFormatter(t).length),
   )
   const yAxisWidth = Math.max(isNarrow ? 30 : 40, Math.ceil(labelLen * charPx) + 10)
 
   const margin = isNarrow
-    ? { top: 6, right: 4, bottom: 0, left: 0 }
+    // Right margin leaves room for the centred last date label.
+    ? { top: 8, right: 14, bottom: 0, left: 0 }
     : { top: 8, right: 12, bottom: 0, left: 0 }
 
   const topHeight    = isNarrow ? 180 : 220
-  // Bottom plot area ≈ 38% of the top; add room for the date labels.
   const xAxisHeight  = isNarrow ? 26 : 28
-  const bottomHeight = Math.round(topHeight * 0.38) + xAxisHeight
+  // Desktop: line plot ≈ 38% of the top. Phones get a taller line plot so it
+  // isn't compressed into spikes.
+  const bottomPlot   = isNarrow ? 104 : Math.round(topHeight * 0.38)
+  const bottomHeight = bottomPlot + xAxisHeight + 22
 
-  const tickCount = isNarrow ? 4 : 5
-  const yTick = { fontSize, fill: AXIS_TEXT }
+  // Phones: explicit, evenly spaced date labels (first + last always shown).
+  const xTicks = isNarrow
+    ? evenTickIndices(formatted.length, 5).map(i => formatted[i].date)
+    : undefined
+
+  const yTick  = { fontSize, fill: AXIS_TEXT }
   const cursor = { stroke: 'var(--text-faint)', strokeWidth: 1, strokeDasharray: '3 3' }
 
   const legendItems: { label: string; color: string; kind: 'bar' | 'line' | 'dashed' }[] = [
@@ -222,7 +275,8 @@ export default function SpendChart({
         <ComposedChart
           data={formatted}
           syncId={syncId}
-          margin={margin}
+          // Bottom margin keeps the "$0" tick label from being dropped at the edge.
+          margin={{ ...margin, bottom: 8 }}
           barCategoryGap={isCompare ? '18%' : '25%'}
           barGap={2}
         >
@@ -232,12 +286,15 @@ export default function SpendChart({
           <YAxis
             yAxisId="spend"
             width={yAxisWidth}
+            domain={spendDomain}
+            ticks={spendTicks}
+            interval={0}
             tick={yTick}
             tickLine={false}
             axisLine={false}
-            tickCount={tickCount}
             tickFormatter={v => spendAxisFormatter(v)}
           />
+          <ReferenceLine yAxisId="spend" y={0} stroke={BASELINE_STROKE} ifOverflow="extendDomain" />
           <Tooltip
             content={renderTooltip}
             cursor={cursor}
@@ -271,8 +328,8 @@ export default function SpendChart({
       </ResponsiveContainer>
 
       {/* Bottom: secondary series as a line, owns the date labels */}
-      <ResponsiveContainer width="100%" height={bottomHeight} minHeight={isNarrow ? 84 : 96}>
-        <ComposedChart data={formatted} syncId={syncId} margin={{ ...margin, top: 16 }}>
+      <ResponsiveContainer width="100%" height={bottomHeight} minHeight={isNarrow ? 120 : 96}>
+        <ComposedChart data={formatted} syncId={syncId} margin={{ ...margin, top: 22 }}>
           <CartesianGrid vertical={false} stroke={GRID_STROKE} />
           <XAxis
             dataKey="date"
@@ -282,18 +339,20 @@ export default function SpendChart({
             tickMargin={8}
             tick={{ fontSize, fill: AXIS_TEXT }}
             tickLine={false}
-            axisLine={{ stroke: GRID_STROKE }}
-            interval="preserveStartEnd"
-            minTickGap={isNarrow ? 28 : 16}
+            axisLine={{ stroke: BASELINE_STROKE }}
+            {...(xTicks
+              ? { ticks: xTicks, interval: 0 as const }
+              : { interval: 'preserveStartEnd' as const, minTickGap: 16 })}
           />
           <YAxis
             yAxisId="conversions"
             width={yAxisWidth}
+            domain={convDomain}
+            ticks={convTicks}
+            interval={0}
             tick={yTick}
             tickLine={false}
             axisLine={false}
-            tickCount={3}
-            allowDecimals={maxConv < 3}
             tickFormatter={v => convAxisFormatter(v)}
           />
           {/* Cursor only — the combined tooltip renders on the top chart. */}
@@ -304,7 +363,7 @@ export default function SpendChart({
             dataKey="conversions"
             stroke={colorConversions}
             strokeWidth={isNarrow ? 2 : 2.5}
-            dot={formatted.length > 45 ? false : { fill: colorConversions, r: 2, strokeWidth: 0 }}
+            dot={isNarrow || formatted.length > 45 ? false : { fill: colorConversions, r: 2, strokeWidth: 0 }}
             activeDot={{ r: 4, strokeWidth: 0 }}
             name={conversionsLabel}
             isAnimationActive={false}
