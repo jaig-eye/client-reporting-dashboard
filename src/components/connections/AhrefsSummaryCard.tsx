@@ -90,45 +90,40 @@ export default async function AhrefsSummaryCard({
 
   const tileDefs: Array<{ key: string; label: string; display: string; delta?: React.ReactNode }> = [
     {
+      key:     'organic_traffic',
+      label:   'Visitors from search',
+      display: latest?.organic_traffic != null ? fmtNum(latest.organic_traffic) : null!,
+      delta:   <DeltaBadge delta={deltaOrgTraffic} />,
+    },
+    {
       key:     'domain_rating',
-      label:   'Domain Rating',
+      label:   'Site strength',
       display: latest?.domain_rating != null ? latest.domain_rating.toFixed(1) : null!,
       delta:   <DrDeltaBadge curr={latest?.domain_rating ?? null} prev={comp?.domain_rating ?? null} />,
     },
     {
       key:     'backlinks',
-      label:   'Backlinks',
+      label:   'Links to your site',
       display: latest?.backlinks != null ? fmtNum(latest.backlinks) : null!,
       delta:   <DeltaBadge delta={deltaBacklinks} />,
     },
     {
       key:     'referring_domains',
-      label:   'Referring Domains',
+      label:   'Sites linking to you',
       display: latest?.referring_domains != null ? fmtNum(latest.referring_domains) : null!,
       delta:   <DeltaBadge delta={deltaRefDomains} />,
     },
     {
-      key:     'ahrefs_rank',
-      label:   'Ahrefs Rank',
-      display: latest?.ahrefs_rank != null ? `#${latest.ahrefs_rank.toLocaleString()}` : null!,
-    },
-    {
       key:     'organic_keywords',
-      label:   'Organic Keywords',
+      label:   'Keywords you rank for',
       display: latest?.organic_keywords != null ? fmtNum(latest.organic_keywords) : null!,
       delta:   <DeltaBadge delta={deltaOrgKw} />,
-    },
-    {
-      key:     'organic_traffic',
-      label:   'Organic Traffic',
-      display: latest?.organic_traffic != null ? fmtNum(latest.organic_traffic) : null!,
-      delta:   <DeltaBadge delta={deltaOrgTraffic} />,
     },
   ].filter(t => t.display != null)
 
   return (
     <ConnectionSummaryCard
-      title="Authority (Ahrefs)"
+      title="Search visibility"
       icon={<LinkSimple size={18} />}
       accentColor="#f59e0b"
       href="/dashboard/seo/authority"
@@ -155,7 +150,7 @@ export default async function AhrefsSummaryCard({
         </>
       ) : (
         <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          No data for this period — trigger a sync to populate Ahrefs metrics.
+          Search visibility numbers will appear here once they have been collected for your site.
         </p>
       )}
     </ConnectionSummaryCard>
