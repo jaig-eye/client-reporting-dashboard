@@ -49,6 +49,7 @@ export interface NoteField {
 export const NOTE_CATEGORIES = [
   'general', 'contact', 'login', 'dns', 'hosting',
   'access', 'billing', 'issue', 'change', 'preference',
+  'client_update',
 ] as const
 
 export type NoteCategory = typeof NOTE_CATEGORIES[number]
@@ -66,6 +67,11 @@ export interface NoteTemplate {
   hasSecret?: boolean
   /** Saving a note in this category stamps clients.last_contacted_at. */
   stampsContact?: boolean
+  /**
+   * Shown to the client on their dashboard (Overview, "From your team"). Only title, body,
+   * the next_up field and the date are ever sent; never the author, other fields or a secret.
+   */
+  clientVisible?: boolean
   /** Placeholder for the freeform body in this category. */
   bodyLabel: string
   fields: NoteField[]
@@ -201,6 +207,18 @@ export const NOTE_TEMPLATES: Record<NoteCategory, NoteTemplate> = {
       { key: 'contact_pref', label: 'Prefers contact by', type: 'select', tier: 'more', options: ['Email', 'Phone', 'Text', 'Whatever'] },
       { key: 'brand_voice',  label: 'Brand voice',        type: 'text', tier: 'legacy', wide: true },
       { key: 'avoid',        label: 'Never mention',      type: 'textarea', tier: 'legacy', wide: true },
+    ],
+  },
+
+  // The one category the client sees. Write it for them, in plain words: what we did and
+  // what's next. Never a credential, an internal opinion or anything about pricing.
+  client_update: {
+    key: 'client_update', label: 'Client update',
+    hint: "Shown to the client on their dashboard. Write it for them: what we did, and what's next.",
+    tone: 'green', clientVisible: true,
+    bodyLabel: 'What we did (one point per line, **bold** for emphasis)',
+    fields: [
+      { key: 'next_up', label: "What's next", type: 'textarea', wide: true, placeholder: 'One point per line' },
     ],
   },
 }

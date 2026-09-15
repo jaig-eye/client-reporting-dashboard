@@ -5013,3 +5013,46 @@ select.note-field__input { cursor: pointer; }
   .ov3-work__figure { font-size: 1.125rem; }
   .ov3-meter__head { flex-direction: column; align-items: flex-start; gap: 0.125rem; }
 }
+
+/* ── Overview: "From your team" — client update notes ── */
+.ov3-team { padding: 1.25rem; }
+.ov3-team__head { display: flex; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.875rem; }
+.ov3-team__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--blue-subtle);
+  color: var(--blue);
+}
+.ov3-team__latest {
+  padding: 0.875rem 1rem;
+  border-radius: 12px;
+  background: var(--bg-subtle);
+}
+.ov3-team__meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.625rem; margin-bottom: 0.375rem; }
+.ov3-team__title { margin: 0; font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+.ov3-team__date { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ov3-team__body { font-size: 0.875rem; line-height: 1.6; color: var(--text-secondary); }
+.ov3-team__body .alert-body__list { margin: 0.25rem 0 0; padding-left: 1.125rem; }
+.ov3-team__body .alert-body__list li + li { margin-top: 0.25rem; }
+.ov3-team__next { margin-top: 0.75rem; padding-top: 0.625rem; border-top: 1px solid var(--border-subtle); }
+.ov3-team__next-label { display: block; margin-bottom: 0.25rem; font-size: 0.75rem; font-weight: 600; color: var(--text-primary); }
+.ov3-team__earlier { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; }
+.ov3-team__earlier li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-block: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.8125rem;
+}
+.ov3-team__earlier-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+
+@media (max-width: 639px) {
+  .ov3-team { padding: 1rem; }
+  .ov3-team__latest { padding: 0.75rem; }
+}

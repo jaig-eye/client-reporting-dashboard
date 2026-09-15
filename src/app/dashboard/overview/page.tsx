@@ -41,10 +41,11 @@ import ChannelSourceCard from './ChannelCard'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
+import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar,
+  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -96,6 +97,7 @@ type AhrefsRow = { date: string; domain_rating: number | null; referring_domains
 type AdStrengthRow = { ad_id: string; ad_type: string | null; ad_status: string | null; ad_strength: string | null; date: string }
 type PostRow       = { title: string | null; published_url: string | null; published_at: string | null }
 type SiteRow       = { uptime_7d: number | string | null; ssl_days_remaining: number | null }
+type UpdateRow     = { title: string | null; content: string | null; next_up: string | null; created_at: string }
 type KeywordRow = {
   keyword: string; current_position: number | null; previous_position: number | null
   position_delta: number | null; search_volume: number | null
@@ -135,7 +137,7 @@ const _getOverviewData = unstable_cache(
       gRes, gPriorRes, mRes, mPriorRes, gAssignRes, mAssignRes,
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
-      adStrengthRes, negativesRes, postsRes, sitesRes,
+      adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes,
     ] = await Promise.all([
       // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
@@ -235,6 +237,13 @@ const _getOverviewData = unstable_cache(
         .order('published_at', { ascending: false }).limit(6),
       // Their website, which we monitor.
       db.from('sites').select('uptime_7d,ssl_days_remaining').eq('client_id', clientId).eq('status', 'active'),
+      // "What we did" notes the team writes for this client: the ONLY note category a client ever
+      // sees, and only these columns. No author, no other fields, never the encrypted secret.
+      db.from('client_notes')
+        .select('title,content,next_up:fields->>next_up,created_at')
+        .eq('client_id', clientId).eq('category', 'client_update')
+        .gte('created_at', new Date(new Date(to + 'T00:00:00Z').getTime() - 90 * 86_400_000).toISOString())
+        .order('created_at', { ascending: false }).limit(3),
     ])
 
     return {
@@ -259,9 +268,10 @@ const _getOverviewData = unstable_cache(
       negativeKeywordCount: (negativesRes as { count: number | null }).count ?? 0,
       posts:       (postsRes.data ?? []) as PostRow[],
       sites:       (sitesRes.data ?? []) as SiteRow[],
+      updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
     }
   },
-  ['dashboard-overview-v5'],
+  ['dashboard-overview-v6'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -1103,6 +1113,41 @@ export default async function OverviewPage({
                     <span className="ov3-watch__label">Keeping an eye on</span>
                     <span className="ov3-watch__text"><b>{watch.text}.</b>{watch.context && <> {watch.context}</>}</span>
                   </p>
+                )}
+              </section>
+            )}
+
+            {data.updates.length > 0 && (
+              <section className="card ov3-team" aria-labelledby="ov3-team-title">
+                <div className="ov3-team__head">
+                  <span className="ov3-team__icon" aria-hidden><Megaphone size={18} weight="bold" /></span>
+                  <div>
+                    <h2 id="ov3-team-title" className="section-title">From your team</h2>
+                    <p className="section-desc">What we&apos;ve been working on for you</p>
+                  </div>
+                </div>
+                <article className="ov3-team__latest">
+                  <div className="ov3-team__meta">
+                    {data.updates[0].title && <h3 className="ov3-team__title">{data.updates[0].title}</h3>}
+                    <span className="ov3-team__date">{fmtShortDate(data.updates[0].created_at.slice(0, 10))}</span>
+                  </div>
+                  <div className="ov3-team__body"><AlertBody body={data.updates[0].content} /></div>
+                  {data.updates[0].next_up && (
+                    <div className="ov3-team__next">
+                      <span className="ov3-team__next-label">What&apos;s next</span>
+                      <div className="ov3-team__body"><AlertBody body={data.updates[0].next_up} /></div>
+                    </div>
+                  )}
+                </article>
+                {data.updates.length > 1 && (
+                  <ul className="ov3-team__earlier">
+                    {data.updates.slice(1).map(u => (
+                      <li key={u.created_at}>
+                        <span className="ov3-team__earlier-title">{u.title || alertPlainText(u.content).slice(0, 90)}</span>
+                        <span className="ov3-team__date">{fmtShortDate(u.created_at.slice(0, 10))}</span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </section>
             )}
