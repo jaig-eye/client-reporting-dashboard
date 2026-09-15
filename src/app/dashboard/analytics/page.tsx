@@ -154,6 +154,13 @@ const EVENT_LABEL: Record<string, string> = {
 const eventLabel = (name: string) =>
   EVENT_LABEL[name] ?? name.replace(/[_-]+/g, ' ').replace(/^\w/, c => c.toUpperCase())
 
+/** AI assistants by the source names GA4 records, named the way people know them. */
+const AI_ASSISTANTS: [RegExp, string][] = [
+  [/chatgpt|openai/i, 'ChatGPT'], [/gemini/i, 'Gemini'], [/copilot/i, 'Microsoft Copilot'],
+  [/perplexity/i, 'Perplexity'], [/claude/i, 'Claude'], [/deepseek/i, 'DeepSeek'], [/grok/i, 'Grok'], [/meta\.ai/i, 'Meta AI'],
+]
+const aiAssistantName = (source: string) => AI_ASSISTANTS.find(([re]) => re.test(source))?.[1] ?? null
+
 /** Events that happen on almost every visit. Counted as conversions, they swell the total. */
 const ROUTINE_EVENTS = new Set(['page_view', 'session_start', 'first_visit', 'user_engagement', 'scroll'])
 
@@ -384,6 +391,23 @@ export default async function AnalyticsPage({
   const sourceTotal = allSources.reduce((s, r) => s + r.sessions, 0)
   const topSources  = allSources.slice(0, 6)
 
+  // ── AI assistants ──────────────────────────────────────────────────────────
+  // GA4's own AI Assistant channel is the total; the named assistants come from the source detail.
+  const aiChannel = channels.find(c => c.name === 'AI Assistant')
+  const aiByName  = new Map<string, { sessions: number; conversions: number }>()
+  for (const s of allSources) {
+    const name = aiAssistantName(s.source) ?? (/ai-assistant/i.test(s.medium) ? s.source : null)
+    if (!name) continue
+    const ex = aiByName.get(name) ?? { sessions: 0, conversions: 0 }
+    ex.sessions    += s.sessions
+    ex.conversions += s.conversions
+    aiByName.set(name, ex)
+  }
+  const aiNamed        = Array.from(aiByName, ([name, v]) => ({ name, ...v })).sort((a, b) => b.sessions - a.sessions)
+  const aiNamedTotal   = aiNamed.reduce((s, a) => s + a.sessions, 0)
+  const aiSessions     = aiChannel?.sessions ?? aiNamedTotal
+  const aiConversions  = aiChannel?.conversions ?? aiNamed.reduce((s, a) => s + a.conversions, 0)
+
   // ── New vs returning ───────────────────────────────────────────────────────
   // new_users is a column; returning is the remainder. GA4 counts a visitor once
   // per channel, so treat these as the split rather than a unique headcount.
@@ -495,6 +519,55 @@ export default async function AnalyticsPage({
           variant="count"
         />
       </section>
+
+      {/* Visits from AI assistants. */}
+      {aiSessions > 0 && (
+        <section className="card p-4 sm:p-6" aria-labelledby="an-ai-title">
+          <div className="mb-4">
+            <h2 id="an-ai-title" className="section-title">Visits from AI assistants</h2>
+            <p className="section-desc">People who clicked through to your site from ChatGPT, Gemini, Copilot and other AI assistants</p>
+          </div>
+          <div className="an-ai">
+            <dl className="an-ai__figures">
+              <div>
+                <dt className="metric-label">Visits</dt>
+                <dd className="an-band__value">{fmtNum(aiSessions)}</dd>
+                {showCompare && aiChannel && aiChannel.delta != null && (
+                  <dd className="an-band__sub"><Delta value={aiChannel.delta} /> vs {priorShort}</dd>
+                )}
+              </div>
+              <div>
+                <dt className="metric-label">Conversions</dt>
+                <dd className="an-band__value">{fmtNum(aiConversions)}</dd>
+              </div>
+              <div>
+                <dt className="metric-label">Share of visits</dt>
+                <dd className="an-band__value">{now.sessions > 0 ? fmtPct(aiSessions / now.sessions) : '—'}</dd>
+              </div>
+            </dl>
+            {aiNamed.length > 0 && (
+              <ul className="an-bars">
+                {aiNamed.slice(0, 6).map(a => {
+                  const share = aiNamedTotal > 0 ? a.sessions / aiNamedTotal : 0
+                  return (
+                    <li key={a.name} className="an-bar">
+                      <span className="an-bar__track">
+                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
+                        <span className="an-bar__name">{a.name}</span>
+                      </span>
+                      <span className="an-bar__value">{fmtNum(a.sessions)}</span>
+                      <span className="an-bar__pct">{fmtPct(share)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+          <p className="an-note">
+            Google counts a visit here when the AI assistant passes on where the visitor came from. Some apps don&rsquo;t, so a few AI visits show up as Direct instead.
+          </p>
+        </section>
+      )}
 
       {/* What they did once they arrived. */}
       <section className="card an-band">

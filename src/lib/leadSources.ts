@@ -13,7 +13,7 @@
 export type LeadSourceGroup = 'paid' | 'organic' | 'untracked'
 
 export type LeadSourceKey =
-  | 'google_ads' | 'meta_ads' | 'other_paid'
+  | 'google_ads' | 'google_ads_call' | 'meta_ads' | 'meta_ads_call' | 'other_paid'
   | 'organic_search' | 'google_business' | 'ai_assistant' | 'social' | 'referral' | 'direct'
   | 'call_or_message' | 'other' | 'untracked'
 
@@ -30,22 +30,25 @@ export type Touch = 'first' | 'last'
 export type LeadSourceCounts = Partial<Record<LeadSourceKey, number>>
 
 export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourceGroup }[] = [
-  { key: 'google_ads',      label: 'Google Ads',                 group: 'paid' },
-  { key: 'meta_ads',        label: 'Facebook & Instagram ads',   group: 'paid' },
-  { key: 'other_paid',      label: 'Other ads',                  group: 'paid' },
-  { key: 'organic_search',  label: 'Search engines',             group: 'organic' },
-  { key: 'google_business', label: 'Google Business Profile',    group: 'organic' },
+  { key: 'google_ads',      label: 'Google Ads',                      group: 'paid' },
+  // A phone call, text or chat from someone whose visit came through an ad.
+  { key: 'google_ads_call', label: 'Google Ads calls',                group: 'paid' },
+  { key: 'meta_ads',        label: 'Facebook & Instagram ads',        group: 'paid' },
+  { key: 'meta_ads_call',   label: 'Facebook & Instagram ad calls',   group: 'paid' },
+  { key: 'other_paid',      label: 'Other ads',                       group: 'paid' },
+  { key: 'organic_search',  label: 'Search engines',                  group: 'organic' },
+  { key: 'google_business', label: 'Google Business Profile',         group: 'organic' },
   { key: 'ai_assistant',    label: 'ChatGPT and other AI assistants', group: 'organic' },
-  { key: 'social',          label: 'Social media',               group: 'organic' },
-  { key: 'referral',        label: 'Other websites',             group: 'organic' },
-  { key: 'direct',          label: 'Came straight to your site', group: 'organic' },
-  // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
-  // counted as organic: it sits with "no source" until a rule is added for it.
+  { key: 'social',          label: 'Social media',                    group: 'organic' },
+  { key: 'referral',        label: 'Other websites',                  group: 'organic' },
+  { key: 'direct',          label: 'Came straight to your site',      group: 'organic' },
   // A call, text or chat that reached the CRM without a website visit, so nothing says what
   // prompted it: it could have come from the listing, an ad's call button, or a business card.
-  { key: 'call_or_message', label: 'Calls and messages',         group: 'untracked' },
-  { key: 'other',           label: 'Other sources',              group: 'untracked' },
-  { key: 'untracked',       label: 'No source recorded',         group: 'untracked' },
+  { key: 'call_or_message', label: 'Calls and messages',              group: 'untracked' },
+  // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
+  // counted as organic: it sits with "no source" until a rule is added for it.
+  { key: 'other',           label: 'Other sources',                   group: 'untracked' },
+  { key: 'untracked',       label: 'No source recorded',              group: 'untracked' },
 ]
 
 const KEYS = new Set<string>(LEAD_SOURCES.map(s => s.key))
@@ -86,11 +89,16 @@ export function contactAttribution(contact: Record<string, unknown>, touch: Touc
   return touch === 'first' ? first ?? last : last ?? first
 }
 
-const PAID_MEDIUM   = /^(cpc|ppc|paid|paid[_ -]?(search|social|media)|cpm|cpv|display|ads?|sem|retargeting|remarketing)$/
+const PAID_MEDIUM   = /^(cpc|ppc|paid|paid[_ -]?(search|social|media|shopping|video|other)|cpm|cpv|display|ads?|sem|retargeting|remarketing|cross[_ -]?network)$/
+// utm_source values that only ever name an ad platform.
+const GOOGLE_AD_SRC = /^(adwords|google[_ -]?ads?|googleads|gads|google[_ -]?(cpc|ppc))$/
+const MS_AD_SRC     = /^(bing|microsoft)[_ -]?ads?$/
+// GA4 / GHL session sources that mean the visit was paid for.
+const PAID_SESSION  = /^(paid search|paid social|paid shopping|paid video|paid other|display|cross[- ]network)$/
 const GOOGLE_SRC    = /(^|[^a-z])(google|adwords|youtube)([^a-z]|$)/
 const META_SRC      = /(facebook|instagram|meta|^fb$|^ig$|messenger)/
 const META_AD_SRC   = /^(fb|facebook|ig|instagram|meta)[_ -]?ads?$/
-const AI_SRC        = /(chatgpt|openai|perplexity|gemini\.google|copilot\.microsoft|claude\.ai)/
+const AI_SRC        = /(chatgpt|openai|perplexity|gemini\.google|copilot\.(microsoft|com)|claude\.ai|deepseek|grok\.com|meta\.ai)/
 // GHL's medium when a contact arrived by phone, text or chat rather than a web form.
 const CONVERSATION_MEDIUM = /^(conversation|call|phone|sms|chat|chat_widget|messaging)$/
 const GBP_SRC       = /^(gmb|gbp|google[_ -]?(my[_ -]?business|business([_ -]?profile)?|maps)|maps)$/
@@ -115,29 +123,46 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
   const medium    = pick(a, 'utmMedium', 'utm_medium')
   const ghlMedium = pick(a, 'medium')   // GHL's own: form, survey, calendar, chat_widget, call, facebook_lead…
   const referrer  = hostOf(pick(a, 'referrer', 'referer'))
-  const gclid     = pick(a, 'gclid', 'gbraid', 'wbraid', 'dclid')
-  const fbclid    = pick(a, 'fbclid', 'fbc')
-  const otherClk  = pick(a, 'msclkid', 'msclikid', 'ttclid', 'li_fat_id', 'twclid')
-  const adIds     = pick(a, 'adId', 'adGroupId', 'campaignId', 'adSource')
-  const paidMed   = PAID_MEDIUM.test(medium)
+  // Google's click IDs under every spelling GHL and UTM templates use, plus gad_source, which Google
+  // adds to ad clicks even when the gclid is stripped.
+  const gclid      = pick(a, 'gclid', 'utmGclid', 'utm_gclid', 'gbraid', 'wbraid', 'dclid', 'gadSource', 'gad_source', 'gadCampaignId', 'gad_campaignid')
+  const fbclid     = pick(a, 'fbclid', 'utmFbclid', 'utm_fbclid', 'fbc')
+  const msclkid    = pick(a, 'msclkid', 'msclikid')
+  const otherClk   = pick(a, 'ttclid', 'li_fat_id', 'twclid')
+  // Ad, ad group and campaign IDs only exist on ad clicks. A campaign *name* alone doesn't count:
+  // plain links (a Business Profile website link, an email) carry campaign names too.
+  const adIds      = pick(a, 'adId', 'utmAdId', 'adGroupId', 'utmAdGroupId', 'campaignId', 'utmCampaignId', 'adSource', 'adName')
+  // Match type is filled by Google Ads' own tracking template, so it marks a Google ad click.
+  const valueTrack = pick(a, 'utmMatchtype', 'utm_matchtype', 'matchtype')
+  const paidMed    = PAID_MEDIUM.test(medium)
 
-  // ── Paid ────────────────────────────────────────────────────────────────
-  // A Google click ID only exists when someone clicked a Google ad.
-  if (gclid) return 'google_ads'
-  if (paidMed && GOOGLE_SRC.test(utmSrc)) return 'google_ads'
-  if (/^facebook[_ ]?(lead|form)/.test(ghlMedium)) return 'meta_ads'
-  // fbclid is added to organic Facebook link clicks too, so on its own it means social, not ads.
-  if (fbclid && (paidMed || adIds)) return 'meta_ads'
-  if (paidMed && META_SRC.test(utmSrc)) return 'meta_ads'
-  if (META_AD_SRC.test(utmSrc)) return 'meta_ads'
-  if (otherClk) return 'other_paid'
-  if (session === 'paid search') return !utmSrc || GOOGLE_SRC.test(utmSrc) ? 'google_ads' : 'other_paid'
-  if (session === 'paid social') return !utmSrc || META_SRC.test(utmSrc) ? 'meta_ads' : 'other_paid'
-  if (paidMed) return 'other_paid'
+  // ── Paid: any tracking that ties the visit to an ad ─────────────────────
+  const paid = ((): LeadSourceKey | null => {
+    if (gclid || valueTrack || GOOGLE_AD_SRC.test(utmSrc)) return 'google_ads'
+    if (/^facebook[_ ]?(lead|form)/.test(ghlMedium) || META_AD_SRC.test(utmSrc)) return 'meta_ads'
+    // fbclid is added to organic Facebook link clicks too, so it needs a second sign of an ad.
+    if (fbclid && (paidMed || adIds || PAID_SESSION.test(session))) return 'meta_ads'
+    if (msclkid || otherClk || MS_AD_SRC.test(utmSrc)) return 'other_paid'
+    if (paidMed || adIds || PAID_SESSION.test(session)) {
+      if (GOOGLE_SRC.test(utmSrc) || GOOGLE_SRC.test(referrer) || (session === 'paid search' && !utmSrc)) return 'google_ads'
+      if (META_SRC.test(utmSrc) || /facebook|instagram/.test(referrer) || (session === 'paid social' && !utmSrc)) return 'meta_ads'
+      return 'other_paid'
+    }
+    return null
+  })()
+  if (paid) {
+    // A call, text or chat from an ad visit keeps the ad and says it was a call.
+    if (CONVERSATION_MEDIUM.test(ghlMedium)) {
+      if (paid === 'google_ads') return 'google_ads_call'
+      if (paid === 'meta_ads')   return 'meta_ads_call'
+    }
+    return paid
+  }
 
   // ── Organic ─────────────────────────────────────────────────────────────
   if (GBP_SRC.test(utmSrc) || /^(business|maps)\.google\./.test(referrer)) return 'google_business'
-  if (AI_SRC.test(utmSrc) || AI_SRC.test(referrer)) return 'ai_assistant'
+  // GA4 tags AI assistant visits with medium "ai-assistant"; GHL may carry that through.
+  if (AI_SRC.test(utmSrc) || AI_SRC.test(referrer) || medium === 'ai-assistant' || session === 'ai assistant') return 'ai_assistant'
   if (session === 'organic search' || SEARCH_REF.test(`.${referrer}`)) return 'organic_search'
   if (fbclid || session === 'social media' || session === 'social' || SOCIAL_REF.test(referrer) || META_SRC.test(utmSrc)) return 'social'
   if (session === 'referral' || referrer) return 'referral'

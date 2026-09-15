@@ -46,7 +46,7 @@ import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck,
+  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck, Sparkle,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -608,11 +608,13 @@ export default async function OverviewPage({
     'Organic Social': 'Organic social', 'Organic Maps': 'Google Maps', 'Organic Video': 'Organic video',
     'Organic Shopping': 'Organic shopping', 'Email': 'Email', 'Unassigned': 'Unassigned',
     'Paid Search': 'Paid search', 'Paid Social': 'Paid social',
+    'AI Assistant': 'AI assistants',
   }
   const GA4_COLOR: Record<string, string> = {
     'Organic Search': 'var(--green)', 'Direct': 'var(--ov-violet)', 'Referral': 'var(--ov-teal)',
     'Organic Social': 'var(--amber)', 'Organic Maps': 'var(--ov-teal)', 'Email': 'var(--amber)',
     'Paid Search': 'var(--blue)', 'Paid Social': 'var(--ov-indigo)',
+    'AI Assistant': 'var(--ov-indigo)',
   }
   const FALLBACK_COLORS = ['var(--ov-teal)', 'var(--amber)', 'var(--ov-violet)', 'var(--green)']
   const ga4Icon = (name: string): ReactNode => {
@@ -621,6 +623,7 @@ export default async function OverviewPage({
     if (name === 'Referral')       return <LinkSimple size={15} weight="bold" aria-hidden />
     if (name === 'Organic Maps')   return <MapPin size={15} weight="bold" aria-hidden />
     if (name === 'Email')          return <EnvelopeSimple size={15} weight="bold" aria-hidden />
+    if (name === 'AI Assistant')   return <Sparkle size={15} weight="bold" aria-hidden />
     if (/Social/.test(name))       return <UsersThree size={15} weight="bold" aria-hidden />
     return <Globe size={15} weight="bold" aria-hidden />
   }
@@ -917,6 +920,12 @@ export default async function OverviewPage({
   }
   if (cplChange != null && cplChange <= -5) {
     highlights.push({ key: 'cpl', icon: 'up', figure: `−${Math.round(-cplChange)}%`, text: 'Lower cost for each lead from your ads' })
+  }
+  // Visits from AI assistants rank high: it's the traffic clients ask about most now.
+  // Visits from ChatGPT, Gemini, Copilot and the like, as Google Analytics' AI Assistant channel counts them.
+  const aiVisits = ga4.byChannel.get('AI Assistant')?.sessions ?? 0
+  if (aiVisits >= 5) {
+    highlights.push({ key: 'ai', icon: 'up', figure: fmtInt(aiVisits), text: 'Visits from ChatGPT and other AI assistants' })
   }
   if (keywordsUp > 0) {
     highlights.push({ key: 'keywords', icon: 'up', figure: fmtInt(keywordsUp), text: `${keywordsUp === 1 ? 'Keyword' : 'Keywords'} we track moved up on Google` })

@@ -5198,3 +5198,12 @@ select.note-field__input { cursor: pointer; }
   .an-th-long  { display: none; }
   .an-th-short { display: inline; }
 }
+
+/* ── Analytics: visits from AI assistants ── */
+.an-ai { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 1.5rem; align-items: start; }
+.an-ai__figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 0; }
+.an-ai__figures dd { margin: 0; }
+.an-ai + .an-note { margin-top: 1rem; }
+@media (max-width: 767px) {
+  .an-ai { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+}
