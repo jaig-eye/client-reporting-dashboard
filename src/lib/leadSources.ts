@@ -18,15 +18,15 @@ export type LeadSourceKey =
   | 'other' | 'untracked'
 
 /**
- * Which of GHL's two attributions to sort by.
+ * Which of GHL's two attributions to read.
  *   first: how the person originally found the business (GHL's "First Attribution")
  *   last:  their most recent visit before they became a lead (GHL's "Latest Attribution")
- * A contact with one visit has the same answer for both.
+ * A contact with one recorded visit has the same answer for both.
  */
 export type Touch = 'first' | 'last'
 
-/** Daily counts per channel, stored at ghl_metrics.raw_data.lead_sources (first touch)
- *  and raw_data.lead_sources_last (last touch). */
+/** Daily counts per channel, stored at ghl_metrics.raw_data.lead_sources. Each lead is counted
+ *  once, under the channel classifyLead picks. */
 export type LeadSourceCounts = Partial<Record<LeadSourceKey, number>>
 
 export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourceGroup }[] = [
@@ -64,7 +64,7 @@ function pick(a: Attr, ...names: string[]): string {
 }
 
 /**
- * The attribution to classify by. /contacts/search returns an `attributions` array flagged
+ * One of the contact's two attributions. /contacts/search returns an `attributions` array flagged
  * isFirst/isLast; /contacts/{id} returns attributionSource (first) and lastAttributionSource
  * (latest). When only one is filled, the person had one recorded visit, so it answers both.
  */
@@ -95,7 +95,7 @@ function hostOf(url: string): string {
   try { return new URL(url.includes('://') ? url : `https://${url}`).hostname.replace(/^www\./, '') } catch { return '' }
 }
 
-/** One contact's channel. Pure, so it can be tested without GHL. */
+/** The channel one of a contact's attributions points to. Pure, so it can be tested without GHL. */
 export function classifyContact(contact: Record<string, unknown>, touch: Touch = 'first'): LeadSourceKey {
   const a = contactAttribution(contact, touch)
   if (!a) return 'untracked'
@@ -135,6 +135,24 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
   if (INTERNAL_SESS.test(session)) return 'untracked'
   if (session || utmSrc) return 'other'
   return 'untracked'
+}
+
+/**
+ * The one channel a lead is counted under.
+ *   1. An ad on either visit wins: the latest visit's ad first, then the first visit's.
+ *      Someone who found the business through search and came back through an ad counts as an ad lead.
+ *   2. Otherwise the first visit decides, since that is how they found the business.
+ *   3. When the first visit says nothing useful, the latest visit is used instead.
+ */
+export function classifyLead(contact: Record<string, unknown>): LeadSourceKey {
+  const first = classifyContact(contact, 'first')
+  const last  = classifyContact(contact, 'last')
+  if (groupOf(last) === 'paid')     return last
+  if (groupOf(first) === 'paid')    return first
+  if (groupOf(first) === 'organic') return first
+  if (groupOf(last) === 'organic')  return last
+  // Neither is usable: a recorded-but-unrecognised source says more than none at all.
+  return first === 'other' || last !== 'other' ? first : last
 }
 
 export function groupOf(key: LeadSourceKey): LeadSourceGroup {

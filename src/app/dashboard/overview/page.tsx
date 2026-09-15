@@ -90,8 +90,6 @@ type GhlRow    = {
   missed_calls: number; forms_submitted: number; new_opportunities: number; won_opportunities: number; won_value: number
   /** raw_data->lead_sources: null on days synced before lead sources were recorded. */
   lead_sources?: LeadSourceCounts | null
-  /** raw_data->lead_sources_last: the same leads counted by their last visit before getting in touch. */
-  lead_sources_last?: LeadSourceCounts | null
 }
 type GbpRow    = {
   date: string; call_clicks: number; direction_clicks: number
@@ -128,7 +126,7 @@ const _getOverviewData = unstable_cache(
 
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
-    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources,lead_sources_last:raw_data->lead_sources_last'
+    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources'
     const GBP_COLS    = 'date,call_clicks,direction_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
@@ -276,7 +274,7 @@ const _getOverviewData = unstable_cache(
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
     }
   },
-  ['dashboard-overview-v9'],
+  ['dashboard-overview-v8'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -505,13 +503,6 @@ export default async function OverviewPage({
   const hasLeadSources  = sourceDays > 0 && leadSources.total > 0
   // Only speak for the whole range when every day in it was counted.
   const sourcesComplete = hasLeadSources && sourceDays === data.ghl.length
-  const lastCounts: LeadSourceCounts = {}
-  let lastDays = 0
-  for (const r of data.ghl) {
-    if (r.lead_sources_last && typeof r.lead_sources_last === 'object') { lastDays++; addLeadSources(lastCounts, r.lead_sources_last) }
-  }
-  const lastPaid     = summariseLeadSources(lastCounts).paid
-  const lastComplete = lastDays > 0 && lastDays === data.ghl.length
 
   const crmDays = Array.from(crm.byDate.entries()).sort(([a], [b]) => a.localeCompare(b))
   const leadTrend: DailyMetric[] = crmDays.map(([date, v]) => ({
@@ -1095,7 +1086,7 @@ export default async function OverviewPage({
       You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}
       {crm.calls + crm.forms > 0 && <> — <b>{fmtInt(crm.calls)}</b> by phone and <b>{fmtInt(crm.forms)}</b> through the website</>}.
       {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
-      {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads clicked an ad first{lastComplete && lastPaid !== leadSources.paid && <> (<b>{fmtInt(lastPaid)}</b> counting their last visit before getting in touch)</>}</>}.</>}
+      {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads came through an ad</>}.</>}
     </>
   ) : adLeads > 0 ? (
     <>
@@ -1253,7 +1244,7 @@ export default async function OverviewPage({
                   <section className="card ov2-card" aria-labelledby="ov2-mix-title">
                     <div className="ov2-card-head">
                       <h2 id="ov2-mix-title" className="section-title">Where your leads came from</h2>
-                      <p className="section-desc">How each lead first found you, as tracked in {crmLabel}</p>
+                      <p className="section-desc">How each lead reached you, as tracked in {crmLabel}. An ad on their first or latest visit counts as from ads.</p>
                     </div>
                     <LeadMixDonut
                       slices={[

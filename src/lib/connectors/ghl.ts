@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
-import { classifyContact, contactAttribution, type LeadSourceCounts } from '../leadSources'
+import { classifyContact, classifyLead, contactAttribution, groupOf, type LeadSourceCounts } from '../leadSources'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
@@ -249,7 +249,7 @@ async function fetchContacts(
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; count: number; spam: number; sources: LeadSourceCounts; sourcesLast: LeadSourceCounts }[]> {
+): Promise<{ date: string; count: number; spam: number; sources: LeadSourceCounts }[]> {
   let contacts: Record<string, unknown>[]
   try {
     contacts = await searchContactsByDate(apiKey, locationId, dateFrom, dateTo)
@@ -262,7 +262,7 @@ async function fetchContacts(
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
 
-  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts; sourcesLast: LeadSourceCounts }>()
+  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts }>()
   // Which attribution fields GHL actually sent, by name only, so the logs show whether the
   // classifier has something to work with without ever printing a contact's details.
   const attrKeys = new Map<string, number>()
@@ -272,31 +272,27 @@ async function fetchContacts(
   const LABEL_FIELDS = ['sessionSource', 'utmSessionSource', 'medium', 'utmSource', 'utmMedium'] as const
   const attrValues  = new Map<string, Map<string, number>>()
   const sourceTally = new Map<string, number>()
-  const lastTally   = new Map<string, number>()
-  let touchesDiffer = 0
+  let adFromLatestVisit = 0
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
     if (c.archived === true || c.deleted === true) continue
-    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {}, sourcesLast: {} }
+    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {} }
     ex.count++
     const tags = (c.tags as string[]) ?? []
     if (tags.some(t => t.toLowerCase().includes('spam'))) {
       ex.spam++
     } else {
       // Spam stays out of the source counts, so the channels add up to the lead count.
-      const key = classifyContact(c)
+      // One channel per lead: an ad on either of GHL's two attributions wins, otherwise the first visit.
+      const key = classifyLead(c)
+      if (groupOf(key) === 'paid' && groupOf(classifyContact(c, 'first')) !== 'paid') adFromLatestVisit++
       ex.sources[key] = (ex.sources[key] ?? 0) + 1
       sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
-      // The same lead by its latest visit before getting in touch. It often differs: someone finds
-      // the business through search, then clicks an ad when they're ready to call.
-      const keyLast = classifyContact(c, 'last')
-      ex.sourcesLast[keyLast] = (ex.sourcesLast[keyLast] ?? 0) + 1
-      lastTally.set(keyLast, (lastTally.get(keyLast) ?? 0) + 1)
-      if (keyLast !== key) touchesDiffer++
-      const attr = contactAttribution(c)
-      if (attr) {
-        withAttr++
+      const attrs = [contactAttribution(c, 'first'), contactAttribution(c, 'last')]
+        .filter((a, i, all): a is Record<string, unknown> => !!a && all.indexOf(a) === i)
+      if (attrs.length > 0) withAttr++
+      for (const attr of attrs) {
         for (const k of Object.keys(attr)) attrKeys.set(k, (attrKeys.get(k) ?? 0) + 1)
         for (const f of LABEL_FIELDS) {
           const v = typeof attr[f] === 'string' ? (attr[f] as string).trim().toLowerCase().slice(0, 60) : ''
@@ -313,7 +309,7 @@ async function fetchContacts(
     const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
     console.log(`[ghl] attribution: ${withAttr}/${contacts.length} contacts have it; fields ${fields || 'none'}`)
     console.log(`[ghl] lead sources: ${Array.from(sourceTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}`)
-    console.log(`[ghl] lead sources (last touch): ${Array.from(lastTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}; differs from first touch for ${touchesDiffer}`)
+    console.log(`[ghl] counted as ad leads because of their latest visit: ${adFromLatestVisit}`)
     for (const [field, counts] of Array.from(attrValues)) {
       const top = Array.from(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`).join(', ')
       console.log(`[ghl] attribution ${field}: ${top}`)
@@ -830,7 +826,6 @@ export const ghlConnector: ConnectorAdapter = {
             // Always written, even when empty, so a day synced with attribution can be told
             // apart from a day synced before it existed.
             lead_sources:   c?.sources ?? {},
-            lead_sources_last: c?.sourcesLast ?? {},
           },
         }
       })

@@ -5198,6 +5198,3 @@ select.note-field__input { cursor: pointer; }
   .an-th-long  { display: none; }
   .an-th-short { display: inline; }
 }
-
-/* Lead sources: first visit / last visit tabs */
-.lead-src-tabs { margin-top: 0.875rem; }
