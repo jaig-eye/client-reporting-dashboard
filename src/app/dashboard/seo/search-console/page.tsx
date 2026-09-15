@@ -69,6 +69,9 @@ export default async function SearchConsolePage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  // This page's content moved into the combined report on the rebuilt dashboard.
+  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+
   // Default end to yesterday (GSC data has a 2-3 day delay; today adds partial noise)
   const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'

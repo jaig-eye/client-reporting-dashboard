@@ -22,6 +22,9 @@ export default async function GoogleMapsRankingPage() {
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  // This page's content moved into the combined report on the rebuilt dashboard.
+  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+
   const url = (client as unknown as { local_dominator_url?: string | null }).local_dominator_url
 
   if (!url) {

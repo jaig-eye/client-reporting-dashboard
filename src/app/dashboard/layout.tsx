@@ -161,7 +161,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 clientLogoUrl={client.logo_url}
                 clientName={client.name}
                 crmName={settings?.crm_name ?? 'CRM'}
-                hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
+                hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
+                dashboardV2={!!(client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2}
               />
             </DashboardNavDrawer>
           </Suspense>

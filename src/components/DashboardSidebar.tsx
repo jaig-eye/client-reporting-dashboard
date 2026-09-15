@@ -24,6 +24,8 @@ interface SidebarProps {
   isAdminPreview?: boolean
   crmName?: string
   hasLocalDominator?: boolean
+  /** Rebuilt dashboard: one page per channel instead of sections with sub-pages. */
+  dashboardV2?: boolean
 }
 
 export interface NavItem {
@@ -36,6 +38,15 @@ export interface NavItem {
   badge?: string
   disabled?: boolean
 }
+
+// The rebuilt structure: each channel is one page that carries its whole report.
+export const NAV_V2: NavItem[] = [
+  { key: 'overview',  label: 'Overview',  icon: <SquaresFour size={15} aria-hidden />,     href: '/dashboard/overview' },
+  { key: 'paid_ads',  label: 'Paid Ads',  icon: <ChartBar size={15} aria-hidden />,        href: '/dashboard/paid-ads' },
+  { key: 'seo',       label: 'SEO',       icon: <MagnifyingGlass size={15} aria-hidden />, href: '/dashboard/seo' },
+  { key: 'analytics', label: 'Analytics', icon: <ChartLineUp size={15} aria-hidden />,     href: '/dashboard/analytics' },
+  { key: 'crm',       label: 'CRM',       icon: <UsersThree size={15} aria-hidden />,      href: '/dashboard/crm' },
+]
 
 export const NAV: NavItem[] = [
   {
@@ -92,8 +103,11 @@ export default function DashboardSidebar({
   isAdminPreview = false,
   crmName = 'CRM',
   hasLocalDominator = false,
+  dashboardV2 = false,
 }: SidebarProps) {
   const pathname     = usePathname()
+  // Paid Ads and SEO keep their platform sub-pages on the classic layout; the rebuilt one is flat.
+  const navItems     = dashboardV2 ? NAV_V2 : NAV
   const searchParams = useSearchParams()
   const router       = useRouter()
   const activeSource = searchParams.get('source') ?? ''
@@ -225,7 +239,7 @@ export default function DashboardSidebar({
 
       {/* Navigation */}
       <nav style={{ flex: 1, padding: '8px 8px' }}>
-        {NAV.map(section => {
+        {navItems.map(section => {
           if (section.children) {
             const visibleChildren = isAdminPreview
               ? section.children

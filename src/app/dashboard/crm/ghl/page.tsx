@@ -88,6 +88,9 @@ export default async function GhlCrmPage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  // This page's content moved into the combined report on the rebuilt dashboard.
+  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/crm')
+
   const crmName = settings.crm_name ?? 'CRM'
 
   const { fromDate, toDate } = resolveDashboardRange(params)

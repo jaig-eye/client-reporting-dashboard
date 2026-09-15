@@ -222,6 +222,12 @@ export default async function DashboardPage({
   // source param: undefined/"all" = all paid sources, "google_ads"/"meta_ads" = single source
   const source = params.source as string | undefined
   const isFiltered = source === 'google_ads' || source === 'meta_ads'
+  const paidOnly   = source === 'paid'
+
+  // The rebuilt dashboard splits this page across Overview / Paid Ads / SEO / Analytics / CRM.
+  if (!source && (client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) {
+    redirect('/dashboard/overview')
+  }
 
   const hasGoogle = isFiltered ? source === 'google_ads' : availableSources.includes('google_ads')
   const hasMeta   = isFiltered ? source === 'meta_ads'   : availableSources.includes('meta_ads')
@@ -324,7 +330,7 @@ export default async function DashboardPage({
   )
   // Filtered source views (?source=meta_ads/google_ads) show campaign/adset-level detail
   // and should use the Paid Ads layout, not the Summary Page layout.
-  const displayLayout = isFiltered ? paidAdsLayout : activeLayout
+  const displayLayout = isFiltered || paidOnly ? paidAdsLayout : activeLayout
 
   // ─── CRM (GHL) data ───────────────────────────────────────────────────────
   const ghlTotals = { contacts: 0, calls: 0, missedCalls: 0, forms: 0, spam: 0, emailsSent: 0, smsSent: 0, newOpps: 0, wonOpps: 0, wonValue: 0 }
@@ -790,7 +796,7 @@ export default async function DashboardPage({
             <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
               {isFiltered
                 ? (source === 'google_ads' ? 'Google Ads Summary' : source === 'meta_ads' ? 'Meta Ads Summary' : 'Paid Ads Summary')
-                : 'Summary'}
+                : paidOnly ? 'Paid Ads' : 'Summary'}
             </h1>
             {syncedAt && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
@@ -1030,7 +1036,7 @@ export default async function DashboardPage({
             )}
 
 {/* ── CRM Activity ─────────────────────────────────────── */}
-            {!isFiltered && hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
+            {!isFiltered && !paidOnly && hasGhl && ghlTotals.contacts + ghlTotals.calls + ghlTotals.forms > 0 && (
               <div className="card p-6">
                 <div className="mb-4">
                   <h2 className="section-title">CRM Activity</h2>
@@ -1068,7 +1074,7 @@ export default async function DashboardPage({
         {/* Each card is an independent async server component — wrapping in Suspense
             lets the paid ads section above render first, then analytics cards stream
             in as their individual DB queries complete. */}
-        {!isFiltered && (
+        {!isFiltered && !paidOnly && (
           <>
             {/* Analytics — GA4 */}
             {availableSources.includes('google_analytics') && connectionsBySource['google_analytics'] && !hiddenTypes.has('google_analytics') && (
@@ -1138,7 +1144,7 @@ export default async function DashboardPage({
         )}
 
         {/* ── Google Maps Ranking ──────────────────────────────── */}
-        {!isFiltered && client.local_dominator_url && (
+        {!isFiltered && !paidOnly && client.local_dominator_url && (
           <div>
             <h2 className="section-title">Google Maps Ranking</h2>
             <div className="card" style={{ overflow: 'hidden', padding: 0, marginTop: '0.75rem' }}>
@@ -1154,7 +1160,7 @@ export default async function DashboardPage({
         )}
 
         {/* ── Blog Posts ───────────────────────────────────────── */}
-        {settings.show_blog_posts === true && (upcomingPosts.length > 0 || recentPosts.length > 0) && (
+        {!paidOnly && settings.show_blog_posts === true && (upcomingPosts.length > 0 || recentPosts.length > 0) && (
           <div>
             <h2 className="section-title">Blog Posts</h2>
 

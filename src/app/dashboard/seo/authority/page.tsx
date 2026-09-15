@@ -24,6 +24,9 @@ export default async function AuthorityPage() {
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  // This page's content moved into the combined report on the rebuilt dashboard.
+  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+
   // Phase 1: fetch connections, metrics (no date filter — snapshots are weekly, not date-range),
   // and the two most recent keyword snapshot dates (for correct date alignment).
   // Keywords/pages are stored with date=resolvedTo (sync end date), which differs from the

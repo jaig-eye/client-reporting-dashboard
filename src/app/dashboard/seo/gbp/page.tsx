@@ -47,6 +47,9 @@ export default async function GBPPage({
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
+  // This page's content moved into the combined report on the rebuilt dashboard.
+  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+
   const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'
 
