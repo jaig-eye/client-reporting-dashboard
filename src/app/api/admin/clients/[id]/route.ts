@@ -24,6 +24,7 @@ export async function PATCH(
     'benchmark_roas', 'benchmark_ctr', 'benchmark_cpc', 'benchmark_conv_rate', 'benchmark_cpm', 'benchmark_cpl',
     'show_benchmarks', 'show_blog_posts', 'hidden_metrics', 'enabled_benchmarks',
     'layout_type', 'metric_layout_override',
+    'dashboard_v2',
     'bill_day', 'historic_bill_day', 'monthly_budget', 'discord_channel_id',
     'local_dominator_url', 'stripe_customer_id',
     'ad_fuel_alert_threshold', 'ad_fuel_alert_muted',

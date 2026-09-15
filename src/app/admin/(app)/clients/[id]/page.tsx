@@ -23,6 +23,7 @@ import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
 import ClientBenchmarks from './ClientBenchmarks'
+import ClientDashboardVersion from './ClientDashboardVersion'
 import ClientMetricVisibility from './ClientMetricVisibility'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import ClientDirectConnections from './ClientDirectConnections'
@@ -480,6 +481,11 @@ export default async function ClientDetailPage({
       {/* ── PERFORMANCE ──────────────────────────────────────────────── */}
       {activeTab === 'performance' && (
         <div className="space-y-6 max-w-3xl">
+          <ClientDashboardVersion
+            clientId={id}
+            initialEnabled={!!(client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2}
+          />
+
           <div className="card p-5">
             <h2 className="section-title mb-1">Performance Benchmarks</h2>
             <p className="section-desc mb-4">Toggle visibility on the client dashboard and optionally override global benchmark targets for this client.</p>
