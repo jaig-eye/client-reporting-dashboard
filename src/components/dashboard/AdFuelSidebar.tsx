@@ -8,6 +8,7 @@
 // balance is. The gauge fill is relative to about a month of spend and is decoration only.
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, ClockCounterClockwise } from '@phosphor-icons/react'
 import { balanceLevel } from '@/lib/adFuelColor'
 import { fmt$ } from '@/lib/metrics'
@@ -68,7 +69,11 @@ export default function AdFuelSidebar({
         </p>
       )}
 
-      {open && <AdFuelModal balance={balance} onClose={() => setOpen(false)} />}
+      {/* Rendered into <body>, not inside the sidebar. The sidebar is sticky on desktop and sits in
+          the fixed nav drawer on phones; both create their own stacking context, which capped the
+          modal's z-index there and let the page's charts paint straight through it. Open state only
+          ever turns on after a click, so document always exists here. */}
+      {open && createPortal(<AdFuelModal balance={balance} onClose={() => setOpen(false)} />, document.body)}
     </section>
   )
 }
