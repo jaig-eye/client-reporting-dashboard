@@ -150,8 +150,9 @@ export default function DateRangePicker({
     const p = new URLSearchParams(searchParams.toString())
     p.set('from', f)
     p.set('to',   t)
-    if (c && c !== 'none') p.set('compare', c)
-    else p.delete('compare')
+    // "No comparison" is written out rather than dropped: the Overview opens on a comparison by
+    // default, so a missing parameter would quietly switch it back on.
+    p.set('compare', c && c !== 'none' ? c : 'none')
     return `?${p.toString()}`
   }
 

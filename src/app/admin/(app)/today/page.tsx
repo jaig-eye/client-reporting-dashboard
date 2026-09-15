@@ -19,7 +19,7 @@ import { loadClientAdFuelBalances } from '@/lib/adFuelBalance'
 import { balanceLevel } from '@/lib/adFuelColor'
 import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
 import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
-import KpiCard, { type KpiDelta, type KpiTone } from './KpiCard'
+import KpiCard, { type KpiDelta, type KpiTone } from './KpiCard'
 import Greeting from './Greeting'
 import LowAdFuelList, { type LowFuelRow } from './LowAdFuelList'
 
