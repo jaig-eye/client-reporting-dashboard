@@ -44,7 +44,7 @@ import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight,
+  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -74,7 +74,10 @@ function dedupeBy<T>(rows: T[], key: (r: T) => string): T[] {
 }
 
 // ── row shapes ───────────────────────────────────────────────────────────────
-type GoogleRow = { campaign_id: string; date: string; spend: number; clicks: number; conversions: number }
+type GoogleRow = {
+  campaign_id: string; date: string; spend: number; clicks: number; conversions: number
+  impressions?: number; search_impression_share?: number | null; search_top_impression_share?: number | null
+}
 type MetaAdRow = {
   ad_id: string; campaign_id: string; date: string; spend: number; clicks: number
   actions: MetaAction[] | null; action_values: MetaAction[] | null
@@ -84,9 +87,15 @@ type GhlRow    = {
   date: string; contacts_created: number; spam_leads: number; total_calls: number; incoming_calls: number
   missed_calls: number; forms_submitted: number; new_opportunities: number; won_opportunities: number; won_value: number
 }
-type GbpRow    = { date: string; call_clicks: number; direction_clicks: number }
+type GbpRow    = {
+  date: string; call_clicks: number; direction_clicks: number
+  location_id?: string | null; reviews_count?: number | null; reviews_avg_rating?: number | null
+}
 type Ga4Row    = { date: string; channel_group: string | null; sessions: number; conversions: number | null }
 type AhrefsRow = { date: string; domain_rating: number | null; referring_domains: number | null }
+type AdStrengthRow = { ad_id: string; ad_type: string | null; ad_status: string | null; ad_strength: string | null; date: string }
+type PostRow       = { title: string | null; published_url: string | null; published_at: string | null }
+type SiteRow       = { uptime_7d: number | string | null; ssl_days_remaining: number | null }
 type KeywordRow = {
   keyword: string; current_position: number | null; previous_position: number | null
   position_delta: number | null; search_volume: number | null
@@ -110,10 +119,10 @@ const _getOverviewData = unstable_cache(
     const db = createAdminClient()
     const none = Promise.resolve({ data: [] as never[] })
 
-    const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions'
+    const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
     const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value'
-    const GBP_COLS    = 'date,call_clicks,direction_clicks'
+    const GBP_COLS    = 'date,call_clicks,direction_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
     const ga4Query = (a: string, b: string) => {
@@ -126,6 +135,7 @@ const _getOverviewData = unstable_cache(
       gRes, gPriorRes, mRes, mPriorRes, gAssignRes, mAssignRes,
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
+      adStrengthRes, negativesRes, postsRes, sitesRes,
     ] = await Promise.all([
       // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
@@ -201,6 +211,30 @@ const _getOverviewData = unstable_cache(
         .select('keyword,current_position,previous_position,position_delta,search_volume')
         .eq('client_id', clientId).eq('is_tracked', true)
         .order('current_position', { ascending: true, nullsFirst: false }).limit(50),
+
+      // Each Google ad's latest status and ad strength. 35 days before the range end holds every
+      // live ad's latest row. Paged: ads x days passes the API's 1000-row limit.
+      has.google
+        ? fetchAllRows((a, b) => db.from('google_ads_ad_metrics')
+            .select('ad_id,ad_type,ad_status,ad_strength,date')
+            .eq('client_id', clientId)
+            .gte('date', new Date(new Date(to + 'T00:00:00Z').getTime() - 35 * 86_400_000).toISOString().slice(0, 10))
+            .lte('date', to)
+            .order('date', { ascending: false }).order('id').range(a, b), { maxRows: 20_000 }).then(data => ({ data }))
+        : none,
+      // Searches we stop this client paying for (negative keywords currently in place).
+      has.google
+        ? db.from('google_ads_negative_keywords').select('id', { count: 'exact', head: true }).eq('client_id', clientId)
+        : Promise.resolve({ count: 0 }),
+      // Posts published on their website in this window. Public pages only: status published with
+      // a live URL, so drafts, rejected posts and internal notes can never appear here.
+      db.from('content_posts')
+        .select('title,published_url,published_at')
+        .eq('client_id', clientId).eq('status', 'published').not('published_url', 'is', null)
+        .gte('published_at', from).lte('published_at', `${to}T23:59:59.999Z`)
+        .order('published_at', { ascending: false }).limit(6),
+      // Their website, which we monitor.
+      db.from('sites').select('uptime_7d,ssl_days_remaining').eq('client_id', clientId).eq('status', 'active'),
     ])
 
     return {
@@ -221,9 +255,13 @@ const _getOverviewData = unstable_cache(
       ga4Prior:    (ga4PriorRes.data ?? []) as Ga4Row[],
       ahrefs:      (ahrefsRes.data   ?? []) as AhrefsRow[],
       keywords:    (keywordsRes.data ?? []) as KeywordRow[],
+      adStrength:  (adStrengthRes.data ?? []) as AdStrengthRow[],
+      negativeKeywordCount: (negativesRes as { count: number | null }).count ?? 0,
+      posts:       (postsRes.data ?? []) as PostRow[],
+      sites:       (sitesRes.data ?? []) as SiteRow[],
     }
   },
-  ['dashboard-overview-v4'],
+  ['dashboard-overview-v5'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -755,6 +793,172 @@ export default async function OverviewPage({
     : []
   const showKeywords = tracked.length > 0 || topSearches.length > 0
 
+  // ── Proof of progress ─────────────────────────────────────────────────────
+  // A local business owner reads this page for one thing: is this working, and do these people
+  // know what they're doing? So besides the results, surface the signals we control — how often
+  // their ads show, how Google rates them, reviews, the work delivered — in plain words. Every
+  // highlight below is picked only when it is actually true for the chosen dates.
+
+  // Search coverage: impression-weighted share of eligible searches the ads appeared for.
+  const searchCoverage = (rows: GoogleRow[]) => {
+    let weight = 0, share = 0, topWeight = 0, top = 0
+    for (const r of dedupeBy(rows, r => `${r.campaign_id}_${r.date}`)) {
+      if (assignmentMap.get(r.campaign_id)?.hidden) continue
+      const imp = Number(r.impressions) || 0
+      if (imp <= 0) continue
+      if (r.search_impression_share != null) { share += Number(r.search_impression_share) * imp; weight += imp }
+      if (r.search_top_impression_share != null) { top += Number(r.search_top_impression_share) * imp; topWeight += imp }
+    }
+    return { share: weight > 0 ? share / weight : null, top: topWeight > 0 ? top / topWeight : null }
+  }
+  const coverage      = searchCoverage(data.google)
+  const coveragePrior = searchCoverage(data.googlePrior)
+  const coverageUp    = showCompare && coverage.share != null && coveragePrior.share != null
+    ? (coverage.share - coveragePrior.share) * 100
+    : null
+
+  // Ad strength of the ads running now (each ad's latest row).
+  const latestAds = new Map<string, AdStrengthRow>()
+  for (const a of data.adStrength) {
+    if (a.ad_type !== 'AD_GROUP_PLACEHOLDER' && !latestAds.has(a.ad_id)) latestAds.set(a.ad_id, a)
+  }
+  const STRENGTHS = [
+    { key: 'EXCELLENT', label: 'Excellent', tone: 'green' },
+    { key: 'GOOD',      label: 'Good',      tone: 'blue' },
+    { key: 'AVERAGE',   label: 'Average',   tone: 'amber' },
+    { key: 'POOR',      label: 'Poor',      tone: 'red' },
+  ] as const
+  const liveAds = Array.from(latestAds.values()).filter(a => ['ENABLED', 'ACTIVE'].includes((a.ad_status ?? '').toUpperCase()))
+  const strengthCounts = STRENGTHS.map(st => ({ ...st, value: liveAds.filter(a => (a.ad_strength ?? '').toUpperCase() === st.key).length }))
+  const ratedAds = strengthCounts.reduce((t, st) => t + st.value, 0)
+  const goodAds  = strengthCounts[0].value + strengthCounts[1].value
+
+  // Google reviews: latest count and rating per location, and how many arrived during the window.
+  const reviews = (() => {
+    const byLocation = new Map<string, { first: GbpRow; last: GbpRow }>()
+    for (const r of data.gbp) {
+      if (!r.reviews_count || Number(r.reviews_count) <= 0) continue
+      const key = r.location_id ?? 'all'
+      const ex  = byLocation.get(key)
+      if (!ex) byLocation.set(key, { first: r, last: r })
+      else { if (r.date < ex.first.date) ex.first = r; if (r.date > ex.last.date) ex.last = r }
+    }
+    let count = 0, gained = 0, ratingSum = 0
+    for (const { first, last } of Array.from(byLocation.values())) {
+      const latest = Number(last.reviews_count) || 0
+      count     += latest
+      gained    += Math.max(0, latest - (Number(first.reviews_count) || 0))
+      ratingSum += (Number(last.reviews_avg_rating) || 0) * latest
+    }
+    return { count, gained, rating: count > 0 ? ratingSum / count : 0 }
+  })()
+
+  // Website: the lowest uptime across their monitored sites, so a bad one is never averaged away.
+  const monitoredSites = data.sites.filter(site => site.uptime_7d != null)
+  const uptime = monitoredSites.length > 0 ? Math.min(...monitoredSites.map(site => Number(site.uptime_7d))) : null
+  const certificatesOk = data.sites.length > 0 && data.sites.every(site => site.ssl_days_remaining == null || site.ssl_days_remaining > 14)
+  const fmtUptime = (u: number) => `${u.toFixed(u >= 99.95 ? 2 : 1)}%`
+
+  const keywordsUp = tracked.filter(k => (k.position_delta ?? 0) > 0).length
+  const pctChange  = (cur: number, prior: number) => (prior > 0 ? ((cur - prior) / prior) * 100 : null)
+  const cplChange  = showCompare && adLeads > 0 && adLeadsPrior > 0 ? pctChange(adCpl, adCplPrior) : null
+
+  // ── At a glance: up to four true highlights, most persuasive first ──
+  type Highlight = { key: string; icon: 'money' | 'up' | 'star' | 'check'; figure: string; text: string }
+  const highlights: Highlight[] = []
+  const wonRatio = crm.wonValue > 0 && adSpend > 0 ? crm.wonValue / adSpend : null
+  if (wonRatio != null && wonRatio >= 1) {
+    // Two facts side by side, not a claim that ads won every job: the CRM counts all won work.
+    highlights.push({
+      key: 'won', icon: 'money',
+      figure: `$${Math.round(crm.wonValue).toLocaleString('en-US')}`,
+      text: `In jobs won, ${wonRatio.toFixed(1)} times what was spent on ads`,
+    })
+  }
+  const leadsChange = showCompare && hasCrmData ? pctChange(crm.leads, crmPrior.leads) : null
+  if (leadsChange != null && leadsChange >= 5) {
+    highlights.push({ key: 'leads', icon: 'up', figure: `+${Math.round(leadsChange)}%`, text: `More leads than ${compare === 'last_year' ? 'the same time last year' : 'the period before'}` })
+  }
+  if (cplChange != null && cplChange <= -5) {
+    highlights.push({ key: 'cpl', icon: 'up', figure: `−${Math.round(-cplChange)}%`, text: 'Lower cost for each lead from your ads' })
+  }
+  if (keywordsUp > 0) {
+    highlights.push({ key: 'keywords', icon: 'up', figure: fmtInt(keywordsUp), text: `${keywordsUp === 1 ? 'Keyword' : 'Keywords'} we track moved up on Google` })
+  }
+  if (reviews.gained > 0) {
+    highlights.push({ key: 'reviews', icon: 'star', figure: `+${reviews.gained}`, text: `New Google ${reviews.gained === 1 ? 'review' : 'reviews'}, ${reviews.rating.toFixed(1)}★ average` })
+  } else if (reviews.count > 0 && reviews.rating >= 4.5) {
+    highlights.push({ key: 'reviews', icon: 'star', figure: `${reviews.rating.toFixed(1)}★`, text: `Average rating across ${fmtInt(reviews.count)} Google reviews` })
+  }
+  if (data.posts.length > 0) {
+    highlights.push({ key: 'posts', icon: 'check', figure: fmtInt(data.posts.length), text: `New ${data.posts.length === 1 ? 'page' : 'pages'} published on your website` })
+  }
+  if (showCalls && answerRate >= 0.85) {
+    highlights.push({ key: 'answered', icon: 'check', figure: `${Math.round(answerRate * 100)}%`, text: 'Of incoming calls were answered' })
+  }
+  if (coverageUp != null && coverageUp >= 3 && coverage.share != null) {
+    highlights.push({ key: 'coverage', icon: 'up', figure: `+${Math.round(coverageUp)} pts`, text: `Your ads now show for ${Math.round(coverage.share * 100)}% of the searches they could` })
+  }
+  if (ratedAds >= 2 && goodAds / ratedAds >= 0.6) {
+    highlights.push({ key: 'strength', icon: 'check', figure: `${goodAds} of ${ratedAds}`, text: 'Ads rated Good or Excellent by Google' })
+  }
+  if (uptime != null && uptime >= 99.5) {
+    highlights.push({ key: 'uptime', icon: 'check', figure: fmtUptime(uptime), text: 'Website uptime, checked around the clock' })
+  }
+  const topHighlights = highlights.slice(0, 4)
+
+  // One thing to keep an eye on: the biggest real drop, with context from their own history.
+  // No invented reasons and no promises — just where the number sits against the longer trend.
+  let watch: { text: string; context: string | null } | null = null
+  if (showCompare && hasCrmData) {
+    const perWeek = { Leads: 'leads', 'Phone calls': 'calls', 'Web forms': 'forms' } as const
+    const drops = ([
+      { noun: 'Leads' as const,       cur: crm.leads, prior: crmPrior.leads },
+      { noun: 'Phone calls' as const, cur: crm.calls, prior: crmPrior.calls },
+      { noun: 'Web forms' as const,   cur: crm.forms, prior: crmPrior.forms },
+    ])
+      .map(d => ({ ...d, pct: pctChange(d.cur, d.prior) }))
+      .filter((d): d is typeof d & { pct: number } => d.pct != null && d.pct <= -10)
+      .sort((a, b) => a.pct - b.pct)
+    const drop = drops[0]
+    if (drop) {
+      const field = perWeek[drop.noun]
+      const avgPerWeek = weekly.length > 0 ? weekly.reduce((t, w) => t + w[field], 0) / weekly.length : 0
+      const nowPerWeek = (drop.cur / Math.max(1, dayCount)) * 7
+      let context: string | null = null
+      if (drop.noun === 'Leads' && cplChange != null && cplChange <= -5) {
+        context = `Each lead from your ads cost ${Math.round(-cplChange)}% less, so the budget went further.`
+      } else if (avgPerWeek > 0) {
+        const vsAverage = ((nowPerWeek - avgPerWeek) / avgPerWeek) * 100
+        const avg = `${fmtInt(avgPerWeek)} a week`
+        context = Math.abs(vsAverage) < 10 ? `That's in line with your 12-week average of ${avg}.`
+          : vsAverage > 0 ? `That's still above your 12-week average of ${avg}.`
+          : `That's below your 12-week average of ${avg}.`
+      }
+      watch = { text: `${drop.noun} down ${Math.round(-drop.pct)}% ${compareNoun}`, context }
+    }
+  }
+
+  // ── The work behind the results ──
+  const work: { key: string; figure: string; label: string; detail: string }[] = []
+  if (data.posts.length > 0) {
+    work.push({ key: 'posts', figure: fmtInt(data.posts.length), label: data.posts.length === 1 ? 'New page published' : 'New pages published', detail: 'Written around what your customers search for' })
+  }
+  if (tracked.length > 0) {
+    work.push({ key: 'keywords', figure: fmtInt(tracked.length), label: tracked.length === 1 ? 'Keyword tracked on Google' : 'Keywords tracked on Google', detail: keywordsUp > 0 ? `${keywordsUp} moved up since the last check` : 'Positions checked regularly' })
+  }
+  if (data.negativeKeywordCount > 0) {
+    work.push({ key: 'negatives', figure: fmtInt(data.negativeKeywordCount), label: 'Irrelevant searches blocked', detail: "Keeps your ads off searches that won't become customers" })
+  }
+  if (liveAds.length > 0) {
+    work.push({ key: 'ads', figure: fmtInt(liveAds.length), label: liveAds.length === 1 ? 'Ad running on Google' : 'Ads running on Google', detail: ratedAds > 0 ? `${goodAds} rated Good or Excellent` : 'Live and serving' })
+  }
+  if (uptime != null) {
+    work.push({ key: 'site', figure: fmtUptime(uptime), label: 'Website uptime', detail: certificatesOk ? 'Monitored around the clock, security certificate valid' : 'Monitored around the clock' })
+  }
+  const showWork     = work.length > 0
+  const showAdHealth = coverage.share != null || coverage.top != null || ratedAds > 0
+
   // ── Search & local (detail lives on the SEO page) ─────────────────────────
   const localCards: ReactNode[] = []
   if (hasGbpData) {
@@ -871,6 +1075,37 @@ export default async function OverviewPage({
         ) : (
           <>
             {headline && <p className="ov-headline">{headline}</p>}
+
+            {(topHighlights.length > 0 || watch) && (
+              <section className="card ov3-glance" aria-labelledby="ov3-glance-title">
+                <div className="ov2-card-head">
+                  <h2 id="ov3-glance-title" className="section-title">At a glance</h2>
+                  <p className="section-desc">What went well over {periodLabel}</p>
+                </div>
+                {topHighlights.length > 0 && (
+                  <ul className="ov3-wins">
+                    {topHighlights.map(h => (
+                      <li key={h.key} className="ov3-win">
+                        <span className={`ov3-win__icon ov3-win__icon--${h.icon}`} aria-hidden>
+                          {h.icon === 'money' ? <CurrencyDollar size={16} weight="bold" />
+                            : h.icon === 'star' ? <Star size={16} weight="fill" />
+                            : h.icon === 'up' ? <TrendUp size={16} weight="bold" />
+                            : <CheckCircle size={16} weight="fill" />}
+                        </span>
+                        <span className="ov3-win__figure">{h.figure}</span>
+                        <span className="ov3-win__text">{h.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {watch && (
+                  <p className="ov3-watch">
+                    <span className="ov3-watch__label">Keeping an eye on</span>
+                    <span className="ov3-watch__text"><b>{watch.text}.</b>{watch.context && <> {watch.context}</>}</span>
+                  </p>
+                )}
+              </section>
+            )}
 
             {kpis.length > 0 && <div className="stat-grid ov2-kpis" data-count={kpis.length}>{kpis}</div>}
 
@@ -1027,6 +1262,102 @@ export default async function OverviewPage({
                         </li>
                       ))}
                     </ul>
+                  </section>
+                )}
+              </div>
+            )}
+
+            {(showWork || showAdHealth) && (
+              <div className={showWork && showAdHealth ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
+                {showWork && (
+                  <section className="card ov2-card" aria-labelledby="ov3-work-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov3-work-title" className="section-title">The work behind your results</h2>
+                      <p className="section-desc">What&apos;s running and being looked after for you</p>
+                    </div>
+                    <ul className="ov3-work">
+                      {work.map(w => (
+                        <li key={w.key} className="ov3-work__item">
+                          <span className="ov3-work__figure">{w.figure}</span>
+                          <span className="ov3-work__body">
+                            <span className="ov3-work__label">{w.label}</span>
+                            <span className="ov3-work__detail">{w.detail}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {data.posts.length > 0 && (
+                      <div className="ov3-posts">
+                        <p className="ov3-posts__title">Published over {periodLabel}</p>
+                        <ul className="ov3-posts__list">
+                          {data.posts.map(post => (
+                            <li key={post.published_url ?? ''} className="ov3-posts__item">
+                              <a href={post.published_url ?? undefined} target="_blank" rel="noopener noreferrer" className="ov2-link ov3-posts__link">
+                                {post.title || post.published_url}
+                              </a>
+                              {post.published_at && <span className="ov3-posts__date">{fmtShortDate(post.published_at.slice(0, 10))}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {showAdHealth && (
+                  <section className="card ov2-card" aria-labelledby="ov3-health-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov3-health-title" className="section-title">Your Google Ads health</h2>
+                      <p className="section-desc">What Google weighs when it decides whose ad to show, and where</p>
+                    </div>
+                    <div className="ov3-health">
+                      {coverage.share != null && (
+                        <div className="ov3-meter">
+                          <div className="ov3-meter__head">
+                            <span className="ov3-meter__label">Searches your ads showed up for</span>
+                            <span className="ov3-meter__value">
+                              {Math.round(coverage.share * 100)}%
+                              {coverageUp != null && Math.abs(coverageUp) >= 1 && (
+                                <span className={`ov3-meter__delta ov2-tone--${coverageUp > 0 ? 'good' : 'bad'}`}>
+                                  {coverageUp > 0 ? '+' : '−'}{Math.abs(Math.round(coverageUp))} pts
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <span className="ov3-meter__track"><span className="ov3-meter__fill" style={{ width: `${Math.min(100, coverage.share * 100)}%` }} /></span>
+                          <p className="ov3-meter__note">Out of all the searches your ads were eligible to appear for</p>
+                        </div>
+                      )}
+                      {coverage.top != null && (
+                        <div className="ov3-meter">
+                          <div className="ov3-meter__head">
+                            <span className="ov3-meter__label">Shown above the regular results</span>
+                            <span className="ov3-meter__value">{Math.round(coverage.top * 100)}%</span>
+                          </div>
+                          <span className="ov3-meter__track"><span className="ov3-meter__fill ov3-meter__fill--top" style={{ width: `${Math.min(100, coverage.top * 100)}%` }} /></span>
+                          <p className="ov3-meter__note">The top of the page is where most people click</p>
+                        </div>
+                      )}
+                      {ratedAds > 0 && (
+                        <div className="ov3-meter">
+                          <div className="ov3-meter__head">
+                            <span className="ov3-meter__label">Ad strength</span>
+                            <span className="ov3-meter__value">{goodAds} of {ratedAds} Good or better</span>
+                          </div>
+                          <span className="ov3-strength" role="img" aria-label={strengthCounts.filter(st => st.value > 0).map(st => `${st.value} ${st.label}`).join(', ')}>
+                            {strengthCounts.filter(st => st.value > 0).map(st => (
+                              <span key={st.key} className={`ov3-strength__seg ov3-tone-bg--${st.tone}`} style={{ flexGrow: st.value }} />
+                            ))}
+                          </span>
+                          <ul className="ov3-strength__legend">
+                            {strengthCounts.filter(st => st.value > 0).map(st => (
+                              <li key={st.key}><span className={`ov3-strength__dot ov3-tone-bg--${st.tone}`} aria-hidden />{st.label} <b>{st.value}</b></li>
+                            ))}
+                          </ul>
+                          <p className="ov3-meter__note">Google&apos;s own rating of how well each ad matches what people search for</p>
+                        </div>
+                      )}
+                    </div>
                   </section>
                 )}
               </div>
