@@ -225,7 +225,7 @@ export default async function CrmPage({
   const sources         = summariseLeadSources(sourceCounts)
   const hasSources      = sources.total > 0
   const sourcesComplete = sourceDates.length === data.length
-  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', untracked: 'No source recorded' }
+  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', untracked: 'No clear source' }
   const sourceGroups = (['paid', 'organic', 'untracked'] as const)
     .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
     .filter(g => g.count > 0)
@@ -414,7 +414,7 @@ export default async function CrmPage({
 
             {share(sources.untracked, sources.total) >= 40 && (
               <p className="crm-insight crm-insight--warn">
-                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track.`}
+                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track or we can't sort yet.`}
               </p>
             )}
             {!sourcesComplete && (

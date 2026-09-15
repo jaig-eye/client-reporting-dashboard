@@ -13,10 +13,10 @@
 //                      bounce_rate, avg_session_duration
 //   ga4_source_metrics date, source, medium, campaign, sessions, conversions,
 //                      engaged_sessions
-//
-// Neither table carries a landing-page or device dimension, so this page has no
-// "top pages" and no "desktop vs mobile" section — either would have to be
-// invented. Add the columns and the sections can follow.
+//   ga4_dimension_metrics  date, dimension (device | city | landing_page | key_event),
+//                      value, sessions, conversions, event_count — the audience detail.
+//                      Cities and landing pages hold each day's top 25, so their
+//                      shares are of the visits those rows cover.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cookies } from 'next/headers'
@@ -30,6 +30,8 @@ import SparkMetricCard from '@/components/SparkMetricCard'
 import TrafficBySourceTable from '@/components/TrafficBySourceTable'
 import PageHeader from '@/components/dashboard/PageHeader'
 import EmptyState from '@/components/dashboard/EmptyState'
+import RowLimit from '@/components/dashboard/RowLimit'
+import { fetchAllRows } from '@/lib/fetchAllRows'
 import { ChartLine } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -66,16 +68,27 @@ const _getCachedGA4Metrics = unstable_cache(
       .eq('client_id', clientId)
       .gte('date', from).lte('date', to)
       .limit(10000)
-    const [{ data: rows }, { data: priorRows }, { data: srcRows }] = await Promise.all([
+    // Audience detail runs past 1000 rows on a busy site, so it is read a page at a time. Before
+    // migration 217 the table doesn't exist; the read fails quietly and the sections stay hidden.
+    const dimQ = fetchAllRows<DimRow>((a, b) => {
+      let q = db.from('ga4_dimension_metrics')
+        .select('dimension,value,sessions,conversions,engaged_sessions,event_count')
+        .eq('client_id', clientId)
+        .gte('date', from).lte('date', to)
+      if (primaryGa4Id) q = q.eq('connection_id', primaryGa4Id)
+      return q.order('id').range(a, b)
+    })
+    const [{ data: rows }, { data: priorRows }, { data: srcRows }, dimRows] = await Promise.all([
       primaryGa4Id ? currQ.eq('connection_id', primaryGa4Id) : currQ,
       showCompare
         ? (primaryGa4Id ? priorQ.eq('connection_id', primaryGa4Id) : priorQ)
         : Promise.resolve({ data: null }),
       primaryGa4Id ? srcQ.eq('connection_id', primaryGa4Id) : srcQ,
+      dimQ,
     ])
-    return { rows: rows ?? [], priorRows: priorRows ?? null, srcRows: srcRows ?? [] }
+    return { rows: rows ?? [], priorRows: priorRows ?? null, srcRows: srcRows ?? [], dimRows }
   },
-  ['dashboard-ga4'],
+  ['dashboard-ga4-v2'],
   { revalidate: 600, tags: ['client-metrics'] }
 )
 
@@ -116,6 +129,33 @@ type Ga4Row = {
   bounce_rate: number | null
   avg_session_duration: number | null
 }
+
+type DimRow = {
+  dimension: 'device' | 'city' | 'landing_page' | 'key_event'
+  value: string
+  sessions: number | null
+  conversions: number | null
+  engaged_sessions: number | null
+  event_count: number | null
+}
+
+/** GA4's device names, in the words a business owner uses. */
+const DEVICE_LABEL: Record<string, string> = { mobile: 'Phone', desktop: 'Computer', tablet: 'Tablet', 'smart tv': 'TV' }
+
+/** Common GA4 event names, said plainly. Anything else is un-snake-cased. */
+const EVENT_LABEL: Record<string, string> = {
+  generate_lead: 'Lead form sent', submit_lead_form: 'Lead form sent', form_submit: 'Form submitted',
+  form_start: 'Started a form', click_to_call: 'Tapped the phone number', call_click: 'Tapped the phone number',
+  phone_click: 'Tapped the phone number', phone_call: 'Phone call', book_appointment: 'Booked an appointment',
+  schedule: 'Booked an appointment', contact: 'Contacted you', purchase: 'Purchase', begin_checkout: 'Started checkout',
+  file_download: 'Downloaded a file', click: 'Clicked a link', page_view: 'Viewed a page', scroll: 'Scrolled a page',
+  session_start: 'Started a visit', first_visit: 'First visit', user_engagement: 'Engaged with a page',
+}
+const eventLabel = (name: string) =>
+  EVENT_LABEL[name] ?? name.replace(/[_-]+/g, ' ').replace(/^\w/, c => c.toUpperCase())
+
+/** Events that happen on almost every visit. Counted as conversions, they swell the total. */
+const ROUTINE_EVENTS = new Set(['page_view', 'session_start', 'first_visit', 'user_engagement', 'scroll'])
 
 type SourceRow = {
   source?: string | null
@@ -237,7 +277,7 @@ export default async function AnalyticsPage({
     )
   }
 
-  const { rows, priorRows, srcRows } = await _getCachedGA4Metrics(
+  const { rows, priorRows, srcRows, dimRows } = await _getCachedGA4Metrics(
     client.id,
     primaryGa4Id,
     fmtDate(fromDate), fmtDate(toDate),
@@ -350,6 +390,31 @@ export default async function AnalyticsPage({
   const newShare            = now.users > 0 ? now.newUsers / now.users : 0
   const returningShare      = now.users > 0 ? now.returningUsers / now.users : 0
   const priorReturningShare = prior.users > 0 ? prior.returningUsers / prior.users : 0
+
+  // ── Audience detail ────────────────────────────────────────────────────────
+  function dimAgg(dimension: DimRow['dimension']) {
+    const map = new Map<string, { value: string; sessions: number; conversions: number; engaged: number; events: number }>()
+    for (const r of dimRows as DimRow[]) {
+      if (r.dimension !== dimension) continue
+      const ex = map.get(r.value) ?? { value: r.value, sessions: 0, conversions: 0, engaged: 0, events: 0 }
+      ex.sessions    += num(r.sessions)
+      ex.conversions += num(r.conversions)
+      ex.engaged     += num(r.engaged_sessions)
+      ex.events      += num(r.event_count)
+      map.set(r.value, ex)
+    }
+    return Array.from(map.values())
+  }
+  const devices      = dimAgg('device').sort((a, b) => b.sessions - a.sessions)
+  const deviceTotal  = devices.reduce((s, d) => s + d.sessions, 0)
+  const phoneShare   = deviceTotal > 0 ? (devices.find(d => d.value === 'mobile')?.sessions ?? 0) / deviceTotal : 0
+  const allCities    = dimAgg('city')
+  const cityTotal    = allCities.reduce((s, c) => s + c.sessions, 0)
+  const cities       = allCities.filter(c => c.value !== '(not set)').sort((a, b) => b.sessions - a.sessions).slice(0, 8)
+  const landingPages = dimAgg('landing_page').filter(p => p.value !== '(not set)').sort((a, b) => b.sessions - a.sessions).slice(0, 25)
+  const keyEvents    = dimAgg('key_event').sort((a, b) => b.conversions - a.conversions)
+  const keyEventTotal = keyEvents.reduce((s, e) => s + e.conversions, 0)
+  const routineKeyEvents = keyEvents.filter(e => ROUTINE_EVENTS.has(e.value))
 
   const visitorsDelta = showCompare ? pctChange(now.users, prior.users) : null
   const since = (value: number, unit: string) =>
@@ -546,6 +611,138 @@ export default async function AnalyticsPage({
           )}
         </section>
       </div>
+
+      {/* Who is visiting: the device in their hand, and where they are. */}
+      {(devices.length > 0 || cities.length > 0) && (
+        <div className="an-panels">
+          {devices.length > 0 && (
+            <section className="card p-4 sm:p-6" aria-labelledby="an-devices-title">
+              <div className="mb-4">
+                <h2 id="an-devices-title" className="section-title">Phone, computer or tablet</h2>
+                <p className="section-desc">
+                  {phoneShare >= 0.5
+                    ? <><strong>{fmtPct(phoneShare)}</strong> of visits came from a phone, so the site has to work well on one.</>
+                    : 'The devices people used to visit your site'}
+                </p>
+              </div>
+              <ul className="an-bars">
+                {devices.map(d => {
+                  const share = deviceTotal > 0 ? d.sessions / deviceTotal : 0
+                  return (
+                    <li key={d.value} className="an-bar">
+                      <span className="an-bar__track">
+                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
+                        <span className="an-bar__name">{DEVICE_LABEL[d.value] ?? d.value}</span>
+                      </span>
+                      <span className="an-bar__value">{fmtNum(d.sessions)}</span>
+                      <span className="an-bar__pct">{fmtPct(share)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+
+          {cities.length > 0 && (
+            <section className="card p-4 sm:p-6" aria-labelledby="an-cities-title">
+              <div className="mb-4">
+                <h2 id="an-cities-title" className="section-title">Where visitors are</h2>
+                <p className="section-desc">The cities your visits came from, as a share of visits with a known location</p>
+              </div>
+              <ul className="an-bars">
+                {cities.map(c => {
+                  const share = cityTotal > 0 ? c.sessions / cityTotal : 0
+                  return (
+                    <li key={c.value} className="an-bar">
+                      <span className="an-bar__track">
+                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
+                        <span className="an-bar__name">{c.value}</span>
+                      </span>
+                      <span className="an-bar__value">{fmtNum(c.sessions)}</span>
+                      <span className="an-bar__pct">{fmtPct(share)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* Where they start, and what counted as a conversion. */}
+      {(landingPages.length > 0 || keyEvents.length > 0) && (
+        <div className="an-panels">
+          {landingPages.length > 0 && (
+            <section className="card an-flush" aria-labelledby="an-pages-title">
+              <div className="an-flush__head">
+                <h2 id="an-pages-title" className="section-title">Pages people land on</h2>
+                <p className="section-desc">The first page of each visit, and how many of those visits converted</p>
+              </div>
+              <RowLimit total={landingPages.length} noun="pages">
+                <div className="table-scroll">
+                  <table className="data-table an-table an-pages-table">
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left' }}>Page</th>
+                        <th style={{ textAlign: 'right' }}>Visits</th>
+                        <th className="hide-sm" style={{ textAlign: 'right' }}>Engaged</th>
+                        <th style={{ textAlign: 'right' }}>
+                          <span className="an-th-long">Conversions</span><span className="an-th-short" aria-hidden>Conv.</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {landingPages.map(p => (
+                        <tr key={p.value}>
+                          <td className="an-page"><span className="block truncate" title={p.value}>{p.value}</span></td>
+                          <td style={{ textAlign: 'right' }}>{fmtNum(p.sessions)}</td>
+                          <td className="hide-sm" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                            {p.sessions > 0 ? fmtPct(p.engaged / p.sessions) : '—'}
+                          </td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{p.conversions > 0 ? fmtNum(p.conversions) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </RowLimit>
+            </section>
+          )}
+
+          {keyEvents.length > 0 && (
+            <section className="card p-4 sm:p-6" aria-labelledby="an-events-title">
+              <div className="mb-4">
+                <h2 id="an-events-title" className="section-title">What counted as a conversion</h2>
+                <p className="section-desc">
+                  The actions Google Analytics is set to count, {fmtNum(keyEventTotal)} in total. One visitor can count more than once.
+                </p>
+              </div>
+              <ul className="an-bars">
+                {keyEvents.slice(0, 8).map(e => {
+                  const share = keyEventTotal > 0 ? e.conversions / keyEventTotal : 0
+                  return (
+                    <li key={e.value} className="an-bar">
+                      <span className="an-bar__track">
+                        <span className="an-bar__fill an-bar__fill--conv" style={{ width: barWidth(share) }} aria-hidden />
+                        <span className="an-bar__name" title={e.value}>{eventLabel(e.value)}</span>
+                      </span>
+                      <span className="an-bar__value">{fmtNum(e.conversions)}</span>
+                      <span className="an-bar__pct">{fmtPct(share)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+              {routineKeyEvents.length > 0 && (
+                <p className="an-callout">
+                  {routineKeyEvents.map(e => eventLabel(e.value)).join(' and ')} {routineKeyEvents.length === 1 ? 'happens' : 'happen'} on
+                  most visits, so counting {routineKeyEvents.length === 1 ? 'it' : 'them'} as a conversion makes the total much higher than
+                  real enquiries. Your account manager can switch {routineKeyEvents.length === 1 ? 'it' : 'them'} off in Google Analytics.
+                </p>
+              )}
+            </section>
+          )}
+        </div>
+      )}
 
       {/* Which channels actually convert. */}
       <section className="card p-4 sm:p-6">

@@ -30,6 +30,8 @@ import GscTrendChart         from './search-console/GscTrendChart'
 import type { GscDailyPoint } from './search-console/GscTrendChart'
 import { GscQueriesTable, GscPagesTable } from './search-console/GscSortableTable'
 import { PositionPill } from '@/components/dashboard/KeywordRank'
+import ScrollTabs            from '@/components/ui/ScrollTabs'
+import RowLimit              from '@/components/dashboard/RowLimit'
 import {
   MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold, Key,
 } from '@phosphor-icons/react/dist/ssr'
@@ -237,7 +239,7 @@ function gbpTotals(rows: GbpRow[]) {
 export default async function SeoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; compare?: string }>
+  searchParams: Promise<{ from?: string; to?: string; compare?: string; tab?: string }>
 }) {
   const cookieStore = await cookies()
   const db          = createAdminClient()
@@ -584,7 +586,7 @@ export default async function SeoPage({
       label:  'Average position',
       value:  fmtPos(avgRank),
       sub:    `across the ${rankRows.length} search term${rankRows.length === 1 ? '' : 's'} we track`,
-      delta:  prevAvgRank > 0 ? pctDelta(avgRank, prevAvgRank) : undefined,
+      delta:  showCompare && prevAvgRank > 0 ? pctDelta(avgRank, prevAvgRank) : undefined,
       invert: true,
       color:  'var(--seo-neutral)',
     })
@@ -602,6 +604,24 @@ export default async function SeoPage({
 
   const nothingConnected = !gscConnectionId && !hasGbpConn && !hasAhrefs && !hasRanks
   const mapsUrl = client.local_dominator_url ?? null
+
+  // One section at a time, chosen in the URL so a tab can be linked to and survives a date change.
+  // The headline figures stay above the tabs, so the answer is always on screen.
+  const seoTabs: { id: string; label: string }[] = [
+    ...(gscHasData || hasRanks ? [{ id: 'keywords', label: 'Keywords' }] : []),
+    { id: 'search',    label: 'Search results' },
+    { id: 'local',     label: 'Google listing' },
+    { id: 'authority', label: 'Site strength' },
+  ]
+  const tab = seoTabs.some(t => t.id === params.tab) ? (params.tab as string) : seoTabs[0].id
+  const tabHref = (id: string) => {
+    const q = new URLSearchParams()
+    if (params.from)    q.set('from', params.from)
+    if (params.to)      q.set('to', params.to)
+    if (params.compare) q.set('compare', params.compare)
+    q.set('tab', id)
+    return `/dashboard/seo?${q.toString()}`
+  }
 
   // ── render ─────────────────────────────────────────────────────────────────
 
@@ -654,9 +674,16 @@ export default async function SeoPage({
             </div>
           </section>
         )}
+        <ScrollTabs
+          label="SEO sections"
+          className="seo-tabs"
+          activeId={tab}
+          items={seoTabs.map(t => ({ id: t.id, label: t.label, href: tabHref(t.id) }))}
+        />
+
 
         {/* ── Keywords: what people search for, and where you rank ───────────── */}
-        {(gscHasData || hasRanks) && (
+        {tab === 'keywords' && (gscHasData || hasRanks) && (
           <section className="seo-section">
             <SectionHead
               icon={<Key size={17} weight="duotone" />}
@@ -735,9 +762,9 @@ export default async function SeoPage({
                   : `Top ${topQueries.length} searches by clicks · tap a heading to sort`}
                 flush
               >
-                <div className="table-scroll">
+                <RowLimit total={topQueries.length} noun="searches"><div className="table-scroll">
                   <GscQueriesTable rows={topQueries} showCompare={showCompare} />
-                </div>
+                </div></RowLimit>
               </Panel>
             )}
 
@@ -770,7 +797,7 @@ export default async function SeoPage({
 
             <div className="seo-split seo-split--aside">
               <Panel title="Your tracked terms" desc={ranked.length === rankRows.length ? 'Position on Google today' : `${ranked.length} of ${rankRows.length} currently ranking`} flush>
-                <div className="table-scroll">
+                <RowLimit total={rankRows.length} noun="terms"><div className="table-scroll">
                   {/* Phones drop the volume column rather than pushing the change off-screen. */}
                   <table className="data-table seo-table--tight" style={{ minWidth: 340 }}>
                     <thead>
@@ -800,7 +827,7 @@ export default async function SeoPage({
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </div></RowLimit>
               </Panel>
 
               <Panel title="How the tracked terms sit" desc="Across all terms we're working on">
@@ -851,6 +878,7 @@ export default async function SeoPage({
         )}
 
         {/* ── Search results (Search Console) ───────────────────────────── */}
+        {tab === 'search' && (
         <section className="seo-section">
           <SectionHead
             icon={<MagnifyingGlass size={17} weight="duotone" />}
@@ -909,17 +937,19 @@ export default async function SeoPage({
               <div>
                 {topPages.length > 0 && (
                   <Panel title="Pages people landed on" desc={`Top ${topPages.length} pages by clicks · tap a heading to sort`} flush>
-                    <div className="table-scroll">
+                    <RowLimit total={topPages.length} noun="pages"><div className="table-scroll">
                       <GscPagesTable rows={topPages} showCompare={showCompare} />
-                    </div>
+                    </div></RowLimit>
                   </Panel>
                 )}
               </div>
             </>
           )}
         </section>
+        )}
 
         {/* ── Local visibility (Business Profile) ───────────────────────── */}
+        {tab === 'local' && (
         <section className="seo-section">
           <SectionHead
             icon={<Storefront size={17} weight="duotone" />}
@@ -1079,8 +1109,10 @@ export default async function SeoPage({
             </p>
           )}
         </section>
+        )}
 
         {/* ── Authority (Ahrefs) ────────────────────────────────────────── */}
+        {tab === 'authority' && (
         <section className="seo-section">
           <SectionHead
             icon={<LinkSimple size={17} weight="duotone" />}
@@ -1184,7 +1216,7 @@ export default async function SeoPage({
                 <div className="seo-split">
                   {ahPages.length > 0 && (
                     <Panel title="Pages bringing in the most visitors" desc={latestKwDate ? `Measured ${fmtDay(latestKwDate)}` : undefined} flush>
-                      <div className="table-scroll">
+                      <RowLimit total={ahPages.length} noun="pages"><div className="table-scroll">
                         <table className="data-table" style={{ minWidth: 320 }}>
                           <thead>
                             <tr>
@@ -1208,13 +1240,13 @@ export default async function SeoPage({
                             ))}
                           </tbody>
                         </table>
-                      </div>
+                      </div></RowLimit>
                     </Panel>
                   )}
 
                   {ahKeywords.length > 0 && (
                     <Panel title="Terms you already rank for" desc={prevKwDate ? `Change since ${fmtDay(prevKwDate)}` : 'Your best-performing search terms'} flush>
-                      <div className="table-scroll">
+                      <RowLimit total={ahKeywords.length} noun="terms"><div className="table-scroll">
                         <table className="data-table seo-table--tight" style={{ minWidth: 340 }}>
                           <thead>
                             <tr>
@@ -1251,7 +1283,7 @@ export default async function SeoPage({
                             })}
                           </tbody>
                         </table>
-                      </div>
+                      </div></RowLimit>
                     </Panel>
                   )}
                 </div>
@@ -1259,6 +1291,7 @@ export default async function SeoPage({
             </>
           )}
         </section>
+        )}
 
       </main>
     </div>

@@ -287,6 +287,14 @@ export async function syncClient(
           )
           recordCount += srcCount
         }
+        if (result.extraRows?.ga4_dimension_metrics) {
+          recordCount += await upsertGA4DimensionMetrics(
+            db,
+            connection.id,
+            clientId,
+            result.extraRows.ga4_dimension_metrics as import('./connectors/google-analytics').GA4DimensionRow[]
+          )
+        }
       } else if (connection.connector.type === 'google_search_console') {
         // Bypass the pre-fetched result — fetch in 30-day chunks to avoid timeouts
         // on large sites during backfills. Each chunk is upserted immediately.
@@ -1180,6 +1188,65 @@ export async function upsertGA4SourceMetrics(
         ignoreDuplicates: false,
       })
     if (error) console.error(`[sync] ga4_source_metrics upsert error (batch ${i}):`, error)
+  }
+  return mapped.length
+}
+
+/**
+ * GA4 detail by device, city, landing page and key event. Best-effort: a failure is logged and
+ * the rest of the GA4 sync still succeeds, including before migration 217 is applied.
+ * The synced dates are cleared first, because values drop out between syncs (an event stops
+ * being a key event, a page stops being a top landing page) and would otherwise linger.
+ */
+export async function upsertGA4DimensionMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-analytics').GA4DimensionRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.value)
+  if (!valid.length) return 0
+
+  const syncedAt = new Date().toISOString()
+  const mapped = valid.map(r => ({
+    connection_id:    connectionId,
+    client_id:        clientId,
+    date:             r.date,
+    dimension:        r.dimension,
+    value:            r.value,
+    sessions:         r.sessions,
+    users:            r.users,
+    conversions:      r.conversions,
+    engaged_sessions: r.engaged_sessions,
+    event_count:      r.event_count,
+    synced_at:        syncedAt,
+  }))
+
+  try {
+    const minDate = mapped.reduce((m, r) => (r.date < m ? r.date : m), mapped[0].date)
+    const maxDate = mapped.reduce((m, r) => (r.date > m ? r.date : m), mapped[0].date)
+    const { error: delErr } = await db
+      .from('ga4_dimension_metrics')
+      .delete()
+      .eq('connection_id', connectionId)
+      .gte('date', minDate)
+      .lte('date', maxDate)
+    if (delErr) {
+      console.error('[sync] ga4_dimension_metrics pre-delete error:', delErr.message)
+      return 0
+    }
+    for (let i = 0; i < mapped.length; i += 500) {
+      const { error } = await db
+        .from('ga4_dimension_metrics')
+        .upsert(mapped.slice(i, i + 500), { onConflict: 'connection_id,date,dimension,value', ignoreDuplicates: false })
+      if (error) {
+        console.error(`[sync] ga4_dimension_metrics upsert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+  } catch (e) {
+    console.error('[sync] ga4_dimension_metrics failed:', e)
+    return 0
   }
   return mapped.length
 }

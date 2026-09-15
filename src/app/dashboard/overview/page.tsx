@@ -765,7 +765,7 @@ export default async function OverviewPage({
   }
   if (hasPaidData) {
     addMove('spend', 'Ad spend', adSpend, adSpendPrior, null, fmt$)
-    if (adLeads > 0 && adLeadsPrior > 0) addMove('cpl', 'Cost per ad lead', adCpl, adCplPrior, false, fmtCurrency)
+    if (adLeads > 0 && adLeadsPrior > 0) addMove('cpl', 'Cost per ad conversion', adCpl, adCplPrior, false, fmtCurrency)
   }
   const organicNow   = ga4.byChannel.get('Organic Search')
   const organicPrior = ga4Prior.byChannel.get('Organic Search')
@@ -1049,13 +1049,15 @@ export default async function OverviewPage({
     kpis.push(
       <SparkMetricCard
         key="ad-spend" label="Ad spend" value={fmt$(adSpend)}
-        sub={`${fmtInt(adLeads)} ${Math.round(adLeads) === 1 ? 'lead' : 'leads'} from ads`}
+        sub={sourcesComplete && leadSources.paid > 0
+          ? `${fmtInt(leadSources.paid)} leads from ads in ${crmLabel}`
+          : `${fmtInt(adLeads)} ${Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} reported by the ads`}
         delta={delta(adSpend, adSpendPrior)} delay={3}
         sparkData={paidDays.map(d => ({ v: (google.byDate.get(d)?.spend ?? 0) + (meta.byDate.get(d)?.spend ?? 0) }))}
         sparkColor="var(--amber)"
       />,
       <SparkMetricCard
-        key="ad-cpl" label="Cost per ad lead" value={adLeads > 0 ? fmtCurrency(adCpl) : '—'}
+        key="ad-cpl" label="Cost per ad conversion" value={adLeads > 0 ? fmtCurrency(adCpl) : '—'}
         sub={hasGoogleData && hasMetaData ? 'across Google and Meta' : hasGoogleData ? 'on Google Ads' : 'on Meta Ads'}
         delta={delta(adCpl, adCplPrior)} invertDelta delay={4}
         sparkData={paidDays.map(d => {
@@ -1084,11 +1086,11 @@ export default async function OverviewPage({
       You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}
       {crm.calls + crm.forms > 0 && <> — <b>{fmtInt(crm.calls)}</b> by phone and <b>{fmtInt(crm.forms)}</b> through the website</>}.
       {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
-      {adLeads > 0 && <> Ads brought in <b>{fmtInt(adLeads)}</b> leads at <b>{fmtCurrency(adCpl)}</b> each.</>}
+      {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads clicked an ad first</>}.</>}
     </>
   ) : adLeads > 0 ? (
     <>
-      Your ads brought in <b>{fmtInt(adLeads)} {Math.round(adLeads) === 1 ? 'lead' : 'leads'}</b> over {periodLabel}, at <b>{fmtCurrency(adCpl)}</b> each
+      Your ads reported <b>{fmtInt(adLeads)} {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'}</b> over {periodLabel}, at <b>{fmtCurrency(adCpl)}</b> each
       on <b>{fmt$(adSpend)}</b> of spend.
     </>
   ) : null
@@ -1248,13 +1250,13 @@ export default async function OverviewPage({
                       slices={[
                         { name: 'From ads',     value: leadSources.paid,      color: 'var(--blue)' },
                         { name: 'On their own', value: leadSources.organic,   color: 'var(--green)' },
-                        { name: 'No source',    value: leadSources.untracked, color: 'var(--text-faint)' },
+                        { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
                       ]}
                       total={leadSources.total}
                       centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
                     />
                     <p className="ov2-foot">
-                      {leadSources.untracked > 0 && 'Leads with no source were usually added by hand or imported. '}
+                      {leadSources.untracked > 0 && 'No clear source means the lead was added by hand, imported, or tagged in a way we can\'t sort yet. '}
                       {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
                     </p>
                   </section>

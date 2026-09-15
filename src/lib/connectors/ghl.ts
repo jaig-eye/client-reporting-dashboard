@@ -267,6 +267,11 @@ async function fetchContacts(
   // classifier has something to work with without ever printing a contact's details.
   const attrKeys = new Map<string, number>()
   let withAttr = 0
+  // The labels GHL uses, counted per field, so contacts in "other" can be given a rule.
+  // Lower-cased and capped, and anything that looks like an email or URL is skipped.
+  const LABEL_FIELDS = ['sessionSource', 'utmSessionSource', 'medium', 'utmSource', 'utmMedium'] as const
+  const attrValues  = new Map<string, Map<string, number>>()
+  const sourceTally = new Map<string, number>()
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
@@ -280,10 +285,18 @@ async function fetchContacts(
       // Spam stays out of the source counts, so the channels add up to the lead count.
       const key = classifyContact(c)
       ex.sources[key] = (ex.sources[key] ?? 0) + 1
+      sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
       const attr = contactAttribution(c)
       if (attr) {
         withAttr++
         for (const k of Object.keys(attr)) attrKeys.set(k, (attrKeys.get(k) ?? 0) + 1)
+        for (const f of LABEL_FIELDS) {
+          const v = typeof attr[f] === 'string' ? (attr[f] as string).trim().toLowerCase().slice(0, 60) : ''
+          if (!v || v.includes('@') || /^https?:/.test(v)) continue
+          const counts = attrValues.get(f) ?? new Map<string, number>()
+          counts.set(v, (counts.get(v) ?? 0) + 1)
+          attrValues.set(f, counts)
+        }
       }
     }
     byDate.set(parsed.date, ex)
@@ -291,6 +304,11 @@ async function fetchContacts(
   if (contacts.length > 0) {
     const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
     console.log(`[ghl] attribution: ${withAttr}/${contacts.length} contacts have it; fields ${fields || 'none'}`)
+    console.log(`[ghl] lead sources: ${Array.from(sourceTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}`)
+    for (const [field, counts] of Array.from(attrValues)) {
+      const top = Array.from(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`).join(', ')
+      console.log(`[ghl] attribution ${field}: ${top}`)
+    }
   }
 
   return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))

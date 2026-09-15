@@ -199,6 +199,104 @@ async function runSourceReport(
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Audience and behaviour detail: device, city, landing page, key events
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GA4Dimension = 'device' | 'city' | 'landing_page' | 'key_event'
+
+export interface GA4DimensionRow {
+  date:             string
+  dimension:        GA4Dimension
+  value:            string
+  sessions:         number
+  users:            number
+  conversions:      number
+  engaged_sessions: number
+  event_count:      number
+}
+
+const TRAFFIC_METRICS = ['sessions', 'totalUsers', 'conversions', 'engagedSessions']
+
+const DIMENSION_REPORTS: { dimension: GA4Dimension; field: string; metrics: string[]; topPerDay: number }[] = [
+  { dimension: 'device',       field: 'deviceCategory', metrics: TRAFFIC_METRICS,               topPerDay: 10 },
+  { dimension: 'city',         field: 'city',           metrics: TRAFFIC_METRICS,               topPerDay: 25 },
+  { dimension: 'landing_page', field: 'landingPage',    metrics: TRAFFIC_METRICS,               topPerDay: 25 },
+  { dimension: 'key_event',    field: 'eventName',      metrics: ['eventCount', 'conversions'], topPerDay: 25 },
+]
+
+/**
+ * One row per day per value for each audience report. Each report runs and fails on its own:
+ * a property that rejects one still syncs the others, and the main traffic sync never depends
+ * on them. Cities and landing pages keep each day's top values, so a long backfill stays small.
+ * Key events keep only events GA4 counts as conversions.
+ */
+async function runDimensionReports(
+  propertyId: string,
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<GA4DimensionRow[]> {
+  const property = propertyId.startsWith('properties/') ? propertyId : `properties/${propertyId}`
+
+  const results = await Promise.all(DIMENSION_REPORTS.map(async report => {
+    try {
+      const res = await fetch(`${DATA_API_BASE}/${property}:runReport`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dateRanges: [{ startDate: dateFrom, endDate: dateTo }],
+          dimensions: [{ name: 'date' }, { name: report.field }],
+          metrics:    report.metrics.map(name => ({ name })),
+          dimensionFilter: { filter: { fieldName: 'platform', stringFilter: { matchType: 'EXACT', value: 'web' } } },
+          limit: 100000,
+        }),
+      })
+      if (!res.ok) {
+        console.warn(`[google-analytics] ${report.dimension} report failed ${res.status}: ${(await res.text()).slice(0, 300)}`)
+        return []
+      }
+      const data = await res.json() as {
+        metricHeaders?: { name: string }[]
+        rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[]
+      }
+      const metricNames = (data.metricHeaders ?? []).map(h => h.name)
+
+      const byDay = new Map<string, GA4DimensionRow[]>()
+      for (const row of data.rows ?? []) {
+        const rawDate = row.dimensionValues[0]?.value ?? ''
+        const date    = rawDate.length === 8 ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}` : rawDate
+        const value   = (row.dimensionValues[1]?.value ?? '').slice(0, 500)
+        if (!date || !value) continue
+        const metric = (name: string) => {
+          const i = metricNames.indexOf(name)
+          return i >= 0 ? Math.round(Number(row.metricValues[i]?.value ?? 0) || 0) : 0
+        }
+        const out: GA4DimensionRow = {
+          date, dimension: report.dimension, value,
+          sessions:         metric('sessions'),
+          users:            metric('totalUsers'),
+          conversions:      metric('conversions'),
+          engaged_sessions: metric('engagedSessions'),
+          event_count:      metric('eventCount'),
+        }
+        if (report.dimension === 'key_event' && out.conversions <= 0) continue
+        const list = byDay.get(date) ?? []
+        list.push(out)
+        byDay.set(date, list)
+      }
+
+      const rank = (r: GA4DimensionRow) => (report.dimension === 'key_event' ? r.conversions : r.sessions)
+      return Array.from(byDay.values()).flatMap(list => list.sort((a, b) => rank(b) - rank(a)).slice(0, report.topPerDay))
+    } catch (e) {
+      console.warn(`[google-analytics] ${report.dimension} report failed:`, e)
+      return []
+    }
+  }))
+
+  return results.flat()
+}
+
 export interface GA4RawRow {
   date: string
   channel_group: string
@@ -246,9 +344,10 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
 
     const propertyId = externalId // stored as the GA4 property ID
 
-    const [channelApiRows, sourceApiRows] = await Promise.all([
+    const [channelApiRows, sourceApiRows, dimensionRows] = await Promise.all([
       runReport(propertyId, accessToken, dateFrom, dateTo),
       runSourceReport(propertyId, accessToken, dateFrom, dateTo),
+      runDimensionReports(propertyId, accessToken, dateFrom, dateTo),
     ])
 
     const rows: GA4RawRow[] = channelApiRows.map(r => ({
@@ -280,7 +379,7 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
     // Cast to RawMetricRow via unknown — GA4 rows are stored separately from ad rows
     return {
       rows: rows as unknown as import('./types').RawMetricRow[],
-      extraRows: { ga4_source_metrics: sourceRows },
+      extraRows: { ga4_source_metrics: sourceRows, ga4_dimension_metrics: dimensionRows },
     }
   },
 

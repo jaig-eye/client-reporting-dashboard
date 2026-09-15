@@ -29,7 +29,9 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   { key: 'social',          label: 'Social media',               group: 'organic' },
   { key: 'referral',        label: 'Other websites',             group: 'organic' },
   { key: 'direct',          label: 'Came straight to your site', group: 'organic' },
-  { key: 'other',           label: 'Other tracked sources',      group: 'organic' },
+  // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
+  // counted as organic: it sits with "no source" until a rule is added for it.
+  { key: 'other',           label: 'Other sources',              group: 'untracked' },
   { key: 'untracked',       label: 'No source recorded',         group: 'untracked' },
 ]
 

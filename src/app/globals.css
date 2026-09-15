@@ -5142,3 +5142,59 @@ select.note-field__input { cursor: pointer; }
   .lead-src-col-type { display: none; }
   .lead-src-dot--inline { display: inline-block; }
 }
+
+/* ── Long tables: top 10 rows, then a button for the rest ── */
+.row-limit[data-open='false'] tbody tr:nth-child(n+11) { display: none; }
+.row-limit__toggle {
+  display: block;
+  width: 100%;
+  padding: 0.6875rem 1rem;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--blue);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 0 0 12px 12px;
+}
+.row-limit__toggle:hover { background: var(--bg-subtle); }
+.row-limit__toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+
+/* ── SEO page: one section at a time under the headline ── */
+.seo-page > .seo-tabs { margin-bottom: -0.5rem; }
+
+/* ── Analytics: audience detail ── */
+.an-flush { padding: 0; overflow: hidden; }
+.an-flush__head { padding: 1rem 1rem 0.75rem; }
+@media (min-width: 640px) { .an-flush__head { padding: 1.5rem 1.5rem 0.75rem; } }
+.an-page { max-width: 18rem; font-weight: 500; color: var(--text-secondary); }
+.an-bar__fill--conv { background: var(--green-subtle); }
+.an-callout {
+  margin: 1rem 0 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  background: var(--amber-subtle);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* Bars line up: fixed number columns, so every track ends at the same place. On a phone the
+   figures stay stacked beside the bar, as the phone layout above sets them. */
+@media (min-width: 640px) {
+  .an-bar { grid-template-columns: minmax(0, 1fr) 4.25rem 3.25rem; }
+}
+@media (max-width: 639px) {
+  .an-bar { grid-template-columns: minmax(0, 1fr) 3.75rem; }
+}
+.an-bar__value, .an-bar__pct { text-align: right; font-variant-numeric: tabular-nums; }
+/* The landing-pages table is three short columns, so it fits a phone without scrolling. */
+.data-table.an-table.an-pages-table { min-width: 0; }
+.an-th-short { display: none; }
+@media (max-width: 639px) {
+  .an-page { max-width: 10rem; }
+  .an-th-long  { display: none; }
+  .an-th-short { display: inline; }
+}
