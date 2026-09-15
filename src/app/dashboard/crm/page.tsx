@@ -23,6 +23,7 @@ import EmptyState from '@/components/dashboard/EmptyState'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import SpendChart from '@/components/SpendChart'
 import { UsersThree } from '@phosphor-icons/react/dist/ssr'
+import { addLeadSources, summariseLeadSources, type LeadSourceCounts, type LeadSourceGroup } from '@/lib/leadSources'
 
 export const dynamic = 'force-dynamic'
 
@@ -101,7 +102,7 @@ type GhlRow = {
   won_opportunities:  number
   lost_opportunities: number
   won_value:          number | string
-  raw_data:           { form_breakdown?: FormBreakdownItem[] } | null
+  raw_data:           { form_breakdown?: FormBreakdownItem[]; lead_sources?: LeadSourceCounts } | null
 }
 
 /** Spam is excluded from the lead count the same way the CRM's own report excludes it. */
@@ -210,6 +211,25 @@ export default async function CrmPage({
   }
   const formList = Array.from(formAgg, ([id, v]) => ({ id, ...v })).sort((a, b) => b.count - a.count)
   const formListTotal = formList.reduce((s, f) => s + f.count, 0)
+
+  // Lead sources, from how each contact first reached the business. Days synced before
+  // sources were recorded have no lead_sources key and are left out rather than counted as zero.
+  const sourceCounts: LeadSourceCounts = {}
+  const sourceDates: string[] = []
+  for (const row of data) {
+    if (row.raw_data?.lead_sources && typeof row.raw_data.lead_sources === 'object') {
+      sourceDates.push(row.date)
+      addLeadSources(sourceCounts, row.raw_data.lead_sources)
+    }
+  }
+  const sources         = summariseLeadSources(sourceCounts)
+  const hasSources      = sources.total > 0
+  const sourcesComplete = sourceDates.length === data.length
+  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', untracked: 'No source recorded' }
+  const sourceGroups = (['paid', 'organic', 'untracked'] as const)
+    .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
+    .filter(g => g.count > 0)
+  const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
 
   // Trend: new leads as bars, phone calls as the line, on the shared chart. When the client
   // has picked a comparison the previous period rides along behind it, named after the window
@@ -329,6 +349,81 @@ export default async function CrmPage({
             delay={3}
           />
         </div>
+
+        {/* ── Lead sources ──────────────────────────────────────────────── */}
+        {hasSources && (
+          <section className="card p-4 sm:p-6" aria-labelledby="crm-sources-title">
+            <h2 id="crm-sources-title" className="section-title">Where your leads came from</h2>
+            <p className="section-desc">
+              {sources.paid > 0
+                ? `${fmtNum(sources.paid)} of ${fmtNum(sources.total)} ${leadWord(sources.total)} clicked one of your ads first. `
+                : `None of these ${fmtNum(sources.total)} ${leadWord(sources.total)} came from an ad. `}
+              {sources.organic > 0 && `${fmtNum(sources.organic)} found you on their own.`}
+            </p>
+
+            <div className="lead-src-split" role="img"
+              aria-label={sourceGroups.map(g => `${g.label}: ${fmtNum(g.count)}`).join(', ')}>
+              {sourceGroups.map(g => (
+                <span key={g.key} className={`lead-src-split__seg lead-src--${g.key}`} style={{ flexGrow: g.count }} />
+              ))}
+            </div>
+
+            <ul className="lead-src-groups">
+              {sourceGroups.map(g => (
+                <li key={g.key} className="lead-src-group">
+                  <span className="lead-src-group__label"><span className={`lead-src-dot lead-src--${g.key}`} aria-hidden />{g.label}</span>
+                  <span className="lead-src-group__value">{fmtNum(g.count)}</span>
+                  <span className="lead-src-group__pct">{share(g.count, sources.total).toFixed(0)}% of tracked leads</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="table-scroll crm-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Source</th>
+                    <th className="lead-src-col-type" style={{ textAlign: 'left' }}>Type</th>
+                    <th style={{ textAlign: 'right' }}>Leads</th>
+                    <th className="crm-col-share" style={{ textAlign: 'right' }}>Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sources.channels.map(c => (
+                    <tr key={c.key}>
+                      <td style={{ fontWeight: 500 }}>
+                        <span className="lead-src-name"><span className={`lead-src-dot lead-src-dot--inline lead-src--${c.group}`} aria-hidden />{c.label}</span>
+                      </td>
+                      <td className="lead-src-col-type">
+                        <span className="lead-src-type"><span className={`lead-src-dot lead-src--${c.group}`} aria-hidden />{c.group === 'paid' ? 'Ad' : c.group === 'organic' ? 'Organic' : 'Unknown'}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtNum(c.count)}</td>
+                      <td className="crm-col-share" style={{ textAlign: 'right' }}>
+                        <span className="crm-share">
+                          <span className="crm-share__track">
+                            <span className={`crm-share__fill lead-src--${c.group}`} style={{ width: `${share(c.count, sources.total)}%` }} />
+                          </span>
+                          <span className="crm-share__num">{share(c.count, sources.total).toFixed(0)}%</span>
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {share(sources.untracked, sources.total) >= 40 && (
+              <p className="crm-insight crm-insight--warn">
+                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track.`}
+              </p>
+            )}
+            {!sourcesComplete && (
+              <p className="crm-insight">
+                {`Sources were first recorded on ${prettyDate(sourceDates[0])}, so earlier leads in this range aren't included here.`}
+              </p>
+            )}
+          </section>
+        )}
 
         {/* ── Trend ─────────────────────────────────────────────────────── */}
         <section className="card p-4 sm:p-6">

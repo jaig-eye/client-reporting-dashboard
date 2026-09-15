@@ -41,6 +41,7 @@ import ChannelSourceCard from './ChannelCard'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
+import { addLeadSources, summariseLeadSources, type LeadSourceCounts } from '@/lib/leadSources'
 import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
@@ -87,6 +88,8 @@ type AssignRow = { campaign_id: string; display_mode: string; hidden: boolean }
 type GhlRow    = {
   date: string; contacts_created: number; spam_leads: number; total_calls: number; incoming_calls: number
   missed_calls: number; forms_submitted: number; new_opportunities: number; won_opportunities: number; won_value: number
+  /** raw_data->lead_sources: null on days synced before lead sources were recorded. */
+  lead_sources?: LeadSourceCounts | null
 }
 type GbpRow    = {
   date: string; call_clicks: number; direction_clicks: number
@@ -123,7 +126,7 @@ const _getOverviewData = unstable_cache(
 
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
-    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value'
+    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources'
     const GBP_COLS    = 'date,call_clicks,direction_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
@@ -271,7 +274,7 @@ const _getOverviewData = unstable_cache(
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
     }
   },
-  ['dashboard-overview-v7'],
+  ['dashboard-overview-v8'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -489,6 +492,17 @@ export default async function OverviewPage({
   const crm        = sumGhl(data.ghl)
   const crmPrior   = sumGhl(data.ghlPrior)
   const hasCrmData = data.ghl.length > 0 && (crm.leads > 0 || crm.calls > 0 || crm.forms > 0)
+
+  // ── Lead sources: how each lead first found the business, from the CRM's own tracking ──
+  const sourceCounts: LeadSourceCounts = {}
+  let sourceDays = 0
+  for (const r of data.ghl) {
+    if (r.lead_sources && typeof r.lead_sources === 'object') { sourceDays++; addLeadSources(sourceCounts, r.lead_sources) }
+  }
+  const leadSources     = summariseLeadSources(sourceCounts)
+  const hasLeadSources  = sourceDays > 0 && leadSources.total > 0
+  // Only speak for the whole range when every day in it was counted.
+  const sourcesComplete = hasLeadSources && sourceDays === data.ghl.length
 
   const crmDays = Array.from(crm.byDate.entries()).sort(([a], [b]) => a.localeCompare(b))
   const leadTrend: DailyMetric[] = crmDays.map(([date, v]) => ({
@@ -1014,7 +1028,8 @@ export default async function OverviewPage({
   if (hasCrmData) {
     kpis.push(
       <SparkMetricCard
-        key="leads" label="Leads" value={fmtInt(crm.leads)} sub="new people who got in touch"
+        key="leads" label="Leads" value={fmtInt(crm.leads)}
+        sub={sourcesComplete ? `${fmtInt(leadSources.paid)} from ads, ${fmtInt(leadSources.organic)} on their own` : 'new people who got in touch'}
         delta={delta(crm.leads, crmPrior.leads)} delay={0}
         sparkData={crmDays.map(([, v]) => ({ v: v.leads }))} sparkColor="var(--blue)"
       />,
@@ -1165,7 +1180,7 @@ export default async function OverviewPage({
             {kpis.length > 0 && <div className="stat-grid ov2-kpis" data-count={kpis.length}>{kpis}</div>}
 
             {showChannels && (
-              <div className={mixTotal > 0 ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
+              <div className={mixTotal > 0 || hasLeadSources ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
                 <section className="card ov2-card ov2-channels" aria-labelledby="ov2-channels-title">
                   <div className="ov2-card-head">
                     <h2 id="ov2-channels-title" className="section-title">Performance by channel</h2>
@@ -1223,7 +1238,27 @@ export default async function OverviewPage({
                   <p className="ov2-foot">{channelFootnote}</p>
                 </section>
 
-                {mixTotal > 0 && (
+                {hasLeadSources ? (
+                  <section className="card ov2-card" aria-labelledby="ov2-mix-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov2-mix-title" className="section-title">Where your leads came from</h2>
+                      <p className="section-desc">How each lead first found you, as tracked in {crmLabel}</p>
+                    </div>
+                    <LeadMixDonut
+                      slices={[
+                        { name: 'From ads',     value: leadSources.paid,      color: 'var(--blue)' },
+                        { name: 'On their own', value: leadSources.organic,   color: 'var(--green)' },
+                        { name: 'No source',    value: leadSources.untracked, color: 'var(--text-faint)' },
+                      ]}
+                      total={leadSources.total}
+                      centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
+                    />
+                    <p className="ov2-foot">
+                      {leadSources.untracked > 0 && 'Leads with no source were usually added by hand or imported. '}
+                      {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
+                    </p>
+                  </section>
+                ) : mixTotal > 0 && (
                   <section className="card ov2-card" aria-labelledby="ov2-mix-title">
                     <div className="ov2-card-head">
                       <h2 id="ov2-mix-title" className="section-title">Conversion mix</h2>

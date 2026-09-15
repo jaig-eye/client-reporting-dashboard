@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
+import { classifyContact, contactAttribution, type LeadSourceCounts } from '../leadSources'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
@@ -248,7 +249,7 @@ async function fetchContacts(
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; count: number; spam: number }[]> {
+): Promise<{ date: string; count: number; spam: number; sources: LeadSourceCounts }[]> {
   let contacts: Record<string, unknown>[]
   try {
     contacts = await searchContactsByDate(apiKey, locationId, dateFrom, dateTo)
@@ -261,16 +262,35 @@ async function fetchContacts(
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
 
-  const byDate = new Map<string, { count: number; spam: number }>()
+  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts }>()
+  // Which attribution fields GHL actually sent, by name only, so the logs show whether the
+  // classifier has something to work with without ever printing a contact's details.
+  const attrKeys = new Map<string, number>()
+  let withAttr = 0
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
     if (c.archived === true || c.deleted === true) continue
-    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0 }
+    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {} }
     ex.count++
     const tags = (c.tags as string[]) ?? []
-    if (tags.some(t => t.toLowerCase().includes('spam'))) ex.spam++
+    if (tags.some(t => t.toLowerCase().includes('spam'))) {
+      ex.spam++
+    } else {
+      // Spam stays out of the source counts, so the channels add up to the lead count.
+      const key = classifyContact(c)
+      ex.sources[key] = (ex.sources[key] ?? 0) + 1
+      const attr = contactAttribution(c)
+      if (attr) {
+        withAttr++
+        for (const k of Object.keys(attr)) attrKeys.set(k, (attrKeys.get(k) ?? 0) + 1)
+      }
+    }
     byDate.set(parsed.date, ex)
+  }
+  if (contacts.length > 0) {
+    const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
+    console.log(`[ghl] attribution: ${withAttr}/${contacts.length} contacts have it; fields ${fields || 'none'}`)
   }
 
   return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
@@ -780,6 +800,9 @@ export const ghlConnector: ConnectorAdapter = {
           won_value:          co?.wonValue         ?? 0,
           raw_data: {
             form_breakdown: f?.breakdown ?? [],
+            // Always written, even when empty, so a day synced with attribution can be told
+            // apart from a day synced before it existed.
+            lead_sources:   c?.sources ?? {},
           },
         }
       })
