@@ -2,6 +2,7 @@
 // Full-screen embed of the client's Local Dominator share link.
 
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client } from '@/lib/types'
@@ -23,7 +24,7 @@ export default async function GoogleMapsRankingPage() {
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
 
   const url = (client as unknown as { local_dominator_url?: string | null }).local_dominator_url
 

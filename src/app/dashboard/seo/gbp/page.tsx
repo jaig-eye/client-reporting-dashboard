@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDashboardRange } from '@/lib/dateRange'
@@ -48,7 +49,7 @@ export default async function GBPPage({
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
 
   const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'

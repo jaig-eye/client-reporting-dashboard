@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cookies }           from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { redirect }          from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { Client }       from '@/lib/types'
@@ -25,7 +26,7 @@ export default async function AuthorityPage() {
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
 
   // Phase 1: fetch connections, metrics (no date filter — snapshots are weekly, not date-range),
   // and the two most recent keyword snapshot dates (for correct date alignment).

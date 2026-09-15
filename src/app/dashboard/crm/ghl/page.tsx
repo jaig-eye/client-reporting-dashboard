@@ -1,6 +1,7 @@
 // GoHighLevel CRM Dashboard — /dashboard/crm/ghl
 
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -89,7 +90,7 @@ export default async function GhlCrmPage({
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/crm')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/crm')
 
   const crmName = settings.crm_name ?? 'CRM'
 

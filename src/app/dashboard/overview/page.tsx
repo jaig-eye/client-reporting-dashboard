@@ -16,6 +16,7 @@
 
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDashboardRange } from '@/lib/dateRange'
@@ -215,7 +216,7 @@ export default async function OverviewPage({
   if (!client) redirect('/access')
 
   // This page ships behind the per-client flag; everyone else keeps the Summary page.
-  if (!(client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard')
+  if (!isDashboardV2(client, cookieStore)) redirect('/dashboard')
 
   const { fromDate, toDate } = resolveDashboardRange(params)
   // An overview is a comparison by nature — "is this better than last month?" — so it

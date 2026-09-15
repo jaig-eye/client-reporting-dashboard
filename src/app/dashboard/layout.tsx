@@ -9,6 +9,7 @@
 import { Suspense } from 'react'
 import { unstable_cache } from 'next/cache'
 import { cookies } from 'next/headers'
+import { isDashboardV2, DASHBOARD_V2_PREVIEW_COOKIE } from '@/lib/dashboardVersion'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAgencySettings } from '@/lib/agency-settings'
 import { isAdminAuthed } from '@/lib/auth'
@@ -33,6 +34,7 @@ import DashboardSidebar from '@/components/DashboardSidebar'
 import DashboardNavDrawer from '@/components/dashboard/NavDrawer'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
+import DashboardV2PreviewToggle from '@/components/dashboard/DashboardV2PreviewToggle'
 
 // Cache the 6 connector-data COUNT queries per client for 5 minutes.
 const getConnectorDataFlags = unstable_cache(
@@ -126,6 +128,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const rawMode      = isAdmin && cookieStore.get('admin_raw_mode')?.value === '1'
   const brandPrimary = (settings as Record<string, unknown> | null)?.brand_primary as string | null ?? '#2563eb'
 
+  // Testing aid for the rebuilt dashboard (temporary). Shown on preview deployments and to admins,
+  // so clients on the live site never see it. It only changes what the current browser sees.
+  const showV2Toggle = isAdmin || process.env.VERCEL_ENV !== 'production'
+
   return (
     <>
       {/* Inject agency brand color as CSS variable for client dashboard */}
@@ -162,7 +168,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 clientName={client.name}
                 crmName={settings?.crm_name ?? 'CRM'}
                 hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
-                dashboardV2={!!(client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2}
+                dashboardV2={isDashboardV2(client, cookieStore)}
               />
             </DashboardNavDrawer>
           </Suspense>
@@ -171,6 +177,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {children}
         </div>
       </div>
+
+      {client && showV2Toggle && (
+        <DashboardV2PreviewToggle
+          enabled={isDashboardV2(client, cookieStore)}
+          overridden={!!cookieStore.get(DASHBOARD_V2_PREVIEW_COOKIE)}
+        />
+      )}
     </>
   )
 }

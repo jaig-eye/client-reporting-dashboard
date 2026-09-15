@@ -8,6 +8,7 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDashboardRange } from '@/lib/dateRange'
@@ -225,7 +226,7 @@ export default async function DashboardPage({
   const paidOnly   = source === 'paid'
 
   // The rebuilt dashboard splits this page across Overview / Paid Ads / SEO / Analytics / CRM.
-  if (!source && (client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) {
+  if (!source && isDashboardV2(client, cookieStore)) {
     redirect('/dashboard/overview')
   }
 

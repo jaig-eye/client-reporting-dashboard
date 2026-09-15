@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cookies } from 'next/headers'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
@@ -70,7 +71,7 @@ export default async function SearchConsolePage({
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if ((client as unknown as { dashboard_v2?: boolean | null }).dashboard_v2) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
 
   // Default end to yesterday (GSC data has a 2-3 day delay; today adds partial noise)
   const { fromDate, toDate } = resolveDashboardRange(params)
