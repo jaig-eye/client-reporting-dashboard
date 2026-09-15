@@ -35,7 +35,7 @@ import DashboardNavDrawer from '@/components/dashboard/NavDrawer'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 import DashboardV2PreviewToggle from '@/components/dashboard/DashboardV2PreviewToggle'
-import AdFuelBadgeWithModal from '@/components/dashboard/AdFuelBadgeWithModal'
+import AdFuelSidebar from '@/components/dashboard/AdFuelSidebar'
 import { getClientAdFuelSummary, type AdFuelSettings } from '@/lib/clientAdFuelSummary'
 
 // Cache the 6 connector-data COUNT queries per client for 5 minutes.
@@ -176,12 +176,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
                 dashboardV2={isDashboardV2(client, cookieStore)}
                 adFuel={adFuel?.show ? (
-                  <AdFuelBadgeWithModal
+                  <AdFuelSidebar
                     balance={adFuel.balance}
                     clientName={client.name}
-                    monthlyBudget={adFuel.monthlyReference > 0 ? adFuel.monthlyReference : undefined}
+                    monthlyReference={adFuel.monthlyReference}
                     pendingAmount={adFuel.pending > 0 ? adFuel.pending : undefined}
-                    width="100%"
                   />
                 ) : undefined}
               />

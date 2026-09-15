@@ -6,7 +6,9 @@
 import React, { useState } from 'react'
 import { fmt$, fmtNum, fmtPct, fmtCurrency } from '@/lib/metrics'
 import LightboxImage from './LightboxImage'
-import { CaretDown, CaretUp, Rows, SquaresFour } from '@phosphor-icons/react'
+import { CaretRight, Rows, SquaresFour } from '@phosphor-icons/react'
+import StatusPill from './dashboard/StatusPill'
+import SortableTh from './dashboard/SortableTh'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ad Group / Ad Set table
@@ -64,17 +66,8 @@ export function AdGroupTable({
     else setSortKey(null)
   }
 
-  function SortTh({ sk, children }: { sk: AdGroupSortKey; children: React.ReactNode }) {
-    const isActive = sortKey === sk
-    return (
-      <th
-        onClick={() => toggleSort(sk)}
-        style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-      >
-        {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
-      </th>
-    )
+  function SortTh({ sk, children, align = 'right' }: { sk: AdGroupSortKey; children: React.ReactNode; align?: 'left' | 'right' }) {
+    return <SortableTh active={sortKey === sk} dir={sortDir} onSort={() => toggleSort(sk)} align={align}>{children}</SortableTh>
   }
 
   if (rows.length === 0) {
@@ -122,40 +115,33 @@ export function AdGroupTable({
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="data-table" style={{ minWidth: 740 }}>
+    <div className="table-scroll">
+      <table className="data-table ads-table" style={{ minWidth: 740 }}>
         <thead>
           <tr>
-            <SortTh sk="setName">Ad Set / Group</SortTh>
-            <th style={{ whiteSpace: 'nowrap', textAlign: 'left' }}>Status</th>
+            <SortTh sk="setName" align="left">Name</SortTh>
+            <th className="ads-table__status-th">Status</th>
             {activeCols.map(key => <React.Fragment key={key}>{COL[key]?.header()}</React.Fragment>)}
           </tr>
         </thead>
         <tbody>
           {sorted.map(row => {
-            const setStatusUpper = (row.status ?? '').toUpperCase()
-            const setIsActive = !row.status || setStatusUpper === 'ACTIVE' || setStatusUpper === 'ENABLED'
-            const setIsPaused = setStatusUpper === 'PAUSED'
             return (
               <tr key={row.setId}>
-                <td style={{ textAlign: 'left' }}>
-                  <a href={row.href} style={{ color: 'var(--blue)', fontWeight: 500, textDecoration: 'none', fontSize: '0.85rem' }}>
-                    {row.setName || row.setId}
+                <td className="ads-table__name" style={{ maxWidth: 320 }}>
+                  <a href={row.href} className="ads-table__link">
+                    <span className="ads-table__title">{row.setName || row.setId}</span>
+                    <CaretRight size={12} weight="bold" className="ads-table__chev" aria-hidden />
                   </a>
                 </td>
-                <td>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: setIsActive ? 'var(--green)' : setIsPaused ? 'var(--amber)' : 'var(--text-faint)' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: setIsActive ? 'var(--green)' : setIsPaused ? 'var(--amber)' : 'var(--text-muted)' }} />
-                    {setIsActive ? 'Active' : setIsPaused ? 'Paused' : (setStatusUpper || '—')}
-                  </span>
-                </td>
+                <td><StatusPill status={row.status ?? 'ACTIVE'} /></td>
                 {activeCols.map(key => <React.Fragment key={key}>{COL[key]?.cell(row)}</React.Fragment>)}
               </tr>
             )
           })}
         </tbody>
         <tfoot>
-          <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
+          <tr className="ads-table__total">
             <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {rows.length} ad set{rows.length !== 1 ? 's' : ''}
             </td>
@@ -232,16 +218,7 @@ export function AdRowTable({
   }
 
   function SortTh({ sk, align = 'right', children }: { sk: AdRowSortKey; align?: 'left' | 'right'; children: React.ReactNode }) {
-    const isActive = sortKey === sk
-    return (
-      <th
-        onClick={() => toggleSort(sk)}
-        style={{ textAlign: align, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-      >
-        {children}
-        {isActive && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
-      </th>
-    )
+    return <SortableTh active={sortKey === sk} dir={sortDir} onSort={() => toggleSort(sk)} align={align}>{children}</SortableTh>
   }
 
   if (rows.length === 0) {
@@ -300,9 +277,6 @@ export function AdRowTable({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
           {sorted.map(row => {
             const previewImg  = row.image_url || row.thumbnail_url || row.video_thumb_url
-            const statusUpper = (row.ad_status ?? '').toUpperCase()
-            const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
-            const isPaused    = statusUpper === 'PAUSED'
             const displayName = row.creative_title || row.ad_name || row.ad_id
             return (
               <div
@@ -364,19 +338,7 @@ export function AdRowTable({
                 )}
 
                 <div style={{ padding: '0.75rem' }}>
-                  {/* Status badge */}
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-                    color: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
-                    marginBottom: 6,
-                  }}>
-                    <span style={{
-                      width: 5, height: 5, borderRadius: '50%',
-                      background: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-muted)',
-                    }} />
-                    {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || 'Unknown')}
-                  </span>
+                  <div style={{ marginBottom: 6 }}><StatusPill status={row.ad_status ?? 'ACTIVE'} /></div>
 
                   {/* Ad name / title */}
                   <p style={{
@@ -420,13 +382,13 @@ export function AdRowTable({
         </div>
       ) : (
         /* List / table view */
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table" style={{ minWidth: 780 }}>
+        <div className="table-scroll">
+          <table className="data-table ads-table" style={{ minWidth: 780 }}>
             <thead>
               <tr>
                 <th style={{ width: 48 }}></th>
                 <SortTh sk="ad_name" align="left">Ad</SortTh>
-                <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+                <th className="ads-table__status-th">Status</th>
                 {showCol('spend') && <SortTh sk="spend">Cost</SortTh>}
                 {showCol('impressions') && <SortTh sk="impressions">Impr.</SortTh>}
                 {showCol('clicks') && <SortTh sk="clicks">Clicks</SortTh>}
@@ -439,9 +401,6 @@ export function AdRowTable({
             <tbody>
               {sorted.map(row => {
                 const previewImg  = row.image_url || row.thumbnail_url || row.video_thumb_url
-                const statusUpper = (row.ad_status ?? '').toUpperCase()
-                const isActive    = !row.ad_status || statusUpper === 'ACTIVE' || statusUpper === 'ENABLED'
-                const isPaused    = statusUpper === 'PAUSED'
                 const copyPreview = row.creative_title || row.creative_body || row.headlines?.[0] || ''
                 const thumbSize   = showCardView ? 80 : 56
 
@@ -491,7 +450,7 @@ export function AdRowTable({
                         </div>
                       )}
                     </td>
-                    <td style={{ maxWidth: 220 }}>
+                    <td className="ads-table__name" style={{ maxWidth: 260 }}>
                       <span className="text-xs font-medium" style={{
                         color: 'var(--text-primary)',
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, display: 'block',
@@ -507,19 +466,7 @@ export function AdRowTable({
                         </p>
                       )}
                     </td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 4,
-                        fontSize: '0.7rem', fontWeight: 600,
-                        color: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
-                      }}>
-                        <span style={{
-                          width: 6, height: 6, borderRadius: '50%',
-                          background: isActive ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-muted)',
-                        }} />
-                        {isActive ? 'Active' : isPaused ? 'Paused' : (statusUpper || '—')}
-                      </span>
-                    </td>
+                    <td><StatusPill status={row.ad_status ?? 'ACTIVE'} /></td>
                     {showCol('spend') && <td className="text-xs" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt$(row.spend)}</td>}
                     {showCol('impressions') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.impressions)}</td>}
                     {showCol('clicks') && <td className="text-xs" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(row.clicks)}</td>}
@@ -532,7 +479,7 @@ export function AdRowTable({
               })}
             </tbody>
             <tfoot>
-              <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
+              <tr className="ads-table__total">
                 <td></td>
                 <td className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   {rows.length} ad{rows.length !== 1 ? 's' : ''}

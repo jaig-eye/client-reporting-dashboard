@@ -2,7 +2,9 @@
 
 import React, { useState } from 'react'
 import Link from 'next/link'
-import { CaretDown, CaretUp } from '@phosphor-icons/react'
+import { CaretRight } from '@phosphor-icons/react'
+import StatusPill from './dashboard/StatusPill'
+import SortableTh from './dashboard/SortableTh'
 import type { ColumnKey } from '@/lib/metric-layouts'
 import { fmtCurrency } from '@/lib/metrics'
 
@@ -107,13 +109,7 @@ export default function CampaignTable({
 
   // ── Column definitions ────────────────────────────────────────────────────
   function SortTh({ sk, children, left }: { sk: SortKey; children: React.ReactNode; left?: boolean }) {
-    const isAct = sortKey === sk
-    return (
-      <th onClick={() => toggleSort(sk)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: left ? 'left' : 'right' }}>
-        {children}
-        {isAct && <span className="ml-1" style={{ opacity: 0.5, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
-      </th>
-    )
+    return <SortableTh active={sortKey === sk} dir={sortDir} onSort={() => toggleSort(sk)} align={left ? 'left' : 'right'}>{children}</SortableTh>
   }
 
   type ColDef = {
@@ -128,11 +124,14 @@ export default function CampaignTable({
       cell: (c) => {
         const link = drillLink(c)
         return (
-          <td className="font-medium" style={{ color: 'var(--text-secondary)', maxWidth: 260 }} title={c.campaign_name}>
+          <td className="ads-table__name" style={{ maxWidth: 320 }} title={c.campaign_name}>
             {link ? (
-              <Link href={link} className="block truncate hover:underline" style={{ color: 'var(--blue)' }}>{c.campaign_name}</Link>
+              <Link href={link} className="ads-table__link">
+                <span className="ads-table__title">{c.campaign_name}</span>
+                <CaretRight size={12} weight="bold" className="ads-table__chev" aria-hidden />
+              </Link>
             ) : (
-              <span className="block truncate">{c.campaign_name}</span>
+              <span className="ads-table__title">{c.campaign_name}</span>
             )}
           </td>
         )
@@ -140,24 +139,8 @@ export default function CampaignTable({
       foot: () => <td className="text-xs" style={{ color: 'var(--text-muted)' }}>{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</td>,
     },
     status: {
-      header: () => <th style={{ whiteSpace: 'nowrap' }}>Status</th>,
-      cell: (c) => {
-        const statusUp = (c.status ?? '').toUpperCase()
-        const isActive = !c.status || statusUp === 'ENABLED' || statusUp === 'ACTIVE'
-        const isPaused = statusUp === 'PAUSED'
-        return (
-          <td>
-            {c.status ? (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: isActive ? 'var(--green)' : isPaused ? '#d97706' : 'var(--text-faint)' }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--green)' : isPaused ? '#d97706' : '#9ca3af' }} />
-                {isActive ? 'Active' : isPaused ? 'Paused' : statusUp.charAt(0) + statusUp.slice(1).toLowerCase()}
-              </span>
-            ) : (
-              <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-            )}
-          </td>
-        )
-      },
+      header: () => <th className="ads-table__status-th">Status</th>,
+      cell: (c) => <td><StatusPill status={c.status} /></td>,
       foot: () => <td></td>,
     },
     spend: {
@@ -225,8 +208,8 @@ export default function CampaignTable({
   const minWidth = Math.max(400, visibleCols.length * 90)
 
   return (
-    <div className="overflow-x-auto">
-      <table className="data-table" style={{ minWidth }}>
+    <div className="table-scroll">
+      <table className="data-table ads-table" style={{ minWidth }}>
         <thead>
           <tr>
             {visibleCols.map(k => <React.Fragment key={k}>{COL[k].header()}</React.Fragment>)}
@@ -240,7 +223,7 @@ export default function CampaignTable({
           ))}
         </tbody>
         <tfoot>
-          <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
+          <tr className="ads-table__total">
             {visibleCols.map(k => <React.Fragment key={k}>{COL[k].foot()}</React.Fragment>)}
           </tr>
         </tfoot>

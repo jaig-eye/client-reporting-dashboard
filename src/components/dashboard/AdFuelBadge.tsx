@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Plus } from '@phosphor-icons/react'
 import { fmt$ } from '@/lib/metrics'
 
-const FORM_URL = 'https://link.launchlocal.io/widget/form/diJohLpSz5Vks5Ccex7n'
+export const FORM_URL = 'https://link.launchlocal.io/widget/form/diJohLpSz5Vks5Ccex7n'
 
 // 4 sinusoidal cycles across 360 viewBox units
 const WAVE_PATH = 'M0,11 C30,2 60,2 90,11 C120,20 150,20 180,11 C210,2 240,2 270,11 C300,20 330,20 360,11 L360,22 L0,22 Z'

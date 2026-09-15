@@ -1,6 +1,8 @@
 // SearchAdCopy — displays RSA / ETA ad copy (headlines + descriptions + URL)
 // Used in the ad set detail view for Google Search campaigns.
 
+import StatusPill from './dashboard/StatusPill'
+
 export interface SearchAdCopyRow {
   ad_id:        string
   ad_name:      string
@@ -33,18 +35,6 @@ function adTypeLabel(t: string | null) {
   return t.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
-function statusDot(s: string | null) {
-  const on = !s || s === 'ENABLED'
-  return (
-    <span
-      style={{
-        display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-        background: on ? 'var(--green)' : 'var(--text-muted)', marginRight: 5, flexShrink: 0,
-      }}
-    />
-  )
-}
-
 export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
   if (!ads.length) {
     return (
@@ -71,15 +61,15 @@ export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
           >
             {/* Header row */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <div className="flex items-center" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                {statusDot(ad.ad_status)}
-                <span>{ad.ad_name || 'Ad'}</span>
+              <div className="flex items-center gap-2" style={{ fontSize: '0.78rem' }}>
+                <StatusPill status={ad.ad_status ?? 'ENABLED'} />
+                <span className="search-ad__name">{ad.ad_name || 'Responsive search ad'}</span>
               </div>
               {typeLabel && (
                 <span
                   style={{
                     fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em',
-                    padding: '1px 7px', borderRadius: 99, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
+                    padding: '1px 7px', borderRadius: 99, background: 'var(--blue-subtle)', color: 'var(--blue)',
                   }}
                 >
                   {typeLabel}
@@ -155,7 +145,7 @@ export default function SearchAdCopy({ ads }: { ads: SearchAdCopyRow[] }) {
             )}
 
             {(ad.headlines ?? []).length === 0 && (ad.descriptions ?? []).length === 0 && (
-              <p className="text-xs" style={{ color: 'var(--text-faint)' }}>No copy fetched — re-sync to populate ad creatives.</p>
+              <p className="text-xs" style={{ color: 'var(--text-faint)' }}>This ad&apos;s copy hasn&apos;t been synced yet.</p>
             )}
           </div>
         )

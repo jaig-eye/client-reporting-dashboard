@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { CaretDown, CaretUp } from '@phosphor-icons/react'
+import StatusPill from './dashboard/StatusPill'
+import SortableTh from './dashboard/SortableTh'
 
 export interface KeywordRow {
   keyword_text:      string
@@ -80,24 +81,16 @@ export default function KeywordTable({
   }
 
   function SortTh({ sk, children, right }: { sk: SortKey; children: React.ReactNode; right?: boolean }) {
-    return (
-      <th
-        onClick={() => toggleSort(sk)}
-        style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: right ? 'right' : undefined }}
-      >
-        {children}
-        {sortKey === sk && <span className="ml-1" style={{ opacity: 0.4, display: 'inline-flex', alignItems: 'center' }}>{sortDir === 'desc' ? <CaretDown size={9} aria-hidden /> : <CaretUp size={9} aria-hidden />}</span>}
-      </th>
-    )
+    return <SortableTh active={sortKey === sk} dir={sortDir} onSort={() => toggleSort(sk)} align={right ? 'right' : 'left'}>{children}</SortableTh>
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="data-table">
+    <div className="table-scroll">
+      <table className="data-table ads-table">
         <thead>
           <tr>
             <SortTh sk="keyword_text">Keyword</SortTh>
-            <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+            <th className="ads-table__status-th">Status</th>
             <th style={{ whiteSpace: 'nowrap' }}>Match</th>
             <SortTh sk="impressions" right>Impressions</SortTh>
             <SortTh sk="clicks" right>Clicks</SortTh>
@@ -110,29 +103,14 @@ export default function KeywordTable({
         </thead>
         <tbody>
           {sorted.map((r, i) => {
-            const statusUpper = (r.keyword_status ?? '').toUpperCase()
-            const isEnabled   = !r.keyword_status || statusUpper === 'ENABLED'
-            const isPaused    = statusUpper === 'PAUSED'
             return (
               <tr key={i}>
-                <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: 300 }}>
-                  <span title={r.keyword_text} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <td className="ads-table__name" style={{ maxWidth: 300 }}>
+                  <span title={r.keyword_text} className="ads-table__title ads-table__title--mono">
                     {r.keyword_text}
                   </span>
                 </td>
-                <td>
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    fontSize: '0.7rem', fontWeight: 600,
-                    color: isEnabled ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
-                  }}>
-                    <span style={{
-                      width: 6, height: 6, borderRadius: '50%',
-                      background: isEnabled ? 'var(--green)' : isPaused ? 'var(--amber)' : 'var(--text-faint)',
-                    }} />
-                    {isEnabled ? 'Enabled' : isPaused ? 'Paused' : (statusUpper || '—')}
-                  </span>
-                </td>
+                <td><StatusPill status={r.keyword_status ?? 'ENABLED'} activeLabel="Enabled" /></td>
                 <td>{matchBadge(r.match_type)}</td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.impressions.toLocaleString()}</td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.clicks.toLocaleString()}</td>

@@ -241,7 +241,7 @@ export default function DashboardSidebar({
       </div>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: '8px 8px' }}>
+      <nav style={{ padding: '8px 8px' }}>
         {navItems.map(section => {
           if (section.children) {
             const visibleChildren = isAdminPreview
@@ -406,6 +406,9 @@ export default function DashboardSidebar({
       </nav>
 
       {adFuel && <div className="dash-sidebar__adfuel">{adFuel}</div>}
+
+      {/* Takes the spare height, so Ad Fuel sits directly under the tabs and the footer at the bottom. */}
+      <div className="dash-sidebar__spacer" aria-hidden />
 
       {/* Footer */}
       <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 5 }}>
