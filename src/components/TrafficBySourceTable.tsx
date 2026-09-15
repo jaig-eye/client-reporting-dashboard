@@ -48,7 +48,7 @@ export default function TrafficBySourceTable({ rows }: { rows: SourceRow[] }) {
   if (rows.length === 0) {
     return (
       <p className="text-sm" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-        No UTM/source data synced yet — run a sync to populate.
+        No source detail recorded for these dates yet.
       </p>
     )
   }
@@ -96,9 +96,9 @@ export default function TrafficBySourceTable({ rows }: { rows: SourceRow[] }) {
               <th style={{ textAlign: 'left' }}>Source</th>
               <th style={{ textAlign: 'left' }}>Medium</th>
               <th style={{ textAlign: 'left' }}>Campaign</th>
-              <th style={{ textAlign: 'right' }}>Sessions</th>
+              <th style={{ textAlign: 'right' }}>Visits</th>
               <th style={{ textAlign: 'right' }}>Engaged</th>
-              <th style={{ textAlign: 'right' }}>Eng. Rate</th>
+              <th style={{ textAlign: 'right' }}>Engagement</th>
               <th style={{ textAlign: 'right' }}>Conversions</th>
             </tr>
           </thead>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -37,28 +37,25 @@ function compactNum(v: number) {
 }
 
 /**
- * Nice, evenly spaced ticks from 0 up to just above `max` (≥4% headroom).
- * Tries each interval count and keeps the tightest top value.
+ * Nice, evenly spaced ticks from 0 to just above `max`, using exactly
+ * `intervals` steps. Both axes share an interval count so the left and right
+ * scales produce the same horizontal gridlines.
  */
-function niceTicks(max: number, intervalOptions: number[]): number[] {
+function niceTicks(max: number, intervals: number): number[] {
   const MULTIPLIERS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
   const target = Math.max(max, 0) * 1.04
-  let best: number[] | null = null
-  for (const intervals of intervalOptions) {
-    if (target <= 0) break
-    const p = Math.pow(10, Math.floor(Math.log10(target / intervals)))
-    for (const m of MULTIPLIERS) {
-      const step = m * p
-      // Integer data (>= 3) shouldn't get fractional ticks like 2.5.
-      if (max >= 3 && step % 1 !== 0) continue
-      if (step * intervals >= target) {
-        const ticks = Array.from({ length: intervals + 1 }, (_, i) => +(step * i).toFixed(6))
-        if (!best || ticks[ticks.length - 1] < best[best.length - 1]) best = ticks
-        break
-      }
+  if (target <= 0) return Array.from({ length: intervals + 1 }, (_, i) => i)
+  const p = Math.pow(10, Math.floor(Math.log10(target / intervals)))
+  for (const m of MULTIPLIERS) {
+    const step = m * p
+    // Integer data (>= 3) shouldn't get fractional ticks like 2.5.
+    if (max >= 3 && step % 1 !== 0) continue
+    if (step * intervals >= target) {
+      return Array.from({ length: intervals + 1 }, (_, i) => +(step * i).toFixed(6))
     }
   }
-  return best ?? Array.from({ length: intervalOptions[0] + 1 }, (_, i) => i)
+  const step = 10 * p
+  return Array.from({ length: intervals + 1 }, (_, i) => +(step * i).toFixed(6))
 }
 
 /**
@@ -75,7 +72,14 @@ function evenTickIndices(n: number, maxLabels: number): number[] {
       return Array.from({ length: labels }, (_, i) => i * step)
     }
   }
-  return Array.from({ length: maxLabels }, (_, i) => Math.round((i * span) / (maxLabels - 1)))
+  // No exact divisor: step uniformly, then land on the last day. Rounding
+  // fractional positions could put two labels on adjacent days.
+  const step = Math.ceil(span / (maxLabels - 1))
+  const idx: number[] = []
+  for (let i = 0; i < span; i += step) idx.push(i)
+  if (span - idx[idx.length - 1] < step * 0.6) idx.pop()
+  idx.push(span)
+  return idx
 }
 
 type Row = {
@@ -92,10 +96,10 @@ const BASELINE_STROKE = 'var(--border)'
 const AXIS_TEXT       = 'var(--text-muted)'
 
 /**
- * Two stacked charts sharing one x-axis: primary series (spend / sessions /
- * profile views) as bars on top, secondary series (conversions / clicks) as a
- * line below. Each has its own y-axis, so no arbitrary dual-scale crossings.
- * Hover is synced across both via `syncId`.
+ * Daily performance: primary series (spend / sessions / profile views) as bars
+ * on the left axis, secondary series (conversions / clicks) as a line on the
+ * right axis, in one combined plot. Both scales start at 0 so the bars and the
+ * line are anchored to the same baseline.
  */
 export default function SpendChart({
   data,
@@ -106,6 +110,8 @@ export default function SpendChart({
   colorPriorConversions  = '#34d399',
   spendLabel             = 'Spend',
   conversionsLabel       = 'Conversions',
+  priorSpendLabel,
+  priorConversionsLabel,
   variant                = 'currency',
 }: {
   data:       DailyMetric[]
@@ -116,10 +122,13 @@ export default function SpendChart({
   colorPriorConversions?: string
   spendLabel?:            string
   conversionsLabel?:      string
+  /** Defaults to `Prior ${spendLabel}` — e.g. "Prior Leads" on a CRM page. */
+  priorSpendLabel?:       string
+  /** Defaults to `Prior ${conversionsLabel}` — e.g. "Prior Calls" on a CRM page. */
+  priorConversionsLabel?: string
   /** 'currency' formats as $n.nn (default); 'count' formats as a plain integer */
   variant?:               'currency' | 'count'
 }) {
-  const syncId   = `spend-chart-${useId()}`
   const isNarrow = useIsNarrow()
 
   if (!data.length) {
@@ -142,8 +151,9 @@ export default function SpendChart({
     : (v: number) => v.toLocaleString()
 
   const isCompare = !!(priorData && priorData.length > 0)
-  const priorSpendLabel       = 'Prior Spend'
-  const priorConversionsLabel = 'Prior Conversions'
+  // Prior-period names follow the series names unless overridden.
+  const priorSpendName       = priorSpendLabel       ?? `Prior ${spendLabel}`
+  const priorConversionsName = priorConversionsLabel ?? `Prior ${conversionsLabel}`
 
   // Merge current + prior by index so bars align side-by-side per day slot.
   const formatted: Row[] = data.map((d, i) => ({
@@ -160,48 +170,40 @@ export default function SpendChart({
   const maxSpend = Math.max(0, ...formatted.map(r => Math.max(r.spend, r.priorSpend ?? 0)))
   const maxConv  = Math.max(0, ...formatted.map(r => Math.max(r.conversions, r.priorConversions ?? 0)))
 
-  // Explicit 0-based domains + nice ticks so both plots are anchored at 0 and
-  // the $0 / 0 tick is always drawn.
-  const spendTicks = niceTicks(maxSpend, isNarrow ? [3, 2] : [4, 5])
-  const convTicks  = niceTicks(maxConv, isNarrow ? [2] : [2])
+  // Same interval count on both axes => one set of horizontal gridlines that
+  // is true for the left and the right scale alike.
+  const intervals  = isNarrow ? 3 : 4
+  const spendTicks = niceTicks(maxSpend, intervals)
+  const convTicks  = niceTicks(maxConv, intervals)
   const spendDomain: [number, number] = [0, spendTicks[spendTicks.length - 1]]
   const convDomain:  [number, number] = [0, convTicks[convTicks.length - 1]]
 
-  // Both charts must reserve the SAME y-axis width or their plot areas (and so
-  // the days) won't line up vertically. Size from the widest tick label.
   const fontSize = isNarrow ? 10 : 11
   const charPx   = isNarrow ? 6.2 : 6.6
-  const labelLen = Math.max(
-    ...spendTicks.map(t => spendAxisFormatter(t).length),
-    ...convTicks.map(t => convAxisFormatter(t).length),
-  )
-  const yAxisWidth = Math.max(isNarrow ? 30 : 40, Math.ceil(labelLen * charPx) + 10)
+  const widthFor = (labels: string[], min: number) =>
+    Math.max(min, Math.ceil(Math.max(...labels.map(l => l.length)) * charPx) + 10)
+  const leftWidth  = widthFor(spendTicks.map(spendAxisFormatter), isNarrow ? 30 : 40)
+  // Phones: the right axis still scales the line, but reserves no width — the
+  // legend and tooltip carry the conversions numbers.
+  const rightWidth = widthFor(convTicks.map(convAxisFormatter), 30)
 
+  const height = isNarrow ? 260 : 300
   const margin = isNarrow
     // Right margin leaves room for the centred last date label.
     ? { top: 8, right: 14, bottom: 0, left: 0 }
-    : { top: 8, right: 12, bottom: 0, left: 0 }
+    : { top: 8, right: 8, bottom: 0, left: 0 }
 
-  const topHeight    = isNarrow ? 180 : 220
-  const xAxisHeight  = isNarrow ? 26 : 28
-  // Desktop: line plot ≈ 38% of the top. Phones get a taller line plot so it
-  // isn't compressed into spikes.
-  const bottomPlot   = isNarrow ? 104 : Math.round(topHeight * 0.38)
-  const bottomHeight = bottomPlot + xAxisHeight + 22
-
-  // Phones: explicit, evenly spaced date labels (first + last always shown).
-  const xTicks = isNarrow
-    ? evenTickIndices(formatted.length, 5).map(i => formatted[i].date)
-    : undefined
+  // Evenly spaced dates, always including the first and last day.
+  const xTicks = evenTickIndices(formatted.length, isNarrow ? 5 : 16).map(i => formatted[i].date)
 
   const yTick  = { fontSize, fill: AXIS_TEXT }
   const cursor = { stroke: 'var(--text-faint)', strokeWidth: 1, strokeDasharray: '3 3' }
 
   const legendItems: { label: string; color: string; kind: 'bar' | 'line' | 'dashed' }[] = [
     { label: spendLabel, color: colorSpend, kind: 'bar' },
-    ...(isCompare ? [{ label: priorSpendLabel, color: colorPriorSpend, kind: 'bar' as const }] : []),
+    ...(isCompare ? [{ label: priorSpendName, color: colorPriorSpend, kind: 'bar' as const }] : []),
     { label: conversionsLabel, color: colorConversions, kind: 'line' },
-    ...(isCompare ? [{ label: priorConversionsLabel, color: colorPriorConversions, kind: 'dashed' as const }] : []),
+    ...(isCompare ? [{ label: priorConversionsName, color: colorPriorConversions, kind: 'dashed' as const }] : []),
   ]
 
   const renderTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
@@ -211,10 +213,10 @@ export default function SpendChart({
     const lines: { name: string; color: string; value: string }[] = [
       { name: spendLabel, color: colorSpend, value: spendFormatter(row.spend) },
       ...(isCompare && row.priorSpend != null
-        ? [{ name: priorSpendLabel, color: colorPriorSpend, value: spendFormatter(row.priorSpend) }] : []),
+        ? [{ name: priorSpendName, color: colorPriorSpend, value: spendFormatter(row.priorSpend) }] : []),
       { name: conversionsLabel, color: colorConversions, value: row.conversions.toLocaleString() },
       ...(isCompare && row.priorConversions != null
-        ? [{ name: priorConversionsLabel, color: colorPriorConversions, value: row.priorConversions.toLocaleString() }] : []),
+        ? [{ name: priorConversionsName, color: colorPriorConversions, value: row.priorConversions.toLocaleString() }] : []),
     ]
     return (
       <div
@@ -245,10 +247,10 @@ export default function SpendChart({
 
   return (
     <div>
-      {/* Shared legend for both charts */}
+      {/* Single legend for both series */}
       <div
         className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2"
-        style={{ fontSize: isNarrow ? 11 : 12, color: 'var(--text-muted)', paddingLeft: yAxisWidth + margin.left }}
+        style={{ fontSize: isNarrow ? 11 : 12, color: 'var(--text-muted)', paddingLeft: leftWidth + margin.left }}
       >
         {legendItems.map(item => (
           <span key={item.label} className="inline-flex items-center gap-1.5">
@@ -270,22 +272,28 @@ export default function SpendChart({
         ))}
       </div>
 
-      {/* Top: primary series as bars */}
-      <ResponsiveContainer width="100%" height={topHeight} minHeight={160}>
+      <ResponsiveContainer width="100%" height={height} minHeight={isNarrow ? 220 : 260}>
         <ComposedChart
           data={formatted}
-          syncId={syncId}
-          // Bottom margin keeps the "$0" tick label from being dropped at the edge.
-          margin={{ ...margin, bottom: 8 }}
+          margin={margin}
           barCategoryGap={isCompare ? '18%' : '25%'}
           barGap={2}
         >
           <CartesianGrid vertical={false} stroke={GRID_STROKE} />
-          {/* Same categories as the bottom chart; ticks hidden, no reserved height. */}
-          <XAxis dataKey="date" hide scale="band" />
+          <XAxis
+            dataKey="date"
+            height={isNarrow ? 26 : 28}
+            tickMargin={8}
+            tick={{ fontSize, fill: AXIS_TEXT }}
+            tickLine={false}
+            axisLine={{ stroke: BASELINE_STROKE }}
+            ticks={xTicks}
+            interval={0}
+          />
           <YAxis
             yAxisId="spend"
-            width={yAxisWidth}
+            orientation="left"
+            width={leftWidth}
             domain={spendDomain}
             ticks={spendTicks}
             interval={0}
@@ -294,14 +302,30 @@ export default function SpendChart({
             axisLine={false}
             tickFormatter={v => spendAxisFormatter(v)}
           />
-          <ReferenceLine yAxisId="spend" y={0} stroke={BASELINE_STROKE} ifOverflow="extendDomain" />
+          <YAxis
+            yAxisId="conversions"
+            orientation="right"
+            width={rightWidth}
+            domain={convDomain}
+            ticks={convTicks}
+            interval={0}
+            tick={yTick}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={v => convAxisFormatter(v)}
+            // Phones: keep the scale, drop the ticks so the plot stays readable.
+            hide={isNarrow}
+          />
+          {/* Anchors both scales at a visible zero baseline. */}
+          <ReferenceLine yAxisId="spend" y={0} stroke={BASELINE_STROKE} />
           <Tooltip
             content={renderTooltip}
             cursor={cursor}
-            position={{ y: 0 }}
             wrapperStyle={{ zIndex: 20, outline: 'none' }}
             isAnimationActive={false}
           />
+
+          {/* Current period primary series */}
           <Bar
             yAxisId="spend"
             dataKey="spend"
@@ -312,6 +336,8 @@ export default function SpendChart({
             maxBarSize={isCompare ? 12 : 24}
             isAnimationActive={false}
           />
+
+          {/* Prior period primary series */}
           {isCompare && (
             <Bar
               yAxisId="spend"
@@ -319,44 +345,13 @@ export default function SpendChart({
               fill={colorPriorSpend}
               opacity={0.7}
               radius={[3, 3, 0, 0]}
-              name={priorSpendLabel}
+              name={priorSpendName}
               maxBarSize={12}
               isAnimationActive={false}
             />
           )}
-        </ComposedChart>
-      </ResponsiveContainer>
 
-      {/* Bottom: secondary series as a line, owns the date labels */}
-      <ResponsiveContainer width="100%" height={bottomHeight} minHeight={isNarrow ? 120 : 96}>
-        <ComposedChart data={formatted} syncId={syncId} margin={{ ...margin, top: 22 }}>
-          <CartesianGrid vertical={false} stroke={GRID_STROKE} />
-          <XAxis
-            dataKey="date"
-            // Band scale (like the bar chart above) so points sit at bar centres.
-            scale="band"
-            height={xAxisHeight}
-            tickMargin={8}
-            tick={{ fontSize, fill: AXIS_TEXT }}
-            tickLine={false}
-            axisLine={{ stroke: BASELINE_STROKE }}
-            {...(xTicks
-              ? { ticks: xTicks, interval: 0 as const }
-              : { interval: 'preserveStartEnd' as const, minTickGap: 16 })}
-          />
-          <YAxis
-            yAxisId="conversions"
-            width={yAxisWidth}
-            domain={convDomain}
-            ticks={convTicks}
-            interval={0}
-            tick={yTick}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={v => convAxisFormatter(v)}
-          />
-          {/* Cursor only — the combined tooltip renders on the top chart. */}
-          <Tooltip content={() => null} cursor={cursor} isAnimationActive={false} />
+          {/* Current secondary series */}
           <Line
             yAxisId="conversions"
             type="monotone"
@@ -368,6 +363,8 @@ export default function SpendChart({
             name={conversionsLabel}
             isAnimationActive={false}
           />
+
+          {/* Prior secondary series — dashed */}
           {isCompare && (
             <Line
               yAxisId="conversions"
@@ -378,7 +375,7 @@ export default function SpendChart({
               strokeDasharray="5 4"
               dot={false}
               activeDot={{ r: 3, strokeWidth: 0 }}
-              name={priorConversionsLabel}
+              name={priorConversionsName}
               isAnimationActive={false}
             />
           )}
