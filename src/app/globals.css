@@ -5056,3 +5056,46 @@ select.note-field__input { cursor: pointer; }
   .ov3-team { padding: 1rem; }
   .ov3-team__latest { padding: 0.75rem; }
 }
+
+/* ── Overview: work list as icon · label · figure, and the CRM nudge ── */
+.ov3-work__item {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+.ov3-work__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--blue-subtle);
+  color: var(--blue);
+}
+.ov3-work__icon--posts     { background: var(--green-subtle); color: var(--green); }
+.ov3-work__icon--negatives { background: var(--amber-subtle); color: var(--amber); }
+.ov3-work__icon--site      { background: var(--green-subtle); color: var(--green); }
+.ov3-work__figure {
+  font-size: 1.125rem;
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 0.5rem;
+}
+.ov3-nudge {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.875rem 0 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: 10px;
+  background: var(--amber-subtle);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.ov3-nudge svg { flex-shrink: 0; margin-top: 2px; color: var(--amber); }
+
+@media (max-width: 639px) {
+  .ov3-work__item { grid-template-columns: 28px minmax(0, 1fr) auto; gap: 0.5rem; }
+  .ov3-work__icon { width: 28px; height: 28px; }
+  .ov3-work__figure { font-size: 1rem; }
+}

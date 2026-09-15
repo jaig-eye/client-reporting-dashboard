@@ -507,8 +507,28 @@ export default async function SeoPage({
     .map(([date, v]) => ({ date, avg: v.sum / v.n }))
 
   // ── Authority (Ahrefs) ─────────────────────────────────────────────────────
+  // Ahrefs sends its rating and its link counts as separate weekly series, and the newest week often
+  // has a rating but no link counts yet. Reading only the newest row left "Links to your site" blank
+  // most of the time, so each figure comes from the newest week that actually has it.
   const ahLatest = ahrefsRows[0]
-  const ahPrev   = ahrefsRows[1]
+  const ahLatestOf = (pick: (r: AhrefsMetricRow) => number | null) => {
+    const withValue = ahrefsRows.filter(row => pick(row) != null)
+    const latest = withValue[0]
+    const prev   = withValue[1]
+    return {
+      value: latest ? pick(latest) : null,
+      date:  latest?.date ?? null,
+      // A change only when a comparison is set, like every other figure on the page.
+      delta: showCompare && latest && prev ? pctDelta(pick(latest)!, pick(prev)!) : undefined,
+    }
+  }
+  const ahTrafficNow = ahLatestOf(row => row.organic_traffic)
+  const ahRatingNow  = ahLatestOf(row => row.domain_rating)
+  const ahLinksNow   = ahLatestOf(row => row.backlinks)
+  const ahDomainsNow = ahLatestOf(row => row.referring_domains)
+  const ahValueNow   = ahLatestOf(row => row.traffic_value)
+  const ahVelocity   = ahrefsRows.find(row => row.new_referring_domains != null || row.new_backlinks != null) ?? null
+  const asOf = (d: string | null) => (d && ahLatest && d !== ahLatest.date ? `, as of ${fmtDay(d)}` : '')
   const ahTrend  = ahrefsRows.slice(0, 8).reverse()
   const spark    = (pick: (r: AhrefsMetricRow) => number | null) => ahTrend.map(r => ({ v: pick(r) ?? 0 }))
 
@@ -524,12 +544,12 @@ export default async function SeoPage({
   interface Headline { label: string; value: string; sub: string; delta?: number; invert?: boolean; spark?: { v: number }[]; color: string }
   const headline: Headline[] = []
 
-  if (hasAhrefsData && ahLatest.organic_traffic != null) {
+  if (hasAhrefsData && ahTrafficNow.value != null) {
     headline.push({
       label: 'Visitors from search',
-      value: fmtNum(ahLatest.organic_traffic),
+      value: fmtNum(ahTrafficNow.value),
       sub:   'people arriving each month without an ad',
-      delta: ahPrev?.organic_traffic != null ? pctDelta(ahLatest.organic_traffic, ahPrev.organic_traffic) : undefined,
+      delta: ahTrafficNow.delta,
       spark: spark(r => r.organic_traffic),
       color: 'var(--seo-local)',
     })
@@ -1081,46 +1101,46 @@ export default async function SeoPage({
               <div className="stat-grid stat-grid--wide">
                 <SparkMetricCard
                   label="Visitors from search"
-                  value={ahLatest.organic_traffic != null ? fmtNum(ahLatest.organic_traffic) : '—'}
-                  sub="people arriving each month without an ad"
-                  delta={ahPrev?.organic_traffic != null && ahLatest.organic_traffic != null ? pctDelta(ahLatest.organic_traffic, ahPrev.organic_traffic) : undefined}
+                  value={ahTrafficNow.value != null ? fmtNum(ahTrafficNow.value) : '—'}
+                  sub={`people arriving each month without an ad${asOf(ahTrafficNow.date)}`}
+                  delta={ahTrafficNow.delta}
                   sparkData={spark(r => r.organic_traffic)}
                   sparkColor="var(--seo-local)"
                   delay={0}
                 />
                 <SparkMetricCard
                   label="Site strength"
-                  value={ahLatest.domain_rating != null ? ahLatest.domain_rating.toFixed(1) : '—'}
-                  sub="how Google weighs your site, 0 to 100"
-                  delta={ahPrev?.domain_rating != null && ahLatest.domain_rating != null ? pctDelta(ahLatest.domain_rating, ahPrev.domain_rating) : undefined}
+                  value={ahRatingNow.value != null ? ahRatingNow.value.toFixed(1) : '—'}
+                  sub={`how Google weighs your site, 0 to 100${asOf(ahRatingNow.date)}`}
+                  delta={ahRatingNow.delta}
                   sparkData={spark(r => r.domain_rating)}
                   sparkColor="var(--seo-search)"
                   delay={1}
                 />
                 <SparkMetricCard
                   label="Links to your site"
-                  value={ahLatest.backlinks != null ? fmtNum(ahLatest.backlinks) : '—'}
-                  sub="from other websites"
-                  delta={ahPrev?.backlinks != null && ahLatest.backlinks != null ? pctDelta(ahLatest.backlinks, ahPrev.backlinks) : undefined}
+                  value={ahLinksNow.value != null ? fmtNum(ahLinksNow.value) : '—'}
+                  sub={`from other websites${asOf(ahLinksNow.date)}`}
+                  delta={ahLinksNow.delta}
                   sparkData={spark(r => r.backlinks)}
                   sparkColor="var(--seo-search-soft)"
                   delay={2}
                 />
                 <SparkMetricCard
                   label="Sites linking to you"
-                  value={ahLatest.referring_domains != null ? fmtNum(ahLatest.referring_domains) : '—'}
-                  sub="how many different websites"
-                  delta={ahPrev?.referring_domains != null && ahLatest.referring_domains != null ? pctDelta(ahLatest.referring_domains, ahPrev.referring_domains) : undefined}
+                  value={ahDomainsNow.value != null ? fmtNum(ahDomainsNow.value) : '—'}
+                  sub={`how many different websites${asOf(ahDomainsNow.date)}`}
+                  delta={ahDomainsNow.delta}
                   sparkData={spark(r => r.referring_domains)}
                   sparkColor="var(--seo-neutral)"
                   delay={3}
                 />
-                {ahLatest.traffic_value != null && (
+                {ahValueNow.value != null && (
                   <SparkMetricCard
                     label="What that traffic is worth"
-                    value={`$${fmtNum(ahLatest.traffic_value)}`}
-                    sub="what you'd pay in ads for the same visitors"
-                    delta={ahPrev?.traffic_value != null ? pctDelta(ahLatest.traffic_value, ahPrev.traffic_value) : undefined}
+                    value={`$${fmtNum(ahValueNow.value)}`}
+                    sub={`what you'd pay in ads for the same visitors${asOf(ahValueNow.date)}`}
+                    delta={ahValueNow.delta}
                     sparkData={spark(r => r.traffic_value)}
                     sparkColor="var(--seo-local)"
                     delay={4}
@@ -1128,32 +1148,32 @@ export default async function SeoPage({
                 )}
               </div>
 
-              {(ahLatest.new_referring_domains != null || ahLatest.new_backlinks != null) && (
+              {ahVelocity && (
                 <div className="card seo-velocity">
                   <p className="metric-label">New and lost links since the last measurement</p>
                   <div className="metric-row metric-row--dense">
-                    {ahLatest.new_referring_domains != null && (
+                    {ahVelocity.new_referring_domains != null && (
                       <div>
                         <p className="metric-label mb-1">New sites linking to you</p>
-                        <p className="metric-row__value" style={{ color: 'var(--green)' }}>+{fmtNum(ahLatest.new_referring_domains)}</p>
+                        <p className="metric-row__value" style={{ color: 'var(--green)' }}>+{fmtNum(ahVelocity.new_referring_domains)}</p>
                       </div>
                     )}
-                    {ahLatest.lost_referring_domains != null && (
+                    {ahVelocity.lost_referring_domains != null && (
                       <div>
                         <p className="metric-label mb-1">Sites that dropped you</p>
-                        <p className="metric-row__value" style={{ color: 'var(--red)' }}>−{fmtNum(ahLatest.lost_referring_domains)}</p>
+                        <p className="metric-row__value" style={{ color: 'var(--red)' }}>−{fmtNum(ahVelocity.lost_referring_domains)}</p>
                       </div>
                     )}
-                    {ahLatest.new_backlinks != null && (
+                    {ahVelocity.new_backlinks != null && (
                       <div>
                         <p className="metric-label mb-1">New links</p>
-                        <p className="metric-row__value" style={{ color: 'var(--green)' }}>+{fmtNum(ahLatest.new_backlinks)}</p>
+                        <p className="metric-row__value" style={{ color: 'var(--green)' }}>+{fmtNum(ahVelocity.new_backlinks)}</p>
                       </div>
                     )}
-                    {ahLatest.lost_backlinks != null && (
+                    {ahVelocity.lost_backlinks != null && (
                       <div>
                         <p className="metric-label mb-1">Lost links</p>
-                        <p className="metric-row__value" style={{ color: 'var(--red)' }}>−{fmtNum(ahLatest.lost_backlinks)}</p>
+                        <p className="metric-row__value" style={{ color: 'var(--red)' }}>−{fmtNum(ahVelocity.lost_backlinks)}</p>
                       </div>
                     )}
                   </div>

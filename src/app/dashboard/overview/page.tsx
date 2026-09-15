@@ -45,7 +45,7 @@ import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone,
+  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -205,7 +205,7 @@ const _getOverviewData = unstable_cache(
       // Ahrefs is a weekly snapshot, so the two most recent rows give value + movement.
       has.ahrefs
         ? db.from('ahrefs_metrics').select('date,domain_rating,referring_domains')
-            .eq('client_id', clientId).order('date', { ascending: false }).limit(2)
+            .eq('client_id', clientId).order('date', { ascending: false }).limit(8)
         : none,
 
       // Tracked keyword positions from the rank tracker (a view over seo_rankings), this client only.
@@ -271,7 +271,7 @@ const _getOverviewData = unstable_cache(
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
     }
   },
-  ['dashboard-overview-v6'],
+  ['dashboard-overview-v7'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -551,9 +551,18 @@ export default async function OverviewPage({
   const gscPrior   = gsc.prior as GSCSummaryResult | null
   const hasGscData = !!gscCurr && gscCurr.totals.impressions > 0
 
-  const ahrefsLatest  = data.ahrefs[0]
-  const ahrefsPrev    = data.ahrefs[1]
-  const hasAhrefsData = !!ahrefsLatest && (ahrefsLatest.referring_domains != null || ahrefsLatest.domain_rating != null)
+  // Each figure from the newest week that has it: Ahrefs' newest week often has a rating but no
+  // link counts yet. A change only when a comparison is set.
+  const ahrefsOf = (pick: (row: AhrefsRow) => number | null) => {
+    const rows = data.ahrefs.filter(row => pick(row) != null)
+    return {
+      value: rows[0] ? pick(rows[0]) : null,
+      delta: showCompare && rows[0] && rows[1] ? calcDelta(pick(rows[0])!, pick(rows[1])!) : undefined,
+    }
+  }
+  const ahrefsDomains = ahrefsOf(row => row.referring_domains)
+  const ahrefsRating  = ahrefsOf(row => row.domain_rating)
+  const hasAhrefsData = ahrefsDomains.value != null || ahrefsRating.value != null
 
   // ── Deltas — only when a comparison is on, and only when there is a base ───
   const delta = (curr: number, prior: number) => (showCompare ? calcDelta(curr, prior) : undefined)
@@ -679,7 +688,10 @@ export default async function OverviewPage({
   }))
 
   // ── From lead to job ──────────────────────────────────────────────────────
-  const showFunnel = hasCrmData && (crm.newOpps > 0 || crm.won > 0)
+  // Shown whenever leads came in. With no jobs marked won, the card nudges the client to mark them:
+  // the CRM is the only place we can learn which leads turned into work.
+  const showFunnel = hasCrmData && crm.leads > 0
+  const crmLabel   = settings.crm_name || 'your CRM'
   const funnel = [
     { label: 'Leads', value: crm.leads, tone: 'blue' },
     ...(crm.newOpps > 0 ? [{ label: 'Opportunities', value: crm.newOpps, tone: 'violet' }] : []),
@@ -983,16 +995,14 @@ export default async function OverviewPage({
       />,
     )
   }
-  if (hasAhrefsData && ahrefsLatest) {
+  if (hasAhrefsData) {
     localCards.push(
       <ChannelSourceCard
         key="ahrefs" title="Search visibility" color="var(--ov-violet)" href={link('/dashboard/seo')}
         icon={<LinkSimple size={16} weight="bold" aria-hidden />}
         metrics={[
-          { label: 'Linking sites', value: ahrefsLatest.referring_domains != null ? fmtInt(ahrefsLatest.referring_domains) : '—',
-            delta: ahrefsPrev?.referring_domains ? calcDelta(ahrefsLatest.referring_domains ?? 0, ahrefsPrev.referring_domains) : undefined },
-          { label: 'Site strength', value: ahrefsLatest.domain_rating != null ? ahrefsLatest.domain_rating.toFixed(1) : '—',
-            delta: ahrefsPrev?.domain_rating ? calcDelta(ahrefsLatest.domain_rating ?? 0, ahrefsPrev.domain_rating) : undefined },
+          { label: 'Linking sites', value: ahrefsDomains.value != null ? fmtInt(ahrefsDomains.value) : '—', delta: ahrefsDomains.delta },
+          { label: 'Site strength', value: ahrefsRating.value != null ? ahrefsRating.value.toFixed(1) : '—', delta: ahrefsRating.delta },
         ]}
       />,
     )
@@ -1323,11 +1333,18 @@ export default async function OverviewPage({
                     <ul className="ov3-work">
                       {work.map(w => (
                         <li key={w.key} className="ov3-work__item">
-                          <span className="ov3-work__figure">{w.figure}</span>
+                          <span className={`ov3-work__icon ov3-work__icon--${w.key}`} aria-hidden>
+                            {w.key === 'posts' ? <FileText size={16} weight="bold" />
+                              : w.key === 'keywords' ? <MagnifyingGlass size={16} weight="bold" />
+                              : w.key === 'negatives' ? <Prohibit size={16} weight="bold" />
+                              : w.key === 'ads' ? <CursorClick size={16} weight="bold" />
+                              : <ShieldCheck size={16} weight="bold" />}
+                          </span>
                           <span className="ov3-work__body">
                             <span className="ov3-work__label">{w.label}</span>
                             <span className="ov3-work__detail">{w.detail}</span>
                           </span>
+                          <span className="ov3-work__figure">{w.figure}</span>
                         </li>
                       ))}
                     </ul>
@@ -1419,7 +1436,7 @@ export default async function OverviewPage({
                     <ol className="ov2-funnel">
                       {funnel.map((s, i) => {
                         const prev = i > 0 ? funnel[i - 1].value : 0
-                        const rate = i > 0 && prev > 0 && s.value <= prev ? Math.round((s.value / prev) * 100) : null
+                        const rate = i > 0 && prev > 0 && s.value > 0 && s.value <= prev ? Math.round((s.value / prev) * 100) : null
                         return (
                           <li key={s.label} className="ov2-funnel__step">
                             {i > 0 && (
@@ -1436,6 +1453,15 @@ export default async function OverviewPage({
                         )
                       })}
                     </ol>
+                    {crm.won === 0 && (
+                      <p className="ov3-nudge">
+                        <Lightbulb size={16} weight="fill" aria-hidden />
+                        <span>
+                          No jobs have been marked won in {crmLabel} for these dates. When a lead becomes a job, mark it
+                          won there. That&apos;s how this page shows which leads turned into work, and what they were worth.
+                        </span>
+                      </p>
+                    )}
                     {crm.won > 0 && crm.wonValue > 0 && (
                       <p className="ov2-funnel__money">
                         Jobs won are worth <b>{fmt$(crm.wonValue)}</b>, about <b>{fmt$(crm.wonValue / crm.won)}</b> each.

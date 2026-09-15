@@ -363,7 +363,7 @@ export default async function CrmPage({
               <p className="section-desc">
                 {t.incoming > 0
                   ? `You missed ${missedRate.toFixed(0)}% of the calls that came in.`
-                  : 'All calls in this period were outgoing.'}
+                  : `${crmName} isn't reporting which calls came in or were missed yet, only the total.`}
               </p>
 
               {t.incoming > 0 && (
@@ -381,8 +381,12 @@ export default async function CrmPage({
 
               <div className="metric-row metric-row--dense crm-stats">
                 <Stat label="Total calls"    value={fmtNum(t.calls)} />
-                <Stat label="Calls in"       value={fmtNum(t.incoming)} sub={t.outgoing > 0 ? `${fmtNum(t.outgoing)} out` : undefined} />
-                <Stat label="Missed"         value={fmtNum(t.missed)} sub={t.incoming > 0 ? `${missedRate.toFixed(0)}% of calls in` : undefined} tone={t.missed > 0 ? 'warn' : undefined} />
+                {t.incoming > 0 && (
+                  <>
+                    <Stat label="Calls in"       value={fmtNum(t.incoming)} sub={t.outgoing > 0 ? `${fmtNum(t.outgoing)} out` : undefined} />
+                    <Stat label="Missed"         value={fmtNum(t.missed)} sub={`${missedRate.toFixed(0)}% of calls in`} tone={t.missed > 0 ? 'warn' : undefined} />
+                  </>
+                )}
               </div>
 
               {t.missed > 0 && missedRate >= 10 && (
@@ -401,6 +405,14 @@ export default async function CrmPage({
                   ? `You won ${winRate.toFixed(0)}% of the ${fmtNum(closable)} ${closable === 1 ? 'quote' : 'quotes'} that were decided.`
                   : 'No quotes have been marked won or lost yet.'}
               </p>
+
+              {closable === 0 && (
+                <p className="crm-insight crm-insight--warn">
+                  Mark each quote as won or lost in {crmName} when you hear back. That&apos;s the only way this page can
+                  show your win rate and the value of the jobs you&apos;ve won.
+                  {t.newOpps > 0 && <> Right now we can see quotes going out, but not which ones turned into work.</>}
+                </p>
+              )}
 
               {closable > 0 && (
                 <>
