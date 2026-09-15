@@ -35,6 +35,8 @@ import DashboardNavDrawer from '@/components/dashboard/NavDrawer'
 import DashboardNavigationRefresher from '@/components/DashboardNavigationRefresher'
 import AdminDashboardBar from '@/components/admin/AdminDashboardBar'
 import DashboardV2PreviewToggle from '@/components/dashboard/DashboardV2PreviewToggle'
+import AdFuelBadgeWithModal from '@/components/dashboard/AdFuelBadgeWithModal'
+import { getClientAdFuelSummary, type AdFuelSettings } from '@/lib/clientAdFuelSummary'
 
 // Cache the 6 connector-data COUNT queries per client for 5 minutes.
 const getConnectorDataFlags = unstable_cache(
@@ -132,6 +134,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // so clients on the live site never see it. It only changes what the current browser sees.
   const showV2Toggle = isAdmin || process.env.VERCEL_ENV !== 'production'
 
+  // Ad Fuel sits in the sidebar so the balance is a glance away on every page, not only the Summary.
+  // Same calculation the Summary page used; only clients who have bought Ad Fuel see it.
+  const adFuel = client ? await getClientAdFuelSummary(client, settings as unknown as AdFuelSettings | null) : null
+
   return (
     <>
       {/* Inject agency brand color as CSS variable for client dashboard */}
@@ -161,14 +167,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Suspense fallback={<div className="hide-lg-down" style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }} />}>
             <DashboardNavDrawer clientName={client.name} clientLogoUrl={client.logo_url} topOffset={isAdmin ? 40 : 0}>
               <DashboardSidebar
-                activeConnectorTypes={activeConnectorTypes}
-                agencyLogoUrl={settings?.agency_logo_url}
-                agencyName={settings?.agency_name}
-                clientLogoUrl={client.logo_url}
-                clientName={client.name}
-                crmName={settings?.crm_name ?? 'CRM'}
+                activeConnectorTypes={activeConnectorTypes}
+                agencyLogoUrl={settings?.agency_logo_url}
+                agencyName={settings?.agency_name}
+                clientLogoUrl={client.logo_url}
+                clientName={client.name}
+                crmName={settings?.crm_name ?? 'CRM'}
                 hasLocalDominator={!!(client as unknown as { local_dominator_url?: string | null }).local_dominator_url}
-                dashboardV2={isDashboardV2(client, cookieStore)}
+                dashboardV2={isDashboardV2(client, cookieStore)}
+                adFuel={adFuel?.show ? (
+                  <AdFuelBadgeWithModal
+                    balance={adFuel.balance}
+                    clientName={client.name}
+                    monthlyBudget={adFuel.monthlyReference > 0 ? adFuel.monthlyReference : undefined}
+                    pendingAmount={adFuel.pending > 0 ? adFuel.pending : undefined}
+                    width="100%"
+                  />
+                ) : undefined}
               />
             </DashboardNavDrawer>
           </Suspense>

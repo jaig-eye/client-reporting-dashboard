@@ -16,14 +16,13 @@ import { getAgencySettings, pctOfBenchmark, scoreColor } from '@/lib/agency-sett
 import { summarizeMetrics, getDailyTrend, calcDelta, fmt$, fmtNum, fmtRoas, fmtPct, fmtCurrency, applyAdFuel, resolveMetaConversions } from '@/lib/metrics'
 import type { Client, ClientConnection, Connector, MetaAction } from '@/lib/types'
 import SpendChart from '@/components/SpendChart'
-import DateRangePicker from '@/components/DateRangePicker'
+import PageHeader from '@/components/dashboard/PageHeader'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import { GA4SummaryCard, GSCSummaryCard, GBPSummaryCard, AhrefsSummaryCard } from '@/components/connections'
 import { Skeleton } from '@/components/Skeleton'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
-import AdFuelBadgeWithModal from '@/components/dashboard/AdFuelBadgeWithModal'
 import CampaignTable from '@/components/CampaignTable'
 
 export const dynamic = 'force-dynamic'
@@ -36,19 +35,6 @@ function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 function dedupeBy<T extends Record<string, unknown>>(rows: T[], key: (r: T) => string): T[] {
   const seen = new Set<string>()
   return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true })
-}
-
-// Matches the admin API helper — first occurrence of billDay on or after cutoffDate
-function getEffectiveCutoff(cutoffDate: string, billDay: number): string {
-  const c = new Date(cutoffDate + 'T00:00:00Z')
-  const y = c.getUTCFullYear(), mo = c.getUTCMonth(), d = c.getUTCDate()
-  if (d <= billDay) return new Date(Date.UTC(y, mo, billDay)).toISOString().slice(0, 10)
-  return new Date(Date.UTC(y, mo + 1, billDay)).toISOString().slice(0, 10)
-}
-function subtractOneDay(date: string): string {
-  const d = new Date(date + 'T00:00:00Z')
-  d.setUTCDate(d.getUTCDate() - 1)
-  return d.toISOString().slice(0, 10)
 }
 
 // Cache the heavy metrics DB block for 5 minutes. Busted by revalidateTag('client-metrics')
@@ -223,10 +209,15 @@ export default async function DashboardPage({
   // source param: undefined/"all" = all paid sources, "google_ads"/"meta_ads" = single source
   const source = params.source as string | undefined
   const isFiltered = source === 'google_ads' || source === 'meta_ads'
+  const v2 = isDashboardV2(client, cookieStore)
+  // Back from a platform view to the page it was opened from — Paid Ads on the rebuilt dashboard.
+  const backQs = new URLSearchParams({ from: fmtDate(fromDate), to: fmtDate(toDate) })
+  if (compare !== 'none') backQs.set('compare', compare)
+  const backHref = `${v2 ? '/dashboard/paid-ads' : '/dashboard'}?${backQs}`
   const paidOnly   = source === 'paid'
 
   // The rebuilt dashboard splits this page across Overview / Paid Ads / SEO / Analytics / CRM.
-  if (!source && isDashboardV2(client, cookieStore)) {
+  if (!source && v2) {
     redirect('/dashboard/overview')
   }
 
@@ -265,51 +256,7 @@ export default async function DashboardPage({
   const assignmentMap = new Map(assignmentsData.map(a => [a.campaign_id, a]))
   const lastSyncedAt  = activeConnection?.last_synced_at ?? null
 
-  // ─── Ad Fuel balance (matches admin API calculation exactly) ─────────────
-  // Always uses real cut — rawMode only affects displayed spend, not balance.
-  // Uses aggregate RPCs to avoid PostgREST's 1000-row cap on high-volume clients.
-  const cutoffDate    = (settings as { ad_fuel_cutoff_date?: string | null }).ad_fuel_cutoff_date ?? '2025-01-01'
-  const realAdFuelCut = client.ad_fuel_cut != null ? client.ad_fuel_cut : (settings.ad_fuel_cut ?? 0)
-  const balanceSplit  = 1 - realAdFuelCut
-
-  type SumRow = { client_id: string; spend: number }
-  const [gLifeRpc, mLifeRpc, ledgerBalRes, achPendingRes] = await Promise.all([
-    db.rpc('sum_google_spend_by_client', { from_date: cutoffDate }).eq('client_id', client.id),
-    db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate }).eq('client_id', client.id),
-    db.from('ad_fuel_ledger').select('amount_af').eq('client_id', client.id).gte('date_of_payment', cutoffDate),
-    db.from('ad_fuel_ach_pending').select('amount_af').eq('client_id', client.id),
-  ])
-
-  // If either spend RPC errored, log it — balance will show as full purchased amount
-  // (spend treated as 0) but the badge remains visible.
-  const spendRpcFailed = !!(gLifeRpc.error || mLifeRpc.error)
-  if (spendRpcFailed) console.error('[dashboard] Ad Fuel spend RPCs failed:', gLifeRpc.error, mLifeRpc.error)
-
-  let gRawLife = Number(((gLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
-  let mRawLife = Number(((mLifeRpc.data ?? []) as SumRow[])[0]?.spend ?? 0)
-
-  // Gap adjustment: clients with historic_bill_day subtract gap spend (cutoff → effectiveCutoff-1)
-  const historicBillDay = (client as unknown as Record<string, unknown>).historic_bill_day as number | null | undefined
-  if (!spendRpcFailed && historicBillDay != null) {
-    const effCutoff = getEffectiveCutoff(cutoffDate, historicBillDay)
-    if (effCutoff > cutoffDate) {
-      const gapEnd = subtractOneDay(effCutoff)
-      const [gGap, mGap] = await Promise.all([
-        db.rpc('sum_google_spend_by_client', { from_date: cutoffDate, to_date: gapEnd }).eq('client_id', client.id),
-        db.rpc('sum_meta_spend_by_client',   { from_date: cutoffDate, to_date: gapEnd }).eq('client_id', client.id),
-      ])
-      gRawLife = Math.max(0, gRawLife - Number(((gGap.data ?? []) as SumRow[])[0]?.spend ?? 0))
-      mRawLife = Math.max(0, mRawLife - Number(((mGap.data ?? []) as SumRow[])[0]?.spend ?? 0))
-    }
-  }
-
-  const rawLifetime   = gRawLife + mRawLife
-  const afLifetime    = balanceSplit > 0 ? rawLifetime / balanceSplit : rawLifetime
-  const afPurchased   = ((ledgerBalRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
-  // When spend RPCs failed, lifetime spend is 0 which makes the balance equal to the full
-  // purchased amount — a falsely inflated figure. Return null so the badge shows "—" instead.
-  const adFuelBalance: number | null = spendRpcFailed ? null : (afPurchased - afLifetime)
-  const pendingAch    = ((achPendingRes.data ?? []) as { amount_af: number }[]).reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
+  // Ad Fuel balance: shown in the sidebar on every page (lib/clientAdFuelSummary.ts).
 
 
   const ecomCount  = assignmentsData.filter(a => a.display_mode === 'ecommerce').length
@@ -696,7 +643,6 @@ export default async function DashboardPage({
   const metaDailyBudgetRaw   = sumBudgetBySource('meta_ads')
   const googleDailyBudget = effectiveAdFuelCut > 0 ? applyAdFuel(googleDailyBudgetRaw, effectiveAdFuelCut) : googleDailyBudgetRaw
   const metaDailyBudget   = effectiveAdFuelCut > 0 ? applyAdFuel(metaDailyBudgetRaw,   effectiveAdFuelCut) : metaDailyBudgetRaw
-  const monthlyBudget     = (googleDailyBudget + metaDailyBudget) * 30.4
 
   // ─── Platform card value maps (for layout-driven metric display) ─────────
   const gSpend = effectiveAdFuelCut > 0 ? applyAdFuel(googleTotal.spend, effectiveAdFuelCut) : googleTotal.spend
@@ -783,39 +729,17 @@ export default async function DashboardPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <style>{`.back-overview-link:hover { color: var(--text-primary) !important; }`}</style>
+      <PageHeader
+        title={isFiltered ? (source === 'google_ads' ? 'Google Ads' : 'Meta Ads') : paidOnly ? 'Paid Ads' : 'Summary'}
+        accent="var(--accent)"
+        fromDate={fromDate}
+        toDate={toDate}
+        compare={compare}
+      >
+        {isFiltered && <a href={backHref} className="dash-page-header__back">← {v2 ? 'Paid Ads' : 'Summary'}</a>}
+        {syncedAt && <span className="dash-page-header__meta">Updated {syncedAt}</span>}
+      </PageHeader>
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
-
-        {/* ── Inline page header ───────────────────────────────── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-          <div>
-            {isFiltered && (
-              <a href="/dashboard" className="back-overview-link" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                ← Overview
-              </a>
-            )}
-            <h1 style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-              {isFiltered
-                ? (source === 'google_ads' ? 'Google Ads Summary' : source === 'meta_ads' ? 'Meta Ads Summary' : 'Paid Ads Summary')
-                : paidOnly ? 'Paid Ads' : 'Summary'}
-            </h1>
-            {syncedAt && (
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)', margin: '3px 0 0' }}>Updated {syncedAt}</p>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {afPurchased > 0 && (
-              <AdFuelBadgeWithModal balance={adFuelBalance} clientName={client.name} monthlyBudget={monthlyBudget > 0 ? monthlyBudget : undefined} pendingAmount={pendingAch > 0 ? pendingAch : undefined} />
-            )}
-            <Suspense fallback={null}>
-              <DateRangePicker
-                from={fromDate.toISOString().split('T')[0]}
-                to={toDate.toISOString().split('T')[0]}
-                compare={compare}
-              />
-            </Suspense>
-          </div>
-        </div>
 
         {/* ── No-data notice (subtle, does not replace KPI grid) ── */}
         {currentMetrics.length === 0 && (
@@ -951,7 +875,7 @@ export default async function DashboardPage({
                   connectionsBySource={connectionsBySource}
                   dateFrom={fmtDate(fromDate)}
                   dateTo={fmtDate(toDate)}
-                  compare={showCompare ? fmtDate(priorFrom) : undefined}
+                  compare={showCompare ? compare : undefined}
                   columns={displayLayout.table_columns}
                 />
               </div>

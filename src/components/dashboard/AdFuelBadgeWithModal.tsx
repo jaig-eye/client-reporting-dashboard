@@ -9,11 +9,14 @@ export default function AdFuelBadgeWithModal({
   clientName,
   monthlyBudget,
   pendingAmount,
+  width,
 }: {
   balance:        number | null
   clientName:     string
   monthlyBudget?: number
   pendingAmount?: number
+  /** Defaults to the badge's own 188px; the sidebar passes '100%'. */
+  width?:         number | string
 }) {
   const [open, setOpen] = useState(false)
 
@@ -25,6 +28,7 @@ export default function AdFuelBadgeWithModal({
         monthlyBudget={monthlyBudget}
         pendingAmount={pendingAmount}
         onActivityClick={() => setOpen(true)}
+        width={width}
       />
       {open && <AdFuelModal balance={balance} onClose={() => setOpen(false)} />}
     </>

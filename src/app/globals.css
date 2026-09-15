@@ -4630,3 +4630,95 @@ select.note-field__input { cursor: pointer; }
   .ov2-chan { white-space: normal; align-items: flex-start; }
   .ov2-chan__icon { margin-top: 0.3125rem; }
 }
+
+/* ── Keyword rank pills and movement (Overview + SEO report) ── */
+.kw-pos {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.kw-pos--top   { background: var(--green-subtle); color: var(--green); }
+.kw-pos--page1 { background: var(--amber-subtle); color: var(--amber); }
+.kw-pos--rest  { background: var(--bg-subtle);    color: var(--text-secondary); }
+.kw-pos--none  { background: transparent; color: var(--text-faint); font-weight: 500; }
+.kw-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.kw-change--up   { background: var(--green-subtle); color: var(--green); }
+.kw-change--down { background: var(--red-subtle);   color: var(--red); }
+.kw-change--flat { padding-inline: 0.25rem; color: var(--text-faint); }
+.kw-new {
+  display: inline-flex;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  background: var(--blue-subtle);
+  color: var(--blue);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kw-bands { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; margin-bottom: 0.875rem; }
+.kw-band { display: flex; flex-direction: column; gap: 2px; padding: 0.625rem 0.75rem; border-radius: 10px; background: var(--bg-subtle); }
+.kw-band--top   { background: var(--green-subtle); }
+.kw-band--page1 { background: var(--amber-subtle); }
+.kw-band__value { font-size: 1.25rem; line-height: 1.1; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.kw-band__label { font-size: 0.6875rem; color: var(--text-secondary); }
+
+.kw-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.kw-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 3.5rem 2.75rem;
+  align-items: center;
+  gap: 0.625rem;
+  padding-block: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.kw-list__row:first-child { border-top: 0; padding-top: 0; }
+.kw-list__term { font-size: 0.875rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kw-list__meta { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kw-list__change { display: flex; justify-content: center; }
+.kw-list__row > .kw-pos { justify-self: end; }
+.kw-empty { margin: 0; font-size: 0.8125rem; color: var(--text-muted); }
+
+.ov2-card-head--split { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.ov2-head-link { font-size: 0.8125rem; white-space: nowrap; }
+
+.seo-subhead { margin: 0.5rem 0 -0.25rem; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+
+/* Page header extras: a back link and when the data last synced. */
+.dash-page-header__title { flex-wrap: wrap; row-gap: 0.25rem; }
+.dash-page-header__back {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.dash-page-header__back:hover { color: var(--text-primary); border-color: var(--text-faint); }
+.dash-page-header__meta { font-size: 0.75rem; color: var(--text-faint); white-space: nowrap; }
+
+/* Ad Fuel in the sidebar, pinned above the footer. */
+.dash-sidebar__adfuel { padding: 0.75rem 1rem; border-top: 1px solid var(--border-subtle); }
+
+@media (max-width: 639px) {
+  .kw-bands { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kw-list__row { grid-template-columns: minmax(0, 1fr) 3.5rem 2.75rem; }
+  .kw-list__meta { display: none; }
+}

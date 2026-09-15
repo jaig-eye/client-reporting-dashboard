@@ -22,12 +22,15 @@ export default function AdFuelBadge({
   monthlyBudget,
   pendingAmount,
   onActivityClick,
+  width = 188,
 }: {
   balance:            number | null
   clientName:         string
   monthlyBudget?:     number
   pendingAmount?:     number  // ACH payment in transit — shown as projected addition
   onActivityClick?:   () => void
+  /** 188px by default; the sidebar passes '100%' to fill its column. */
+  width?:             number | string
 }) {
   const [mounted, setMounted] = useState(false)
 
@@ -59,7 +62,7 @@ export default function AdFuelBadge({
   return (
     <div style={{
       position: 'relative',
-      width: 188, height: 76,
+      width, height: 76,
       borderRadius: 10, overflow: 'hidden',
       background: 'var(--bg-surface, #fff)',
       border: `1px solid ${borderCol}`,

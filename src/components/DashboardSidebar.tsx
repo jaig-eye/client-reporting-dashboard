@@ -1,7 +1,7 @@
 'use client'
 
 import { usePathname, useSearchParams, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   SquaresFour,
   ChartBar,
@@ -26,6 +26,8 @@ interface SidebarProps {
   hasLocalDominator?: boolean
   /** Rebuilt dashboard: one page per channel instead of sections with sub-pages. */
   dashboardV2?: boolean
+  /** Ad Fuel balance widget, built on the server by the layout and pinned above the footer. */
+  adFuel?: ReactNode
 }
 
 export interface NavItem {
@@ -104,6 +106,7 @@ export default function DashboardSidebar({
   crmName = 'CRM',
   hasLocalDominator = false,
   dashboardV2 = false,
+  adFuel,
 }: SidebarProps) {
   const pathname     = usePathname()
   // Paid Ads and SEO keep their platform sub-pages on the classic layout; the rebuilt one is flat.
@@ -401,6 +404,8 @@ export default function DashboardSidebar({
           )
         })}
       </nav>
+
+      {adFuel && <div className="dash-sidebar__adfuel">{adFuel}</div>}
 
       {/* Footer */}
       <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 5 }}>
