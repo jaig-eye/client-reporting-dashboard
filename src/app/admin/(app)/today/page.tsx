@@ -142,7 +142,7 @@ function changeDelta(cur: number, prev: number, upTone: KpiTone, downTone: KpiTo
   if (prev === 0) return { text: 'New', direction: 'up', tone: upTone, label: `Up from zero ${vs}` }
   const pct = ((cur - prev) / prev) * 100
   const abs = Math.abs(pct)
-  if (abs < 0.5) return { text: '0%', direction: 'flat', tone: 'neutral', label: `Flat ${vs}` }
+  if (abs < 0.5) return null   // no meaningful change — show no pill rather than "0%"
   const up = pct > 0
   return {
     text:      `${abs >= 100 ? Math.round(abs) : abs.toFixed(1)}%`,
@@ -504,7 +504,7 @@ export default async function TodayPage() {
   if (syncPct != null && syncPctPrev != null) {
     const pts = syncPct - syncPctPrev
     syncDelta = Math.abs(pts) < 0.5
-      ? { text: '0 pts', direction: 'flat', tone: 'neutral', label: 'Flat vs the previous 24 hours' }
+      ? null   // no meaningful change — show no pill rather than "0 pts"
       : {
           text:      `${Math.abs(pts).toFixed(1)} pts`,
           direction: pts > 0 ? 'up' : 'down',
