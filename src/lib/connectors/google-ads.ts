@@ -485,6 +485,112 @@ export interface GoogleAdsAdRawRow {
   all_conversions_value?: number
 }
 
+export interface GoogleAdsCallRawRow {
+  date:            string
+  campaign_id:     string
+  campaign_name:   string
+  phone_calls:     number
+  calls_received:  number
+  calls_missed:    number
+  call_seconds:    number
+  calls_from_ad:   number
+  calls_from_site: number
+}
+
+/**
+ * Calls from Google Ads, per campaign per day. Someone who taps an ad's call button never visits
+ * the website, so the CRM can't tie that call to the ad; Google Ads can. Two queries, each on its own:
+ *   campaign metrics.phone_calls   calls from call assets and call-only ads
+ *   call_view                      one row per call: status, duration, and whether it was placed from
+ *                                  the ad or the website. Empty unless call reporting is on.
+ * The caller's area code and country are never selected.
+ */
+export async function fetchGoogleAdsCalls(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string
+): Promise<GoogleAdsCallRawRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const token    = accessToken
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token as string | undefined) || undefined
+
+  const byKey = new Map<string, GoogleAdsCallRawRow>()
+  const rowFor = (date: string, campaignId: string, campaignName: string) => {
+    const key = `${date}|${campaignId}`
+    let r = byKey.get(key)
+    if (!r) {
+      r = { date, campaign_id: campaignId, campaign_name: campaignName, phone_calls: 0, calls_received: 0, calls_missed: 0, call_seconds: 0, calls_from_ad: 0, calls_from_site: 0 }
+      byKey.set(key, r)
+    }
+    if (!r.campaign_name && campaignName) r.campaign_name = campaignName
+    return r
+  }
+
+  try {
+    const raw = await runQuery(externalId, mccId, token,
+      `SELECT campaign.id, campaign.name, segments.date, metrics.phone_calls
+       FROM campaign
+       WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+         AND metrics.phone_calls > 0`,
+      devToken)
+    for (const row of raw) {
+      const campaign = row.campaign as Record<string, unknown> | undefined
+      const segments = row.segments as Record<string, unknown> | undefined
+      const metrics  = row.metrics  as Record<string, unknown> | undefined
+      const calls = Number(metrics?.phoneCalls || 0)
+      const date  = String(segments?.date || '')
+      if (!calls || !date) continue
+      rowFor(date, String(campaign?.id || 'unknown'), String(campaign?.name || '')).phone_calls += calls
+    }
+  } catch (e) {
+    console.warn('[google-ads] phone_calls query failed:', String(e).slice(0, 300))
+  }
+
+  try {
+    const raw = await runQuery(externalId, mccId, token,
+      `SELECT campaign.id, campaign.name,
+              call_view.start_call_date_time, call_view.call_status,
+              call_view.call_duration_seconds, call_view.call_tracking_display_location
+       FROM call_view
+       WHERE call_view.start_call_date_time >= '${dateFrom} 00:00:00'
+         AND call_view.start_call_date_time <= '${dateTo} 23:59:59'`,
+      devToken)
+    for (const row of raw) {
+      const campaign = row.campaign as Record<string, unknown> | undefined
+      const call     = row.callView as Record<string, unknown> | undefined
+      const date = String(call?.startCallDateTime || '').slice(0, 10)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+      const r = rowFor(date, String(campaign?.id || 'unknown'), String(campaign?.name || ''))
+      const status = String(call?.callStatus || '')
+      if (status === 'RECEIVED') r.calls_received++
+      else if (status === 'MISSED') r.calls_missed++
+      r.call_seconds += Number(call?.callDurationSeconds || 0)
+      const placed = String(call?.callTrackingDisplayLocation || '')
+      if (placed === 'AD') r.calls_from_ad++
+      else if (placed === 'LANDING_PAGE') r.calls_from_site++
+    }
+  } catch (e) {
+    console.warn('[google-ads] call_view query failed (call reporting may be off):', String(e).slice(0, 300))
+  }
+
+  return Array.from(byKey.values())
+}
+
 /**
  * Fetch ad-level metrics for a Google Ads account over a date range.
  * Called by the sync engine after campaign-level sync.

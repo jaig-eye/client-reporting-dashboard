@@ -5207,3 +5207,7 @@ select.note-field__input { cursor: pointer; }
 @media (max-width: 767px) {
   .an-ai { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
 }
+
+/* ── Overview channel table: a short note under the channel name ── */
+.ov2-chan__text { display: flex; flex-direction: column; min-width: 0; }
+.ov2-chan__note { font-size: 0.6875rem; font-weight: 500; color: var(--text-muted); line-height: 1.3; }

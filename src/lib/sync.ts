@@ -16,7 +16,7 @@ import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
 import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords, fetchGoogleNegativeKeywords } from './connectors/google-ads'
 import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow, GoogleAdsSearchTermRawRow } from './connectors/google-ads'
-import { fetchGoogleSearchTerms } from './connectors/google-ads'
+import { fetchGoogleSearchTerms, fetchGoogleAdsCalls } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
@@ -168,12 +168,13 @@ export async function syncClient(
           result.rows as GoogleAdsRawRow[]
         )
         // Run all Google Ads sub-fetches in parallel (best-effort — each is independent)
-        const [adResult, assetResult, kwResult, negResult, stResult] = await Promise.allSettled([
+        const [adResult, assetResult, kwResult, negResult, stResult, callResult] = await Promise.allSettled([
           fetchGoogleAdMetrics(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGooglePMaxAssets(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchKeywords(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGoogleNegativeKeywords(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchTerms(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
+          fetchGoogleAdsCalls(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
         ])
 
         if (adResult.status === 'fulfilled') {
@@ -212,6 +213,15 @@ export async function syncClient(
           await upsertGoogleSearchTerms(db, connection.id, clientId, stResult.value)
         } else if (stResult.status === 'rejected') {
           console.error(`[sync] Google Ads search terms failed for connection ${connection.id}:`, stResult.reason)
+        }
+
+        if (callResult.status === 'fulfilled') {
+          const calls = callResult.value
+          const total = calls.reduce((s, r) => s + Math.max(r.phone_calls, r.calls_received + r.calls_missed), 0)
+          console.log(`[sync] Google Ads calls: ${calls.length} campaign-days, ${total} calls for connection ${connection.id}`)
+          await upsertGoogleAdsCallMetrics(db, connection.id, clientId, calls, resolvedFrom, resolvedTo)
+        } else {
+          console.error(`[sync] Google Ads calls failed for connection ${connection.id}:`, callResult.reason)
         }
       } else if (connection.connector.type === 'meta_ads') {
         onProgress(80, 'Saving campaign data…')
@@ -1249,6 +1259,54 @@ export async function upsertGA4DimensionMetrics(
     return 0
   }
   return mapped.length
+}
+
+/**
+ * Calls from Google Ads per campaign per day. Best-effort, like the GA4 detail: a failure is logged
+ * and the rest of the Ads sync still succeeds, including before migration 218 is applied.
+ * The synced dates are cleared first, so a day whose calls dropped to zero doesn't keep old counts.
+ */
+export async function upsertGoogleAdsCallMetrics(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-ads').GoogleAdsCallRawRow[],
+  dateFrom: string,
+  dateTo: string
+): Promise<number> {
+  try {
+    const { error: delErr } = await db
+      .from('google_ads_call_metrics')
+      .delete()
+      .eq('connection_id', connectionId)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+    if (delErr) {
+      console.error('[sync] google_ads_call_metrics pre-delete error:', delErr.message)
+      return 0
+    }
+    const syncedAt = new Date().toISOString()
+    const mapped = rows.filter(r => r.date).map(r => ({
+      connection_id: connectionId, client_id: clientId, date: r.date,
+      campaign_id: r.campaign_id, campaign_name: r.campaign_name || null,
+      phone_calls: r.phone_calls, calls_received: r.calls_received, calls_missed: r.calls_missed,
+      call_seconds: r.call_seconds, calls_from_ad: r.calls_from_ad, calls_from_site: r.calls_from_site,
+      synced_at: syncedAt,
+    }))
+    for (let i = 0; i < mapped.length; i += 500) {
+      const { error } = await db
+        .from('google_ads_call_metrics')
+        .upsert(mapped.slice(i, i + 500), { onConflict: 'connection_id,date,campaign_id', ignoreDuplicates: false })
+      if (error) {
+        console.error(`[sync] google_ads_call_metrics upsert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+    return mapped.length
+  } catch (e) {
+    console.error('[sync] google_ads_call_metrics failed:', e)
+    return 0
+  }
 }
 
 export async function upsertGSCMetrics(

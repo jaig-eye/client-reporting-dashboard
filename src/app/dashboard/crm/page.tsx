@@ -50,7 +50,7 @@ const _getCachedCrmMetrics = unstable_cache(
     showCompare: boolean,
   ) => {
     const db = createAdminClient()
-    const [{ data: rows }, { data: priorRows }] = await Promise.all([
+    const [{ data: rows }, { data: priorRows }, { data: adCallRows }] = await Promise.all([
       db.from('ghl_metrics').select(GHL_SELECT)
         .eq('client_id', clientId).gte('date', from).lte('date', to)
         .order('date', { ascending: true }).limit(ROW_CAP),
@@ -59,10 +59,14 @@ const _getCachedCrmMetrics = unstable_cache(
             .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo)
             .order('date', { ascending: true }).limit(ROW_CAP)
         : Promise.resolve({ data: [] as unknown[] }),
+      // Calls Google Ads counted from its own ads (migration 218). Before that table exists the read
+      // fails quietly and the note below stays hidden.
+      db.from('google_ads_call_metrics').select('phone_calls,calls_received,calls_missed,calls_from_ad')
+        .eq('client_id', clientId).gte('date', from).lte('date', to).limit(ROW_CAP * 5),
     ])
-    return { rows: rows ?? [], priorRows: priorRows ?? [] }
+    return { rows: rows ?? [], priorRows: priorRows ?? [], adCalls: (adCallRows ?? []) as AdCallRow[] }
   },
-  ['dashboard-crm'],
+  ['dashboard-crm-v2'],
   { revalidate: 600, tags: ['client-metrics'] }
 )
 
@@ -82,6 +86,8 @@ function prettyDate(value: string) {
 function share(part: number, whole: number) {
   return whole > 0 ? (part / whole) * 100 : 0
 }
+
+type AdCallRow = { phone_calls: number; calls_received: number; calls_missed: number; calls_from_ad: number }
 
 type FormBreakdownItem = { id: string; name: string; type: string; count: number }
 
@@ -170,7 +176,7 @@ export default async function CrmPage({
   }
   const priorLabel = compare === 'last_year' ? 'the same period last year' : `the previous ${dayCount} days`
 
-  const { rows, priorRows } = await _getCachedCrmMetrics(
+  const { rows, priorRows, adCalls } = await _getCachedCrmMetrics(
     client.id,
     iso(fromDate), iso(toDate),
     iso(priorFrom), iso(priorTo),
@@ -230,6 +236,16 @@ export default async function CrmPage({
     .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
     .filter(g => g.count > 0)
   const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
+
+  // Calls straight from Google ads. The callers never visited the website, so the CRM can't tie them
+  // to the ad; they're reported beside the lead sources rather than added into them.
+  const adCallCount    = Math.max(
+    adCalls.reduce((s, r) => s + num(r.phone_calls), 0),
+    adCalls.reduce((s, r) => s + num(r.calls_from_ad), 0),
+  )
+  const adCallsAnswered = adCalls.reduce((s, r) => s + num(r.calls_received), 0)
+  const adCallsMissed   = adCalls.reduce((s, r) => s + num(r.calls_missed), 0)
+  const hasCallsBucket  = sources.channels.some(c => c.key === 'call_or_message')
 
   // Trend: new leads as bars, phone calls as the line, on the shared chart. When the client
   // has picked a comparison the previous period rides along behind it, named after the window
@@ -415,6 +431,11 @@ export default async function CrmPage({
             {share(sources.untracked, sources.total) >= 40 && (
               <p className="crm-insight crm-insight--warn">
                 {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track or we can't sort yet.`}
+              </p>
+            )}
+            {adCallCount > 0 && (
+              <p className="crm-insight">
+                {`Google Ads also counted ${fmtNum(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} straight from your ads. Those callers never visited your site, so ${crmName} can't tie them to the ad${hasCallsBucket ? ': they are likely among the "Calls and messages" above' : ''}.${adCallsAnswered + adCallsMissed > 0 ? ` Of the calls Google could track, ${fmtNum(adCallsAnswered)} ${adCallsAnswered === 1 ? 'was' : 'were'} answered${adCallsMissed > 0 ? ` and ${fmtNum(adCallsMissed)} missed` : ''}.` : ''}`}
               </p>
             )}
             {!sourcesComplete && (

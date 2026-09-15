@@ -106,6 +106,9 @@ type KeywordRow = {
   position_delta: number | null; search_volume: number | null
 }
 
+/** Calls Google Ads counted from its own ads (migration 218). */
+type AdCallRow = { phone_calls: number; calls_received: number; calls_missed: number; calls_from_ad: number }
+
 interface Connected {
   google: boolean; meta: boolean; ghl: boolean; gbp: boolean; ga4: boolean; ahrefs: boolean
 }
@@ -140,7 +143,7 @@ const _getOverviewData = unstable_cache(
       gRes, gPriorRes, mRes, mPriorRes, gAssignRes, mAssignRes,
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
-      adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes,
+      adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes, adCallsRes,
     ] = await Promise.all([
       // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
@@ -247,6 +250,12 @@ const _getOverviewData = unstable_cache(
         .eq('client_id', clientId).eq('category', 'client_update')
         .gte('created_at', new Date(new Date(to + 'T00:00:00Z').getTime() - 90 * 86_400_000).toISOString())
         .order('created_at', { ascending: false }).limit(3),
+      // Calls from Google Ads. Only campaign-days with calls are stored, so this stays small; before
+      // migration 218 the read fails quietly and nothing is shown.
+      has.google
+        ? db.from('google_ads_call_metrics').select('phone_calls,calls_received,calls_missed,calls_from_ad')
+            .eq('client_id', clientId).gte('date', from).lte('date', to).limit(MAX_ROWS * 5)
+        : none,
     ])
 
     return {
@@ -272,9 +281,10 @@ const _getOverviewData = unstable_cache(
       posts:       (postsRes.data ?? []) as PostRow[],
       sites:       (sitesRes.data ?? []) as SiteRow[],
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
+      adCalls:     (adCallsRes.data ?? []) as AdCallRow[],
     }
   },
-  ['dashboard-overview-v8'],
+  ['dashboard-overview-v9'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -461,6 +471,12 @@ export default async function OverviewPage({
   const adCplPrior   = adLeadsPrior > 0 ? adSpendPrior / adLeadsPrior : 0
 
   const hasGoogleData = google.spend > 0 || google.leads > 0
+  // Calls straight from Google ads: the call reporting count when it's on, otherwise the phone_calls
+  // metric. The CRM can't tie these callers to the ad, so they're shown beside the ad leads, not added in.
+  const adCallCount = Math.max(
+    data.adCalls.reduce((s, r) => s + (Number(r.phone_calls) || 0), 0),
+    data.adCalls.reduce((s, r) => s + (Number(r.calls_from_ad) || 0), 0),
+  )
   const hasMetaData   = meta.spend   > 0 || meta.leads   > 0
   const hasPaidData   = hasGoogleData || hasMetaData
 
@@ -596,6 +612,8 @@ export default async function OverviewPage({
   // ── Performance by channel ────────────────────────────────────────────────
   interface ChannelRow {
     key: string; name: string; icon: ReactNode; color: string
+    /** A short line under the channel name, e.g. calls from the ad. */
+    note?: string
     /** null = this channel is not paid for per click. */
     cost: number | null
     visits: number
@@ -634,6 +652,7 @@ export default async function OverviewPage({
       key: 'google', name: 'Google Ads', color: 'var(--blue)',
       icon: <ConnectorLogo type="google_ads" size={16} aria-hidden />,
       cost: google.spend, visits: google.clicks, leads: google.leads,
+      note: adCallCount > 0 ? `+ ${fmtInt(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} from the ad` : undefined,
       trend: allDays.map(d => ({ v: google.byDate.get(d)?.leads ?? 0 })),
     })
   }
@@ -1095,7 +1114,7 @@ export default async function OverviewPage({
       You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}
       {crm.calls + crm.forms > 0 && <> — <b>{fmtInt(crm.calls)}</b> by phone and <b>{fmtInt(crm.forms)}</b> through the website</>}.
       {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
-      {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads came through an ad</>}.</>}
+      {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads came through an ad</>}.{adCallCount > 0 && <> Google Ads also counted <b>{fmtInt(adCallCount)}</b> {adCallCount === 1 ? 'call' : 'calls'} straight from the ad.</>}</>}
     </>
   ) : adLeads > 0 ? (
     <>
@@ -1215,7 +1234,10 @@ export default async function OverviewPage({
                             <th scope="row">
                               <span className="ov2-chan">
                                 <span className="ov2-chan__icon" style={{ color: c.color }}>{c.icon}</span>
-                                {c.name}
+                                <span className="ov2-chan__text">
+                                  {c.name}
+                                  {c.note && <span className="ov2-chan__note">{c.note}</span>}
+                                </span>
                               </span>
                             </th>
                             <td className="num">{c.cost == null ? <span className="ov2-muted">—</span> : fmtWholeDollars(c.cost)}</td>
