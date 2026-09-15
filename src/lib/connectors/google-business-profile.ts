@@ -103,6 +103,9 @@ const METRIC_MAP: Record<string, keyof GBPRawRow> = {
 
 const DAILY_METRICS = Object.keys(METRIC_MAP)
 
+/** Roughly 18 months: how far back the Performance API keeps daily metrics. */
+const MAX_HISTORY_DAYS = 540
+
 type DatedValue   = { date: { year: number; month: number; day: number }; value?: string }
 type MetricSeries = { dailyMetric: string; timeSeries?: { datedValues?: DatedValue[] } }
 
@@ -135,6 +138,12 @@ async function fetchLocationMetrics(
   dateFrom: string,
   dateTo: string
 ): Promise<GBPRawRow[]> {
+  // Daily metrics only go back about 18 months, and the 2-year backfill asks for more.
+  // Start at the oldest day Google keeps rather than letting the whole request fail.
+  const oldest = new Date(Date.now() - MAX_HISTORY_DAYS * 86_400_000).toISOString().split('T')[0]
+  if (dateTo < oldest) return []
+  if (dateFrom < oldest) dateFrom = oldest
+
   const [fromY, fromM, fromD] = dateFrom.split('-').map(Number)
   const [toY,   toM,   toD]   = dateTo.split('-').map(Number)
 
