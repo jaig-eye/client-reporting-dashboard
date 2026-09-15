@@ -117,7 +117,7 @@ export default function SiteRow({ site, state, dates, history, open, menuOpen, o
               </span>
             ) : site.audit_enabled ? (
               <span className="site-chip site-chip--faint" title="Weekly audit on, no score yet">SEO …</span>
-            ) : null}
+            ) : <span className="site-row__slot" aria-hidden />}
             <span className={`site-row__pct site-tone--${uptimeTone(pct)}`} title="Uptime, last 7 days">
               {pct == null ? '—' : fmtPct(pct)}
             </span>
